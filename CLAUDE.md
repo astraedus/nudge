@@ -1,6 +1,10 @@
 # Nudge — Open-Source Android App Blocker
 
-Privacy-first app blocker with delay-to-open (breathing exercises before opening distracting apps), per-app daily time budgets, and app groups. Zero internet permission. All data local.
+Privacy-first app blocker with delay-to-open (breathing exercises before opening distracting apps), per-app daily time budgets, app groups, schedule-based rules, in-app feature blocking (YouTube Shorts, Instagram Reels, TikTok), and grayscale mode. Zero internet permission. All data local.
+
+- GitHub: https://github.com/astraedus/nudge
+- F-Droid MR: https://gitlab.com/fdroid/fdroiddata/-/merge_requests/38398
+- v1.0.0 tag pushed
 
 ## Build
 
@@ -60,3 +64,20 @@ AccessibilityService: TYPE_WINDOW_STATE_CHANGED
 - `HARD_BLOCK` — cannot open the app at all
 - `DELAY` — configurable countdown (5/15/30/60s) before app opens
 - `BREATHING` — guided breathing exercise before app opens (the signature feature)
+
+## v1.1 Features
+
+- **Schedule-based rules** — day-of-week + time-of-day, overnight schedule support (spans midnight)
+- **In-app feature blocking** — YouTube Shorts, Instagram Reels/Explore, TikTok detection via AccessibilityService
+- **Grayscale mode** — force screen to grayscale (requires ADB: `adb shell pm grant com.astraedus.nudge android.permission.WRITE_SECURE_SETTINGS`)
+- **Rotating motivational messages** — shown on overlay screens when blocks trigger
+- **"Walked Away" tracking** — counts when user taps "I changed my mind" instead of waiting
+- **2x2 dashboard stats** — Screen Time, Active Rules, Blocked, Walked Away
+
+## Database
+
+Room DB version 3. Migrations: 1->2, 2->3 (in `NudgeDatabase.kt`).
+
+## Store listing
+
+Assets at `store-listing/` — feature graphic, screenshots, listing copy, batch config (`screenshots.json`).

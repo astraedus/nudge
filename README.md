@@ -16,12 +16,41 @@ Nudge is a small act of fighting back. It's open source, requests zero internet 
 
 ## What it does
 
+### Core
+
 - **Delay-to-open** — Before opening a blocked app, you wait through a breathing exercise or countdown timer. Not a hard lock — a moment of friction that breaks the autopilot habit loop. This is the feature no other open-source blocker has.
 - **Hard blocking** — Completely block apps you don't want to access at all.
 - **Daily time budgets** — Allow 30 minutes of Instagram per day, then block. You choose the limit.
 - **App groups** — Create a "Social Media" group, configure once, apply to all.
-- **Usage stats** — See where your screen time actually goes.
+- **Motivational messages** — Rotating messages on overlay screens to reinforce your intent when a block triggers.
+- **"Walked Away" tracking** — Every time you tap "I changed my mind" instead of waiting through the delay, Nudge counts it. See your wins on the dashboard.
+
+### Schedule rules
+
+- Block apps on specific days and times (e.g. block social media 9-5 on weekdays).
+- Supports overnight schedules that span midnight.
+- Per-rule day-of-week and time-of-day configuration.
+
+### In-app feature blocking
+
+- Block addictive feeds without blocking the whole app: **YouTube Shorts**, **Instagram Reels/Explore**, **TikTok For You**.
+- Uses Accessibility Service to detect in-app navigation to these screens.
+
+### Grayscale mode
+
+- Force your screen to grayscale to make apps less appealing.
+- Requires a one-time ADB permission grant: `adb shell pm grant com.astraedus.nudge android.permission.WRITE_SECURE_SETTINGS`
+
+### Dashboard
+
+- 2x2 stats at a glance: **Screen Time**, **Active Rules**, **Blocked** (times blocked today), **Walked Away** (times you chose to leave).
+
+### Privacy
+
 - **Zero internet permission** — Declared in the manifest. Verifiable. Not a promise — a guarantee.
+- All data stored locally (Room DB + DataStore). Nothing leaves your device.
+- No analytics, no telemetry, no crash reporting, no third-party SDKs.
+- Open source under GPL-3.0. Read the [privacy policy](PRIVACY.md).
 
 ## Install
 
@@ -85,11 +114,16 @@ The delay/breathing modes are the core idea. They don't lock you out — they in
 - [x] Per-app daily time budgets
 - [x] App groups
 - [x] Usage stats dashboard
-- [ ] In-app blocking (Reels, Shorts, Explore feeds)
-- [ ] Schedule-based rules (block social media 9-5 on weekdays)
-- [ ] Grayscale mode
+- [x] Rotating motivational messages
+- [x] "Walked Away" tracking
+- [x] In-app blocking (Reels, Shorts, Explore feeds)
+- [x] Schedule-based rules (day-of-week + time-of-day, overnight support)
+- [x] Grayscale mode (ADB permission required)
+- [x] 2x2 dashboard stats
 - [ ] Anti-bypass protections
 - [ ] NFC/QR unlock
+- [ ] Widget support
+- [ ] Export/import settings
 
 ## License
 
