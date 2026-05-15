@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Simple pause icon -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M38,30 L48,30 L48,78 L38,78 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M60,30 L70,30 L70,78 L60,78 Z" />
+</vector>
