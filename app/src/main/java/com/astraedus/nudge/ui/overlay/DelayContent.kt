@@ -34,6 +34,8 @@ fun DelayContent(
     onComplete: () -> Unit,
     onCancel: () -> Unit
 ) {
+    val title = remember { NudgeMessages.delayTitles.random() }
+    val subtitle = remember { NudgeMessages.delaySubtitles.random() }
     var remainingSeconds by remember { mutableIntStateOf(delaySeconds) }
 
     val progress by animateFloatAsState(
@@ -83,7 +85,7 @@ fun DelayContent(
             Spacer(modifier = Modifier.height(32.dp))
 
             Text(
-                text = "Take a moment to think...",
+                text = title,
                 style = MaterialTheme.typography.titleLarge,
                 color = MaterialTheme.colorScheme.onBackground,
                 textAlign = TextAlign.Center
@@ -92,7 +94,7 @@ fun DelayContent(
             Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-                text = "Do you really need to open this app right now?",
+                text = subtitle,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center

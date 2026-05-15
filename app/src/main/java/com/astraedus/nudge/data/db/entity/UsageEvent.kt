@@ -10,5 +10,6 @@ data class UsageEvent(
     val timestamp: Long = System.currentTimeMillis(),
     val durationMs: Long = 0,
     val wasBlocked: Boolean = false,
-    val blockMode: String? = null
+    val blockMode: String? = null,
+    val userChangedMind: Boolean = false
 )

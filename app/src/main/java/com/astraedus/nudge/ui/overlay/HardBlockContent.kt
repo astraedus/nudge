@@ -15,6 +15,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
@@ -25,6 +26,8 @@ fun HardBlockContent(
     packageName: String,
     onGoBack: () -> Unit
 ) {
+    val message = remember { NudgeMessages.hardBlockMessages.random() }
+
     Surface(
         modifier = Modifier.fillMaxSize(),
         color = MaterialTheme.colorScheme.background
@@ -54,7 +57,7 @@ fun HardBlockContent(
             Spacer(modifier = Modifier.height(12.dp))
 
             Text(
-                text = "You've blocked access to this app",
+                text = message,
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center

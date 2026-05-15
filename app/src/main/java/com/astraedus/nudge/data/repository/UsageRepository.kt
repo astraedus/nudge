@@ -26,6 +26,12 @@ class UsageRepository @Inject constructor(
     fun getUsageForDay(dayStart: Long, dayEnd: Long): Flow<List<UsageEvent>> =
         usageEventDao.getEventsForDay(dayStart, dayEnd)
 
+    fun getChangedMindCountForDay(dayStart: Long, dayEnd: Long): Flow<Int> =
+        usageEventDao.getChangedMindCount(dayStart, dayEnd)
+
+    fun getBlockedCountForDay(dayStart: Long, dayEnd: Long): Flow<Int> =
+        usageEventDao.getBlockedCount(dayStart, dayEnd)
+
     /** Delete events older than [retainDays] days. */
     suspend fun cleanup(retainDays: Int = 30) {
         val cutoff = System.currentTimeMillis() - retainDays.toLong() * 24L * 60L * 60L * 1000L

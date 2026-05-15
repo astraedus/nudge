@@ -19,7 +19,8 @@ data class HomeUiState(
     val isGlobalEnabled: Boolean = true,
     val todayTotalUsageFormatted: String = "0s",
     val activeRuleCount: Int = 0,
-    val blockedCountToday: Int = 0
+    val blockedCountToday: Int = 0,
+    val changedMindCount: Int = 0
 )
 
 @HiltViewModel
@@ -36,15 +37,17 @@ class HomeViewModel @Inject constructor(
     val uiState: StateFlow<HomeUiState> = combine(
         nudgePreferences.isGlobalEnabled,
         blockRuleRepository.getEnabledRules(),
-        usageRepository.getUsageForDay(todayStart, todayEnd)
-    ) { enabled, rules, events ->
+        usageRepository.getUsageForDay(todayStart, todayEnd),
+        usageRepository.getChangedMindCountForDay(todayStart, todayEnd)
+    ) { enabled, rules, events, changedMind ->
         val totalMs = events.sumOf { it.durationMs }
         val blockedCount = events.count { it.wasBlocked }
         HomeUiState(
             isGlobalEnabled = enabled,
             todayTotalUsageFormatted = timeTracker.formatDuration(totalMs),
             activeRuleCount = rules.size,
-            blockedCountToday = blockedCount
+            blockedCountToday = blockedCount,
+            changedMindCount = changedMind
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), HomeUiState())
 

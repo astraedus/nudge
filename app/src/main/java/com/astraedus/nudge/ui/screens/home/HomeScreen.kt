@@ -20,6 +20,7 @@ import androidx.compose.material.icons.outlined.Block
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Shield
+import androidx.compose.material.icons.outlined.ThumbUp
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -97,10 +98,22 @@ fun HomeScreen(
                     value = state.activeRuleCount.toString(),
                     modifier = Modifier.weight(1f)
                 )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
                 StatCard(
                     icon = Icons.Outlined.Block,
                     label = "Blocked",
                     value = state.blockedCountToday.toString(),
+                    modifier = Modifier.weight(1f)
+                )
+                StatCard(
+                    icon = Icons.Outlined.ThumbUp,
+                    label = "Walked Away",
+                    value = state.changedMindCount.toString(),
                     modifier = Modifier.weight(1f)
                 )
             }

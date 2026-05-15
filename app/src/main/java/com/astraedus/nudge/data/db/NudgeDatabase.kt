@@ -19,7 +19,7 @@ import com.astraedus.nudge.data.db.entity.UsageEvent
         AppGroupMember::class,
         UsageEvent::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 abstract class NudgeDatabase : RoomDatabase() {
@@ -38,6 +38,12 @@ abstract class NudgeDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE block_rules ADD COLUMN inAppFeatures TEXT")
                 // Grayscale mode
                 db.execSQL("ALTER TABLE block_rules ADD COLUMN grayscale INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE usage_events ADD COLUMN userChangedMind INTEGER NOT NULL DEFAULT 0")
             }
         }
     }

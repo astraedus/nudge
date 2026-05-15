@@ -24,7 +24,7 @@ object DatabaseModule {
             context,
             NudgeDatabase::class.java,
             "nudge.db"
-        ).addMigrations(NudgeDatabase.MIGRATION_1_2).build()
+        ).addMigrations(NudgeDatabase.MIGRATION_1_2, NudgeDatabase.MIGRATION_2_3).build()
     }
 
     @Provides

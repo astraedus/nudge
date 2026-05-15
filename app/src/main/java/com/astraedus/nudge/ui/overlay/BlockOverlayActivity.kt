@@ -4,13 +4,21 @@ import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import com.astraedus.nudge.data.db.entity.UsageEvent
+import com.astraedus.nudge.data.repository.UsageRepository
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.service.NudgeAccessibilityService
 import com.astraedus.nudge.ui.theme.NudgeTheme
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import javax.inject.Inject
 
 @AndroidEntryPoint
 class BlockOverlayActivity : ComponentActivity() {
+
+    @Inject lateinit var usageRepository: UsageRepository
 
     companion object {
         const val EXTRA_BLOCK_MODE = "block_mode"
@@ -69,6 +77,20 @@ class BlockOverlayActivity : ComponentActivity() {
     }
 
     private fun navigateHome() {
+        // Log that user changed their mind
+        val pkg = intent.getStringExtra(EXTRA_PACKAGE_NAME) ?: ""
+        val mode = intent.getStringExtra(EXTRA_BLOCK_MODE) ?: ""
+        CoroutineScope(Dispatchers.IO).launch {
+            usageRepository.logEvent(
+                UsageEvent(
+                    packageName = pkg,
+                    wasBlocked = true,
+                    blockMode = mode,
+                    userChangedMind = true
+                )
+            )
+        }
+
         val homeIntent = Intent(Intent.ACTION_MAIN).apply {
             addCategory(Intent.CATEGORY_HOME)
             flags = Intent.FLAG_ACTIVITY_NEW_TASK
