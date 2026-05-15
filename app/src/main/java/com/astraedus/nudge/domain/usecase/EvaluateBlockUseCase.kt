@@ -21,8 +21,11 @@ class EvaluateBlockUseCase @Inject constructor(
     /**
      * Evaluate whether a package should be blocked right now.
      * Combines rule resolution, daily usage lookup, and the block engine decision.
+     *
+     * @param detectedFeature If the accessibility service detected an in-app feature
+     *   (e.g. "REELS", "SHORTS"), pass it here so the engine can match feature-level rules.
      */
-    suspend fun invoke(packageName: String): BlockDecision {
+    suspend fun invoke(packageName: String, detectedFeature: String? = null): BlockDecision {
         val allRules = blockRuleRepository.getEnabledRules().first()
         val allGroups = blockRuleRepository.getAllGroups().first()
 
@@ -35,7 +38,12 @@ class EvaluateBlockUseCase @Inject constructor(
                 mode = try { BlockMode.valueOf(rule.mode) } catch (_: Exception) { BlockMode.HARD_BLOCK },
                 delaySeconds = rule.delaySeconds,
                 dailyLimitMinutes = rule.dailyLimitMinutes,
-                enabled = rule.enabled
+                enabled = rule.enabled,
+                scheduleDays = rule.scheduleDays?.split(",")?.mapNotNull { it.trim().toIntOrNull() },
+                scheduleStartMinute = rule.scheduleStartMinute,
+                scheduleEndMinute = rule.scheduleEndMinute,
+                inAppFeatures = rule.inAppFeatures?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() },
+                grayscale = rule.grayscale
             )
         }
 
@@ -51,6 +59,6 @@ class EvaluateBlockUseCase @Inject constructor(
         val activeRules = ruleEvaluator.resolveRulesForPackage(packageName, ruleDataList, memberships)
         val dailyUsageMs = usageRepository.getDailyUsage(packageName).first()
 
-        return blockEngine.evaluate(packageName, activeRules, dailyUsageMs)
+        return blockEngine.evaluate(packageName, activeRules, dailyUsageMs, detectedFeature)
     }
 }

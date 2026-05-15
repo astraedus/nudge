@@ -10,6 +10,7 @@ import com.astraedus.nudge.data.repository.InstalledAppsRepository
 import com.astraedus.nudge.data.repository.UsageRepository
 import com.astraedus.nudge.domain.engine.BlockEngine
 import com.astraedus.nudge.domain.engine.RuleEvaluator
+import com.astraedus.nudge.domain.engine.ScheduleEvaluator
 import com.astraedus.nudge.domain.engine.TimeTracker
 import dagger.Module
 import dagger.Provides
@@ -49,7 +50,11 @@ object RepositoryModule {
     ): InstalledAppsRepository = InstalledAppsRepository(context)
 
     @Provides
-    fun provideBlockEngine(): BlockEngine = BlockEngine()
+    fun provideScheduleEvaluator(): ScheduleEvaluator = ScheduleEvaluator()
+
+    @Provides
+    fun provideBlockEngine(scheduleEvaluator: ScheduleEvaluator): BlockEngine =
+        BlockEngine(scheduleEvaluator)
 
     @Provides
     fun provideRuleEvaluator(): RuleEvaluator = RuleEvaluator()

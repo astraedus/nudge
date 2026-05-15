@@ -2,6 +2,8 @@ package com.astraedus.nudge.ui.screens.rules
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -14,6 +16,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -38,7 +41,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.astraedus.nudge.domain.model.BlockMode
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun RuleEditorScreen(
     viewModel: RuleEditorViewModel,
@@ -78,6 +81,7 @@ fun RuleEditorScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
+            // --- Block Mode ---
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
                     "Block Mode",
@@ -131,6 +135,7 @@ fun RuleEditorScreen(
 
             HorizontalDivider()
 
+            // --- Daily Time Limit ---
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -163,6 +168,169 @@ fun RuleEditorScreen(
                 }
             }
 
+            HorizontalDivider()
+
+            // --- Schedule ---
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "Schedule",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Switch(
+                        checked = state.scheduleEnabled,
+                        onCheckedChange = { viewModel.setScheduleEnabled(it) }
+                    )
+                }
+
+                if (state.scheduleEnabled) {
+                    Text(
+                        "Active days",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        val dayLabels = listOf(
+                            1 to "Mon", 2 to "Tue", 3 to "Wed", 4 to "Thu",
+                            5 to "Fri", 6 to "Sat", 7 to "Sun"
+                        )
+                        dayLabels.forEach { (day, label) ->
+                            FilterChip(
+                                selected = day in state.scheduleDays,
+                                onClick = { viewModel.toggleScheduleDay(day) },
+                                label = { Text(label) }
+                            )
+                        }
+                    }
+
+                    // Time pickers - start time
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Start time", style = MaterialTheme.typography.bodyMedium)
+                        TimeSelector(
+                            hour = state.scheduleStartHour,
+                            minute = state.scheduleStartMinuteOfHour,
+                            onTimeSelected = { h, m -> viewModel.setScheduleStartTime(h, m) }
+                        )
+                    }
+
+                    // Time pickers - end time
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("End time", style = MaterialTheme.typography.bodyMedium)
+                        TimeSelector(
+                            hour = state.scheduleEndHour,
+                            minute = state.scheduleEndMinuteOfHour,
+                            onTimeSelected = { h, m -> viewModel.setScheduleEndTime(h, m) }
+                        )
+                    }
+
+                    if (state.scheduleDays.isEmpty()) {
+                        Text(
+                            "No days selected - rule will apply every day during the time window",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
+            // --- In-App Blocking (only for supported apps) ---
+            if (state.supportsInAppBlocking) {
+                HorizontalDivider()
+
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "In-App Blocking",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Medium
+                    )
+
+                    Text(
+                        "Block specific features instead of the whole app",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    val pkg = state.packageName
+
+                    // Instagram features
+                    if (pkg == "com.instagram.android") {
+                        InAppCheckbox(
+                            label = "Block Reels",
+                            checked = state.inAppReels,
+                            onCheckedChange = { viewModel.setInAppReels(it) }
+                        )
+                        InAppCheckbox(
+                            label = "Block Explore",
+                            checked = state.inAppExplore,
+                            onCheckedChange = { viewModel.setInAppExplore(it) }
+                        )
+                    }
+
+                    // YouTube features
+                    if (pkg == "com.google.android.youtube") {
+                        InAppCheckbox(
+                            label = "Block Shorts",
+                            checked = state.inAppShorts,
+                            onCheckedChange = { viewModel.setInAppShorts(it) }
+                        )
+                    }
+
+                    // TikTok features
+                    if (pkg == "com.zhiliaoapp.musically" || pkg == "com.ss.android.ugc.trill") {
+                        InAppCheckbox(
+                            label = "Block TikTok Feed",
+                            checked = state.inAppTikTokFeed,
+                            onCheckedChange = { viewModel.setInAppTikTokFeed(it) }
+                        )
+                    }
+                }
+            }
+
+            HorizontalDivider()
+
+            // --- Grayscale ---
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "Grayscale Mode",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            "Make screen gray when this app is open",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = state.grayscale,
+                        onCheckedChange = { viewModel.setGrayscale(it) }
+                    )
+                }
+            }
+
             Spacer(Modifier.height(16.dp))
 
             Button(
@@ -186,5 +354,63 @@ fun RuleEditorScreen(
 
             Spacer(Modifier.height(16.dp))
         }
+    }
+}
+
+@Composable
+private fun InAppCheckbox(
+    label: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Checkbox(
+            checked = checked,
+            onCheckedChange = onCheckedChange
+        )
+        Text(
+            label,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.padding(start = 4.dp)
+        )
+    }
+}
+
+/**
+ * Simple time selector using hour/minute FilterChips.
+ * Displays current time as a button, cycles through preset options.
+ */
+@Composable
+private fun TimeSelector(
+    hour: Int,
+    minute: Int,
+    onTimeSelected: (Int, Int) -> Unit
+) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // Hour selector
+        FilterChip(
+            selected = true,
+            onClick = {
+                // Cycle hour: +1, wrap at 24
+                onTimeSelected((hour + 1) % 24, minute)
+            },
+            label = { Text(String.format("%02d", hour)) }
+        )
+        Text(":", style = MaterialTheme.typography.bodyLarge)
+        // Minute selector
+        FilterChip(
+            selected = true,
+            onClick = {
+                // Cycle minute in 15-min increments
+                onTimeSelected(hour, (minute + 15) % 60)
+            },
+            label = { Text(String.format("%02d", minute)) }
+        )
     }
 }

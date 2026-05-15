@@ -32,7 +32,12 @@ class RuleEvaluator @Inject constructor() {
                 mode = rule.mode,
                 delaySeconds = rule.delaySeconds,
                 dailyLimitMinutes = rule.dailyLimitMinutes,
-                enabled = rule.enabled
+                enabled = rule.enabled,
+                scheduleDays = rule.scheduleDays,
+                scheduleStartMinute = rule.scheduleStartMinute,
+                scheduleEndMinute = rule.scheduleEndMinute,
+                inAppFeatures = rule.inAppFeatures,
+                grayscale = rule.grayscale
             )
         }
     }

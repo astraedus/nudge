@@ -18,6 +18,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.Accessibility
 import androidx.compose.material.icons.outlined.Code
+import androidx.compose.material.icons.outlined.InvertColors
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Layers
 import androidx.compose.material.icons.outlined.QueryStats
@@ -111,6 +112,14 @@ fun SettingsScreen(
                 }
             )
 
+            PermissionItem(
+                title = "Grayscale Permission",
+                description = "Grant via ADB: adb shell pm grant com.astraedus.nudge android.permission.WRITE_SECURE_SETTINGS",
+                granted = hasGrayscalePermission(context),
+                icon = { Icon(Icons.Outlined.InvertColors, contentDescription = null) },
+                onClick = { /* Cannot be granted from UI -- requires ADB */ }
+            )
+
             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
             Text(
@@ -177,4 +186,22 @@ private fun hasUsageStatsPermission(context: Context): Boolean {
         context.packageName
     )
     return mode == AppOpsManager.MODE_ALLOWED
+}
+
+private fun hasGrayscalePermission(context: Context): Boolean {
+    return try {
+        val current = Settings.Secure.getInt(
+            context.contentResolver,
+            "accessibility_display_daltonizer_enabled",
+            0
+        )
+        Settings.Secure.putInt(
+            context.contentResolver,
+            "accessibility_display_daltonizer_enabled",
+            current
+        )
+        true
+    } catch (_: SecurityException) {
+        false
+    }
 }

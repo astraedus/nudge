@@ -14,7 +14,7 @@ class BlockEngineTest {
 
     @Before
     fun setUp() {
-        engine = BlockEngine()
+        engine = BlockEngine(ScheduleEvaluator())
     }
 
     @Test

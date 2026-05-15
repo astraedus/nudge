@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.astraedus.nudge.data.db.entity.BlockRule
 import com.astraedus.nudge.data.repository.BlockRuleRepository
 import com.astraedus.nudge.domain.model.BlockMode
+import com.astraedus.nudge.service.InAppDetector
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -22,7 +23,22 @@ data class RuleEditorUiState(
     val dailyLimitMinutes: Int = 30,
     val existingRuleId: Long? = null,
     val isSaved: Boolean = false,
-    val isDeleted: Boolean = false
+    val isDeleted: Boolean = false,
+    // Schedule fields
+    val scheduleDays: Set<Int> = emptySet(),     // 1=Mon..7=Sun
+    val scheduleStartHour: Int = 9,
+    val scheduleStartMinuteOfHour: Int = 0,
+    val scheduleEndHour: Int = 17,
+    val scheduleEndMinuteOfHour: Int = 0,
+    val scheduleEnabled: Boolean = false,
+    // In-app feature blocking
+    val inAppReels: Boolean = false,
+    val inAppShorts: Boolean = false,
+    val inAppExplore: Boolean = false,
+    val inAppTikTokFeed: Boolean = false,
+    val supportsInAppBlocking: Boolean = false,
+    // Grayscale
+    val grayscale: Boolean = false
 )
 
 @HiltViewModel
@@ -33,7 +49,12 @@ class RuleEditorViewModel @Inject constructor(
 
     private val packageName: String = savedStateHandle.get<String>("packageName") ?: ""
 
-    private val _uiState = MutableStateFlow(RuleEditorUiState(packageName = packageName))
+    private val _uiState = MutableStateFlow(
+        RuleEditorUiState(
+            packageName = packageName,
+            supportsInAppBlocking = packageName in InAppDetector.SUPPORTED_PACKAGES
+        )
+    )
     val uiState: StateFlow<RuleEditorUiState> = _uiState.asStateFlow()
 
     init {
@@ -45,6 +66,22 @@ class RuleEditorViewModel @Inject constructor(
             val rules = blockRuleRepository.getAllRules().firstOrNull() ?: emptyList()
             val existing = rules.find { it.packageName == packageName }
             if (existing != null) {
+                val days = existing.scheduleDays
+                    ?.split(",")
+                    ?.mapNotNull { it.trim().toIntOrNull() }
+                    ?.toSet()
+                    ?: emptySet()
+
+                val features = existing.inAppFeatures
+                    ?.split(",")
+                    ?.map { it.trim() }
+                    ?.filter { it.isNotEmpty() }
+                    ?: emptyList()
+
+                val hasSchedule = existing.scheduleStartMinute != null && existing.scheduleEndMinute != null
+                val startMinute = existing.scheduleStartMinute ?: 540  // 9:00 AM
+                val endMinute = existing.scheduleEndMinute ?: 1020     // 5:00 PM
+
                 _uiState.value = _uiState.value.copy(
                     blockMode = try {
                         BlockMode.valueOf(existing.mode)
@@ -54,7 +91,18 @@ class RuleEditorViewModel @Inject constructor(
                     delaySeconds = existing.delaySeconds,
                     dailyLimitEnabled = existing.dailyLimitMinutes != null,
                     dailyLimitMinutes = existing.dailyLimitMinutes ?: 30,
-                    existingRuleId = existing.id
+                    existingRuleId = existing.id,
+                    scheduleDays = days,
+                    scheduleStartHour = startMinute / 60,
+                    scheduleStartMinuteOfHour = startMinute % 60,
+                    scheduleEndHour = endMinute / 60,
+                    scheduleEndMinuteOfHour = endMinute % 60,
+                    scheduleEnabled = hasSchedule || days.isNotEmpty(),
+                    inAppReels = "REELS" in features,
+                    inAppShorts = "SHORTS" in features,
+                    inAppExplore = "EXPLORE" in features,
+                    inAppTikTokFeed = "TIKTOK_FEED" in features,
+                    grayscale = existing.grayscale
                 )
             }
         }
@@ -76,16 +124,96 @@ class RuleEditorViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(dailyLimitMinutes = minutes)
     }
 
+    // --- Schedule ---
+
+    fun setScheduleEnabled(enabled: Boolean) {
+        _uiState.value = _uiState.value.copy(scheduleEnabled = enabled)
+    }
+
+    fun toggleScheduleDay(day: Int) {
+        val current = _uiState.value.scheduleDays
+        val updated = if (day in current) current - day else current + day
+        _uiState.value = _uiState.value.copy(scheduleDays = updated)
+    }
+
+    fun setScheduleStartTime(hour: Int, minute: Int) {
+        _uiState.value = _uiState.value.copy(
+            scheduleStartHour = hour,
+            scheduleStartMinuteOfHour = minute
+        )
+    }
+
+    fun setScheduleEndTime(hour: Int, minute: Int) {
+        _uiState.value = _uiState.value.copy(
+            scheduleEndHour = hour,
+            scheduleEndMinuteOfHour = minute
+        )
+    }
+
+    // --- In-app features ---
+
+    fun setInAppReels(enabled: Boolean) {
+        _uiState.value = _uiState.value.copy(inAppReels = enabled)
+    }
+
+    fun setInAppShorts(enabled: Boolean) {
+        _uiState.value = _uiState.value.copy(inAppShorts = enabled)
+    }
+
+    fun setInAppExplore(enabled: Boolean) {
+        _uiState.value = _uiState.value.copy(inAppExplore = enabled)
+    }
+
+    fun setInAppTikTokFeed(enabled: Boolean) {
+        _uiState.value = _uiState.value.copy(inAppTikTokFeed = enabled)
+    }
+
+    // --- Grayscale ---
+
+    fun setGrayscale(enabled: Boolean) {
+        _uiState.value = _uiState.value.copy(grayscale = enabled)
+    }
+
+    // --- Save / Delete ---
+
     fun save() {
         viewModelScope.launch {
             val state = _uiState.value
+
+            // Build schedule fields
+            val scheduleDaysStr = if (state.scheduleEnabled && state.scheduleDays.isNotEmpty()) {
+                state.scheduleDays.sorted().joinToString(",")
+            } else null
+
+            val scheduleStartMinute = if (state.scheduleEnabled) {
+                state.scheduleStartHour * 60 + state.scheduleStartMinuteOfHour
+            } else null
+
+            val scheduleEndMinute = if (state.scheduleEnabled) {
+                state.scheduleEndHour * 60 + state.scheduleEndMinuteOfHour
+            } else null
+
+            // Build in-app features string
+            val features = buildList {
+                if (state.inAppReels) add("REELS")
+                if (state.inAppShorts) add("SHORTS")
+                if (state.inAppExplore) add("EXPLORE")
+                if (state.inAppTikTokFeed) add("TIKTOK_FEED")
+            }
+            val inAppFeaturesStr = if (features.isNotEmpty()) features.joinToString(",") else null
+
             val rule = BlockRule(
                 id = state.existingRuleId ?: 0,
                 packageName = state.packageName,
                 mode = state.blockMode.name,
                 delaySeconds = state.delaySeconds,
                 dailyLimitMinutes = if (state.dailyLimitEnabled) state.dailyLimitMinutes else null,
-                enabled = true
+                enabled = true,
+                scheduleDays = scheduleDaysStr,
+                scheduleStartMinute = scheduleStartMinute,
+                scheduleEndMinute = scheduleEndMinute,
+                inAppFeatures = inAppFeaturesStr,
+                grayscale = state.grayscale
             )
             if (state.existingRuleId != null) {
                 blockRuleRepository.updateRule(rule)
