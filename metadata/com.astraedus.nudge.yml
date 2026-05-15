@@ -1,0 +1,46 @@
+Categories:
+  - Security
+  - System
+AuthorName: Astraedus
+AuthorEmail: theagentthatcould@gmail.com
+AuthorWebSite: https://github.com/astraedus
+License: GPL-3.0-only
+SourceCode: https://github.com/astraedus/nudge
+IssueTracker: https://github.com/astraedus/nudge/issues
+
+Summary: Privacy-first app blocker with breathing exercises and delay-to-open
+
+Description: |
+  App blockers ask for Accessibility Service permissions — the most powerful
+  permission on Android. Most are closed-source with vague privacy policies.
+  Nudge is different.
+
+  Nudge is open source, requests zero internet permissions, and keeps all
+  your data on your device. No analytics. No telemetry. No data leaving
+  your phone.
+
+  Features:
+  * Delay-to-open with breathing exercises
+  * Hard blocking
+  * Daily time budgets
+  * App groups
+  * Schedule-based rules
+  * In-app Reels/Shorts blocking
+  * Grayscale mode
+  * Usage statistics
+
+RepoType: git
+Repo: https://github.com/astraedus/nudge.git
+
+Builds:
+  - versionName: 1.0.0
+    versionCode: 1
+    commit: main
+    subdir: app
+    gradle:
+      - yes
+
+AutoUpdateMode: Version
+UpdateCheckMode: Tags
+CurrentVersion: 1.0.0
+CurrentVersionCode: 1

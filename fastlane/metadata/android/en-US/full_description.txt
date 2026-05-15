@@ -1,0 +1,17 @@
+App blockers ask for Accessibility Service permissions — the most powerful permission on Android. It can see everything on your screen. Most app blockers are closed-source with vague privacy policies. Nudge is different.
+
+Nudge is open source, requests zero internet permissions, and keeps all your data on your device. No analytics. No telemetry. No data leaving your phone. Ever.
+
+Features:
+* Delay-to-open — wait through a breathing exercise or countdown before opening distracting apps
+* Hard blocking — completely block apps you don't want to access
+* Daily time budgets — allow 30 minutes of Instagram per day, then block
+* App groups — create a "Social Media" group, configure once, apply to all
+* Schedule-based rules — block social media 9-5 on weekdays
+* In-app blocking — block Instagram Reels and YouTube Shorts without blocking the whole app
+* Grayscale mode — make blocked apps less appealing by forcing grayscale display
+* Usage stats — see where your screen time actually goes
+
+The delay/breathing modes are the core idea. They don't lock you out — they insert a moment of intentional friction that breaks the automatic habit loop driving most mindless phone usage.
+
+Zero internet permission is declared in the manifest — verifiable, not a promise.

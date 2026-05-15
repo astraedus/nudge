@@ -1,0 +1,9 @@
+Initial release:
+* App blocking with three modes: hard block, delay timer, breathing exercise
+* Per-app daily time budgets
+* App groups
+* Usage stats dashboard
+* Schedule-based rules
+* In-app Reels/Shorts blocking
+* Grayscale mode
+* Zero internet permission — fully offline and private
