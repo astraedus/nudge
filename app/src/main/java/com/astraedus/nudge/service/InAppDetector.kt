@@ -147,7 +147,7 @@ class InAppDetector @Inject constructor(
     }
 
     private fun detectYouTube(root: AccessibilityNodeInfo): Feature? {
-        // Look for "Shorts" tab text in bottom navigation
+        // Method 1: Check if Shorts tab is selected (user navigated via bottom tab)
         val shortsNodes = root.findAccessibilityNodeInfosByText("Shorts")
         if (shortsNodes.isNotEmpty()) {
             for (node in shortsNodes) {
@@ -158,6 +158,24 @@ class InAppDetector @Inject constructor(
             }
         }
         recycleNodes(shortsNodes)
+
+        // Method 2: Check for Shorts player container (user tapped a Short from home feed)
+        val reelRecycler = root.findAccessibilityNodeInfosByViewId(
+            "com.google.android.youtube:id/reel_recycler"
+        )
+        if (reelRecycler.isNotEmpty()) {
+            recycleNodes(reelRecycler)
+            return Feature.SHORTS
+        }
+
+        // Method 3: Check for reel player page (another common Shorts container ID)
+        val reelPlayer = root.findAccessibilityNodeInfosByViewId(
+            "com.google.android.youtube:id/reel_player_page_container"
+        )
+        if (reelPlayer.isNotEmpty()) {
+            recycleNodes(reelPlayer)
+            return Feature.SHORTS
+        }
 
         return null
     }

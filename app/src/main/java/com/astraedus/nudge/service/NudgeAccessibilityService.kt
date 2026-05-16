@@ -239,6 +239,30 @@ class NudgeAccessibilityService : AccessibilityService() {
             return
         }
 
+        // Show counter/time remaining overlay for apps with showTimeRemaining.
+        // This runs BEFORE passthrough check because awareness overlays should show
+        // even when the block overlay has been bypassed via passthrough.
+        val cacheEntry = counterCache.getEntry(packageName)
+        if (cacheEntry != null && cacheEntry.showTimeRemaining && cacheEntry.dailyLimitMinutes != null) {
+            serviceScope.launch {
+                val globalEnabled = entryPoint.nudgePreferences().isGlobalEnabled.first()
+                if (!globalEnabled) return@launch
+
+                val manager = entryPoint.counterOverlayManager()
+                withContext(Dispatchers.Main) {
+                    if (!manager.isVisible()) {
+                        manager.show("taps")
+                        manager.updateCount(
+                            entryPoint.interactionTracker().getSessionCount(packageName),
+                            entryPoint.interactionTracker().getDailyTotal(packageName)
+                        )
+                    }
+                }
+                lastTimeRemainingUpdateMs = 0L
+                maybeUpdateTimeRemaining(packageName, manager)
+            }
+        }
+
         if (shouldSkipForegroundEvaluationForPassthrough(packageName)) {
             entryPoint.nudgeLogger().d("skip evaluation package=$packageName reason=passthrough")
             return
@@ -263,29 +287,6 @@ class NudgeAccessibilityService : AccessibilityService() {
             val decision = entryPoint.evaluateBlockUseCase().invoke(packageName)
             entryPoint.nudgeLogger().d("whole-app decision package=$packageName decision=$decision")
             handleDecision(decision, packageName)
-        }
-
-        // Show time remaining overlay immediately for allowed apps with showTimeRemaining
-        val cacheEntry = counterCache.getEntry(packageName)
-        if (cacheEntry != null && cacheEntry.showTimeRemaining && cacheEntry.dailyLimitMinutes != null) {
-            serviceScope.launch {
-                val globalEnabled = entryPoint.nudgePreferences().isGlobalEnabled.first()
-                if (!globalEnabled) return@launch
-
-                val manager = entryPoint.counterOverlayManager()
-                withContext(Dispatchers.Main) {
-                    if (!manager.isVisible()) {
-                        manager.show("taps")
-                        manager.updateCount(
-                            entryPoint.interactionTracker().getSessionCount(packageName),
-                            entryPoint.interactionTracker().getDailyTotal(packageName)
-                        )
-                    }
-                }
-                // Force time remaining update regardless of debounce
-                lastTimeRemainingUpdateMs = 0L
-                maybeUpdateTimeRemaining(packageName, manager)
-            }
         }
     }
 
