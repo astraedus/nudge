@@ -20,6 +20,7 @@ import com.astraedus.nudge.ui.screens.home.HomeViewModel
 import com.astraedus.nudge.ui.screens.onboarding.OnboardingScreen
 import com.astraedus.nudge.ui.screens.rules.RuleEditorScreen
 import com.astraedus.nudge.ui.screens.rules.RuleEditorViewModel
+import com.astraedus.nudge.ui.screens.settings.GrayscaleGuideScreen
 import com.astraedus.nudge.ui.screens.settings.SettingsScreen
 import com.astraedus.nudge.ui.screens.stats.StatsScreen
 import com.astraedus.nudge.ui.screens.stats.StatsViewModel
@@ -35,6 +36,7 @@ sealed class Screen(val route: String) {
     data object Stats : Screen("stats")
     data object Settings : Screen("settings")
     data object Onboarding : Screen("onboarding")
+    data object GrayscaleGuide : Screen("grayscale_guide")
 }
 
 @Composable
@@ -116,6 +118,15 @@ fun NudgeNavGraph(
 
         composable(Screen.Settings.route) {
             SettingsScreen(
+                onNavigateBack = { navController.popBackStack() },
+                onNavigateToGrayscaleGuide = {
+                    navController.navigate(Screen.GrayscaleGuide.route)
+                }
+            )
+        }
+
+        composable(Screen.GrayscaleGuide.route) {
+            GrayscaleGuideScreen(
                 onNavigateBack = { navController.popBackStack() }
             )
         }

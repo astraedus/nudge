@@ -6,6 +6,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Process
 import android.provider.Settings
+import com.astraedus.nudge.ui.hasGrayscalePermission
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -44,7 +45,8 @@ import androidx.compose.ui.unit.dp
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
-    onNavigateBack: () -> Unit
+    onNavigateBack: () -> Unit,
+    onNavigateToGrayscaleGuide: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val accessibilityEnabled by remember { mutableStateOf(isAccessibilityEnabled(context)) }
@@ -114,10 +116,10 @@ fun SettingsScreen(
 
             PermissionItem(
                 title = "Grayscale Permission",
-                description = "Grant via ADB: adb shell pm grant com.astraedus.nudge android.permission.WRITE_SECURE_SETTINGS",
+                description = if (hasGrayscalePermission(context)) "Granted" else "Tap to see setup guide",
                 granted = hasGrayscalePermission(context),
                 icon = { Icon(Icons.Outlined.InvertColors, contentDescription = null) },
-                onClick = { /* Cannot be granted from UI -- requires ADB */ }
+                onClick = onNavigateToGrayscaleGuide
             )
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
@@ -188,20 +190,4 @@ private fun hasUsageStatsPermission(context: Context): Boolean {
     return mode == AppOpsManager.MODE_ALLOWED
 }
 
-private fun hasGrayscalePermission(context: Context): Boolean {
-    return try {
-        val current = Settings.Secure.getInt(
-            context.contentResolver,
-            "accessibility_display_daltonizer_enabled",
-            0
-        )
-        Settings.Secure.putInt(
-            context.contentResolver,
-            "accessibility_display_daltonizer_enabled",
-            current
-        )
-        true
-    } catch (_: SecurityException) {
-        false
-    }
-}
+// hasGrayscalePermission is now in com.astraedus.nudge.ui.PermissionUtils
