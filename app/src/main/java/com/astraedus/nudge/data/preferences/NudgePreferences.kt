@@ -22,6 +22,7 @@ class NudgePreferences @Inject constructor(
     private object Keys {
         val GLOBAL_ENABLED = booleanPreferencesKey("global_enabled")
         val ONBOARDING_COMPLETE = booleanPreferencesKey("onboarding_complete")
+        val DEBUG_LOGGING_ENABLED = booleanPreferencesKey("debug_logging_enabled")
     }
 
     val isGlobalEnabled: Flow<Boolean> = context.dataStore.data
@@ -39,6 +40,15 @@ class NudgePreferences @Inject constructor(
     suspend fun setOnboardingComplete(complete: Boolean) {
         context.dataStore.edit { prefs ->
             prefs[Keys.ONBOARDING_COMPLETE] = complete
+        }
+    }
+
+    val isDebugLoggingEnabled: Flow<Boolean> = context.dataStore.data
+        .map { prefs -> prefs[Keys.DEBUG_LOGGING_ENABLED] ?: false }
+
+    suspend fun setDebugLoggingEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.DEBUG_LOGGING_ENABLED] = enabled
         }
     }
 }

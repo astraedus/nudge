@@ -24,4 +24,9 @@ object NudgeMessages {
         "Time to do something else",
         "You set this boundary for a reason",
     )
+
+    val allMessages: List<String>
+        get() = delayTitles + delaySubtitles + hardBlockMessages
+
+    fun getRandom(): String = allMessages.random()
 }

@@ -10,6 +10,7 @@ import com.astraedus.nudge.data.repository.UsageRepository
 import com.astraedus.nudge.domain.model.BlockDecision
 import com.astraedus.nudge.domain.usecase.EvaluateBlockUseCase
 import com.astraedus.nudge.ui.overlay.BlockOverlayActivity
+import com.astraedus.nudge.util.NudgeLogger
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
@@ -34,6 +35,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         fun interactionTracker(): InteractionTracker
         fun counterOverlayManager(): CounterOverlayManager
         fun blockRuleRepository(): BlockRuleRepository
+        fun nudgeLogger(): NudgeLogger
     }
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -64,9 +66,7 @@ class NudgeAccessibilityService : AccessibilityService() {
     private val scrollDebounceMs = 500L
 
     /** Cache of packages with showCounter enabled. Refreshed every 10 seconds. */
-    private val counterEnabledCache = mutableSetOf<String>()
-    private var lastCacheRefresh: Long = 0L
-    private val cacheRefreshIntervalMs = 10_000L
+    private val counterCache = CounterCacheRefresher()
 
     companion object {
         private const val DEBOUNCE_MS = 1000L
@@ -99,11 +99,32 @@ class NudgeAccessibilityService : AccessibilityService() {
             lastPassthroughPackage = packageName
             lastPassthroughTime = System.currentTimeMillis()
         }
+
+        internal fun resetPassthroughForTests() {
+            lastPassthroughPackage = null
+            lastPassthroughTime = 0L
+        }
+
+        internal fun isPassthroughGranted(packageName: String): Boolean {
+            return packageName == lastPassthroughPackage
+        }
+
+        internal fun shouldSkipEvaluationForPassthrough(packageName: String): Boolean {
+            return isPassthroughGranted(packageName)
+        }
+
+        internal fun clearPassthroughIfAppChanged(packageName: String): Boolean {
+            if (lastPassthroughPackage == null || packageName == lastPassthroughPackage) return false
+            lastPassthroughPackage = null
+            lastPassthroughTime = 0L
+            return true
+        }
     }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         entryPoint.counterOverlayManager().setServiceContext(this)
+        entryPoint.nudgeLogger().i("accessibility service connected")
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -118,6 +139,8 @@ class NudgeAccessibilityService : AccessibilityService() {
 
         // Skip if the overlay is currently showing
         if (isOverlayActive) return
+
+        entryPoint.nudgeLogger().d("event received type=${event.eventType} package=$packageName")
 
         // Periodically refresh which packages have the counter enabled
         refreshCounterCacheIfNeeded()
@@ -144,6 +167,7 @@ class NudgeAccessibilityService : AccessibilityService() {
      */
     private fun handleWindowStateChanged(packageName: String) {
         val now = System.currentTimeMillis()
+        entryPoint.nudgeLogger().i("foreground app changed package=$packageName")
 
         // If user navigated away from a grayscale-enabled app, disable grayscale
         val grayscalePkg = grayscaleActiveForPackage
@@ -153,7 +177,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         }
 
         // Counter overlay: hide when switching to an app without counter, reset session for new app
-        if (packageName !in counterEnabledCache) {
+        if (!counterCache.isEnabled(packageName)) {
             activeReelLabel = null
             entryPoint.counterOverlayManager().hide()
         } else if (packageName != lastPackage) {
@@ -162,27 +186,34 @@ class NudgeAccessibilityService : AccessibilityService() {
         }
 
         // Post-overlay passthrough: user completed delay/breathing, let them use app until they leave
-        if (packageName == lastPassthroughPackage) {
+        if (shouldSkipEvaluationForPassthrough(packageName)) {
+            entryPoint.nudgeLogger().d("skip evaluation package=$packageName reason=passthrough")
             return
         }
 
         // User switched to a different app — clear passthrough
-        if (lastPassthroughPackage != null && packageName != lastPassthroughPackage) {
-            lastPassthroughPackage = null
-            lastPassthroughTime = 0L
+        if (clearPassthroughIfAppChanged(packageName)) {
+            entryPoint.nudgeLogger().d("passthrough cleared on app switch package=$packageName")
         }
 
         // Debounce: don't re-evaluate if same package was checked < 1 second ago
-        if (packageName == lastPackage && (now - lastEvalTime) < DEBOUNCE_MS) return
+        if (packageName == lastPackage && (now - lastEvalTime) < DEBOUNCE_MS) {
+            entryPoint.nudgeLogger().d("skip evaluation package=$packageName reason=debounce")
+            return
+        }
 
         lastPackage = packageName
         lastEvalTime = now
 
         serviceScope.launch {
             val globalEnabled = entryPoint.nudgePreferences().isGlobalEnabled.first()
-            if (!globalEnabled) return@launch
+            if (!globalEnabled) {
+                entryPoint.nudgeLogger().d("skip evaluation package=$packageName reason=global_disabled")
+                return@launch
+            }
 
             val decision = entryPoint.evaluateBlockUseCase().invoke(packageName)
+            entryPoint.nudgeLogger().d("whole-app decision package=$packageName decision=$decision")
             handleDecision(decision, packageName)
         }
     }
@@ -196,7 +227,10 @@ class NudgeAccessibilityService : AccessibilityService() {
         if (packageName !in InAppDetector.SUPPORTED_PACKAGES) return
 
         // Post-overlay passthrough applies to in-app detection too
-        if (packageName == lastPassthroughPackage) return
+        if (shouldSkipEvaluationForPassthrough(packageName)) {
+            entryPoint.nudgeLogger().d("skip in-app detection package=$packageName reason=passthrough")
+            return
+        }
 
         val now = System.currentTimeMillis()
 
@@ -207,14 +241,21 @@ class NudgeAccessibilityService : AccessibilityService() {
 
         val rootNode = try { rootInActiveWindow } catch (_: Exception) { null } ?: return
         val feature = entryPoint.inAppDetector().detectFeature(packageName, rootNode)
+        entryPoint.nudgeLogger().d("in-app detection package=$packageName feature=$feature")
 
         // Only re-evaluate if a specific feature was detected
         if (feature != null) {
             serviceScope.launch {
                 val globalEnabled = entryPoint.nudgePreferences().isGlobalEnabled.first()
-                if (!globalEnabled) return@launch
+                if (!globalEnabled) {
+                    entryPoint.nudgeLogger().d("skip feature evaluation package=$packageName reason=global_disabled")
+                    return@launch
+                }
 
                 val decision = entryPoint.evaluateBlockUseCase().invoke(packageName, feature.key)
+                entryPoint.nudgeLogger().d(
+                    "feature decision package=$packageName feature=${feature.key} decision=$decision"
+                )
                 handleDecision(decision, packageName)
             }
         }
@@ -223,6 +264,10 @@ class NudgeAccessibilityService : AccessibilityService() {
     private suspend fun handleDecision(decision: BlockDecision, packageName: String) {
         when (decision) {
             is BlockDecision.Block -> {
+                entryPoint.nudgeLogger().i(
+                    "handling block package=$packageName mode=${decision.mode} " +
+                        "delaySeconds=${decision.delaySeconds} grayscale=${decision.grayscale}"
+                )
                 // Enable grayscale if the rule requests it
                 if (decision.grayscale) {
                     entryPoint.grayscaleManager().enableGrayscale()
@@ -249,6 +294,7 @@ class NudgeAccessibilityService : AccessibilityService() {
             }
 
             is BlockDecision.Allow -> {
+                entryPoint.nudgeLogger().d("handling allow package=$packageName")
                 // Log normal usage event (not blocked)
                 entryPoint.usageRepository().logEvent(
                     UsageEvent(packageName = packageName)
@@ -260,7 +306,7 @@ class NudgeAccessibilityService : AccessibilityService() {
     // --- Interaction counter handlers ---
 
     private fun handleViewClicked(packageName: String) {
-        if (packageName !in counterEnabledCache) return
+        if (!counterCache.isEnabled(packageName)) return
 
         val now = System.currentTimeMillis()
         if ((now - lastClickTime) < clickDebounceMs) return
@@ -270,6 +316,9 @@ class NudgeAccessibilityService : AccessibilityService() {
         if (packageName in InAppDetector.SUPPORTED_PACKAGES) return
 
         val count = entryPoint.interactionTracker().recordInteraction(packageName)
+        entryPoint.nudgeLogger().d(
+            "counter tap package=$packageName session=${count.sessionCount} daily=${count.dailyTotal}"
+        )
         updateCounterOverlay(count, "taps")
     }
 
@@ -277,7 +326,7 @@ class NudgeAccessibilityService : AccessibilityService() {
     private var activeReelLabel: String? = null
 
     private fun handleViewScrolled(packageName: String) {
-        if (packageName !in counterEnabledCache) return
+        if (!counterCache.isEnabled(packageName)) return
 
         val now = System.currentTimeMillis()
         if ((now - lastScrollTime) < scrollDebounceMs) return
@@ -302,6 +351,10 @@ class NudgeAccessibilityService : AccessibilityService() {
         }
 
         val count = entryPoint.interactionTracker().recordInteraction(packageName)
+        entryPoint.nudgeLogger().d(
+            "counter scroll package=$packageName label=$label " +
+                "session=${count.sessionCount} daily=${count.dailyTotal}"
+        )
         updateCounterOverlay(count, label)
     }
 
@@ -318,17 +371,18 @@ class NudgeAccessibilityService : AccessibilityService() {
 
     private fun refreshCounterCacheIfNeeded() {
         val now = System.currentTimeMillis()
-        if ((now - lastCacheRefresh) < cacheRefreshIntervalMs) return
-        lastCacheRefresh = now
 
         serviceScope.launch {
-            val rules = entryPoint.blockRuleRepository().getEnabledRules().first()
-            val enabled = rules
-                .filter { it.showCounter }
-                .mapNotNull { it.packageName }
-                .toSet()
-            counterEnabledCache.clear()
-            counterEnabledCache.addAll(enabled)
+            val refreshed = counterCache.refreshIfNeeded(now) {
+                val rules = entryPoint.blockRuleRepository().getEnabledRules().first()
+                rules
+                    .filter { it.showCounter }
+                    .mapNotNull { it.packageName }
+                    .toSet()
+            }
+            if (refreshed) {
+                entryPoint.nudgeLogger().d("counter cache refreshed packages=${counterCache.snapshot().size}")
+            }
         }
     }
 

@@ -3,10 +3,12 @@ package com.astraedus.nudge.domain.engine
 import com.astraedus.nudge.domain.model.ActiveRule
 import com.astraedus.nudge.domain.model.BlockDecision
 import com.astraedus.nudge.domain.model.BlockMode
+import com.astraedus.nudge.domain.logging.NudgeLog
 import javax.inject.Inject
 
 class BlockEngine @Inject constructor(
-    private val scheduleEvaluator: ScheduleEvaluator
+    private val scheduleEvaluator: ScheduleEvaluator,
+    private val logger: NudgeLog = NudgeLog.NoOp
 ) {
 
     /**
@@ -24,6 +26,11 @@ class BlockEngine @Inject constructor(
         dailyUsageMs: Long,
         detectedFeature: String? = null
     ): BlockDecision {
+        logger.d(
+            "evaluate package=$packageName rules=${activeRules.size} " +
+                "dailyUsageMs=$dailyUsageMs detectedFeature=$detectedFeature"
+        )
+
         val applicableRules = activeRules
             .filter { it.enabled }
             .filter { scheduleEvaluator.isActiveNow(it) }
@@ -39,7 +46,10 @@ class BlockEngine @Inject constructor(
                 }
             }
 
-        if (applicableRules.isEmpty()) return BlockDecision.Allow
+        if (applicableRules.isEmpty()) {
+            logger.d("allow package=$packageName reason=no_applicable_rules")
+            return BlockDecision.Allow
+        }
 
         // Check whether any applicable rule wants grayscale
         val wantsGrayscale = applicableRules.any { it.grayscale }
@@ -48,23 +58,42 @@ class BlockEngine @Inject constructor(
         val unconditionalHardBlock = applicableRules.any {
             it.mode == BlockMode.HARD_BLOCK && it.dailyLimitMinutes == null
         }
-        if (unconditionalHardBlock) return BlockDecision.Block(BlockMode.HARD_BLOCK, grayscale = wantsGrayscale)
+        if (unconditionalHardBlock) {
+            logger.i("block package=$packageName reason=unconditional_hard_block grayscale=$wantsGrayscale")
+            return BlockDecision.Block(BlockMode.HARD_BLOCK, grayscale = wantsGrayscale)
+        }
 
         // Check if any time budget is exceeded
         val timeBudgetExceeded = applicableRules.any { rule ->
             rule.dailyLimitMinutes != null &&
                 dailyUsageMs >= rule.dailyLimitMinutes.toLong() * 60L * 1000L
         }
-        if (timeBudgetExceeded) return BlockDecision.Block(BlockMode.HARD_BLOCK, grayscale = wantsGrayscale)
+        if (timeBudgetExceeded) {
+            logger.i("block package=$packageName reason=time_budget_exceeded grayscale=$wantsGrayscale")
+            return BlockDecision.Block(BlockMode.HARD_BLOCK, grayscale = wantsGrayscale)
+        }
 
         // Check for DELAY rules
         val delayRule = applicableRules.firstOrNull { it.mode == BlockMode.DELAY }
-        if (delayRule != null) return BlockDecision.Block(BlockMode.DELAY, delayRule.delaySeconds, wantsGrayscale)
+        if (delayRule != null) {
+            logger.i(
+                "block package=$packageName reason=delay_rule " +
+                    "delaySeconds=${delayRule.delaySeconds} grayscale=$wantsGrayscale"
+            )
+            return BlockDecision.Block(BlockMode.DELAY, delayRule.delaySeconds, wantsGrayscale)
+        }
 
         // Check for BREATHING rules
         val breathingRule = applicableRules.firstOrNull { it.mode == BlockMode.BREATHING }
-        if (breathingRule != null) return BlockDecision.Block(BlockMode.BREATHING, breathingRule.delaySeconds, wantsGrayscale)
+        if (breathingRule != null) {
+            logger.i(
+                "block package=$packageName reason=breathing_rule " +
+                    "delaySeconds=${breathingRule.delaySeconds} grayscale=$wantsGrayscale"
+            )
+            return BlockDecision.Block(BlockMode.BREATHING, breathingRule.delaySeconds, wantsGrayscale)
+        }
 
+        logger.d("allow package=$packageName reason=no_matching_block_mode")
         return BlockDecision.Allow
     }
 }

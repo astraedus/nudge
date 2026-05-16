@@ -9,6 +9,7 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.LinearLayout
 import android.widget.TextView
+import com.astraedus.nudge.util.NudgeLogger
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -23,7 +24,8 @@ import javax.inject.Singleton
  */
 @Singleton
 class CounterOverlayManager @Inject constructor(
-    @ApplicationContext private val context: Context
+    @ApplicationContext private val context: Context,
+    private val logger: NudgeLogger
 ) {
     private var overlayView: View? = null
     private var windowManager: WindowManager? = null
@@ -37,12 +39,19 @@ class CounterOverlayManager @Inject constructor(
 
     fun setServiceContext(ctx: Context) {
         serviceContext = ctx
+        logger.d("counter overlay service context set")
     }
 
     fun show(label: String = "taps") {
-        if (isShowing) return
+        if (isShowing) {
+            logger.d("counter overlay show skipped reason=already_visible")
+            return
+        }
 
-        val ctx = serviceContext ?: return
+        val ctx = serviceContext ?: run {
+            logger.w("counter overlay show skipped reason=no_service_context")
+            return
+        }
         windowManager = ctx.getSystemService(Context.WINDOW_SERVICE) as WindowManager
 
         overlayView = createOverlayView(label)
@@ -63,7 +72,9 @@ class CounterOverlayManager @Inject constructor(
         try {
             windowManager?.addView(overlayView, params)
             isShowing = true
-        } catch (_: Exception) {
+            logger.i("counter overlay shown label=$label")
+        } catch (e: Exception) {
+            logger.w("counter overlay show failed", e)
             // Window token may be invalid if service was recently restarted
         }
     }
@@ -71,17 +82,24 @@ class CounterOverlayManager @Inject constructor(
     fun updateCount(sessionCount: Int, dailyTotal: Int) {
         counterText?.text = sessionCount.toString()
         dailyText?.text = "today: $dailyTotal"
+        logger.d("counter overlay updated session=$sessionCount daily=$dailyTotal")
     }
 
     fun updateLabel(label: String) {
         labelText?.text = label
+        logger.d("counter overlay label updated label=$label")
     }
 
     fun hide() {
-        if (!isShowing) return
+        if (!isShowing) {
+            logger.d("counter overlay hide skipped reason=not_visible")
+            return
+        }
         try {
             windowManager?.removeView(overlayView)
-        } catch (_: Exception) {
+            logger.i("counter overlay hidden")
+        } catch (e: Exception) {
+            logger.w("counter overlay hide failed", e)
             // View may already be detached
         }
         overlayView = null

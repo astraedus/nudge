@@ -12,6 +12,8 @@ import com.astraedus.nudge.domain.engine.BlockEngine
 import com.astraedus.nudge.domain.engine.RuleEvaluator
 import com.astraedus.nudge.domain.engine.ScheduleEvaluator
 import com.astraedus.nudge.domain.engine.TimeTracker
+import com.astraedus.nudge.domain.logging.NudgeLog
+import com.astraedus.nudge.util.NudgeLogger
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -53,8 +55,14 @@ object RepositoryModule {
     fun provideScheduleEvaluator(): ScheduleEvaluator = ScheduleEvaluator()
 
     @Provides
-    fun provideBlockEngine(scheduleEvaluator: ScheduleEvaluator): BlockEngine =
-        BlockEngine(scheduleEvaluator)
+    fun provideBlockEngine(
+        scheduleEvaluator: ScheduleEvaluator,
+        nudgeLog: NudgeLog
+    ): BlockEngine = BlockEngine(scheduleEvaluator, nudgeLog)
+
+    @Provides
+    @Singleton
+    fun provideNudgeLog(logger: NudgeLogger): NudgeLog = logger
 
     @Provides
     fun provideRuleEvaluator(): RuleEvaluator = RuleEvaluator()

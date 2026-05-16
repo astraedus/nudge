@@ -1,7 +1,7 @@
 package com.astraedus.nudge.service
 
-import android.util.Log
 import android.view.accessibility.AccessibilityNodeInfo
+import com.astraedus.nudge.util.NudgeLogger
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -13,7 +13,9 @@ import javax.inject.Singleton
  * to whole-app rule evaluation.
  */
 @Singleton
-class InAppDetector @Inject constructor() {
+class InAppDetector @Inject constructor(
+    private val logger: NudgeLogger
+) {
 
     enum class Feature(val displayName: String, val key: String) {
         REELS("Instagram Reels", "REELS"),
@@ -23,8 +25,6 @@ class InAppDetector @Inject constructor() {
     }
 
     companion object {
-        private const val TAG = "InAppDetector"
-
         /** Packages that support in-app feature detection. */
         val SUPPORTED_PACKAGES = setOf(
             "com.instagram.android",
@@ -41,16 +41,21 @@ class InAppDetector @Inject constructor() {
      *   (user is in a non-feature part of the app, or detection failed).
      */
     fun detectFeature(packageName: String, rootNode: AccessibilityNodeInfo?): Feature? {
-        if (rootNode == null) return null
+        if (rootNode == null) {
+            logger.d("feature detection skipped package=$packageName reason=null_root")
+            return null
+        }
         return try {
-            when (packageName) {
+            val feature = when (packageName) {
                 "com.instagram.android" -> detectInstagram(rootNode)
                 "com.google.android.youtube" -> detectYouTube(rootNode)
                 "com.zhiliaoapp.musically", "com.ss.android.ugc.trill" -> Feature.TIKTOK_FEED
                 else -> null
             }
+            logger.d("feature detection result package=$packageName feature=$feature")
+            feature
         } catch (e: Exception) {
-            Log.w(TAG, "Feature detection failed for $packageName", e)
+            logger.w("feature detection failed package=$packageName", e)
             null
         }
     }
