@@ -13,14 +13,17 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import androidx.compose.runtime.Immutable
 import javax.inject.Inject
 
+@Immutable
 data class AppWithBlockStatus(
     val appInfo: InstalledAppsRepository.AppInfo,
     val isBlocked: Boolean,
     val ruleId: Long? = null
 )
 
+@Immutable
 data class AppListUiState(
     val apps: List<AppWithBlockStatus> = emptyList(),
     val searchQuery: String = "",

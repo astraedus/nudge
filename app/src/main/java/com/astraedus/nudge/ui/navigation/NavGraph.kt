@@ -1,7 +1,7 @@
 package com.astraedus.nudge.ui.navigation
 
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -52,7 +52,7 @@ fun NudgeNavGraph(
 
     // Determine start destination
     val startDestination = if (nudgePreferences != null) {
-        val onboardingComplete by nudgePreferences.isOnboardingComplete.collectAsState(initial = true)
+        val onboardingComplete by nudgePreferences.isOnboardingComplete.collectAsStateWithLifecycle(initialValue = true)
         if (onboardingComplete) Screen.Home.route else Screen.Onboarding.route
     } else {
         Screen.Home.route

@@ -236,7 +236,7 @@ fun RuleEditorScreen(
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        listOf(5, 15, 30, 60).forEach { seconds ->
+                        remember { listOf(5, 15, 30, 60) }.forEach { seconds ->
                             FilterChip(
                                 selected = state.delaySeconds == seconds,
                                 onClick = { viewModel.setDelaySeconds(seconds) },
@@ -281,7 +281,7 @@ fun RuleEditorScreen(
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        listOf(15 to "15m", 30 to "30m", 60 to "1h", 120 to "2h").forEach { (minutes, label) ->
+                        remember { listOf(15 to "15m", 30 to "30m", 60 to "1h", 120 to "2h") }.forEach { (minutes, label) ->
                             FilterChip(
                                 selected = state.dailyLimitMinutes == minutes,
                                 onClick = { viewModel.setDailyLimitMinutes(minutes) },
@@ -371,10 +371,10 @@ fun RuleEditorScreen(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        val dayLabels = listOf(
+                        val dayLabels = remember { listOf(
                             1 to "Mon", 2 to "Tue", 3 to "Wed", 4 to "Thu",
                             5 to "Fri", 6 to "Sat", 7 to "Sun"
-                        )
+                        ) }
                         dayLabels.forEach { (day, label) ->
                             FilterChip(
                                 selected = day in state.scheduleDays,

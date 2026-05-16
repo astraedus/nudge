@@ -13,8 +13,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
+import androidx.compose.runtime.Immutable
 import javax.inject.Inject
 
+@Immutable
 data class RuleSummary(
     val id: Long,
     val mode: String,
@@ -22,6 +24,7 @@ data class RuleSummary(
     val description: String  // e.g. "Whole app: Delay 15s", "Shorts: Hard Block"
 )
 
+@Immutable
 data class RuleEditorUiState(
     val packageName: String = "",
     val blockMode: BlockMode = BlockMode.DELAY,

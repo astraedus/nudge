@@ -35,7 +35,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -63,7 +63,7 @@ fun SettingsScreen(
     val overlayEnabled by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
     val usageStatsEnabled by remember { mutableStateOf(hasUsageStatsPermission(context)) }
     val preferences = remember { NudgePreferences(context.applicationContext) }
-    val debugLoggingEnabled by preferences.isDebugLoggingEnabled.collectAsState(initial = false)
+    val debugLoggingEnabled by preferences.isDebugLoggingEnabled.collectAsStateWithLifecycle(initialValue = false)
     val coroutineScope = rememberCoroutineScope()
     var versionTapCount by rememberSaveable { mutableIntStateOf(0) }
     var developerOptionsVisible by rememberSaveable { mutableStateOf(false) }

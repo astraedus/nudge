@@ -14,14 +14,17 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
+import androidx.compose.runtime.Immutable
 import javax.inject.Inject
 
+@Immutable
 data class ActiveRulesGroup(
     val packageName: String,
     val appName: String,
     val rules: List<RuleSummary>
 )
 
+@Immutable
 data class ActiveRulesUiState(
     val groups: List<ActiveRulesGroup> = emptyList(),
     val isLoading: Boolean = true,

@@ -34,6 +34,18 @@ class CounterOverlayManager @Inject constructor(
     private var dailyText: TextView? = null
     private var timeRemainingText: TextView? = null
     private var isShowing = false
+    private val density = context.resources.displayMetrics.density
+    private val bgNormal = GradientDrawable().apply {
+        shape = GradientDrawable.RECTANGLE
+        cornerRadius = 32 * density
+        setColor(Color.argb(128, 0, 0, 0))
+    }
+    private val bgAlert = GradientDrawable().apply {
+        shape = GradientDrawable.RECTANGLE
+        cornerRadius = 32 * density
+        setColor(Color.argb(160, 80, 0, 0))
+    }
+    private var currentBgIsAlert = false
 
     // TYPE_ACCESSIBILITY_OVERLAY requires the service's own context for a valid window token
     private var serviceContext: Context? = null
@@ -92,22 +104,11 @@ class CounterOverlayManager @Inject constructor(
         }
         counterText?.setTextColor(counterColor)
 
-        // Tint background red at 30+ scrolls
         val container = overlayView as? LinearLayout
-        if (sessionCount >= 30) {
-            val bg = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                cornerRadius = 32 * (context.resources.displayMetrics.density)
-                setColor(Color.argb(160, 80, 0, 0))
-            }
-            container?.background = bg
-        } else {
-            val bg = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                cornerRadius = 32 * (context.resources.displayMetrics.density)
-                setColor(Color.argb(128, 0, 0, 0))
-            }
-            container?.background = bg
+        val shouldAlert = sessionCount >= 30
+        if (shouldAlert != currentBgIsAlert) {
+            container?.background = if (shouldAlert) bgAlert else bgNormal
+            currentBgIsAlert = shouldAlert
         }
 
         logger.d("counter overlay updated session=$sessionCount daily=$dailyTotal")

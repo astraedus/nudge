@@ -13,8 +13,10 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import androidx.compose.runtime.Immutable
 import javax.inject.Inject
 
+@Immutable
 data class HomeUiState(
     val isGlobalEnabled: Boolean = true,
     val todayTotalUsageFormatted: String = "0s",

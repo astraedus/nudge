@@ -13,8 +13,10 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
+import androidx.compose.runtime.Immutable
 import javax.inject.Inject
 
+@Immutable
 data class AppUsageStat(
     val packageName: String,
     val appName: String,
@@ -23,6 +25,7 @@ data class AppUsageStat(
     val fraction: Float
 )
 
+@Immutable
 data class StatsUiState(
     val totalFormatted: String = "0s",
     val appStats: List<AppUsageStat> = emptyList(),

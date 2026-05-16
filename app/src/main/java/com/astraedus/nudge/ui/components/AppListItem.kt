@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.unit.dp
@@ -23,8 +24,9 @@ fun AppListItem(
         headlineContent = { Text(appName) },
         leadingContent = {
             if (icon != null) {
+                val bitmap = remember(icon) { icon.toBitmap(48, 48).asImageBitmap() }
                 Image(
-                    bitmap = icon.toBitmap(48, 48).asImageBitmap(),
+                    bitmap = bitmap,
                     contentDescription = appName,
                     modifier = Modifier.size(40.dp)
                 )

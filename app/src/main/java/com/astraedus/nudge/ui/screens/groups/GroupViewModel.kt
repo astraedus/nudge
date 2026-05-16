@@ -16,13 +16,16 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import androidx.compose.runtime.Immutable
 import javax.inject.Inject
 
+@Immutable
 data class GroupWithCount(
     val group: AppGroup,
     val memberCount: Int
 )
 
+@Immutable
 data class GroupListUiState(
     val groups: List<GroupWithCount> = emptyList(),
     val selectedGroup: AppGroup? = null,
