@@ -31,8 +31,9 @@ import kotlinx.coroutines.launch
 sealed class Screen(val route: String) {
     data object Home : Screen("home")
     data object Apps : Screen("apps")
-    data object RuleEditor : Screen("rule_editor/{packageName}") {
+    data object RuleEditor : Screen("rule_editor/{packageName}?ruleId={ruleId}") {
         fun createRoute(packageName: String) = "rule_editor/$packageName"
+        fun createRoute(packageName: String, ruleId: Long) = "rule_editor/$packageName?ruleId=$ruleId"
     }
     data object Groups : Screen("groups")
     data object Stats : Screen("stats")
@@ -95,7 +96,13 @@ fun NudgeNavGraph(
 
         composable(
             route = Screen.RuleEditor.route,
-            arguments = listOf(navArgument("packageName") { type = NavType.StringType })
+            arguments = listOf(
+                navArgument("packageName") { type = NavType.StringType },
+                navArgument("ruleId") {
+                    type = NavType.LongType
+                    defaultValue = -1L
+                }
+            )
         ) {
             val viewModel: RuleEditorViewModel = hiltViewModel()
             RuleEditorScreen(
@@ -109,8 +116,8 @@ fun NudgeNavGraph(
             ActiveRulesScreen(
                 viewModel = viewModel,
                 onNavigateBack = { navController.popBackStack() },
-                onNavigateToRuleEditor = { pkg ->
-                    navController.navigate(Screen.RuleEditor.createRoute(pkg))
+                onNavigateToRuleEditor = { pkg, ruleId ->
+                    navController.navigate(Screen.RuleEditor.createRoute(pkg, ruleId))
                 }
             )
         }

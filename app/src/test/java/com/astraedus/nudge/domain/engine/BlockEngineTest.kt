@@ -118,4 +118,41 @@ class BlockEngineTest {
         assertEquals(BlockMode.DELAY, block.mode)
         assertEquals(10, block.delaySeconds)
     }
+
+    @Test
+    fun `feature-scoped rule does not block whole app launch`() {
+        val rules = listOf(
+            ActiveRule(
+                mode = BlockMode.DELAY,
+                delaySeconds = 15,
+                dailyLimitMinutes = null,
+                enabled = true,
+                inAppFeatures = listOf("REELS")
+            )
+        )
+
+        val decision = engine.evaluate("com.instagram.android", rules, 0L)
+
+        assertTrue(decision is BlockDecision.Allow)
+    }
+
+    @Test
+    fun `feature-scoped rule blocks when matching feature is detected`() {
+        val rules = listOf(
+            ActiveRule(
+                mode = BlockMode.DELAY,
+                delaySeconds = 15,
+                dailyLimitMinutes = null,
+                enabled = true,
+                inAppFeatures = listOf("REELS")
+            )
+        )
+
+        val decision = engine.evaluate("com.instagram.android", rules, 0L, detectedFeature = "REELS")
+
+        assertTrue(decision is BlockDecision.Block)
+        val block = decision as BlockDecision.Block
+        assertEquals(BlockMode.DELAY, block.mode)
+        assertEquals(15, block.delaySeconds)
+    }
 }

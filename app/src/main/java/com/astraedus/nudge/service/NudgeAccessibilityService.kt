@@ -146,8 +146,9 @@ class NudgeAccessibilityService : AccessibilityService() {
         refreshCounterCacheIfNeeded()
 
         when (event.eventType) {
-            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
-                handleWindowStateChanged(packageName)
+            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
+            AccessibilityEvent.TYPE_WINDOWS_CHANGED -> {
+                evaluateForegroundPackage(packageName)
             }
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
                 handleWindowContentChanged(packageName, event)
@@ -165,9 +166,8 @@ class NudgeAccessibilityService : AccessibilityService() {
      * Original flow: foreground app changed. Evaluate whole-app rules.
      * Also handles grayscale toggle when navigating away from a grayscale-blocked app.
      */
-    private fun handleWindowStateChanged(packageName: String) {
+    private fun evaluateForegroundPackage(packageName: String) {
         val now = System.currentTimeMillis()
-        entryPoint.nudgeLogger().i("foreground app changed package=$packageName")
 
         // If user navigated away from a grayscale-enabled app, disable grayscale
         val grayscalePkg = grayscaleActiveForPackage
@@ -202,6 +202,7 @@ class NudgeAccessibilityService : AccessibilityService() {
             return
         }
 
+        entryPoint.nudgeLogger().i("foreground evaluation package=$packageName")
         lastPackage = packageName
         lastEvalTime = now
 
@@ -225,6 +226,10 @@ class NudgeAccessibilityService : AccessibilityService() {
     private fun handleWindowContentChanged(packageName: String, event: AccessibilityEvent) {
         // Only inspect supported packages
         if (packageName !in InAppDetector.SUPPORTED_PACKAGES) return
+
+        // Some apps change foreground surfaces without reliably emitting TYPE_WINDOW_STATE_CHANGED.
+        // This keeps whole-app rules enforced while feature-specific rules remain feature-gated.
+        evaluateForegroundPackage(packageName)
 
         // Post-overlay passthrough applies to in-app detection too
         if (shouldSkipEvaluationForPassthrough(packageName)) {

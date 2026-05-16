@@ -36,7 +36,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 fun ActiveRulesScreen(
     viewModel: ActiveRulesViewModel,
     onNavigateBack: () -> Unit,
-    onNavigateToRuleEditor: (String) -> Unit
+    onNavigateToRuleEditor: (String, Long) -> Unit
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
 
@@ -78,13 +78,15 @@ fun ActiveRulesScreen(
                         fontWeight = FontWeight.Medium,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { onNavigateToRuleEditor(group.packageName) }
+                            .clickable { onNavigateToRuleEditor(group.packageName, group.rules.first().id) }
                             .padding(vertical = 4.dp)
                     )
 
                     group.rules.forEach { rule ->
                         Card(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onNavigateToRuleEditor(group.packageName, rule.id) },
                             colors = CardDefaults.cardColors(
                                 containerColor = if (rule.enabled)
                                     MaterialTheme.colorScheme.surfaceVariant
