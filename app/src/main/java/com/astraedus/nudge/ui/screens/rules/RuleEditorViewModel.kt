@@ -47,7 +47,10 @@ data class RuleEditorUiState(
     // Grayscale
     val grayscale: Boolean = false,
     // Interaction counter
-    val showCounter: Boolean = false,
+    val showCounter: Boolean = true,
+    // Auto-kick after N scrolls
+    val autoKickEnabled: Boolean = false,
+    val autoKickAfter: Int = 30,
     // All rules for this package (for summary display)
     val allRulesForPackage: List<RuleSummary> = emptyList()
 )
@@ -115,7 +118,9 @@ class RuleEditorViewModel @Inject constructor(
                     inAppExplore = "EXPLORE" in features,
                     inAppTikTokFeed = "TIKTOK_FEED" in features,
                     grayscale = existing.grayscale,
-                    showCounter = existing.showCounter
+                    showCounter = existing.showCounter,
+                    autoKickEnabled = existing.autoKickAfter != null,
+                    autoKickAfter = existing.autoKickAfter ?: 30
                 )
             }
         }
@@ -141,6 +146,7 @@ class RuleEditorViewModel @Inject constructor(
                         if (rule.scheduleDays != null) add("Scheduled")
                         if (rule.grayscale) add("Grayscale")
                         if (rule.showCounter) add("Counter")
+                        if (rule.autoKickAfter != null) add("Auto-kick@${rule.autoKickAfter}")
                     }
                     val extraStr = if (extras.isNotEmpty()) " + ${extras.joinToString(", ")}" else ""
 
@@ -242,6 +248,16 @@ class RuleEditorViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(showCounter = enabled)
     }
 
+    // --- Auto-kick ---
+
+    fun setAutoKickEnabled(enabled: Boolean) {
+        _uiState.value = _uiState.value.copy(autoKickEnabled = enabled)
+    }
+
+    fun setAutoKickAfter(count: Int) {
+        _uiState.value = _uiState.value.copy(autoKickAfter = count)
+    }
+
     // --- Save / Delete ---
 
     fun save() {
@@ -282,7 +298,8 @@ class RuleEditorViewModel @Inject constructor(
                 scheduleEndMinute = scheduleEndMinute,
                 inAppFeatures = inAppFeaturesStr,
                 grayscale = state.grayscale,
-                showCounter = state.showCounter
+                showCounter = state.showCounter,
+                autoKickAfter = if (state.showCounter && state.autoKickEnabled) state.autoKickAfter else null
             )
             if (state.existingRuleId != null) {
                 blockRuleRepository.updateRule(rule)

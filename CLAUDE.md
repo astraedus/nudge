@@ -73,39 +73,29 @@ AccessibilityService: TYPE_WINDOW_STATE_CHANGED
 - **Rotating motivational messages** — shown on overlay screens when blocks trigger
 - **"Walked Away" tracking** — counts when user taps "I changed my mind" instead of waiting
 - **2x2 dashboard stats** — Screen Time, Active Rules (tappable), Blocked, Walked Away
-- **Floating interaction counter** — semi-transparent touch-through overlay showing reels/shorts scrolled or taps per session. TYPE_ACCESSIBILITY_OVERLAY from service, no extra permission. Per-rule `showCounter` toggle.
+- **Floating interaction counter** — centered touch-through overlay (40sp counter, 16sp label, 13sp daily) showing reels/shorts scrolled or taps per session. Escalating colors: white (0-9), orange (10-19), deep orange (20-29), red with red background tint (30+). TYPE_ACCESSIBILITY_OVERLAY from service, no extra permission. Per-rule `showCounter` toggle (default ON for new rules).
+- **Auto-kick** — optional per-rule feature: sends user to home screen after N scrolls/taps in one session. Configurable threshold 5-100 (step 5, default 30). Session counter resets after kick. Stored as `autoKickAfter` on BlockRule.
 - **Post-overlay passthrough** — after delay/breathing completes, skip re-evaluation until user leaves app. Prevents infinite overlay loop.
 - **Rule editor UX** — info tooltips on all sections, block mode descriptions, per-app rules summary with enable/disable
 - **Settings** — version links to GitHub repo, source code & feedback link
 
 ## Database
 
-Room DB version 4. Migrations: 1->2 (schedule/inapp/grayscale), 2->3 (userChangedMind), 3->4 (showCounter).
+Room DB version 5. Migrations: 1->2 (schedule/inapp/grayscale), 2->3 (userChangedMind), 3->4 (showCounter), 4->5 (autoKickAfter).
 
 ## Counter overlay architecture
 
 - `InteractionTracker` (@Singleton): in-memory session/daily counts per package. No DB writes per interaction.
-- `CounterOverlayManager` (@Singleton): WindowManager overlay using service context (required for TYPE_ACCESSIBILITY_OVERLAY token). `setServiceContext()` called in `onServiceConnected()`.
+- `CounterOverlayManager` (@Singleton): WindowManager overlay using service context (required for TYPE_ACCESSIBILITY_OVERLAY token). `setServiceContext()` called in `onServiceConnected()`. Centered on screen with escalating colors (white -> orange -> deep orange -> red) based on session count.
 - `activeReelLabel`: once Shorts/Reels feature detected, skip tree inspection on subsequent scrolls. Reset on app switch.
-- Counter-enabled packages cached every 10s to avoid DB queries on every accessibility event.
+- Counter-enabled packages cached every 10s via `CounterCacheRefresher` (Map<String, CounterCacheEntry> with autoKickAfter per package).
+- Auto-kick: optional per-rule threshold (`autoKickAfter`). When session count hits threshold, sends ACTION_MAIN/CATEGORY_HOME intent and resets session counter.
 
 ## Store listing
 
 Assets at `store-listing/` — feature graphic, screenshots, listing copy, batch config (`screenshots.json`).
 
-## Backlog (next session)
-
-### Testing debt (Codex task, HIGH PRIORITY)
-- [ ] Unit tests for InteractionTracker (session/daily counts, onAppChanged reset, recordInteraction)
-- [ ] Unit tests for passthrough logic (grantPassthrough, clear on app switch)
-- [ ] Unit tests for counter cache (refreshCounterCacheIfNeeded)
-- [ ] Unit tests for NudgeMessages (non-empty lists, randomness)
-- [ ] Unit tests for DB migrations (MIGRATION_2_3, MIGRATION_3_4)
-
-### Debug logging system (Codex task)
-- [ ] NudgeLogger wrapper checking BuildConfig.DEBUG or DataStore toggle
-- [ ] Logging in AccessibilityService, BlockEngine, CounterOverlayManager, InAppDetector
-- [ ] Hidden developer options toggle (tap version 7x in Settings)
+## Backlog
 
 ### v1.2 features
 - [ ] Anti-bypass, NFC/QR unlock, widgets, contextual triggers

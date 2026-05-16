@@ -367,6 +367,26 @@ class NudgeAccessibilityService : AccessibilityService() {
             manager.show(label)
         }
         manager.updateCount(count.sessionCount, count.dailyTotal)
+
+        // Auto-kick: send user to home screen if threshold reached
+        val autoKickAfter = counterCache.getAutoKickAfter(count.packageName)
+        if (autoKickAfter != null && count.sessionCount >= autoKickAfter) {
+            entryPoint.nudgeLogger().i(
+                "auto-kick triggered package=${count.packageName} " +
+                    "session=${count.sessionCount} threshold=$autoKickAfter"
+            )
+
+            // Go to home screen
+            val homeIntent = Intent(Intent.ACTION_MAIN).apply {
+                addCategory(Intent.CATEGORY_HOME)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            startActivity(homeIntent)
+
+            // Reset session counter so re-opening starts fresh
+            entryPoint.interactionTracker().onAppChanged(count.packageName)
+            manager.hide()
+        }
     }
 
     private fun refreshCounterCacheIfNeeded() {
@@ -377,8 +397,12 @@ class NudgeAccessibilityService : AccessibilityService() {
                 val rules = entryPoint.blockRuleRepository().getEnabledRules().first()
                 rules
                     .filter { it.showCounter }
-                    .mapNotNull { it.packageName }
-                    .toSet()
+                    .mapNotNull { rule ->
+                        rule.packageName?.let { pkg ->
+                            pkg to CounterCacheEntry(autoKickAfter = rule.autoKickAfter)
+                        }
+                    }
+                    .toMap()
             }
             if (refreshed) {
                 entryPoint.nudgeLogger().d("counter cache refreshed packages=${counterCache.snapshot().size}")

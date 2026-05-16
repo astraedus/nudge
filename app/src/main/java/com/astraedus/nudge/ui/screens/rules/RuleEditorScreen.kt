@@ -34,6 +34,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.Slider
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
@@ -440,10 +441,10 @@ fun RuleEditorScreen(
                                 fontWeight = FontWeight.Medium
                             )
                             InfoButton(
-                                "Shows a small floating counter on screen while you use this app.\n\n" +
+                                "Shows a floating counter on screen while you use this app.\n\n" +
                                 "For YouTube/Instagram/TikTok: counts how many Reels or Shorts you've scrolled through.\n\n" +
                                 "For other apps: counts how many times you've tapped the screen.\n\n" +
-                                "Seeing the raw number makes mindless usage feel concrete. The counter is semi-transparent and doesn't block touches."
+                                "Seeing the raw number makes mindless usage feel concrete. The counter turns orange at 10, deep orange at 20, and red at 30."
                             )
                         }
                         Text(
@@ -456,6 +457,79 @@ fun RuleEditorScreen(
                         checked = state.showCounter,
                         onCheckedChange = { viewModel.setShowCounter(it) }
                     )
+                }
+
+                // --- Auto-kick (only when counter is enabled) ---
+                if (state.showCounter) {
+                    Spacer(Modifier.height(8.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Text(
+                                    "Auto-close app",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                InfoButton(
+                                    "Automatically sends you to the home screen after a set number of scrolls or taps in one session.\n\n" +
+                                    "The counter resets when you re-open the app, so you start fresh each time.\n\n" +
+                                    "This is the nuclear option for stopping infinite scroll."
+                                )
+                            }
+                            Text(
+                                "Send to home screen after N scrolls",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = state.autoKickEnabled,
+                            onCheckedChange = { viewModel.setAutoKickEnabled(it) }
+                        )
+                    }
+
+                    if (state.autoKickEnabled) {
+                        Column(
+                            modifier = Modifier.padding(start = 8.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                "After ${state.autoKickAfter} scrolls/taps",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Slider(
+                                value = state.autoKickAfter.toFloat(),
+                                onValueChange = { viewModel.setAutoKickAfter(it.toInt()) },
+                                valueRange = 5f..100f,
+                                steps = 18, // (100-5)/5 - 1 = 18 steps for increments of 5
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    "5",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    "100",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
                 }
             }
 

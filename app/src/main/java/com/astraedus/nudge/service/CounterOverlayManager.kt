@@ -65,8 +65,7 @@ class CounterOverlayManager @Inject constructor(
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT
         ).apply {
-            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            y = 200 // offset from top in pixels
+            gravity = Gravity.CENTER
         }
 
         try {
@@ -82,6 +81,34 @@ class CounterOverlayManager @Inject constructor(
     fun updateCount(sessionCount: Int, dailyTotal: Int) {
         counterText?.text = sessionCount.toString()
         dailyText?.text = "today: $dailyTotal"
+
+        // Escalating color based on session count
+        val counterColor = when {
+            sessionCount >= 30 -> Color.argb(220, 255, 0, 0)       // red
+            sessionCount >= 20 -> Color.argb(200, 255, 69, 0)      // deep orange / red-orange
+            sessionCount >= 10 -> Color.argb(180, 255, 165, 0)     // orange
+            else -> Color.WHITE                                      // default
+        }
+        counterText?.setTextColor(counterColor)
+
+        // Tint background red at 30+ scrolls
+        val container = overlayView as? LinearLayout
+        if (sessionCount >= 30) {
+            val bg = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = 32 * (context.resources.displayMetrics.density)
+                setColor(Color.argb(160, 80, 0, 0))
+            }
+            container?.background = bg
+        } else {
+            val bg = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = 32 * (context.resources.displayMetrics.density)
+                setColor(Color.argb(128, 0, 0, 0))
+            }
+            container?.background = bg
+        }
+
         logger.d("counter overlay updated session=$sessionCount daily=$dailyTotal")
     }
 
@@ -118,15 +145,15 @@ class CounterOverlayManager @Inject constructor(
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
             setPadding(
+                (32 * density).toInt(),
                 (20 * density).toInt(),
-                (12 * density).toInt(),
-                (20 * density).toInt(),
-                (12 * density).toInt()
+                (32 * density).toInt(),
+                (20 * density).toInt()
             )
 
             val bg = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
-                cornerRadius = 24 * density
+                cornerRadius = 32 * density
                 setColor(Color.argb(128, 0, 0, 0)) // 50% black
             }
             background = bg
@@ -136,7 +163,7 @@ class CounterOverlayManager @Inject constructor(
         counterText = TextView(context).apply {
             text = "0"
             setTextColor(Color.WHITE)
-            textSize = 28f
+            textSize = 40f
             gravity = Gravity.CENTER
             typeface = android.graphics.Typeface.DEFAULT_BOLD
         }
@@ -145,7 +172,7 @@ class CounterOverlayManager @Inject constructor(
         labelText = TextView(context).apply {
             text = label
             setTextColor(Color.argb(200, 255, 255, 255))
-            textSize = 12f
+            textSize = 16f
             gravity = Gravity.CENTER
         }
         container.addView(labelText)
@@ -153,7 +180,7 @@ class CounterOverlayManager @Inject constructor(
         dailyText = TextView(context).apply {
             text = "today: 0"
             setTextColor(Color.argb(150, 255, 255, 255))
-            textSize = 10f
+            textSize = 13f
             gravity = Gravity.CENTER
         }
         container.addView(dailyText)

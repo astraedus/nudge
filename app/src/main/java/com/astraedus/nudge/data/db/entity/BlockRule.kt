@@ -22,5 +22,7 @@ data class BlockRule(
     // Grayscale mode (Feature 3)
     val grayscale: Boolean = false,
     // Interaction counter overlay
-    val showCounter: Boolean = false
+    val showCounter: Boolean = false,
+    // Auto-kick: send user to home screen after this many scrolls (null = disabled)
+    val autoKickAfter: Int? = null
 )
