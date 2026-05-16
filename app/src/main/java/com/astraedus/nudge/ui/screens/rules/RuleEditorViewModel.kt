@@ -19,7 +19,7 @@ data class RuleSummary(
     val id: Long,
     val mode: String,
     val enabled: Boolean,
-    val description: String  // e.g. "Delay 15s", "Hard Block", "Breathing 30s", "Block Shorts (Delay 15s)"
+    val description: String  // e.g. "Whole app: Delay 15s", "Shorts: Hard Block"
 )
 
 data class RuleEditorUiState(
@@ -48,7 +48,7 @@ data class RuleEditorUiState(
     val grayscale: Boolean = false,
     // Interaction counter
     val showCounter: Boolean = true,
-    // Auto-kick after N scrolls
+    // Auto-kick after N scrolls/taps
     val autoKickEnabled: Boolean = false,
     val autoKickAfter: Int = 30,
     // All rules for this package (for summary display)

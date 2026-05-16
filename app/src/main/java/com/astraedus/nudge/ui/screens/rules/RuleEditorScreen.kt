@@ -107,11 +107,22 @@ fun RuleEditorScreen(
             // --- Existing Rules Summary ---
             if (state.allRulesForPackage.isNotEmpty()) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        "Current Rules",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Medium
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            "Current Rules",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Medium
+                        )
+                        InfoButton(
+                            "If multiple active rules match, Nudge uses the strongest action:\n\n" +
+                            "Hard Block > Delay > Breathing.\n\n" +
+                            "Whole-app rules apply when opening the app. Feature rules apply only when Nudge detects that feature, like Reels, Explore, or Shorts.\n\n" +
+                            "Example: Instagram can delay when opened, hard block Reels, and delay Explore."
+                        )
+                    }
 
                     state.allRulesForPackage.forEach { rule ->
                         Card(
@@ -174,10 +185,11 @@ fun RuleEditorScreen(
                         fontWeight = FontWeight.Medium
                     )
                     InfoButton(
-                        "Choose how the app is blocked:\n\n" +
+                        "Choose what this rule does when it matches.\n\n" +
                         "Hard Block -- Completely prevents opening the app. You can only go back to the home screen.\n\n" +
                         "Delay -- Shows a countdown timer (5-60 seconds) before letting you in. Gives your brain time to reconsider.\n\n" +
-                        "Breathing -- Guides you through a calming breathing exercise before the app opens."
+                        "Breathing -- Guides you through a calming breathing exercise before the app opens.\n\n" +
+                        "If multiple matching rules are active, the strongest action wins: Hard Block > Delay > Breathing."
                     )
                 }
 
@@ -372,7 +384,7 @@ fun RuleEditorScreen(
                 }
             }
 
-            // --- In-App Blocking (only for supported apps) ---
+            // --- Apply Rule To (only for supported apps) ---
             if (state.supportsInAppBlocking) {
                 HorizontalDivider()
 
@@ -382,19 +394,20 @@ fun RuleEditorScreen(
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         Text(
-                            "In-App Blocking",
+                            "Apply Rule To",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Medium
                         )
                         InfoButton(
-                            "Block specific features inside the app without blocking the whole thing.\n\n" +
-                            "For example, you can block YouTube Shorts but still watch regular videos, or block Instagram Reels but keep DMs and your feed.\n\n" +
-                            "This works by detecting which tab or section you're in. If none are checked, the block mode above applies to the whole app."
+                            "Choose where this rule applies.\n\n" +
+                            "If no features are selected, this rule applies to the whole app when you open it.\n\n" +
+                            "If you select Reels, Explore, Shorts, or TikTok Feed, this rule only applies when Nudge detects that feature.\n\n" +
+                            "The action still comes from Block Mode above. For example, select Explore + Delay to add a 15 second delay only when opening Explore."
                         )
                     }
 
                     Text(
-                        "Block specific features instead of the whole app",
+                        "Select features to scope this rule. Leave all off for the whole app.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -404,12 +417,12 @@ fun RuleEditorScreen(
                     // Instagram features
                     if (pkg == "com.instagram.android") {
                         InAppCheckbox(
-                            label = "Block Reels",
+                            label = "Reels",
                             checked = state.inAppReels,
                             onCheckedChange = { viewModel.setInAppReels(it) }
                         )
                         InAppCheckbox(
-                            label = "Block Explore",
+                            label = "Explore",
                             checked = state.inAppExplore,
                             onCheckedChange = { viewModel.setInAppExplore(it) }
                         )
@@ -418,7 +431,7 @@ fun RuleEditorScreen(
                     // YouTube features
                     if (pkg == "com.google.android.youtube") {
                         InAppCheckbox(
-                            label = "Block Shorts",
+                            label = "Shorts",
                             checked = state.inAppShorts,
                             onCheckedChange = { viewModel.setInAppShorts(it) }
                         )
@@ -427,7 +440,7 @@ fun RuleEditorScreen(
                     // TikTok features
                     if (pkg == "com.zhiliaoapp.musically" || pkg == "com.ss.android.ugc.trill") {
                         InAppCheckbox(
-                            label = "Block TikTok Feed",
+                            label = "TikTok Feed",
                             checked = state.inAppTikTokFeed,
                             onCheckedChange = { viewModel.setInAppTikTokFeed(it) }
                         )
@@ -499,7 +512,7 @@ fun RuleEditorScreen(
                                 )
                             }
                             Text(
-                                "Send to home screen after N scrolls",
+                                "Send to home screen after N scrolls or taps",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )

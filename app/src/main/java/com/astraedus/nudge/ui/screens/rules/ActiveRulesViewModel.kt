@@ -64,6 +64,8 @@ class ActiveRulesViewModel @Inject constructor(
                                 if (rule.dailyLimitMinutes != null) add("${rule.dailyLimitMinutes}min/day limit")
                                 if (rule.scheduleDays != null) add("Scheduled")
                                 if (rule.grayscale) add("Grayscale")
+                                if (rule.showCounter) add("Counter")
+                                if (rule.autoKickAfter != null) add("Auto-close@${rule.autoKickAfter}")
                             }
                             val extraStr = if (extras.isNotEmpty()) " + ${extras.joinToString(", ")}" else ""
 
