@@ -21,20 +21,30 @@ Test device: Pixel 3 on ADB at `192.168.1.73:5555` (Android 12, API 31).
 
 ## Releasing
 
-Tag-triggered via GitHub Actions (`.github/workflows/release.yml`). Push a tag and the CI builds, tests, and creates a GitHub release with `nudge-vX.Y.Z.apk`.
+Two paths: fast (instant) or CI (verified).
 
+**Fast path** -- release is live in seconds, CI verifies in the background:
 ```bash
 # 1. Bump version in app/build.gradle.kts (versionCode + versionName)
-# 2. Commit the bump
+# 2. Build locally: ./gradlew test && ./gradlew assembleDebug
+# 3. Commit, tag, push
 git add app/build.gradle.kts
 git commit -m "chore: bump version to 1.4.0"
-# 3. Tag and push
 git tag v1.4.0
 git push origin main --tags
-# 4. GitHub Action handles the rest: test -> build -> release with APK
+# 4. Create release immediately with local APK
+cp app/build/outputs/apk/debug/app-debug.apk nudge-v1.4.0.apk
+gh release create v1.4.0 nudge-v1.4.0.apk --title "v1.4.0" --generate-notes
 ```
 
-No local Android SDK or `gh` CLI needed for releases -- it all runs on GitHub.
+**CI-only path** -- just tag and push, wait ~3 min for GitHub Actions:
+```bash
+git tag v1.4.0
+git push origin main --tags
+# GitHub Action builds, tests, creates release with APK automatically
+```
+
+CI runs on every tag push (`.github/workflows/release.yml`). If a release already exists (fast path), CI updates it with a verified APK. Free for public repos, unlimited minutes.
 
 ## Architecture
 
