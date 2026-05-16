@@ -149,7 +149,7 @@ fun SettingsScreen(
 
             ListItem(
                 headlineContent = { Text("Version") },
-                supportingContent = { Text("1.1.0") },
+                supportingContent = { Text(com.astraedus.nudge.BuildConfig.VERSION_NAME) },
                 leadingContent = { Icon(Icons.Outlined.Info, contentDescription = null) },
                 modifier = Modifier.clickable {
                     if (!developerOptionsVisible) {

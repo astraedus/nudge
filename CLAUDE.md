@@ -4,7 +4,7 @@ Privacy-first app blocker with delay-to-open (breathing exercises before opening
 
 - GitHub: https://github.com/astraedus/nudge
 - F-Droid MR: https://gitlab.com/fdroid/fdroiddata/-/merge_requests/38398
-- v1.1.4 (current), working toward v1.2.0
+- v1.3.0 (current)
 - See CHANGELOG.md for release history
 
 ## Build
@@ -97,6 +97,24 @@ Room DB version 6. Migrations: 1->2 (schedule/inapp/grayscale), 2->3 (userChange
 - Auto-kick cooldown: configurable per-rule (default 60s). After auto-kick, re-opening the app shows a DELAY overlay for the remaining cooldown. Session counter NOT reset during cooldown.
 - Time remaining overlay: optional per-rule (`showTimeRemaining`). Uses UsageStatsManager to get actual foreground time, displays remaining daily limit as color-coded overlay line. Updated every 30 seconds.
 
+## Export/Import architecture
+
+- `data/export/RuleExportData.kt` — data classes: `NudgeExport`, `ExportedRule`, `ExportedGroup`
+- `data/export/RuleExporter.kt` — serialization/deserialization via `org.json` (no extra dependency). Handles null fields, version validation, block mode validation. `@Singleton` with `@Inject`.
+- `domain/usecase/ExportRulesUseCase.kt` — collects enabled rules + groups + members, delegates to RuleExporter
+- `domain/usecase/ImportRulesUseCase.kt` — `preview()` returns count, `execute()` inserts with duplicate detection (packageName + mode + schedule match). Creates groups by name if missing.
+- UI: three-dot overflow menu in `ActiveRulesScreen` with "Export Rules" (share intent via FileProvider) and "Import Rules" (ACTION_OPEN_DOCUMENT file picker). Confirmation dialog before importing.
+- Export format: pretty-printed JSON, version 1, human-readable. Groups referenced by name (not ID).
+
+## Stats visualization architecture
+
+- `ui/screens/stats/StatsCalculator.kt` — pure Kotlin (no Android deps), injected via Hilt. Methods: `buildWeeklyData`, `buildTrendData`, `buildHourlyData`, `calculateStreak`. Fully unit-testable.
+- `ui/screens/stats/charts/WeeklyBarChart.kt` — Canvas-based 7-day bar chart with rounded corners, day labels
+- `ui/screens/stats/charts/BlockedTrendChart.kt` — dual chart: bars (blocked) + line with dots (walked away)
+- `ui/screens/stats/charts/HourlyHeatmap.kt` — 24-cell row, color intensity from surfaceVariant to primary
+- `ui/screens/stats/charts/StreakCounter.kt` — flame icon + streak count + "X days streak" label
+- All charts use Material 3 colorScheme exclusively, handle empty states, no external dependencies.
+
 ## Store listing
 
 Assets at `store-listing/` — feature graphic, screenshots, listing copy, batch config (`screenshots.json`).
@@ -118,10 +136,19 @@ After any feature addition or significant change:
 - [x] Time remaining overlay (code-complete, verified on device)
 - [x] Auto-kick cooldown (code-complete, verified on device)
 - [x] Rule name on block overlays (code-complete, verified on device)
+- [x] Export/Import rules (code-complete, tests pass, needs on-device QA)
+- [x] Enhanced stats visualizations (code-complete, tests pass, needs on-device QA)
+- [x] Dynamic version display from BuildConfig
+- [x] Release build script (`scripts/release.sh`)
 - [ ] Instagram home feed detection -- code written but AccessibilityService API doesn't expose child node `selected` state through `findAccessibilityNodeInfosByText/ViewId`. Needs tree-walk approach: traverse from `rootInActiveWindow`, find ImageView nodes with `selected=true` in bottom nav, match to parent tab. See InAppDetector.kt.
-- [ ] On-device QA for all v1.2 features after home feed fix
+- [ ] On-device QA for all v1.2 features
 - [ ] YouTube Shorts verification on device
 
 ### v1.3+
-- [ ] Anti-bypass, NFC/QR unlock, widgets, contextual triggers
+- [ ] **QR code unlock** -- physical friction for bypassing blocks. User generates a QR code in settings (random secret encoded via ZXing), prints/places it somewhere inconvenient. Per-rule toggle `requireQrUnlock`. Block overlay gets "Scan QR to unlock" button that opens camera (ML Kit barcode scanner), verifies against stored secret, grants passthrough. Adds camera permission (only one we'd need beyond accessibility). Twist: multiple QR codes with different unlock durations (e.g. "bedroom QR" = 10min, "office QR" = 1hr). Could also give QR to a friend for accountability. Low implementation complexity, high user-perceived value.
+- [ ] **Advanced data visualization** -- expand beyond current charts: per-app weekly breakdown, comparison vs previous week, export charts as image for sharing/accountability.
+- [ ] Discord in-app detection: count server/channel switches as "taps" for counter + auto-kick. Discord uses React Native so TYPE_VIEW_CLICKED doesn't fire. Would need to detect server/channel navigation via accessibility tree changes. Low priority.
+- [ ] NFC tag unlock -- same concept as QR but tap phone to NFC tag. No extra permissions needed (hardware feature). User writes unlock token to a cheap NFC tag ($1), places it somewhere. Lower priority than QR since fewer people have NFC tags lying around.
+- [ ] Widgets (home screen quick stats, toggle rules)
+- [ ] Contextual triggers (location-based, time-of-day auto-enable)
 - [ ] Release signing key (currently distributing debug APK)

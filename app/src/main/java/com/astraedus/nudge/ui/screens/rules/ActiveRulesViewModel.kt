@@ -1,10 +1,13 @@
 package com.astraedus.nudge.ui.screens.rules
 
-import android.content.pm.PackageManager
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.astraedus.nudge.data.export.ImportResult
 import com.astraedus.nudge.data.repository.BlockRuleRepository
 import com.astraedus.nudge.data.repository.InstalledAppsRepository
+import com.astraedus.nudge.domain.usecase.ExportRulesUseCase
+import com.astraedus.nudge.domain.usecase.ImportOutcome
+import com.astraedus.nudge.domain.usecase.ImportRulesUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -21,13 +24,19 @@ data class ActiveRulesGroup(
 
 data class ActiveRulesUiState(
     val groups: List<ActiveRulesGroup> = emptyList(),
-    val isLoading: Boolean = true
+    val isLoading: Boolean = true,
+    val exportJson: String? = null,
+    val importPreview: ImportResult? = null,
+    val importOutcome: ImportOutcome? = null,
+    val importError: String? = null
 )
 
 @HiltViewModel
 class ActiveRulesViewModel @Inject constructor(
     private val blockRuleRepository: BlockRuleRepository,
-    private val installedAppsRepository: InstalledAppsRepository
+    private val installedAppsRepository: InstalledAppsRepository,
+    private val exportRulesUseCase: ExportRulesUseCase,
+    private val importRulesUseCase: ImportRulesUseCase
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ActiveRulesUiState())
@@ -95,5 +104,46 @@ class ActiveRulesViewModel @Inject constructor(
             val rule = rules.find { it.id == ruleId } ?: return@launch
             blockRuleRepository.updateRule(rule.copy(enabled = !currentlyEnabled))
         }
+    }
+
+    // --- Export/Import ---
+
+    fun exportRules() {
+        viewModelScope.launch {
+            val json = exportRulesUseCase.invoke()
+            _uiState.value = _uiState.value.copy(exportJson = json)
+        }
+    }
+
+    fun clearExport() {
+        _uiState.value = _uiState.value.copy(exportJson = null)
+    }
+
+    fun previewImport(json: String) {
+        val result = importRulesUseCase.preview(json)
+        if (result.error != null) {
+            _uiState.value = _uiState.value.copy(importError = result.error, importPreview = null)
+        } else {
+            _uiState.value = _uiState.value.copy(importPreview = result, importError = null)
+        }
+    }
+
+    fun confirmImport() {
+        val preview = _uiState.value.importPreview ?: return
+        viewModelScope.launch {
+            val outcome = importRulesUseCase.execute(preview)
+            _uiState.value = _uiState.value.copy(
+                importOutcome = outcome,
+                importPreview = null
+            )
+        }
+    }
+
+    fun cancelImport() {
+        _uiState.value = _uiState.value.copy(importPreview = null, importError = null)
+    }
+
+    fun clearImportOutcome() {
+        _uiState.value = _uiState.value.copy(importOutcome = null, importError = null)
     }
 }

@@ -2,14 +2,18 @@
 
 All notable changes to Nudge are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased] - v1.2.0
+## [1.3.0] - 2026-05-16
 
 ### Added
 - **Time remaining overlay**: Per-rule opt-in (`showTimeRemaining` toggle in rule editor). Displays remaining daily time as a color-coded overlay line below the interaction counter. Green (>50% remaining), orange (25-50%), red (<25%). Uses Android UsageStatsManager for actual foreground time. Requires a daily limit to be set on the rule.
 - **Auto-kick cooldown**: Configurable 0-300 second cooldown after auto-kick (default 60s). Returning to the app during cooldown forces a DELAY overlay for the remaining cooldown time. Session counter preserved during cooldown -- user doesn't get a fresh slate. New `autoKickCooldownSeconds` field in rule editor with slider.
 - **Rule name on block overlays**: All three overlay screens (Hard Block, Delay, Breathing) now show which rule triggered the block at the bottom of the screen. Auto-generated descriptive labels from rule properties (e.g. "Reels - Delay (5 min/day)", "Hard Block", "Breathing (scheduled)").
 - **Instagram home feed detection**: InAppDetector now detects Instagram's home feed and treats scrolling there as reels-equivalent. Home feed scrolls count toward the interaction counter and auto-kick threshold.
-- 21 new unit tests: 8 cooldown logic, 7 time formatting, 5 cache merge, 1 DB migration.
+- **Export/Import rules**: Export active blocking rules to JSON (share intent), import rules from JSON file picker. Handles groups, duplicate detection, version validation. Three-dot overflow menu in Active Rules screen. FileProvider for secure file sharing. 19 unit tests.
+- **Enhanced usage visualizations**: Stats screen redesigned with four custom Compose Canvas charts: 7-day bar chart (screen time per day), blocked vs walked-away trend chart, hourly usage heatmap (24-cell color-coded row), and streak counter (consecutive days with nudge interactions). All lightweight custom Canvas -- no external charting library. 12 unit tests.
+- **Dynamic version display**: Settings screen now shows `BuildConfig.VERSION_NAME` instead of hardcoded string.
+- **Release build script**: `scripts/release.sh` for version bumping (patch/minor/major), building, and optional device install.
+- 52 new unit tests across export/import validation, stats calculations, and existing features.
 
 ### Changed
 - Room database version 5 -> 6. Migration adds `showTimeRemaining` (BOOLEAN, default 0) and `autoKickCooldownSeconds` (INTEGER, default 60) to `block_rules`.

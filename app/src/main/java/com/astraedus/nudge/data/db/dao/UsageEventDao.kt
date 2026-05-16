@@ -27,6 +27,12 @@ interface UsageEventDao {
     @Query("SELECT COUNT(*) FROM usage_events WHERE wasBlocked = 1 AND timestamp >= :since AND timestamp < :until")
     fun getBlockedCount(since: Long, until: Long): Flow<Int>
 
+    @Query("SELECT SUM(durationMs) FROM usage_events WHERE timestamp >= :dayStart AND timestamp < :dayEnd")
+    fun getTotalDurationForDay(dayStart: Long, dayEnd: Long): Flow<Long?>
+
+    @Query("SELECT * FROM usage_events WHERE timestamp >= :since")
+    fun getEventsSince(since: Long): Flow<List<UsageEvent>>
+
     @Query("DELETE FROM usage_events WHERE timestamp < :timestamp")
     suspend fun deleteOlderThan(timestamp: Long)
 }

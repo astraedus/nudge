@@ -13,6 +13,7 @@ import com.astraedus.nudge.domain.engine.RuleEvaluator
 import com.astraedus.nudge.domain.engine.ScheduleEvaluator
 import com.astraedus.nudge.domain.engine.TimeTracker
 import com.astraedus.nudge.domain.logging.NudgeLog
+import com.astraedus.nudge.ui.screens.stats.StatsCalculator
 import com.astraedus.nudge.util.NudgeLogger
 import dagger.Module
 import dagger.Provides
@@ -70,4 +71,7 @@ object RepositoryModule {
 
     @Provides
     fun provideTimeTracker(): TimeTracker = TimeTracker()
+
+    @Provides
+    fun provideStatsCalculator(timeTracker: TimeTracker): StatsCalculator = StatsCalculator(timeTracker)
 }
