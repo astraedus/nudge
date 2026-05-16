@@ -6,6 +6,8 @@ sealed class BlockDecision {
         val mode: BlockMode,
         val delaySeconds: Int = 0,
         val grayscale: Boolean = false,
-        val ruleName: String? = null
+        val ruleName: String? = null,
+        val dailyTimeRemainingMs: Long? = null,
+        val dailyLimitMinutes: Int? = null
     ) : BlockDecision()
 }

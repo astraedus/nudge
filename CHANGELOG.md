@@ -2,6 +2,13 @@
 
 All notable changes to Nudge are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.3.4] - 2026-05-16
+
+### Fixed
+- **Time remaining now visible**: The floating time-remaining overlay now appears immediately when opening an app with `showTimeRemaining` enabled, instead of only after scroll/tap interactions. Previously the overlay was coupled to the interaction counter and never showed unless you scrolled reels or tapped.
+- **App name + daily budget on nudge screens**: Delay, breathing, and hard-block overlay screens now show the human-readable app name (e.g. "Instagram") and color-coded daily time remaining ("42m left today") when a daily limit is configured. Color coding: primary (>50%), tertiary (25-50%), error (<25%).
+- **Hard block shows "Daily limit reached"**: When a hard block triggers because the daily time budget is exhausted, the overlay now says "Daily limit reached" instead of the generic "App Blocked".
+
 ## [1.3.1] - 2026-05-16
 
 ### Fixed

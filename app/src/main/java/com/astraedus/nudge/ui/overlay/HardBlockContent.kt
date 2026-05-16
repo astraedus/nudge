@@ -25,7 +25,10 @@ import androidx.compose.ui.unit.dp
 fun HardBlockContent(
     packageName: String,
     onGoBack: () -> Unit,
-    ruleName: String? = null
+    ruleName: String? = null,
+    appLabel: String? = null,
+    dailyTimeRemainingMs: Long? = null,
+    dailyLimitMinutes: Int? = null
 ) {
     val message = remember { NudgeMessages.hardBlockMessages.random() }
 
@@ -50,10 +53,19 @@ fun HardBlockContent(
             Spacer(modifier = Modifier.height(24.dp))
 
             Text(
-                text = "App Blocked",
+                text = appLabel ?: "App Blocked",
                 style = MaterialTheme.typography.headlineLarge,
                 color = MaterialTheme.colorScheme.onBackground
             )
+
+            if (dailyTimeRemainingMs != null && dailyTimeRemainingMs <= 0L && dailyLimitMinutes != null) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "Daily limit reached",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
 
             Spacer(modifier = Modifier.height(12.dp))
 

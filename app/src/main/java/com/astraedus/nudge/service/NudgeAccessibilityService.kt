@@ -264,6 +264,29 @@ class NudgeAccessibilityService : AccessibilityService() {
             entryPoint.nudgeLogger().d("whole-app decision package=$packageName decision=$decision")
             handleDecision(decision, packageName)
         }
+
+        // Show time remaining overlay immediately for allowed apps with showTimeRemaining
+        val cacheEntry = counterCache.getEntry(packageName)
+        if (cacheEntry != null && cacheEntry.showTimeRemaining && cacheEntry.dailyLimitMinutes != null) {
+            serviceScope.launch {
+                val globalEnabled = entryPoint.nudgePreferences().isGlobalEnabled.first()
+                if (!globalEnabled) return@launch
+
+                val manager = entryPoint.counterOverlayManager()
+                withContext(Dispatchers.Main) {
+                    if (!manager.isVisible()) {
+                        manager.show("taps")
+                        manager.updateCount(
+                            entryPoint.interactionTracker().getSessionCount(packageName),
+                            entryPoint.interactionTracker().getDailyTotal(packageName)
+                        )
+                    }
+                }
+                // Force time remaining update regardless of debounce
+                lastTimeRemainingUpdateMs = 0L
+                maybeUpdateTimeRemaining(packageName, manager)
+            }
+        }
     }
 
     private fun clearCounterOverlay(
@@ -350,6 +373,12 @@ class NudgeAccessibilityService : AccessibilityService() {
                     putExtra(BlockOverlayActivity.EXTRA_PACKAGE_NAME, packageName)
                     putExtra(BlockOverlayActivity.EXTRA_FEATURE_KEY, featureKey)
                     putExtra(BlockOverlayActivity.EXTRA_RULE_NAME, decision.ruleName)
+                    decision.dailyTimeRemainingMs?.let {
+                        putExtra(BlockOverlayActivity.EXTRA_DAILY_TIME_REMAINING_MS, it)
+                    }
+                    decision.dailyLimitMinutes?.let {
+                        putExtra(BlockOverlayActivity.EXTRA_DAILY_LIMIT_MINUTES, it)
+                    }
                 }
                 applicationContext.startActivity(overlayIntent)
             }

@@ -38,7 +38,10 @@ fun BreathingContent(
     delaySeconds: Int,
     onComplete: () -> Unit,
     onCancel: () -> Unit,
-    ruleName: String? = null
+    ruleName: String? = null,
+    appLabel: String? = null,
+    dailyTimeRemainingMs: Long? = null,
+    dailyLimitMinutes: Int? = null
 ) {
     val circleScale = remember { Animatable(0.6f) }
     var isInhaling by remember { mutableStateOf(true) }
@@ -97,6 +100,22 @@ fun BreathingContent(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
+            if (appLabel != null) {
+                Text(
+                    text = appLabel,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (dailyTimeRemainingMs != null && dailyLimitMinutes != null && dailyLimitMinutes > 0) {
+                    Text(
+                        text = "${formatDuration(dailyTimeRemainingMs)} left today",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = timeRemainingColor(dailyTimeRemainingMs, dailyLimitMinutes)
+                    )
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+
             Text(
                 text = if (isInhaling) "Breathe in..." else "Breathe out...",
                 style = MaterialTheme.typography.titleLarge,

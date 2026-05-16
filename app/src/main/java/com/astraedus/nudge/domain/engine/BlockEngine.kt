@@ -54,6 +54,12 @@ class BlockEngine @Inject constructor(
             return BlockDecision.Allow
         }
 
+        // Compute daily time remaining from the minimum daily limit among applicable rules
+        val minDailyLimit = applicableRules.mapNotNull { it.dailyLimitMinutes }.minOrNull()
+        val dailyTimeRemainingMs = if (minDailyLimit != null) {
+            (minDailyLimit.toLong() * 60L * 1000L - dailyUsageMs).coerceAtLeast(0L)
+        } else null
+
         // Check whether any applicable rule wants grayscale
         val wantsGrayscale = applicableRules.any { it.grayscale }
 
@@ -66,7 +72,9 @@ class BlockEngine @Inject constructor(
             return BlockDecision.Block(
                 BlockMode.HARD_BLOCK,
                 grayscale = wantsGrayscale,
-                ruleName = unconditionalHardBlockRule.ruleName
+                ruleName = unconditionalHardBlockRule.ruleName,
+                dailyTimeRemainingMs = dailyTimeRemainingMs,
+                dailyLimitMinutes = minDailyLimit
             )
         }
 
@@ -81,7 +89,9 @@ class BlockEngine @Inject constructor(
             return BlockDecision.Block(
                 BlockMode.HARD_BLOCK,
                 grayscale = wantsGrayscale,
-                ruleName = budgetRuleName
+                ruleName = budgetRuleName,
+                dailyTimeRemainingMs = dailyTimeRemainingMs,
+                dailyLimitMinutes = minDailyLimit
             )
         }
 
@@ -96,7 +106,9 @@ class BlockEngine @Inject constructor(
                 BlockMode.DELAY,
                 delayRule.delaySeconds,
                 wantsGrayscale,
-                ruleName = delayRule.ruleName
+                ruleName = delayRule.ruleName,
+                dailyTimeRemainingMs = dailyTimeRemainingMs,
+                dailyLimitMinutes = minDailyLimit
             )
         }
 
@@ -111,7 +123,9 @@ class BlockEngine @Inject constructor(
                 BlockMode.BREATHING,
                 breathingRule.delaySeconds,
                 wantsGrayscale,
-                ruleName = breathingRule.ruleName
+                ruleName = breathingRule.ruleName,
+                dailyTimeRemainingMs = dailyTimeRemainingMs,
+                dailyLimitMinutes = minDailyLimit
             )
         }
 

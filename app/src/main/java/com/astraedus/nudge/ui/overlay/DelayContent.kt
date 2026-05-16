@@ -33,7 +33,10 @@ fun DelayContent(
     delaySeconds: Int,
     onComplete: () -> Unit,
     onCancel: () -> Unit,
-    ruleName: String? = null
+    ruleName: String? = null,
+    appLabel: String? = null,
+    dailyTimeRemainingMs: Long? = null,
+    dailyLimitMinutes: Int? = null
 ) {
     val title = remember { NudgeMessages.delayTitles.random() }
     val subtitle = remember { NudgeMessages.delaySubtitles.random() }
@@ -64,6 +67,23 @@ fun DelayContent(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
+            // App name + daily time remaining
+            if (appLabel != null) {
+                Text(
+                    text = appLabel,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (dailyTimeRemainingMs != null && dailyLimitMinutes != null && dailyLimitMinutes > 0) {
+                    Text(
+                        text = "${formatDuration(dailyTimeRemainingMs)} left today",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = timeRemainingColor(dailyTimeRemainingMs, dailyLimitMinutes)
+                    )
+                }
+                Spacer(modifier = Modifier.height(24.dp))
+            }
+
             Box(
                 contentAlignment = Alignment.Center,
                 modifier = Modifier.size(180.dp)
@@ -117,5 +137,27 @@ fun DelayContent(
                 )
             }
         }
+    }
+}
+
+internal fun formatDuration(ms: Long): String {
+    if (ms <= 0) return "0m"
+    val totalMinutes = ms / 60_000
+    val hours = totalMinutes / 60
+    val minutes = totalMinutes % 60
+    return when {
+        hours > 0 -> "${hours}h ${minutes}m"
+        else -> "${minutes}m"
+    }
+}
+
+@Composable
+internal fun timeRemainingColor(remainingMs: Long, limitMinutes: Int): androidx.compose.ui.graphics.Color {
+    val limitMs = limitMinutes.toLong() * 60_000L
+    val pct = if (limitMs > 0) remainingMs.toFloat() / limitMs else 1f
+    return when {
+        pct > 0.50f -> MaterialTheme.colorScheme.primary
+        pct > 0.25f -> MaterialTheme.colorScheme.tertiary
+        else -> MaterialTheme.colorScheme.error
     }
 }

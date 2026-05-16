@@ -26,6 +26,8 @@ class BlockOverlayActivity : ComponentActivity() {
         const val EXTRA_PACKAGE_NAME = "package_name"
         const val EXTRA_FEATURE_KEY = "feature_key"
         const val EXTRA_RULE_NAME = "rule_name"
+        const val EXTRA_DAILY_TIME_REMAINING_MS = "daily_time_remaining_ms"
+        const val EXTRA_DAILY_LIMIT_MINUTES = "daily_limit_minutes"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -42,6 +44,15 @@ class BlockOverlayActivity : ComponentActivity() {
         val delaySeconds = intent.getIntExtra(EXTRA_DELAY_SECONDS, 15)
         val packageName = intent.getStringExtra(EXTRA_PACKAGE_NAME) ?: ""
         val ruleName = intent.getStringExtra(EXTRA_RULE_NAME)
+        val dailyTimeRemainingMs = intent.getLongExtra(EXTRA_DAILY_TIME_REMAINING_MS, -1L)
+            .let { if (it < 0) null else it }
+        val dailyLimitMinutes = intent.getIntExtra(EXTRA_DAILY_LIMIT_MINUTES, -1)
+            .let { if (it < 0) null else it }
+
+        val appLabel = try {
+            val appInfo = packageManager.getApplicationInfo(packageName, 0)
+            packageManager.getApplicationLabel(appInfo).toString()
+        } catch (_: Exception) { null }
 
         setContent {
             NudgeTheme {
@@ -49,6 +60,9 @@ class BlockOverlayActivity : ComponentActivity() {
                     BlockMode.HARD_BLOCK -> {
                         HardBlockContent(
                             packageName = packageName,
+                            appLabel = appLabel,
+                            dailyTimeRemainingMs = dailyTimeRemainingMs,
+                            dailyLimitMinutes = dailyLimitMinutes,
                             onGoBack = { navigateHome() },
                             ruleName = ruleName
                         )
@@ -57,6 +71,9 @@ class BlockOverlayActivity : ComponentActivity() {
                     BlockMode.DELAY -> {
                         DelayContent(
                             delaySeconds = delaySeconds,
+                            appLabel = appLabel,
+                            dailyTimeRemainingMs = dailyTimeRemainingMs,
+                            dailyLimitMinutes = dailyLimitMinutes,
                             onComplete = { onTimerComplete() },
                             onCancel = { navigateHome() },
                             ruleName = ruleName
@@ -66,6 +83,9 @@ class BlockOverlayActivity : ComponentActivity() {
                     BlockMode.BREATHING -> {
                         BreathingContent(
                             delaySeconds = delaySeconds,
+                            appLabel = appLabel,
+                            dailyTimeRemainingMs = dailyTimeRemainingMs,
+                            dailyLimitMinutes = dailyLimitMinutes,
                             onComplete = { onTimerComplete() },
                             onCancel = { navigateHome() },
                             ruleName = ruleName
