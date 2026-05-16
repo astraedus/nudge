@@ -4,7 +4,7 @@ Privacy-first app blocker with delay-to-open (breathing exercises before opening
 
 - GitHub: https://github.com/astraedus/nudge
 - F-Droid MR: https://gitlab.com/fdroid/fdroiddata/-/merge_requests/38398
-- v1.3.0 (current)
+- v1.3.2 (current)
 - See CHANGELOG.md for release history
 
 ## Build
@@ -12,6 +12,7 @@ Privacy-first app blocker with delay-to-open (breathing exercises before opening
 ```bash
 export ANDROID_HOME=$HOME/Android/Sdk
 ./gradlew assembleDebug                    # Build debug APK
+./gradlew assembleRelease                  # Build release APK (needs keystore.properties)
 ./gradlew test                             # Unit tests (JVM)
 ./gradlew connectedAndroidTest             # Instrumented tests (needs device)
 adb install -r app/build/outputs/apk/debug/app-debug.apk  # Install on device
@@ -26,25 +27,31 @@ Two paths: fast (instant) or CI (verified).
 **Fast path** -- release is live in seconds, CI verifies in the background:
 ```bash
 # 1. Bump version in app/build.gradle.kts (versionCode + versionName)
-# 2. Build locally: ./gradlew test && ./gradlew assembleDebug
+# 2. Build locally: ./gradlew test && ./gradlew assembleRelease
 # 3. Commit, tag, push
 git add app/build.gradle.kts
 git commit -m "chore: bump version to 1.4.0"
 git tag v1.4.0
 git push origin main --tags
-# 4. Create release immediately with local APK
-cp app/build/outputs/apk/debug/app-debug.apk nudge-v1.4.0.apk
+# 4. Create release immediately with local release APK
+cp app/build/outputs/apk/release/app-release.apk nudge-v1.4.0.apk
 gh release create v1.4.0 nudge-v1.4.0.apk --title "v1.4.0" --generate-notes
 ```
 
-**CI-only path** -- just tag and push, wait ~3 min for GitHub Actions:
+**CI-only path** -- just tag and push, wait ~4 min for GitHub Actions:
 ```bash
 git tag v1.4.0
 git push origin main --tags
-# GitHub Action builds, tests, creates release with APK automatically
+# GitHub Action builds release APK, tests, creates release automatically
 ```
 
-CI runs on every tag push (`.github/workflows/release.yml`). If a release already exists (fast path), CI updates it with a verified APK. Free for public repos, unlimited minutes.
+CI runs on every tag push (`.github/workflows/release.yml`). Builds `assembleRelease` using secrets (`KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`). If a release already exists (fast path), CI updates it with the CI-built APK.
+
+## Release Signing
+
+Keystore: `nudge-release.keystore` (PKCS12, alias `nudge`, 2048-bit RSA, 10000-day validity).
+Config: `keystore.properties` (gitignored). CI uses GitHub secrets.
+**Always use `assembleRelease`** for distribution. Debug APKs use machine-specific keys and cause "App not installed" when users try to update from a different build.
 
 ## Architecture
 
@@ -178,4 +185,4 @@ After any feature addition or significant change:
 - [ ] NFC tag unlock -- same concept as QR but tap phone to NFC tag. No extra permissions needed (hardware feature). User writes unlock token to a cheap NFC tag ($1), places it somewhere. Lower priority than QR since fewer people have NFC tags lying around.
 - [ ] Widgets (home screen quick stats, toggle rules)
 - [ ] Contextual triggers (location-based, time-of-day auto-enable)
-- [ ] Release signing key (currently distributing debug APK)
+- [x] Release signing key (v1.3.2 -- PKCS12 keystore, CI via GitHub secrets)
