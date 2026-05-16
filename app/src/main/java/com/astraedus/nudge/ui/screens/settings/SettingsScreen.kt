@@ -134,8 +134,19 @@ fun SettingsScreen(
 
             ListItem(
                 headlineContent = { Text("Version") },
-                supportingContent = { Text("1.0.0") },
+                supportingContent = { Text("1.1.0") },
                 leadingContent = { Icon(Icons.Outlined.Info, contentDescription = null) }
+            )
+
+            ListItem(
+                headlineContent = { Text("Source Code & Feedback") },
+                supportingContent = { Text("Open source on GitHub. Report bugs or suggest features.") },
+                leadingContent = { Icon(Icons.Outlined.Code, contentDescription = null) },
+                modifier = Modifier.clickable {
+                    context.startActivity(
+                        Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/astraedus/nudge"))
+                    )
+                }
             )
 
             ListItem(

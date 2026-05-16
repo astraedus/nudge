@@ -20,5 +20,7 @@ data class BlockRule(
     // In-app feature blocking (Feature 2)
     val inAppFeatures: String? = null,      // comma-separated: "REELS,SHORTS". null = block whole app
     // Grayscale mode (Feature 3)
-    val grayscale: Boolean = false
+    val grayscale: Boolean = false,
+    // Interaction counter overlay
+    val showCounter: Boolean = false
 )

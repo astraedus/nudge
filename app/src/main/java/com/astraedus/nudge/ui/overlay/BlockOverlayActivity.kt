@@ -72,6 +72,10 @@ class BlockOverlayActivity : ComponentActivity() {
 
     /** Timer finished -- user waited patiently, let them through to the blocked app. */
     private fun onTimerComplete() {
+        val pkg = intent.getStringExtra(EXTRA_PACKAGE_NAME) ?: ""
+        if (pkg.isNotEmpty()) {
+            NudgeAccessibilityService.grantPassthrough(pkg)
+        }
         NudgeAccessibilityService.isOverlayActive = false
         finish()
     }

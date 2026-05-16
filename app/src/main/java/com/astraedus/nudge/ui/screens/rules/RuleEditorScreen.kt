@@ -422,6 +422,45 @@ fun RuleEditorScreen(
 
             HorizontalDivider()
 
+            // --- Interaction Counter ---
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                "Interaction Counter",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Medium
+                            )
+                            InfoButton(
+                                "Shows a small floating counter on screen while you use this app.\n\n" +
+                                "For YouTube/Instagram/TikTok: counts how many Reels or Shorts you've scrolled through.\n\n" +
+                                "For other apps: counts how many times you've tapped the screen.\n\n" +
+                                "Seeing the raw number makes mindless usage feel concrete. The counter is semi-transparent and doesn't block touches."
+                            )
+                        }
+                        Text(
+                            "Show floating counter while using this app",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = state.showCounter,
+                        onCheckedChange = { viewModel.setShowCounter(it) }
+                    )
+                }
+            }
+
+            HorizontalDivider()
+
             // --- Grayscale ---
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Row(

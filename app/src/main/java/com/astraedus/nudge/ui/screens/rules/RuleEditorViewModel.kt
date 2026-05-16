@@ -46,6 +46,8 @@ data class RuleEditorUiState(
     val supportsInAppBlocking: Boolean = false,
     // Grayscale
     val grayscale: Boolean = false,
+    // Interaction counter
+    val showCounter: Boolean = false,
     // All rules for this package (for summary display)
     val allRulesForPackage: List<RuleSummary> = emptyList()
 )
@@ -112,7 +114,8 @@ class RuleEditorViewModel @Inject constructor(
                     inAppShorts = "SHORTS" in features,
                     inAppExplore = "EXPLORE" in features,
                     inAppTikTokFeed = "TIKTOK_FEED" in features,
-                    grayscale = existing.grayscale
+                    grayscale = existing.grayscale,
+                    showCounter = existing.showCounter
                 )
             }
         }
@@ -137,6 +140,7 @@ class RuleEditorViewModel @Inject constructor(
                         if (rule.dailyLimitMinutes != null) add("${rule.dailyLimitMinutes}min/day limit")
                         if (rule.scheduleDays != null) add("Scheduled")
                         if (rule.grayscale) add("Grayscale")
+                        if (rule.showCounter) add("Counter")
                     }
                     val extraStr = if (extras.isNotEmpty()) " + ${extras.joinToString(", ")}" else ""
 
@@ -232,6 +236,12 @@ class RuleEditorViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(grayscale = enabled)
     }
 
+    // --- Interaction counter ---
+
+    fun setShowCounter(enabled: Boolean) {
+        _uiState.value = _uiState.value.copy(showCounter = enabled)
+    }
+
     // --- Save / Delete ---
 
     fun save() {
@@ -271,7 +281,8 @@ class RuleEditorViewModel @Inject constructor(
                 scheduleStartMinute = scheduleStartMinute,
                 scheduleEndMinute = scheduleEndMinute,
                 inAppFeatures = inAppFeaturesStr,
-                grayscale = state.grayscale
+                grayscale = state.grayscale,
+                showCounter = state.showCounter
             )
             if (state.existingRuleId != null) {
                 blockRuleRepository.updateRule(rule)
