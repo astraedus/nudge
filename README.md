@@ -1,8 +1,9 @@
 # Nudge
 
 **A privacy-first, open-source app blocker for Android.**
-Made by @[Antimatter543](https://github.com/Antimatter543)
+Made by @[Antimatter543](https://github.com/Antimatter543).
 
+Always free.
 ## Why
 
 App blockers ask for Accessibility Service permissions, the most powerful permission on Android. It can see everything on your screen. Every keystroke, every notification, every app you open.
