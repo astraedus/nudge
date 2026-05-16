@@ -48,6 +48,34 @@ class NudgeDatabaseMigrationTest {
         )
     }
 
+    @Test
+    fun `all migrations registered from version 1 to current`() {
+        val allMigrations = listOf(
+            NudgeDatabase.MIGRATION_1_2,
+            NudgeDatabase.MIGRATION_2_3,
+            NudgeDatabase.MIGRATION_3_4,
+            NudgeDatabase.MIGRATION_4_5,
+            NudgeDatabase.MIGRATION_5_6
+        )
+
+        val currentVersion = 6
+
+        // Every version gap from 1 to current must have a migration
+        for (v in 1 until currentVersion) {
+            val found = allMigrations.any { it.startVersion == v && it.endVersion == v + 1 }
+            assert(found) {
+                "Missing migration from version $v to ${v + 1}! " +
+                    "Add MIGRATION_${v}_${v + 1} to NudgeDatabase and register it in DatabaseModule."
+            }
+        }
+
+        assertEquals(
+            "Migration count should equal version gaps",
+            currentVersion - 1,
+            allMigrations.size
+        )
+    }
+
     private class RecordingDatabase : InvocationHandler {
         val sql = mutableListOf<String>()
 
