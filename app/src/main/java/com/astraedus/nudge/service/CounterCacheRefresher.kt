@@ -27,4 +27,20 @@ internal class CounterCacheRefresher(
         enabledPackages.putAll(loadEnabledPackages())
         return true
     }
+
+    companion object {
+        fun mergeEntries(
+            entries: Iterable<Pair<String, CounterCacheEntry>>
+        ): Map<String, CounterCacheEntry> {
+            return entries
+                .groupBy(keySelector = { it.first }, valueTransform = { it.second })
+                .mapValues { (_, packageEntries) ->
+                    CounterCacheEntry(
+                        autoKickAfter = packageEntries
+                            .mapNotNull { it.autoKickAfter }
+                            .minOrNull()
+                    )
+                }
+        }
+    }
 }

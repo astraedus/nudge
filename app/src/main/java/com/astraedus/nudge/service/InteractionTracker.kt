@@ -46,6 +46,13 @@ class InteractionTracker @Inject constructor() {
     fun getSessionCount(packageName: String): Int = sessionCounts[packageName] ?: 0
     fun getDailyTotal(packageName: String): Int = dailyTotals[packageName] ?: 0
 
+    fun resetSession(packageName: String) {
+        sessionCounts[packageName] = 0
+        if (currentPackage == packageName) {
+            currentPackage = null
+        }
+    }
+
     /** Clear daily totals -- called at midnight or service start. */
     fun resetDaily() {
         dailyTotals.clear()

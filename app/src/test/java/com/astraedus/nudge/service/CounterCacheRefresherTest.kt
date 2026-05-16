@@ -49,4 +49,21 @@ class CounterCacheRefresherTest {
         assertEquals(null, refresher.getAutoKickAfter("com.example.beta"))
         assertEquals(null, refresher.getAutoKickAfter("com.example.unknown"))
     }
+
+    @Test
+    fun `mergeEntries keeps package enabled and uses strictest auto-kick threshold`() {
+        val merged = CounterCacheRefresher.mergeEntries(
+            listOf(
+                "com.example.alpha" to CounterCacheEntry(autoKickAfter = 30),
+                "com.example.alpha" to CounterCacheEntry(autoKickAfter = null),
+                "com.example.alpha" to CounterCacheEntry(autoKickAfter = 15),
+                "com.example.beta" to CounterCacheEntry(autoKickAfter = null),
+            )
+        )
+
+        assertTrue("com.example.alpha" in merged)
+        assertTrue("com.example.beta" in merged)
+        assertEquals(15, merged["com.example.alpha"]?.autoKickAfter)
+        assertEquals(null, merged["com.example.beta"]?.autoKickAfter)
+    }
 }

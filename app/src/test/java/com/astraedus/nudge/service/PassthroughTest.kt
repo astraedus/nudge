@@ -1,5 +1,6 @@
 package com.astraedus.nudge.service
 
+import android.view.accessibility.AccessibilityEvent
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -67,6 +68,39 @@ class PassthroughTest {
             NudgeAccessibilityService.shouldSkipFeatureEvaluationForPassthrough(
                 "com.example.alpha",
                 "EXPLORE"
+            )
+        )
+    }
+
+    @Test
+    fun `own package overlay widget events do not clear counter state`() {
+        assertFalse(
+            NudgeAccessibilityService.shouldClearForOwnPackageEvent(
+                eventType = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
+                className = "android.widget.TextView",
+                ownPackageName = "com.astraedus.nudge"
+            )
+        )
+    }
+
+    @Test
+    fun `own package app window events clear counter state`() {
+        assertTrue(
+            NudgeAccessibilityService.shouldClearForOwnPackageEvent(
+                eventType = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
+                className = "com.astraedus.nudge.MainActivity",
+                ownPackageName = "com.astraedus.nudge"
+            )
+        )
+    }
+
+    @Test
+    fun `own package non-window events do not clear counter state`() {
+        assertFalse(
+            NudgeAccessibilityService.shouldClearForOwnPackageEvent(
+                eventType = AccessibilityEvent.TYPE_VIEW_CLICKED,
+                className = "com.astraedus.nudge.MainActivity",
+                ownPackageName = "com.astraedus.nudge"
             )
         )
     }

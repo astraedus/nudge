@@ -85,6 +85,11 @@ class NudgeAccessibilityService : AccessibilityService() {
             "com.samsung.android.launcher",
         )
 
+        private val WINDOW_CHANGE_EVENT_TYPES = setOf(
+            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
+            AccessibilityEvent.TYPE_WINDOWS_CHANGED
+        )
+
         /** Set by BlockOverlayActivity when it starts/stops. */
         @Volatile
         var isOverlayActive = false
@@ -131,6 +136,15 @@ class NudgeAccessibilityService : AccessibilityService() {
             lastPassthroughTime = 0L
             return true
         }
+
+        internal fun shouldClearForOwnPackageEvent(
+            eventType: Int,
+            className: String?,
+            ownPackageName: String
+        ): Boolean {
+            return eventType in WINDOW_CHANGE_EVENT_TYPES &&
+                className?.startsWith(ownPackageName) == true
+        }
     }
 
     override fun onServiceConnected() {
@@ -143,21 +157,24 @@ class NudgeAccessibilityService : AccessibilityService() {
         if (event == null) return
         val packageName = event.packageName?.toString() ?: return
 
-        // Skip our own package
+        // Skip if the overlay is currently showing
+        if (isOverlayActive) {
+            clearCounterForForegroundExit(applicationContext.packageName, "block_overlay_active")
+            return
+        }
+
+        // Skip our own package. The floating counter itself is an accessibility overlay owned by
+        // Nudge, so only clear for real app windows, not TextView/LinearLayout overlay events.
         if (packageName == applicationContext.packageName) {
-            clearCounterForForegroundExit(packageName, "own_package")
+            if (isOwnAppWindowEvent(event)) {
+                clearCounterForForegroundExit(packageName, "own_app_window")
+            }
             return
         }
 
         // Skip system packages
         if (packageName in SYSTEM_PACKAGES) {
             clearCounterForForegroundExit(packageName, "system_package")
-            return
-        }
-
-        // Skip if the overlay is currently showing
-        if (isOverlayActive) {
-            clearCounterForForegroundExit(applicationContext.packageName, "block_overlay_active")
             return
         }
 
@@ -181,6 +198,14 @@ class NudgeAccessibilityService : AccessibilityService() {
                 handleViewScrolled(packageName)
             }
         }
+    }
+
+    private fun isOwnAppWindowEvent(event: AccessibilityEvent): Boolean {
+        return shouldClearForOwnPackageEvent(
+            eventType = event.eventType,
+            className = event.className?.toString(),
+            ownPackageName = applicationContext.packageName
+        )
     }
 
     /**
@@ -437,7 +462,7 @@ class NudgeAccessibilityService : AccessibilityService() {
             startActivity(homeIntent)
 
             // Reset session counter so re-opening starts fresh
-            entryPoint.interactionTracker().onAppChanged(count.packageName)
+            entryPoint.interactionTracker().resetSession(count.packageName)
             manager.hide()
         }
     }
@@ -448,14 +473,15 @@ class NudgeAccessibilityService : AccessibilityService() {
         serviceScope.launch {
             val refreshed = counterCache.refreshIfNeeded(now) {
                 val rules = entryPoint.blockRuleRepository().getEnabledRules().first()
-                rules
-                    .filter { it.showCounter }
-                    .mapNotNull { rule ->
-                        rule.packageName?.let { pkg ->
-                            pkg to CounterCacheEntry(autoKickAfter = rule.autoKickAfter)
+                CounterCacheRefresher.mergeEntries(
+                    rules
+                        .filter { it.showCounter }
+                        .mapNotNull { rule ->
+                            rule.packageName?.let { pkg ->
+                                pkg to CounterCacheEntry(autoKickAfter = rule.autoKickAfter)
+                            }
                         }
-                    }
-                    .toMap()
+                )
             }
             if (refreshed) {
                 entryPoint.nudgeLogger().d("counter cache refreshed packages=${counterCache.snapshot().size}")

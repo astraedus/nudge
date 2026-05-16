@@ -59,4 +59,17 @@ class InteractionTrackerTest {
         assertEquals(2, second.sessionCount)
         assertEquals(2, second.dailyTotal)
     }
+
+    @Test
+    fun `resetSession clears current session without clearing daily total`() {
+        tracker.onAppChanged("com.example.alpha")
+        tracker.recordInteraction("com.example.alpha")
+        tracker.recordInteraction("com.example.alpha")
+
+        tracker.resetSession("com.example.alpha")
+        val afterReset = tracker.recordInteraction("com.example.alpha")
+
+        assertEquals(1, afterReset.sessionCount)
+        assertEquals(3, afterReset.dailyTotal)
+    }
 }
