@@ -51,6 +51,10 @@ data class RuleEditorUiState(
     // Auto-kick after N scrolls/taps
     val autoKickEnabled: Boolean = false,
     val autoKickAfter: Int = 30,
+    // Auto-kick cooldown duration (seconds)
+    val autoKickCooldownSeconds: Int = 60,
+    // Show time remaining overlay
+    val showTimeRemaining: Boolean = false,
     // All rules for this package (for summary display)
     val allRulesForPackage: List<RuleSummary> = emptyList()
 )
@@ -126,7 +130,9 @@ class RuleEditorViewModel @Inject constructor(
                     grayscale = existing.grayscale,
                     showCounter = existing.showCounter,
                     autoKickEnabled = existing.autoKickAfter != null,
-                    autoKickAfter = existing.autoKickAfter ?: 30
+                    autoKickAfter = existing.autoKickAfter ?: 30,
+                    autoKickCooldownSeconds = existing.autoKickCooldownSeconds,
+                    showTimeRemaining = existing.showTimeRemaining
                 )
             }
         }
@@ -153,6 +159,7 @@ class RuleEditorViewModel @Inject constructor(
                         if (rule.grayscale) add("Grayscale")
                         if (rule.showCounter) add("Counter")
                         if (rule.autoKickAfter != null) add("Auto-kick@${rule.autoKickAfter}")
+                        if (rule.showTimeRemaining) add("Time remaining")
                     }
                     val extraStr = if (extras.isNotEmpty()) " + ${extras.joinToString(", ")}" else ""
 
@@ -264,6 +271,16 @@ class RuleEditorViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(autoKickAfter = count)
     }
 
+    fun setAutoKickCooldownSeconds(seconds: Int) {
+        _uiState.value = _uiState.value.copy(autoKickCooldownSeconds = seconds)
+    }
+
+    // --- Show time remaining ---
+
+    fun setShowTimeRemaining(enabled: Boolean) {
+        _uiState.value = _uiState.value.copy(showTimeRemaining = enabled)
+    }
+
     // --- Save / Delete ---
 
     fun save() {
@@ -305,7 +322,10 @@ class RuleEditorViewModel @Inject constructor(
                 inAppFeatures = inAppFeaturesStr,
                 grayscale = state.grayscale,
                 showCounter = state.showCounter,
-                autoKickAfter = if (state.showCounter && state.autoKickEnabled) state.autoKickAfter else null
+                autoKickAfter = if (state.showCounter && state.autoKickEnabled) state.autoKickAfter else null,
+                showTimeRemaining = state.showTimeRemaining && state.dailyLimitEnabled,
+                autoKickCooldownSeconds = if (state.showCounter && state.autoKickEnabled)
+                    state.autoKickCooldownSeconds else 60
             )
             if (state.existingRuleId != null) {
                 blockRuleRepository.updateRule(rule)

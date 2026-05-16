@@ -289,6 +289,44 @@ fun RuleEditorScreen(
                             )
                         }
                     }
+
+                    // Show time remaining overlay toggle
+                    Spacer(Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Text(
+                                    "Show time remaining",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                InfoButton(
+                                    "Displays remaining daily time as a floating overlay while you use this app.\n\n" +
+                                    "The counter changes color as time runs out:\n" +
+                                    "Green = more than 50% left\n" +
+                                    "Orange = 25-50% left\n" +
+                                    "Red = less than 25% left\n\n" +
+                                    "Requires a daily time limit to be set."
+                                )
+                            }
+                            Text(
+                                "Floating overlay showing remaining daily time",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = state.showTimeRemaining,
+                            onCheckedChange = { viewModel.setShowTimeRemaining(it) }
+                        )
+                    }
                 }
             }
 
@@ -551,6 +589,41 @@ fun RuleEditorScreen(
                                 )
                                 Text(
                                     "100",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+
+                            Spacer(Modifier.height(8.dp))
+
+                            Text(
+                                "Cooldown: ${state.autoKickCooldownSeconds}s",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                "Wait time before you can re-open the app after auto-close",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Slider(
+                                value = state.autoKickCooldownSeconds.toFloat(),
+                                onValueChange = { viewModel.setAutoKickCooldownSeconds(it.toInt()) },
+                                valueRange = 0f..300f,
+                                steps = 5, // 0, 60, 120, 180, 240, 300
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    "Off",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    "5m",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )

@@ -33,6 +33,21 @@ class NudgeDatabaseMigrationTest {
         )
     }
 
+    @Test
+    fun `MIGRATION_5_6 adds showTimeRemaining and autoKickCooldownSeconds columns`() {
+        val db = RecordingDatabase()
+
+        NudgeDatabase.MIGRATION_5_6.migrate(db.proxy)
+
+        assertEquals(
+            listOf(
+                "ALTER TABLE block_rules ADD COLUMN showTimeRemaining INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE block_rules ADD COLUMN autoKickCooldownSeconds INTEGER NOT NULL DEFAULT 60"
+            ),
+            db.sql
+        )
+    }
+
     private class RecordingDatabase : InvocationHandler {
         val sql = mutableListOf<String>()
 

@@ -32,6 +32,7 @@ class CounterOverlayManager @Inject constructor(
     private var counterText: TextView? = null
     private var labelText: TextView? = null
     private var dailyText: TextView? = null
+    private var timeRemainingText: TextView? = null
     private var isShowing = false
 
     // TYPE_ACCESSIBILITY_OVERLAY requires the service's own context for a valid window token
@@ -112,6 +113,33 @@ class CounterOverlayManager @Inject constructor(
         logger.d("counter overlay updated session=$sessionCount daily=$dailyTotal")
     }
 
+    /**
+     * Update the "time remaining" line on the overlay.
+     * @param remainingMs time remaining in milliseconds, or null to hide the line
+     * @param limitMinutes the configured daily limit (used for color escalation)
+     */
+    fun updateTimeRemaining(remainingMs: Long?, limitMinutes: Int?) {
+        val tv = timeRemainingText ?: return
+        if (remainingMs == null || limitMinutes == null || limitMinutes <= 0) {
+            tv.visibility = View.GONE
+            return
+        }
+        tv.visibility = View.VISIBLE
+        tv.text = "${formatCompactDuration(remainingMs)} left"
+
+        // Color escalation based on % remaining
+        val limitMs = limitMinutes.toLong() * 60L * 1000L
+        val pct = if (limitMs > 0) remainingMs.toFloat() / limitMs else 1f
+        val color = when {
+            pct > 0.50f -> Color.argb(200, 100, 220, 100)  // green
+            pct > 0.25f -> Color.argb(200, 255, 165, 0)    // orange
+            else -> Color.argb(220, 255, 0, 0)              // red
+        }
+        tv.setTextColor(color)
+
+        logger.d("time remaining updated remaining=${remainingMs}ms pct=$pct")
+    }
+
     fun updateLabel(label: String) {
         labelText?.text = label
         logger.d("counter overlay label updated label=$label")
@@ -133,6 +161,7 @@ class CounterOverlayManager @Inject constructor(
         counterText = null
         labelText = null
         dailyText = null
+        timeRemainingText = null
         isShowing = false
     }
 
@@ -185,6 +214,33 @@ class CounterOverlayManager @Inject constructor(
         }
         container.addView(dailyText)
 
+        timeRemainingText = TextView(context).apply {
+            text = ""
+            setTextColor(Color.argb(200, 100, 220, 100)) // default green
+            textSize = 13f
+            gravity = Gravity.CENTER
+            visibility = View.GONE
+        }
+        container.addView(timeRemainingText)
+
         return container
+    }
+
+    companion object {
+        /**
+         * Formats milliseconds into a compact duration string for the overlay.
+         * Examples: "42m left", "1h 12m left", "30s left"
+         */
+        fun formatCompactDuration(ms: Long): String {
+            if (ms <= 0) return "0s"
+            val totalSeconds = ms / 1000
+            val hours = totalSeconds / 3600
+            val minutes = (totalSeconds % 3600) / 60
+            return when {
+                hours > 0 -> "${hours}h ${minutes}m"
+                minutes > 0 -> "${minutes}m"
+                else -> "${totalSeconds}s"
+            }
+        }
     }
 }

@@ -26,10 +26,16 @@ class InteractionTracker @Inject constructor() {
     private val dailyTotals = mutableMapOf<String, Int>()
     private var currentPackage: String? = null
 
+    /** Package -> epoch ms when cooldown expires. Set after auto-kick. */
+    private val cooldownUntil = mutableMapOf<String, Long>()
+
     /** Called when the foreground app changes. Resets the session count for the new app. */
     fun onAppChanged(packageName: String) {
         if (packageName != currentPackage) {
-            sessionCounts[packageName] = 0
+            // Don't reset session counter if in cooldown (user shouldn't get a fresh slate)
+            if (!isInCooldown(packageName)) {
+                sessionCounts[packageName] = 0
+            }
             currentPackage = packageName
         }
     }
@@ -56,5 +62,38 @@ class InteractionTracker @Inject constructor() {
     /** Clear daily totals -- called at midnight or service start. */
     fun resetDaily() {
         dailyTotals.clear()
+    }
+
+    // --- Cooldown ---
+
+    /** Set a cooldown that expires [durationMs] from now. */
+    fun setCooldown(packageName: String, durationMs: Long) {
+        cooldownUntil[packageName] = System.currentTimeMillis() + durationMs
+    }
+
+    /** Returns true if the package is currently in cooldown. */
+    fun isInCooldown(packageName: String): Boolean {
+        val until = cooldownUntil[packageName] ?: return false
+        if (System.currentTimeMillis() >= until) {
+            cooldownUntil.remove(packageName)
+            return false
+        }
+        return true
+    }
+
+    /** Returns remaining cooldown time in ms, or 0 if not in cooldown. */
+    fun getCooldownRemainingMs(packageName: String): Long {
+        val until = cooldownUntil[packageName] ?: return 0L
+        val remaining = until - System.currentTimeMillis()
+        if (remaining <= 0L) {
+            cooldownUntil.remove(packageName)
+            return 0L
+        }
+        return remaining
+    }
+
+    /** Clear the cooldown for a package. */
+    fun clearCooldown(packageName: String) {
+        cooldownUntil.remove(packageName)
     }
 }

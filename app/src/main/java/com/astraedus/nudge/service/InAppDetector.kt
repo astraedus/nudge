@@ -86,7 +86,57 @@ class InAppDetector @Inject constructor(
         }
         recycleNodes(exploreNodes)
 
+        // Home feed detection: Instagram's home feed also has scrollable reels-like content.
+        // If none of the non-home tabs (Reels, Explore, Shop, Profile, Search) are selected,
+        // the user is most likely on the home feed -- treat it as reels-equivalent so scrolling
+        // counts the same way.
+        if (isOnInstagramHomeFeed(root)) {
+            logger.d("instagram home feed detected, treating as REELS")
+            return Feature.REELS
+        }
+
         return null
+    }
+
+    /**
+     * Checks if the user is on Instagram's home feed by verifying that none of the
+     * non-home tabs are currently selected. Instagram's bottom nav typically has:
+     * Home, Search/Explore, Reels, Shop, Profile.
+     *
+     * If no known non-home tab text is found as selected, we assume home feed.
+     * We also look for the "Home" tab being selected as a positive signal.
+     */
+    private fun isOnInstagramHomeFeed(root: AccessibilityNodeInfo): Boolean {
+        // Positive signal: "Home" tab is selected
+        val homeNodes = root.findAccessibilityNodeInfosByText("Home")
+        if (homeNodes.isNotEmpty()) {
+            for (node in homeNodes) {
+                if (node.isSelected || isInSelectedTab(node)) {
+                    recycleNodes(homeNodes)
+                    return true
+                }
+            }
+        }
+        recycleNodes(homeNodes)
+
+        // Negative signal: check if any known non-home tab is selected
+        val nonHomeTabs = listOf("Search", "Explore", "Reels", "Shop", "Profile")
+        for (tabName in nonHomeTabs) {
+            val nodes = root.findAccessibilityNodeInfosByText(tabName)
+            if (nodes.isNotEmpty()) {
+                for (node in nodes) {
+                    if (node.isSelected || isInSelectedTab(node)) {
+                        recycleNodes(nodes)
+                        return false // A non-home tab is selected
+                    }
+                }
+            }
+            recycleNodes(nodes)
+        }
+
+        // No tab detected as selected -- could be home or an unknown screen.
+        // Conservatively return false to avoid false positives on DMs, stories, etc.
+        return false
     }
 
     private fun detectYouTube(root: AccessibilityNodeInfo): Feature? {

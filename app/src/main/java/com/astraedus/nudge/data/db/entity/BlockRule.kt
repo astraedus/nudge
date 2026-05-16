@@ -24,5 +24,9 @@ data class BlockRule(
     // Interaction counter overlay
     val showCounter: Boolean = false,
     // Auto-kick: send user to home screen after this many scrolls (null = disabled)
-    val autoKickAfter: Int? = null
+    val autoKickAfter: Int? = null,
+    // Show remaining daily time as overlay
+    val showTimeRemaining: Boolean = false,
+    // Cooldown after auto-kick in seconds (0 = no cooldown)
+    val autoKickCooldownSeconds: Int = 60
 )

@@ -35,9 +35,10 @@ object RepositoryModule {
     @Provides
     @Singleton
     fun provideUsageRepository(
+        @ApplicationContext context: Context,
         usageEventDao: UsageEventDao,
         timeTracker: TimeTracker
-    ): UsageRepository = UsageRepository(usageEventDao, timeTracker)
+    ): UsageRepository = UsageRepository(context, usageEventDao, timeTracker)
 
     @Provides
     @Singleton

@@ -65,8 +65,12 @@ class NudgeAccessibilityService : AccessibilityService() {
     private var lastScrollTime: Long = 0L
     private val scrollDebounceMs = 500L
 
-    /** Cache of packages with showCounter enabled. Refreshed every 10 seconds. */
+    /** Cache of packages with showCounter/showTimeRemaining enabled. Refreshed every 10 seconds. */
     private val counterCache = CounterCacheRefresher()
+
+    /** Time-remaining overlay: rate-limit UsageStatsManager queries. */
+    private var lastTimeRemainingUpdateMs: Long = 0L
+    private val timeRemainingUpdateIntervalMs = 30_000L // update every 30 seconds
 
     companion object {
         private const val DEBOUNCE_MS = 1000L
@@ -222,12 +226,33 @@ class NudgeAccessibilityService : AccessibilityService() {
             grayscaleActiveForPackage = null
         }
 
-        // Counter overlay: hide when switching to an app without counter, reset session for new app
+        // Counter/time overlay: hide when switching to an app without counter or time remaining
         if (!counterCache.isEnabled(packageName)) {
             clearCounterForForegroundExit(packageName, "counter_disabled", markForeground = false)
         } else if (packageName != lastPackage) {
             activeReelLabel = null
             entryPoint.interactionTracker().onAppChanged(packageName)
+            // Force a time-remaining update when switching to a new app
+            lastTimeRemainingUpdateMs = 0L
+        }
+
+        // Cooldown enforcement: if user was auto-kicked and tries to re-open immediately,
+        // launch the block overlay in DELAY mode with the remaining cooldown as the delay
+        val tracker = entryPoint.interactionTracker()
+        if (tracker.isInCooldown(packageName)) {
+            val remainingMs = tracker.getCooldownRemainingMs(packageName)
+            val remainingSeconds = ((remainingMs + 999) / 1000).toInt().coerceAtLeast(1)
+            entryPoint.nudgeLogger().i(
+                "cooldown enforced package=$packageName remaining=${remainingSeconds}s"
+            )
+            val overlayIntent = Intent(applicationContext, BlockOverlayActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                putExtra(BlockOverlayActivity.EXTRA_BLOCK_MODE, "DELAY")
+                putExtra(BlockOverlayActivity.EXTRA_DELAY_SECONDS, remainingSeconds)
+                putExtra(BlockOverlayActivity.EXTRA_PACKAGE_NAME, packageName)
+            }
+            applicationContext.startActivity(overlayIntent)
+            return
         }
 
         // Post-overlay passthrough: user completed delay/breathing, let them use app until they leave
@@ -446,13 +471,29 @@ class NudgeAccessibilityService : AccessibilityService() {
         }
         manager.updateCount(count.sessionCount, count.dailyTotal)
 
+        // Update time remaining if enabled for this package
+        maybeUpdateTimeRemaining(count.packageName, manager)
+
         // Auto-kick: send user to home screen if threshold reached
-        val autoKickAfter = counterCache.getAutoKickAfter(count.packageName)
+        val cacheEntry = counterCache.getEntry(count.packageName)
+        val autoKickAfter = cacheEntry?.autoKickAfter
         if (autoKickAfter != null && count.sessionCount >= autoKickAfter) {
             entryPoint.nudgeLogger().i(
                 "auto-kick triggered package=${count.packageName} " +
                     "session=${count.sessionCount} threshold=$autoKickAfter"
             )
+
+            // Set cooldown before kicking
+            val cooldownSeconds = cacheEntry.autoKickCooldownSeconds
+            if (cooldownSeconds > 0) {
+                entryPoint.interactionTracker().setCooldown(
+                    count.packageName,
+                    cooldownSeconds.toLong() * 1000L
+                )
+                entryPoint.nudgeLogger().d(
+                    "cooldown set package=${count.packageName} seconds=$cooldownSeconds"
+                )
+            }
 
             // Go to home screen
             val homeIntent = Intent(Intent.ACTION_MAIN).apply {
@@ -467,6 +508,33 @@ class NudgeAccessibilityService : AccessibilityService() {
         }
     }
 
+    /**
+     * Periodically query UsageStatsManager and update the time-remaining line
+     * on the counter overlay. Rate-limited to once every 30 seconds.
+     */
+    private fun maybeUpdateTimeRemaining(
+        packageName: String,
+        manager: CounterOverlayManager
+    ) {
+        val entry = counterCache.getEntry(packageName) ?: return
+        if (!entry.showTimeRemaining || entry.dailyLimitMinutes == null) {
+            manager.updateTimeRemaining(null, null)
+            return
+        }
+
+        val now = System.currentTimeMillis()
+        if ((now - lastTimeRemainingUpdateMs) < timeRemainingUpdateIntervalMs) return
+        lastTimeRemainingUpdateMs = now
+
+        // Query UsageStatsManager on a background thread (already in IO scope from handler)
+        serviceScope.launch {
+            val usageMs = entryPoint.usageRepository().getDailyForegroundTimeMs(packageName)
+            val limitMs = entry.dailyLimitMinutes.toLong() * 60L * 1000L
+            val remainingMs = (limitMs - usageMs).coerceAtLeast(0L)
+            manager.updateTimeRemaining(remainingMs, entry.dailyLimitMinutes)
+        }
+    }
+
     private fun refreshCounterCacheIfNeeded() {
         val now = System.currentTimeMillis()
 
@@ -475,10 +543,15 @@ class NudgeAccessibilityService : AccessibilityService() {
                 val rules = entryPoint.blockRuleRepository().getEnabledRules().first()
                 CounterCacheRefresher.mergeEntries(
                     rules
-                        .filter { it.showCounter }
+                        .filter { it.showCounter || it.showTimeRemaining }
                         .mapNotNull { rule ->
                             rule.packageName?.let { pkg ->
-                                pkg to CounterCacheEntry(autoKickAfter = rule.autoKickAfter)
+                                pkg to CounterCacheEntry(
+                                    autoKickAfter = rule.autoKickAfter,
+                                    showTimeRemaining = rule.showTimeRemaining,
+                                    dailyLimitMinutes = rule.dailyLimitMinutes,
+                                    autoKickCooldownSeconds = rule.autoKickCooldownSeconds
+                                )
                             }
                         }
                 )

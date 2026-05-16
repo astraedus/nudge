@@ -1,7 +1,10 @@
 package com.astraedus.nudge.service
 
 internal data class CounterCacheEntry(
-    val autoKickAfter: Int? = null
+    val autoKickAfter: Int? = null,
+    val showTimeRemaining: Boolean = false,
+    val dailyLimitMinutes: Int? = null,
+    val autoKickCooldownSeconds: Int = 60
 )
 
 internal class CounterCacheRefresher(
@@ -13,6 +16,8 @@ internal class CounterCacheRefresher(
     fun isEnabled(packageName: String): Boolean = packageName in enabledPackages
 
     fun getAutoKickAfter(packageName: String): Int? = enabledPackages[packageName]?.autoKickAfter
+
+    fun getEntry(packageName: String): CounterCacheEntry? = enabledPackages[packageName]
 
     fun snapshot(): Set<String> = enabledPackages.keys.toSet()
 
@@ -38,7 +43,13 @@ internal class CounterCacheRefresher(
                     CounterCacheEntry(
                         autoKickAfter = packageEntries
                             .mapNotNull { it.autoKickAfter }
-                            .minOrNull()
+                            .minOrNull(),
+                        showTimeRemaining = packageEntries.any { it.showTimeRemaining },
+                        dailyLimitMinutes = packageEntries
+                            .mapNotNull { it.dailyLimitMinutes }
+                            .minOrNull(),
+                        autoKickCooldownSeconds = packageEntries
+                            .maxOf { it.autoKickCooldownSeconds }
                     )
                 }
         }
