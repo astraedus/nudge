@@ -1,0 +1,6 @@
+Bug fixes and rule improvements:
+* Added layered rules so one app can have both a whole-app delay and separate in-app Reels/Shorts rules
+* Added Add Rule flow from the rule editor
+* Fixed Active Rules rows so tapping a rule opens that exact rule
+* Hardened foreground detection for apps like Instagram
+* Fixed floating counter cleanup when leaving a monitored app

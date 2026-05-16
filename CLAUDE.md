@@ -4,7 +4,7 @@ Privacy-first app blocker with delay-to-open (breathing exercises before opening
 
 - GitHub: https://github.com/astraedus/nudge
 - F-Droid MR: https://gitlab.com/fdroid/fdroiddata/-/merge_requests/38398
-- v1.1.0 (current), v1.0.0 released
+- v1.1.2 (current), v1.1.1/v1.1.0/v1.0.0 released
 
 ## Build
 
