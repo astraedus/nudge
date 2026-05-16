@@ -144,13 +144,22 @@ class NudgeAccessibilityService : AccessibilityService() {
         val packageName = event.packageName?.toString() ?: return
 
         // Skip our own package
-        if (packageName == applicationContext.packageName) return
+        if (packageName == applicationContext.packageName) {
+            clearCounterForForegroundExit(packageName, "own_package")
+            return
+        }
 
         // Skip system packages
-        if (packageName in SYSTEM_PACKAGES) return
+        if (packageName in SYSTEM_PACKAGES) {
+            clearCounterForForegroundExit(packageName, "system_package")
+            return
+        }
 
         // Skip if the overlay is currently showing
-        if (isOverlayActive) return
+        if (isOverlayActive) {
+            clearCounterForForegroundExit(applicationContext.packageName, "block_overlay_active")
+            return
+        }
 
         entryPoint.nudgeLogger().d("event received type=${event.eventType} package=$packageName")
 
@@ -190,8 +199,7 @@ class NudgeAccessibilityService : AccessibilityService() {
 
         // Counter overlay: hide when switching to an app without counter, reset session for new app
         if (!counterCache.isEnabled(packageName)) {
-            activeReelLabel = null
-            entryPoint.counterOverlayManager().hide()
+            clearCounterForForegroundExit(packageName, "counter_disabled", markForeground = false)
         } else if (packageName != lastPackage) {
             activeReelLabel = null
             entryPoint.interactionTracker().onAppChanged(packageName)
@@ -228,6 +236,24 @@ class NudgeAccessibilityService : AccessibilityService() {
             val decision = entryPoint.evaluateBlockUseCase().invoke(packageName)
             entryPoint.nudgeLogger().d("whole-app decision package=$packageName decision=$decision")
             handleDecision(decision, packageName)
+        }
+    }
+
+    private fun clearCounterForForegroundExit(
+        packageName: String,
+        reason: String,
+        markForeground: Boolean = true
+    ) {
+        activeReelLabel = null
+        if (markForeground) {
+            lastPackage = packageName
+        }
+        entryPoint.interactionTracker().onAppChanged(packageName)
+
+        val manager = entryPoint.counterOverlayManager()
+        if (manager.isVisible()) {
+            entryPoint.nudgeLogger().d("counter overlay clearing package=$packageName reason=$reason")
+            manager.hide()
         }
     }
 
