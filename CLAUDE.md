@@ -92,3 +92,21 @@ Room DB version 4. Migrations: 1->2 (schedule/inapp/grayscale), 2->3 (userChange
 ## Store listing
 
 Assets at `store-listing/` — feature graphic, screenshots, listing copy, batch config (`screenshots.json`).
+
+## Backlog (next session)
+
+### Testing debt (Codex task, HIGH PRIORITY)
+- [ ] Unit tests for InteractionTracker (session/daily counts, onAppChanged reset, recordInteraction)
+- [ ] Unit tests for passthrough logic (grantPassthrough, clear on app switch)
+- [ ] Unit tests for counter cache (refreshCounterCacheIfNeeded)
+- [ ] Unit tests for NudgeMessages (non-empty lists, randomness)
+- [ ] Unit tests for DB migrations (MIGRATION_2_3, MIGRATION_3_4)
+
+### Debug logging system (Codex task)
+- [ ] NudgeLogger wrapper checking BuildConfig.DEBUG or DataStore toggle
+- [ ] Logging in AccessibilityService, BlockEngine, CounterOverlayManager, InAppDetector
+- [ ] Hidden developer options toggle (tap version 7x in Settings)
+
+### v1.2 features
+- [ ] Anti-bypass, NFC/QR unlock, widgets, contextual triggers
+- [ ] Release signing key (currently distributing debug APK)
