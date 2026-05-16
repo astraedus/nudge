@@ -18,6 +18,8 @@ import com.astraedus.nudge.ui.screens.groups.GroupViewModel
 import com.astraedus.nudge.ui.screens.home.HomeScreen
 import com.astraedus.nudge.ui.screens.home.HomeViewModel
 import com.astraedus.nudge.ui.screens.onboarding.OnboardingScreen
+import com.astraedus.nudge.ui.screens.config.UnifiedAppConfigScreen
+import com.astraedus.nudge.ui.screens.config.UnifiedAppConfigViewModel
 import com.astraedus.nudge.ui.screens.rules.ActiveRulesScreen
 import com.astraedus.nudge.ui.screens.rules.ActiveRulesViewModel
 import com.astraedus.nudge.ui.screens.rules.RuleEditorScreen
@@ -42,6 +44,9 @@ sealed class Screen(val route: String) {
     data object Onboarding : Screen("onboarding")
     data object GrayscaleGuide : Screen("grayscale_guide")
     data object ActiveRules : Screen("active_rules")
+    data object AppConfig : Screen("app_config/{packageName}") {
+        fun createRoute(packageName: String) = "app_config/$packageName"
+    }
 }
 
 @Composable
@@ -90,7 +95,7 @@ fun NudgeNavGraph(
                 viewModel = viewModel,
                 onNavigateBack = { navController.popBackStack() },
                 onNavigateToRuleEditor = { pkg ->
-                    navController.navigate(Screen.RuleEditor.createRoute(pkg))
+                    navController.navigate(Screen.AppConfig.createRoute(pkg))
                 }
             )
         }
@@ -118,13 +123,24 @@ fun NudgeNavGraph(
             )
         }
 
+        composable(
+            route = Screen.AppConfig.route,
+            arguments = listOf(navArgument("packageName") { type = NavType.StringType })
+        ) {
+            val viewModel: UnifiedAppConfigViewModel = hiltViewModel()
+            UnifiedAppConfigScreen(
+                viewModel = viewModel,
+                onNavigateBack = { navController.popBackStack() }
+            )
+        }
+
         composable(Screen.ActiveRules.route) {
             val viewModel: ActiveRulesViewModel = hiltViewModel()
             ActiveRulesScreen(
                 viewModel = viewModel,
                 onNavigateBack = { navController.popBackStack() },
-                onNavigateToRuleEditor = { pkg, ruleId ->
-                    navController.navigate(Screen.RuleEditor.createRoute(pkg, ruleId))
+                onNavigateToRuleEditor = { pkg, _ ->
+                    navController.navigate(Screen.AppConfig.createRoute(pkg))
                 }
             )
         }

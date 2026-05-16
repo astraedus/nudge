@@ -2,6 +2,18 @@
 
 All notable changes to Nudge are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.4.0] - 2026-05-17
+
+### Added
+- **Unified App Config screen**: Replaces the per-rule editor with a single configuration page per app. All settings for an app live on one screen: master enable toggle, daily time limit, interaction counter, grayscale, block mode with delay duration, auto-kick, per-feature overrides (Reels/Explore/Shorts/Feed), and scheduled time-based overrides. No more confusing rule conflicts.
+- **Per-feature override cards**: For Instagram, YouTube, and TikTok -- each detected feature (Reels, Explore, Shorts, Feed) gets its own card with mode selection (Inherit/Block/Delay/Breathing), delay duration, and auto-kick settings independent of the app-level defaults.
+- **Scheduled override**: Apply a different block mode during specific time windows (e.g. hard block 6am-9am, delay otherwise). Supports day-of-week selection and independent feature overrides within the schedule.
+- **"Remove All Rules" action**: One-tap removal of all rules for an app with confirmation dialog.
+- **`deleteByPackageName` DAO method**: Bulk delete for clean-slate save in the unified config.
+
+### Changed
+- Navigation from Manage Apps and Active Rules now routes to the unified config screen instead of the per-rule editor.
+
 ## [1.3.4] - 2026-05-16
 
 ### Fixed

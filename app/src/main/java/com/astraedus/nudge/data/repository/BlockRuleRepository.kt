@@ -40,6 +40,9 @@ class BlockRuleRepository @Inject constructor(
 
     suspend fun deleteRule(id: Long) = blockRuleDao.deleteById(id)
 
+    suspend fun deleteDirectRulesForPackage(packageName: String) =
+        blockRuleDao.deleteByPackageName(packageName)
+
     // --- Group operations ---
 
     fun getAllGroups(): Flow<List<AppGroup>> = appGroupDao.getAll()

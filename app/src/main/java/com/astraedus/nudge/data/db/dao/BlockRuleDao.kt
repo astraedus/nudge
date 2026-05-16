@@ -34,4 +34,7 @@ interface BlockRuleDao {
 
     @Query("DELETE FROM block_rules WHERE id = :id")
     suspend fun deleteById(id: Long)
+
+    @Query("DELETE FROM block_rules WHERE packageName = :packageName")
+    suspend fun deleteByPackageName(packageName: String)
 }
