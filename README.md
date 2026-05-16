@@ -1,7 +1,7 @@
 # Nudge
 
 **A privacy-first, open-source app blocker for Android.**
-Made by @Antimatter543.
+Made by @[antimatter543](https://github.com/Antimatter543)
 
 ## Why
 
