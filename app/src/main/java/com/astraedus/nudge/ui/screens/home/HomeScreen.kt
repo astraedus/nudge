@@ -46,7 +46,8 @@ fun HomeScreen(
     viewModel: HomeViewModel,
     onNavigateToApps: () -> Unit,
     onNavigateToStats: () -> Unit,
-    onNavigateToSettings: () -> Unit
+    onNavigateToSettings: () -> Unit,
+    onNavigateToActiveRules: () -> Unit = {}
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
 
@@ -96,7 +97,8 @@ fun HomeScreen(
                     icon = Icons.Outlined.Shield,
                     label = "Active Rules",
                     value = state.activeRuleCount.toString(),
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.weight(1f),
+                    onClick = onNavigateToActiveRules
                 )
             }
 
@@ -157,10 +159,11 @@ private fun StatCard(
     icon: ImageVector,
     label: String,
     value: String,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onClick: (() -> Unit)? = null
 ) {
     Card(
-        modifier = modifier,
+        modifier = if (onClick != null) modifier.clickable(onClick = onClick) else modifier,
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.primaryContainer
         )

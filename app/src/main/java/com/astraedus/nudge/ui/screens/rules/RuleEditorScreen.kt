@@ -17,6 +17,8 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import com.astraedus.nudge.ui.hasGrayscalePermission
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -92,6 +94,53 @@ fun RuleEditorScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
+            // --- Existing Rules Summary ---
+            if (state.allRulesForPackage.isNotEmpty()) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "Current Rules",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Medium
+                    )
+
+                    state.allRulesForPackage.forEach { rule ->
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (rule.enabled)
+                                    MaterialTheme.colorScheme.surfaceVariant
+                                else
+                                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                            )
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    rule.description,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    modifier = Modifier.weight(1f),
+                                    color = if (rule.enabled)
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    else
+                                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                                )
+                                Switch(
+                                    checked = rule.enabled,
+                                    onCheckedChange = { viewModel.toggleRuleEnabled(rule.id, rule.enabled) }
+                                )
+                            }
+                        }
+                    }
+                }
+
+                HorizontalDivider()
+            }
+
             // --- Block Mode ---
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
@@ -120,6 +169,16 @@ fun RuleEditorScreen(
                         }
                     }
                 }
+
+                Text(
+                    when (state.blockMode) {
+                        BlockMode.HARD_BLOCK -> "Completely blocks the app. You can only go back to the home screen."
+                        BlockMode.DELAY -> "Shows a countdown timer before letting you in. Gives you time to reconsider."
+                        BlockMode.BREATHING -> "Guides you through a breathing exercise before opening. Calms the impulse."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
 
             if (state.blockMode == BlockMode.DELAY || state.blockMode == BlockMode.BREATHING) {

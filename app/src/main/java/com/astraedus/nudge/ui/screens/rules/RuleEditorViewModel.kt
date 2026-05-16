@@ -15,6 +15,13 @@ import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+data class RuleSummary(
+    val id: Long,
+    val mode: String,
+    val enabled: Boolean,
+    val description: String  // e.g. "Delay 15s", "Hard Block", "Breathing 30s", "Block Shorts (Delay 15s)"
+)
+
 data class RuleEditorUiState(
     val packageName: String = "",
     val blockMode: BlockMode = BlockMode.DELAY,
@@ -38,7 +45,9 @@ data class RuleEditorUiState(
     val inAppTikTokFeed: Boolean = false,
     val supportsInAppBlocking: Boolean = false,
     // Grayscale
-    val grayscale: Boolean = false
+    val grayscale: Boolean = false,
+    // All rules for this package (for summary display)
+    val allRulesForPackage: List<RuleSummary> = emptyList()
 )
 
 @HiltViewModel
@@ -59,6 +68,7 @@ class RuleEditorViewModel @Inject constructor(
 
     init {
         loadExistingRule()
+        loadAllRulesForPackage()
     }
 
     private fun loadExistingRule() {
@@ -105,6 +115,54 @@ class RuleEditorViewModel @Inject constructor(
                     grayscale = existing.grayscale
                 )
             }
+        }
+    }
+
+    private fun loadAllRulesForPackage() {
+        viewModelScope.launch {
+            blockRuleRepository.getRulesForPackage(packageName).collect { rules ->
+                val summaries = rules.map { rule ->
+                    val modeLabel = when (rule.mode) {
+                        "HARD_BLOCK" -> "Hard Block"
+                        "DELAY" -> "Delay ${rule.delaySeconds}s"
+                        "BREATHING" -> "Breathing ${rule.delaySeconds}s"
+                        else -> rule.mode
+                    }
+                    val features = rule.inAppFeatures?.split(",")?.filter { it.isNotBlank() } ?: emptyList()
+                    val featureLabel = if (features.isNotEmpty()) {
+                        features.joinToString(", ") { it.lowercase().replaceFirstChar { c -> c.uppercase() } }
+                    } else "Whole app"
+
+                    val extras = buildList {
+                        if (rule.dailyLimitMinutes != null) add("${rule.dailyLimitMinutes}min/day limit")
+                        if (rule.scheduleDays != null) add("Scheduled")
+                        if (rule.grayscale) add("Grayscale")
+                    }
+                    val extraStr = if (extras.isNotEmpty()) " + ${extras.joinToString(", ")}" else ""
+
+                    RuleSummary(
+                        id = rule.id,
+                        mode = rule.mode,
+                        enabled = rule.enabled,
+                        description = "$featureLabel: $modeLabel$extraStr"
+                    )
+                }
+                _uiState.value = _uiState.value.copy(allRulesForPackage = summaries)
+            }
+        }
+    }
+
+    fun toggleRuleEnabled(ruleId: Long, currentlyEnabled: Boolean) {
+        viewModelScope.launch {
+            val rules = blockRuleRepository.getAllRules().firstOrNull() ?: return@launch
+            val rule = rules.find { it.id == ruleId } ?: return@launch
+            blockRuleRepository.updateRule(rule.copy(enabled = !currentlyEnabled))
+        }
+    }
+
+    fun deleteRuleById(ruleId: Long) {
+        viewModelScope.launch {
+            blockRuleRepository.deleteRule(ruleId)
         }
     }
 

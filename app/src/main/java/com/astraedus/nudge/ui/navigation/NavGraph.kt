@@ -18,6 +18,8 @@ import com.astraedus.nudge.ui.screens.groups.GroupViewModel
 import com.astraedus.nudge.ui.screens.home.HomeScreen
 import com.astraedus.nudge.ui.screens.home.HomeViewModel
 import com.astraedus.nudge.ui.screens.onboarding.OnboardingScreen
+import com.astraedus.nudge.ui.screens.rules.ActiveRulesScreen
+import com.astraedus.nudge.ui.screens.rules.ActiveRulesViewModel
 import com.astraedus.nudge.ui.screens.rules.RuleEditorScreen
 import com.astraedus.nudge.ui.screens.rules.RuleEditorViewModel
 import com.astraedus.nudge.ui.screens.settings.GrayscaleGuideScreen
@@ -37,6 +39,7 @@ sealed class Screen(val route: String) {
     data object Settings : Screen("settings")
     data object Onboarding : Screen("onboarding")
     data object GrayscaleGuide : Screen("grayscale_guide")
+    data object ActiveRules : Screen("active_rules")
 }
 
 @Composable
@@ -74,7 +77,8 @@ fun NudgeNavGraph(
                 viewModel = viewModel,
                 onNavigateToApps = { navController.navigate(Screen.Apps.route) },
                 onNavigateToStats = { navController.navigate(Screen.Stats.route) },
-                onNavigateToSettings = { navController.navigate(Screen.Settings.route) }
+                onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
+                onNavigateToActiveRules = { navController.navigate(Screen.ActiveRules.route) }
             )
         }
 
@@ -97,6 +101,17 @@ fun NudgeNavGraph(
             RuleEditorScreen(
                 viewModel = viewModel,
                 onNavigateBack = { navController.popBackStack() }
+            )
+        }
+
+        composable(Screen.ActiveRules.route) {
+            val viewModel: ActiveRulesViewModel = hiltViewModel()
+            ActiveRulesScreen(
+                viewModel = viewModel,
+                onNavigateBack = { navController.popBackStack() },
+                onNavigateToRuleEditor = { pkg ->
+                    navController.navigate(Screen.RuleEditor.createRoute(pkg))
+                }
             )
         }
 
