@@ -2,6 +2,20 @@
 
 All notable changes to Nudge are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.3.1] - 2026-05-16
+
+### Fixed
+- **Removed ripple flash** -- no more white shine when tapping buttons and cards.
+- **Smoother app list scrolling** -- icon bitmap conversion now cached instead of recalculated every frame.
+- **Counter overlay allocations** -- overlay background no longer creates new objects on every scroll tick during Reels/Shorts.
+- **Onboarding buttons clipped** -- Next/Get Started buttons were hidden behind the navigation bar on gesture-nav devices.
+
+### Improved
+- Flow collection stops when app is backgrounded (lifecycle-aware).
+- All UI state classes marked `@Immutable` so Compose can skip unchanged recompositions.
+- Constant lists in rule editor memoized to reduce garbage collection pressure.
+- Tag-triggered GitHub Actions release pipeline replaces local release script.
+
 ## [1.3.0] - 2026-05-16
 
 ### Added
