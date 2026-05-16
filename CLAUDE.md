@@ -19,6 +19,23 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk  # Install on device
 
 Test device: Pixel 3 on ADB at `192.168.1.73:5555` (Android 12, API 31).
 
+## Releasing
+
+Tag-triggered via GitHub Actions (`.github/workflows/release.yml`). Push a tag and the CI builds, tests, and creates a GitHub release with `nudge-vX.Y.Z.apk`.
+
+```bash
+# 1. Bump version in app/build.gradle.kts (versionCode + versionName)
+# 2. Commit the bump
+git add app/build.gradle.kts
+git commit -m "chore: bump version to 1.4.0"
+# 3. Tag and push
+git tag v1.4.0
+git push origin main --tags
+# 4. GitHub Action handles the rest: test -> build -> release with APK
+```
+
+No local Android SDK or `gh` CLI needed for releases -- it all runs on GitHub.
+
 ## Architecture
 
 Clean Architecture in a single module with package boundaries:
@@ -139,7 +156,7 @@ After any feature addition or significant change:
 - [x] Export/Import rules (code-complete, tests pass, needs on-device QA)
 - [x] Enhanced stats visualizations (code-complete, tests pass, needs on-device QA)
 - [x] Dynamic version display from BuildConfig
-- [x] Release build script (`scripts/release.sh`)
+- [x] Tag-triggered GitHub Actions release pipeline (`.github/workflows/release.yml`)
 - [ ] Instagram home feed detection -- code written but AccessibilityService API doesn't expose child node `selected` state through `findAccessibilityNodeInfosByText/ViewId`. Needs tree-walk approach: traverse from `rootInActiveWindow`, find ImageView nodes with `selected=true` in bottom nav, match to parent tab. See InAppDetector.kt.
 - [ ] On-device QA for all v1.2 features
 - [ ] YouTube Shorts verification on device
