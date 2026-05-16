@@ -155,4 +155,34 @@ class BlockEngineTest {
         assertEquals(BlockMode.DELAY, block.mode)
         assertEquals(15, block.delaySeconds)
     }
+
+    @Test
+    fun `feature evaluation can ignore whole-app rules after whole-app passthrough`() {
+        val rules = listOf(
+            ActiveRule(
+                mode = BlockMode.DELAY,
+                delaySeconds = 15,
+                dailyLimitMinutes = null,
+                enabled = true
+            ),
+            ActiveRule(
+                mode = BlockMode.HARD_BLOCK,
+                delaySeconds = 0,
+                dailyLimitMinutes = null,
+                enabled = true,
+                inAppFeatures = listOf("REELS")
+            )
+        )
+
+        val decision = engine.evaluate(
+            packageName = "com.instagram.android",
+            activeRules = rules,
+            dailyUsageMs = 0L,
+            detectedFeature = "REELS",
+            includeWholeAppRulesForFeature = false
+        )
+
+        assertTrue(decision is BlockDecision.Block)
+        assertEquals(BlockMode.HARD_BLOCK, (decision as BlockDecision.Block).mode)
+    }
 }

@@ -93,15 +93,19 @@ class NudgeAccessibilityService : AccessibilityService() {
         @Volatile
         var lastPassthroughPackage: String? = null
         @Volatile
+        var lastPassthroughFeature: String? = null
+        @Volatile
         var lastPassthroughTime: Long = 0L
 
-        fun grantPassthrough(packageName: String) {
+        fun grantPassthrough(packageName: String, featureKey: String? = null) {
             lastPassthroughPackage = packageName
+            lastPassthroughFeature = featureKey
             lastPassthroughTime = System.currentTimeMillis()
         }
 
         internal fun resetPassthroughForTests() {
             lastPassthroughPackage = null
+            lastPassthroughFeature = null
             lastPassthroughTime = 0L
         }
 
@@ -109,13 +113,21 @@ class NudgeAccessibilityService : AccessibilityService() {
             return packageName == lastPassthroughPackage
         }
 
-        internal fun shouldSkipEvaluationForPassthrough(packageName: String): Boolean {
+        internal fun shouldSkipForegroundEvaluationForPassthrough(packageName: String): Boolean {
             return isPassthroughGranted(packageName)
+        }
+
+        internal fun shouldSkipFeatureEvaluationForPassthrough(
+            packageName: String,
+            featureKey: String
+        ): Boolean {
+            return isPassthroughGranted(packageName) && lastPassthroughFeature == featureKey
         }
 
         internal fun clearPassthroughIfAppChanged(packageName: String): Boolean {
             if (lastPassthroughPackage == null || packageName == lastPassthroughPackage) return false
             lastPassthroughPackage = null
+            lastPassthroughFeature = null
             lastPassthroughTime = 0L
             return true
         }
@@ -186,7 +198,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         }
 
         // Post-overlay passthrough: user completed delay/breathing, let them use app until they leave
-        if (shouldSkipEvaluationForPassthrough(packageName)) {
+        if (shouldSkipForegroundEvaluationForPassthrough(packageName)) {
             entryPoint.nudgeLogger().d("skip evaluation package=$packageName reason=passthrough")
             return
         }
@@ -231,12 +243,6 @@ class NudgeAccessibilityService : AccessibilityService() {
         // This keeps whole-app rules enforced while feature-specific rules remain feature-gated.
         evaluateForegroundPackage(packageName)
 
-        // Post-overlay passthrough applies to in-app detection too
-        if (shouldSkipEvaluationForPassthrough(packageName)) {
-            entryPoint.nudgeLogger().d("skip in-app detection package=$packageName reason=passthrough")
-            return
-        }
-
         val now = System.currentTimeMillis()
 
         // Rate limit
@@ -250,6 +256,13 @@ class NudgeAccessibilityService : AccessibilityService() {
 
         // Only re-evaluate if a specific feature was detected
         if (feature != null) {
+            if (shouldSkipFeatureEvaluationForPassthrough(packageName, feature.key)) {
+                entryPoint.nudgeLogger().d(
+                    "skip feature evaluation package=$packageName feature=${feature.key} reason=passthrough"
+                )
+                return
+            }
+
             serviceScope.launch {
                 val globalEnabled = entryPoint.nudgePreferences().isGlobalEnabled.first()
                 if (!globalEnabled) {
@@ -257,16 +270,24 @@ class NudgeAccessibilityService : AccessibilityService() {
                     return@launch
                 }
 
-                val decision = entryPoint.evaluateBlockUseCase().invoke(packageName, feature.key)
+                val decision = entryPoint.evaluateBlockUseCase().invoke(
+                    packageName = packageName,
+                    detectedFeature = feature.key,
+                    includeWholeAppRulesForFeature = !shouldSkipForegroundEvaluationForPassthrough(packageName)
+                )
                 entryPoint.nudgeLogger().d(
                     "feature decision package=$packageName feature=${feature.key} decision=$decision"
                 )
-                handleDecision(decision, packageName)
+                handleDecision(decision, packageName, feature.key)
             }
         }
     }
 
-    private suspend fun handleDecision(decision: BlockDecision, packageName: String) {
+    private suspend fun handleDecision(
+        decision: BlockDecision,
+        packageName: String,
+        featureKey: String? = null
+    ) {
         when (decision) {
             is BlockDecision.Block -> {
                 entryPoint.nudgeLogger().i(
@@ -294,6 +315,7 @@ class NudgeAccessibilityService : AccessibilityService() {
                     putExtra(BlockOverlayActivity.EXTRA_BLOCK_MODE, decision.mode.name)
                     putExtra(BlockOverlayActivity.EXTRA_DELAY_SECONDS, decision.delaySeconds)
                     putExtra(BlockOverlayActivity.EXTRA_PACKAGE_NAME, packageName)
+                    putExtra(BlockOverlayActivity.EXTRA_FEATURE_KEY, featureKey)
                 }
                 applicationContext.startActivity(overlayIntent)
             }

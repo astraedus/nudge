@@ -62,8 +62,9 @@ class RuleEditorViewModel @Inject constructor(
 ) : ViewModel() {
 
     private val packageName: String = savedStateHandle.get<String>("packageName") ?: ""
-    private val requestedRuleId: Long? = savedStateHandle.get<Long>("ruleId")
-        ?.takeIf { it > 0L }
+    private val routeRuleId: Long = savedStateHandle.get<Long>("ruleId") ?: -1L
+    private val requestedRuleId: Long? = routeRuleId.takeIf { it > 0L }
+    private val isCreatingNewRule: Boolean = routeRuleId == 0L
 
     private val _uiState = MutableStateFlow(
         RuleEditorUiState(
@@ -79,6 +80,8 @@ class RuleEditorViewModel @Inject constructor(
     }
 
     private fun loadExistingRule() {
+        if (isCreatingNewRule) return
+
         viewModelScope.launch {
             val rules = blockRuleRepository.getAllRules().firstOrNull() ?: emptyList()
             val existing = rules.find { it.id == requestedRuleId }

@@ -34,6 +34,7 @@ sealed class Screen(val route: String) {
     data object RuleEditor : Screen("rule_editor/{packageName}?ruleId={ruleId}") {
         fun createRoute(packageName: String) = "rule_editor/$packageName"
         fun createRoute(packageName: String, ruleId: Long) = "rule_editor/$packageName?ruleId=$ruleId"
+        fun createNewRoute(packageName: String) = "rule_editor/$packageName?ruleId=0"
     }
     data object Groups : Screen("groups")
     data object Stats : Screen("stats")
@@ -107,7 +108,13 @@ fun NudgeNavGraph(
             val viewModel: RuleEditorViewModel = hiltViewModel()
             RuleEditorScreen(
                 viewModel = viewModel,
-                onNavigateBack = { navController.popBackStack() }
+                onNavigateBack = { navController.popBackStack() },
+                onNavigateToRuleEditor = { pkg, ruleId ->
+                    navController.navigate(Screen.RuleEditor.createRoute(pkg, ruleId))
+                },
+                onCreateNewRule = { pkg ->
+                    navController.navigate(Screen.RuleEditor.createNewRoute(pkg))
+                }
             )
         }
 

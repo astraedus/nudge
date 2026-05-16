@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.HelpOutline
@@ -61,7 +62,9 @@ import kotlinx.coroutines.launch
 @Composable
 fun RuleEditorScreen(
     viewModel: RuleEditorViewModel,
-    onNavigateBack: () -> Unit
+    onNavigateBack: () -> Unit,
+    onNavigateToRuleEditor: (String, Long) -> Unit,
+    onCreateNewRule: (String) -> Unit
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -75,7 +78,7 @@ fun RuleEditorScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Edit Rule") },
+                title = { Text(if (state.existingRuleId == null) "New Rule" else "Edit Rule") },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
@@ -112,7 +115,9 @@ fun RuleEditorScreen(
 
                     state.allRulesForPackage.forEach { rule ->
                         Card(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onNavigateToRuleEditor(state.packageName, rule.id) },
                             colors = CardDefaults.cardColors(
                                 containerColor = if (rule.enabled)
                                     MaterialTheme.colorScheme.surfaceVariant
@@ -141,6 +146,15 @@ fun RuleEditorScreen(
                                     onCheckedChange = { viewModel.toggleRuleEnabled(rule.id, rule.enabled) }
                                 )
                             }
+                        }
+                    }
+
+                    if (state.existingRuleId != null) {
+                        OutlinedButton(
+                            onClick = { onCreateNewRule(state.packageName) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Add Rule")
                         }
                     }
                 }
@@ -587,7 +601,7 @@ fun RuleEditorScreen(
                 onClick = { viewModel.save() },
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text("Save Rule")
+                Text(if (state.existingRuleId == null) "Create Rule" else "Save Rule")
             }
 
             if (state.existingRuleId != null) {

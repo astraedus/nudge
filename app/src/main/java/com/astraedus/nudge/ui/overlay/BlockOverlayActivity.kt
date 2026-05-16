@@ -24,6 +24,7 @@ class BlockOverlayActivity : ComponentActivity() {
         const val EXTRA_BLOCK_MODE = "block_mode"
         const val EXTRA_DELAY_SECONDS = "delay_seconds"
         const val EXTRA_PACKAGE_NAME = "package_name"
+        const val EXTRA_FEATURE_KEY = "feature_key"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -74,7 +75,10 @@ class BlockOverlayActivity : ComponentActivity() {
     private fun onTimerComplete() {
         val pkg = intent.getStringExtra(EXTRA_PACKAGE_NAME) ?: ""
         if (pkg.isNotEmpty()) {
-            NudgeAccessibilityService.grantPassthrough(pkg)
+            NudgeAccessibilityService.grantPassthrough(
+                packageName = pkg,
+                featureKey = intent.getStringExtra(EXTRA_FEATURE_KEY)
+            )
         }
         NudgeAccessibilityService.isOverlayActive = false
         finish()

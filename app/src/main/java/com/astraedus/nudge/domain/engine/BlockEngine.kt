@@ -14,9 +14,9 @@ class BlockEngine @Inject constructor(
     /**
      * Evaluate whether a package should be blocked based on active rules and daily usage.
      *
-     * @param detectedFeature If non-null, only rules whose [ActiveRule.inAppFeatures] list
-     *   contains this feature (or whose inAppFeatures is null/empty, meaning whole-app block)
-     *   will be considered.
+     * @param detectedFeature If non-null, feature-scoped rules whose [ActiveRule.inAppFeatures]
+     *   list contains this feature will be considered. Whole-app rules are also considered unless
+     *   [includeWholeAppRulesForFeature] is false.
      *
      * Priority: HARD_BLOCK > time budget exceeded > DELAY > BREATHING > Allow
      */
@@ -24,11 +24,13 @@ class BlockEngine @Inject constructor(
         packageName: String,
         activeRules: List<ActiveRule>,
         dailyUsageMs: Long,
-        detectedFeature: String? = null
+        detectedFeature: String? = null,
+        includeWholeAppRulesForFeature: Boolean = true
     ): BlockDecision {
         logger.d(
             "evaluate package=$packageName rules=${activeRules.size} " +
-                "dailyUsageMs=$dailyUsageMs detectedFeature=$detectedFeature"
+                "dailyUsageMs=$dailyUsageMs detectedFeature=$detectedFeature " +
+                "includeWholeAppRulesForFeature=$includeWholeAppRulesForFeature"
         )
 
         val applicableRules = activeRules
@@ -37,9 +39,10 @@ class BlockEngine @Inject constructor(
             .filter { rule ->
                 if (detectedFeature != null) {
                     // In-app detection active: match rules that target this feature
-                    // or whole-app rules (inAppFeatures == null/empty)
+                    // and, unless suppressed by passthrough, whole-app rules.
                     val features = rule.inAppFeatures
-                    features == null || features.isEmpty() || detectedFeature in features
+                    detectedFeature in (features ?: emptyList()) ||
+                        (includeWholeAppRulesForFeature && (features == null || features.isEmpty()))
                 } else {
                     // No in-app detection: only apply whole-app rules
                     rule.inAppFeatures == null || rule.inAppFeatures.isEmpty()
