@@ -14,17 +14,9 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/**
- * Manages a floating overlay that displays interaction counts on top of monitored apps.
- *
- * The overlay uses [WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY] so it can be
- * shown from the AccessibilityService without the SYSTEM_ALERT_WINDOW permission.
- * It has [WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE] so users can interact
- * with the app behind it.
- */
 @Singleton
 class CounterOverlayManager @Inject constructor(
-    @ApplicationContext private val context: Context,
+    @ApplicationContext private val appContext: Context,
     private val logger: NudgeLogger
 ) {
     private var overlayView: View? = null
@@ -33,8 +25,9 @@ class CounterOverlayManager @Inject constructor(
     private var labelText: TextView? = null
     private var dailyText: TextView? = null
     private var timeRemainingText: TextView? = null
+    @Volatile
     private var isShowing = false
-    private val density = context.resources.displayMetrics.density
+    private val density = appContext.resources.displayMetrics.density
     private val bgNormal = GradientDrawable().apply {
         shape = GradientDrawable.RECTANGLE
         cornerRadius = 32 * density
@@ -47,7 +40,9 @@ class CounterOverlayManager @Inject constructor(
     }
     private var currentBgIsAlert = false
 
-    // TYPE_ACCESSIBILITY_OVERLAY requires the service's own context for a valid window token
+    // TYPE_ACCESSIBILITY_OVERLAY needs the service context for both the window token
+    // AND view creation. Using ApplicationContext for views causes BadTokenException.
+    @Volatile
     private var serviceContext: Context? = null
 
     fun setServiceContext(ctx: Context) {
@@ -55,52 +50,54 @@ class CounterOverlayManager @Inject constructor(
         logger.d("counter overlay service context set")
     }
 
+    fun clearServiceContext() {
+        hide()
+        serviceContext = null
+    }
+
     fun show(label: String = "taps") {
-        if (isShowing) {
-            logger.d("counter overlay show skipped reason=already_visible")
-            return
-        }
+        if (isShowing) return
 
         val ctx = serviceContext ?: run {
             logger.w("counter overlay show skipped reason=no_service_context")
             return
         }
-        windowManager = ctx.getSystemService(Context.WINDOW_SERVICE) as WindowManager
-
-        overlayView = createOverlayView(label)
-
-        val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-            PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.CENTER
-        }
 
         try {
+            windowManager = ctx.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+            overlayView = createOverlayView(ctx, label)
+
+            val params = WindowManager.LayoutParams(
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                PixelFormat.TRANSLUCENT
+            ).apply {
+                gravity = Gravity.CENTER
+            }
+
             windowManager?.addView(overlayView, params)
             isShowing = true
             logger.i("counter overlay shown label=$label")
         } catch (e: Exception) {
             logger.w("counter overlay show failed", e)
-            // Window token may be invalid if service was recently restarted
+            resetViewState()
         }
     }
 
     fun updateCount(sessionCount: Int, dailyTotal: Int) {
+        if (!isShowing) return
         counterText?.text = sessionCount.toString()
         dailyText?.text = "today: $dailyTotal"
 
-        // Escalating color based on session count
         val counterColor = when {
-            sessionCount >= 30 -> Color.argb(220, 255, 0, 0)       // red
-            sessionCount >= 20 -> Color.argb(200, 255, 69, 0)      // deep orange / red-orange
-            sessionCount >= 10 -> Color.argb(180, 255, 165, 0)     // orange
-            else -> Color.WHITE                                      // default
+            sessionCount >= 30 -> Color.argb(220, 255, 0, 0)
+            sessionCount >= 20 -> Color.argb(200, 255, 69, 0)
+            sessionCount >= 10 -> Color.argb(180, 255, 165, 0)
+            else -> Color.WHITE
         }
         counterText?.setTextColor(counterColor)
 
@@ -110,15 +107,8 @@ class CounterOverlayManager @Inject constructor(
             container?.background = if (shouldAlert) bgAlert else bgNormal
             currentBgIsAlert = shouldAlert
         }
-
-        logger.d("counter overlay updated session=$sessionCount daily=$dailyTotal")
     }
 
-    /**
-     * Update the "time remaining" line on the overlay.
-     * @param remainingMs time remaining in milliseconds, or null to hide the line
-     * @param limitMinutes the configured daily limit (used for color escalation)
-     */
     fun updateTimeRemaining(remainingMs: Long?, limitMinutes: Int?) {
         val tv = timeRemainingText ?: return
         if (remainingMs == null || limitMinutes == null || limitMinutes <= 0) {
@@ -128,69 +118,60 @@ class CounterOverlayManager @Inject constructor(
         tv.visibility = View.VISIBLE
         tv.text = "${formatCompactDuration(remainingMs)} left"
 
-        // Color escalation based on % remaining
         val limitMs = limitMinutes.toLong() * 60L * 1000L
         val pct = if (limitMs > 0) remainingMs.toFloat() / limitMs else 1f
         val color = when {
-            pct > 0.50f -> Color.argb(200, 100, 220, 100)  // green
-            pct > 0.25f -> Color.argb(200, 255, 165, 0)    // orange
-            else -> Color.argb(220, 255, 0, 0)              // red
+            pct > 0.50f -> Color.argb(200, 100, 220, 100)
+            pct > 0.25f -> Color.argb(200, 255, 165, 0)
+            else -> Color.argb(220, 255, 0, 0)
         }
         tv.setTextColor(color)
-
-        logger.d("time remaining updated remaining=${remainingMs}ms pct=$pct")
     }
 
     fun updateLabel(label: String) {
         labelText?.text = label
-        logger.d("counter overlay label updated label=$label")
     }
 
     fun hide() {
-        if (!isShowing) {
-            logger.d("counter overlay hide skipped reason=not_visible")
-            return
-        }
+        if (!isShowing) return
         try {
             windowManager?.removeView(overlayView)
-            logger.i("counter overlay hidden")
         } catch (e: Exception) {
             logger.w("counter overlay hide failed", e)
-            // View may already be detached
         }
+        resetViewState()
+        logger.i("counter overlay hidden")
+    }
+
+    fun isVisible(): Boolean = isShowing
+
+    private fun resetViewState() {
         overlayView = null
         counterText = null
         labelText = null
         dailyText = null
         timeRemainingText = null
+        windowManager = null
         isShowing = false
+        currentBgIsAlert = false
     }
 
-    fun isVisible(): Boolean = isShowing
+    private fun createOverlayView(ctx: Context, label: String): View {
+        val d = ctx.resources.displayMetrics.density
 
-    private fun createOverlayView(label: String): View {
-        val density = context.resources.displayMetrics.density
-
-        val container = LinearLayout(context).apply {
+        val container = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setPadding(
-                (32 * density).toInt(),
-                (20 * density).toInt(),
-                (32 * density).toInt(),
-                (20 * density).toInt()
-            )
-
-            val bg = GradientDrawable().apply {
+            setPadding((32 * d).toInt(), (20 * d).toInt(), (32 * d).toInt(), (20 * d).toInt())
+            background = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
-                cornerRadius = 32 * density
-                setColor(Color.argb(128, 0, 0, 0)) // 50% black
+                cornerRadius = 32 * d
+                setColor(Color.argb(128, 0, 0, 0))
             }
-            background = bg
             alpha = 0.85f
         }
 
-        counterText = TextView(context).apply {
+        counterText = TextView(ctx).apply {
             text = "0"
             setTextColor(Color.WHITE)
             textSize = 40f
@@ -199,7 +180,7 @@ class CounterOverlayManager @Inject constructor(
         }
         container.addView(counterText)
 
-        labelText = TextView(context).apply {
+        labelText = TextView(ctx).apply {
             text = label
             setTextColor(Color.argb(200, 255, 255, 255))
             textSize = 16f
@@ -207,7 +188,7 @@ class CounterOverlayManager @Inject constructor(
         }
         container.addView(labelText)
 
-        dailyText = TextView(context).apply {
+        dailyText = TextView(ctx).apply {
             text = "today: 0"
             setTextColor(Color.argb(150, 255, 255, 255))
             textSize = 13f
@@ -215,9 +196,9 @@ class CounterOverlayManager @Inject constructor(
         }
         container.addView(dailyText)
 
-        timeRemainingText = TextView(context).apply {
+        timeRemainingText = TextView(ctx).apply {
             text = ""
-            setTextColor(Color.argb(200, 100, 220, 100)) // default green
+            setTextColor(Color.argb(200, 100, 220, 100))
             textSize = 13f
             gravity = Gravity.CENTER
             visibility = View.GONE
@@ -228,10 +209,6 @@ class CounterOverlayManager @Inject constructor(
     }
 
     companion object {
-        /**
-         * Formats milliseconds into a compact duration string for the overlay.
-         * Examples: "42m left", "1h 12m left", "30s left"
-         */
         fun formatCompactDuration(ms: Long): String {
             if (ms <= 0) return "0s"
             val totalSeconds = ms / 1000

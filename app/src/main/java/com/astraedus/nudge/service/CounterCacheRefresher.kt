@@ -10,7 +10,10 @@ internal data class CounterCacheEntry(
 internal class CounterCacheRefresher(
     private val refreshIntervalMs: Long = 10_000L
 ) {
-    private val enabledPackages = mutableMapOf<String, CounterCacheEntry>()
+    // Atomic reference swap -- readers never see a half-populated map
+    @Volatile
+    private var enabledPackages: Map<String, CounterCacheEntry> = emptyMap()
+    @Volatile
     private var lastRefreshTime: Long = 0L
 
     fun isEnabled(packageName: String): Boolean = packageName in enabledPackages
@@ -19,7 +22,7 @@ internal class CounterCacheRefresher(
 
     fun getEntry(packageName: String): CounterCacheEntry? = enabledPackages[packageName]
 
-    fun snapshot(): Set<String> = enabledPackages.keys.toSet()
+    fun snapshot(): Set<String> = enabledPackages.keys
 
     suspend fun refreshIfNeeded(
         now: Long,
@@ -27,10 +30,15 @@ internal class CounterCacheRefresher(
     ): Boolean {
         if ((now - lastRefreshTime) < refreshIntervalMs) return false
         lastRefreshTime = now
-
-        enabledPackages.clear()
-        enabledPackages.putAll(loadEnabledPackages())
+        enabledPackages = loadEnabledPackages()
         return true
+    }
+
+    suspend fun forceRefresh(
+        loadEnabledPackages: suspend () -> Map<String, CounterCacheEntry>
+    ) {
+        lastRefreshTime = System.currentTimeMillis()
+        enabledPackages = loadEnabledPackages()
     }
 
     companion object {
