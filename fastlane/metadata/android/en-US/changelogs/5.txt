@@ -1,0 +1,3 @@
+Bug fix:
+* Fixed the Reels floating counter so it stays visible and keeps counting instead of resetting to 1 after every reel
+* Kept the counter cleanup when leaving the app or when a delay/block overlay takes over
