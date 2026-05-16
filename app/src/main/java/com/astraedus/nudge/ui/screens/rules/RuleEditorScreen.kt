@@ -12,9 +12,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import com.astraedus.nudge.ui.hasGrayscalePermission
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -35,12 +38,15 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -143,11 +149,22 @@ fun RuleEditorScreen(
 
             // --- Block Mode ---
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    "Block Mode",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Medium
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(
+                        "Block Mode",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Medium
+                    )
+                    InfoButton(
+                        "Choose how the app is blocked:\n\n" +
+                        "Hard Block -- Completely prevents opening the app. You can only go back to the home screen.\n\n" +
+                        "Delay -- Shows a countdown timer (5-60 seconds) before letting you in. Gives your brain time to reconsider.\n\n" +
+                        "Breathing -- Guides you through a calming breathing exercise before the app opens."
+                    )
+                }
 
                 SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
                     BlockMode.entries.forEachIndexed { index, mode ->
@@ -212,11 +229,21 @@ fun RuleEditorScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        "Daily Time Limit",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Medium
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            "Daily Time Limit",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Medium
+                        )
+                        InfoButton(
+                            "Set a daily usage budget for this app.\n\n" +
+                            "Once you've used the app for this many minutes today, it switches to a hard block for the rest of the day -- regardless of what block mode you chose above.\n\n" +
+                            "Example: Delay mode + 30 minute limit = you get a countdown each time you open the app, but after 30 minutes of total usage today, the app is fully blocked."
+                        )
+                    }
                     Switch(
                         checked = state.dailyLimitEnabled,
                         onCheckedChange = { viewModel.setDailyLimitEnabled(it) }
@@ -247,11 +274,21 @@ fun RuleEditorScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        "Schedule",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Medium
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            "Schedule",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Medium
+                        )
+                        InfoButton(
+                            "Only apply this rule during specific times.\n\n" +
+                            "Select which days the rule is active, and set a start and end time.\n\n" +
+                            "Overnight schedules work too -- if the end time is before the start time (e.g. 10 PM to 6 AM), the rule spans midnight."
+                        )
+                    }
                     Switch(
                         checked = state.scheduleEnabled,
                         onCheckedChange = { viewModel.setScheduleEnabled(it) }
@@ -325,11 +362,21 @@ fun RuleEditorScreen(
                 HorizontalDivider()
 
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        "In-App Blocking",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Medium
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            "In-App Blocking",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Medium
+                        )
+                        InfoButton(
+                            "Block specific features inside the app without blocking the whole thing.\n\n" +
+                            "For example, you can block YouTube Shorts but still watch regular videos, or block Instagram Reels but keep DMs and your feed.\n\n" +
+                            "This works by detecting which tab or section you're in. If none are checked, the block mode above applies to the whole app."
+                        )
+                    }
 
                     Text(
                         "Block specific features instead of the whole app",
@@ -383,11 +430,21 @@ fun RuleEditorScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            "Grayscale Mode",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Medium
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                "Grayscale Mode",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Medium
+                            )
+                            InfoButton(
+                                "Makes your phone screen black-and-white while this app is in the foreground.\n\n" +
+                                "Color is a major factor in making apps feel rewarding. Removing it makes scrolling feel less engaging.\n\n" +
+                                "Requires a one-time setup -- check Settings for the guide."
+                            )
+                        }
                         Text(
                             "Make screen gray when this app is open",
                             style = MaterialTheme.typography.bodySmall,
@@ -434,6 +491,40 @@ fun RuleEditorScreen(
 
             Spacer(Modifier.height(16.dp))
         }
+    }
+}
+
+@Composable
+private fun InfoButton(explanation: String) {
+    var showDialog by remember { mutableStateOf(false) }
+
+    IconButton(
+        onClick = { showDialog = true },
+        modifier = Modifier.size(32.dp)
+    ) {
+        Icon(
+            Icons.AutoMirrored.Outlined.HelpOutline,
+            contentDescription = "More info",
+            modifier = Modifier.size(20.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+        )
+    }
+
+    if (showDialog) {
+        AlertDialog(
+            onDismissRequest = { showDialog = false },
+            confirmButton = {
+                TextButton(onClick = { showDialog = false }) {
+                    Text("Got it")
+                }
+            },
+            text = {
+                Text(
+                    explanation,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+        )
     }
 }
 
