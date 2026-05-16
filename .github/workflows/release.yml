@@ -26,13 +26,25 @@ jobs:
       - name: Run tests
         run: ./gradlew test
 
-      - name: Build debug APK
-        run: ./gradlew assembleDebug
+      - name: Decode keystore
+        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > nudge-release.keystore
+
+      - name: Write keystore.properties
+        run: |
+          cat > keystore.properties <<PROPS
+          storeFile=../nudge-release.keystore
+          storePassword=${{ secrets.KEYSTORE_PASSWORD }}
+          keyAlias=nudge
+          keyPassword=${{ secrets.KEYSTORE_PASSWORD }}
+          PROPS
+
+      - name: Build release APK
+        run: ./gradlew assembleRelease
 
       - name: Rename APK
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          cp app/build/outputs/apk/debug/app-debug.apk "nudge-v${VERSION}.apk"
+          cp app/build/outputs/apk/release/app-release.apk "nudge-v${VERSION}.apk"
 
       - name: Create or update GitHub Release
         uses: softprops/action-gh-release@v2
