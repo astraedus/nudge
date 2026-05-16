@@ -4,6 +4,7 @@
 Made by @[Antimatter543](https://github.com/Antimatter543).
 
 Always free.
+This app is the product of a disdain for subscription services for things that should be free, a disdain for all infinite scrolling short content and about 2 doses of ritalin.
 ## Why
 
 App blockers ask for Accessibility Service permissions, the most powerful permission on Android. It can see everything on your screen. Every keystroke, every notification, every app you open.
