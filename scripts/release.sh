@@ -4,31 +4,27 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 BUILD_GRADLE="$PROJECT_DIR/app/build.gradle.kts"
-APK="$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk"
 
 usage() {
-    echo "Usage: $0 [patch|minor|major] [--install] [--no-build] [--no-release]"
+    echo "Usage: $0 [patch|minor|major] [--no-build] [--no-release]"
     echo ""
-    echo "Bumps version, builds debug APK, commits, creates GitHub release with APK."
+    echo "Bumps version, runs tests, builds APK, commits, pushes, creates GitHub release."
     echo ""
     echo "  patch        1.2.0 -> 1.2.1 (default)"
     echo "  minor        1.2.0 -> 1.3.0"
     echo "  major        1.2.0 -> 2.0.0"
-    echo "  --install    Install APK on connected device after build"
     echo "  --no-build   Only bump version, skip build + release"
     echo "  --no-release Build but skip GitHub release"
     exit 1
 }
 
 BUMP_TYPE="patch"
-INSTALL=false
 BUILD=true
 RELEASE=true
 
 for arg in "$@"; do
     case "$arg" in
         patch|minor|major) BUMP_TYPE="$arg" ;;
-        --install) INSTALL=true ;;
         --no-build) BUILD=false; RELEASE=false ;;
         --no-release) RELEASE=false ;;
         -h|--help) usage ;;
@@ -58,6 +54,8 @@ sed -i "s/versionName = \"$current_version\"/versionName = \"$new_version\"/" "$
 
 echo "Updated build.gradle.kts"
 
+RELEASE_APK="$PROJECT_DIR/app/build/outputs/apk/debug/nudge-v${new_version}.apk"
+
 if [ "$BUILD" = true ]; then
     echo "Running tests..."
     cd "$PROJECT_DIR"
@@ -67,34 +65,30 @@ if [ "$BUILD" = true ]; then
     echo "Building debug APK..."
     ./gradlew assembleDebug --quiet
 
-    if [ -f "$APK" ]; then
-        echo "Built: $APK ($(du -h "$APK" | cut -f1))"
+    RAW_APK="$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk"
+    if [ -f "$RAW_APK" ]; then
+        cp "$RAW_APK" "$RELEASE_APK"
+        echo "Built: $RELEASE_APK ($(du -h "$RELEASE_APK" | cut -f1))"
     else
         echo "ERROR: APK not found"
         exit 1
     fi
-
-    if [ "$INSTALL" = true ]; then
-        echo "Installing on device..."
-        adb install -r "$APK"
-        echo "Installed v$new_version on device"
-    fi
 fi
 
-# Commit the version bump
 cd "$PROJECT_DIR"
 git add app/build.gradle.kts
 git commit -m "chore: bump version to $new_version" || true
 
-if [ "$RELEASE" = true ] && [ -f "$APK" ]; then
+if [ "$RELEASE" = true ] && [ -f "$RELEASE_APK" ]; then
     echo "Pushing to origin..."
     git push origin main
 
     echo "Creating GitHub release v$new_version..."
-    # Generate notes from CHANGELOG if available
-    gh release create "v$new_version" "$APK" \
+    gh release create "v$new_version" "$RELEASE_APK" \
         --title "v$new_version" \
         --generate-notes
+
+    rm -f "$RELEASE_APK"
 
     echo "Release: https://github.com/astraedus/nudge/releases/tag/v$new_version"
 fi
