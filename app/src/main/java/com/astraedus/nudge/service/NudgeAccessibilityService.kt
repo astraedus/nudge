@@ -250,6 +250,7 @@ class NudgeAccessibilityService : AccessibilityService() {
                 putExtra(BlockOverlayActivity.EXTRA_BLOCK_MODE, "DELAY")
                 putExtra(BlockOverlayActivity.EXTRA_DELAY_SECONDS, remainingSeconds)
                 putExtra(BlockOverlayActivity.EXTRA_PACKAGE_NAME, packageName)
+                putExtra(BlockOverlayActivity.EXTRA_RULE_NAME, "Auto-kick cooldown")
             }
             applicationContext.startActivity(overlayIntent)
             return
@@ -392,6 +393,7 @@ class NudgeAccessibilityService : AccessibilityService() {
                     putExtra(BlockOverlayActivity.EXTRA_DELAY_SECONDS, decision.delaySeconds)
                     putExtra(BlockOverlayActivity.EXTRA_PACKAGE_NAME, packageName)
                     putExtra(BlockOverlayActivity.EXTRA_FEATURE_KEY, featureKey)
+                    putExtra(BlockOverlayActivity.EXTRA_RULE_NAME, decision.ruleName)
                 }
                 applicationContext.startActivity(overlayIntent)
             }

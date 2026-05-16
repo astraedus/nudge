@@ -4,7 +4,8 @@ Privacy-first app blocker with delay-to-open (breathing exercises before opening
 
 - GitHub: https://github.com/astraedus/nudge
 - F-Droid MR: https://gitlab.com/fdroid/fdroiddata/-/merge_requests/38398
-- v1.1.2 (current), v1.1.1/v1.1.0/v1.0.0 released
+- v1.1.4 (current), working toward v1.2.0
+- See CHANGELOG.md for release history
 
 ## Build
 
@@ -74,29 +75,53 @@ AccessibilityService: TYPE_WINDOW_STATE_CHANGED
 - **"Walked Away" tracking** — counts when user taps "I changed my mind" instead of waiting
 - **2x2 dashboard stats** — Screen Time, Active Rules (tappable), Blocked, Walked Away
 - **Floating interaction counter** — centered touch-through overlay (40sp counter, 16sp label, 13sp daily) showing reels/shorts scrolled or taps per session. Escalating colors: white (0-9), orange (10-19), deep orange (20-29), red with red background tint (30+). TYPE_ACCESSIBILITY_OVERLAY from service, no extra permission. Per-rule `showCounter` toggle (default ON for new rules).
+- **Time remaining overlay** — per-rule opt-in (`showTimeRemaining`). Displays "42m left" or "1h 12m left" below counter, color-coded: green (>50% remaining), orange (25-50%), red (<25%). Uses UsageStatsManager for actual foreground time. Requires daily limit to be set.
 - **Auto-kick** — optional per-rule feature: sends user to home screen after N scrolls/taps in one session. Configurable threshold 5-100 (step 5, default 30). Session counter resets after kick. Stored as `autoKickAfter` on BlockRule.
+- **Auto-kick cooldown** — configurable per-rule (0-300 seconds, default 60s). After auto-kick, returning to the app forces a DELAY overlay for the remaining cooldown. Session counter preserved during cooldown. Stored as `autoKickCooldownSeconds` on BlockRule.
+- **Instagram home feed detection** — `InAppDetector` now detects Instagram's home feed (when Home tab is selected, no other tabs active) and treats it as REELS-equivalent. Home feed scrolling counts toward interaction counter and auto-kick the same as the Reels tab.
 - **Post-overlay passthrough** — after delay/breathing completes, skip re-evaluation until user leaves app. Prevents infinite overlay loop.
 - **Rule editor UX** — info tooltips on all sections, block mode descriptions, per-app rules summary with enable/disable
 - **Settings** — version links to GitHub repo, source code & feedback link
 
 ## Database
 
-Room DB version 5. Migrations: 1->2 (schedule/inapp/grayscale), 2->3 (userChangedMind), 3->4 (showCounter), 4->5 (autoKickAfter).
+Room DB version 6. Migrations: 1->2 (schedule/inapp/grayscale), 2->3 (userChangedMind), 3->4 (showCounter), 4->5 (autoKickAfter), 5->6 (showTimeRemaining, autoKickCooldownSeconds).
 
 ## Counter overlay architecture
 
-- `InteractionTracker` (@Singleton): in-memory session/daily counts per package. No DB writes per interaction.
-- `CounterOverlayManager` (@Singleton): WindowManager overlay using service context (required for TYPE_ACCESSIBILITY_OVERLAY token). `setServiceContext()` called in `onServiceConnected()`. Centered on screen with escalating colors (white -> orange -> deep orange -> red) based on session count.
+- `InteractionTracker` (@Singleton): in-memory session/daily counts per package. No DB writes per interaction. Also tracks cooldown state per package after auto-kick.
+- `CounterOverlayManager` (@Singleton): WindowManager overlay using service context (required for TYPE_ACCESSIBILITY_OVERLAY token). `setServiceContext()` called in `onServiceConnected()`. Centered on screen with escalating colors (white -> orange -> deep orange -> red) based on session count. Also displays time-remaining line with color escalation (green/orange/red based on % remaining).
 - `activeReelLabel`: once Shorts/Reels feature detected, skip tree inspection on subsequent scrolls. Reset on app switch.
-- Counter-enabled packages cached every 10s via `CounterCacheRefresher` (Map<String, CounterCacheEntry> with autoKickAfter per package).
-- Auto-kick: optional per-rule threshold (`autoKickAfter`). When session count hits threshold, sends ACTION_MAIN/CATEGORY_HOME intent and resets session counter.
+- Counter-enabled packages cached every 10s via `CounterCacheRefresher` (Map<String, CounterCacheEntry> with autoKickAfter, showTimeRemaining, dailyLimitMinutes, autoKickCooldownSeconds per package).
+- Auto-kick: optional per-rule threshold (`autoKickAfter`). When session count hits threshold, sends ACTION_MAIN/CATEGORY_HOME intent, sets cooldown, and resets session counter.
+- Auto-kick cooldown: configurable per-rule (default 60s). After auto-kick, re-opening the app shows a DELAY overlay for the remaining cooldown. Session counter NOT reset during cooldown.
+- Time remaining overlay: optional per-rule (`showTimeRemaining`). Uses UsageStatsManager to get actual foreground time, displays remaining daily limit as color-coded overlay line. Updated every 30 seconds.
 
 ## Store listing
 
 Assets at `store-listing/` — feature graphic, screenshots, listing copy, batch config (`screenshots.json`).
 
+## Post-feature checklist
+
+After any feature addition or significant change:
+1. Update CHANGELOG.md (under `[Unreleased]` section)
+2. Update this CLAUDE.md (architecture docs, feature descriptions)
+3. Run `./gradlew test` and verify all pass
+4. Build debug APK and install on Pixel 3 via ADB
+5. Test golden path + edge cases on real device
+6. Update store listing copy if user-facing
+7. Commit with descriptive message
+
 ## Backlog
 
-### v1.2 features
+### v1.2 in progress
+- [x] Time remaining overlay (code-complete, verified on device)
+- [x] Auto-kick cooldown (code-complete, verified on device)
+- [x] Rule name on block overlays (code-complete, verified on device)
+- [ ] Instagram home feed detection -- code written but AccessibilityService API doesn't expose child node `selected` state through `findAccessibilityNodeInfosByText/ViewId`. Needs tree-walk approach: traverse from `rootInActiveWindow`, find ImageView nodes with `selected=true` in bottom nav, match to parent tab. See InAppDetector.kt.
+- [ ] On-device QA for all v1.2 features after home feed fix
+- [ ] YouTube Shorts verification on device
+
+### v1.3+
 - [ ] Anti-bypass, NFC/QR unlock, widgets, contextual triggers
 - [ ] Release signing key (currently distributing debug APK)

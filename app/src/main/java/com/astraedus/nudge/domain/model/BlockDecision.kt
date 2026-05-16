@@ -5,6 +5,7 @@ sealed class BlockDecision {
     data class Block(
         val mode: BlockMode,
         val delaySeconds: Int = 0,
-        val grayscale: Boolean = false
+        val grayscale: Boolean = false,
+        val ruleName: String? = null
     ) : BlockDecision()
 }

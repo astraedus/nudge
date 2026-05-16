@@ -32,7 +32,8 @@ import kotlinx.coroutines.delay
 fun DelayContent(
     delaySeconds: Int,
     onComplete: () -> Unit,
-    onCancel: () -> Unit
+    onCancel: () -> Unit,
+    ruleName: String? = null
 ) {
     val title = remember { NudgeMessages.delayTitles.random() }
     val subtitle = remember { NudgeMessages.delaySubtitles.random() }
@@ -104,6 +105,16 @@ fun DelayContent(
 
             OutlinedButton(onClick = onCancel) {
                 Text("I changed my mind")
+            }
+
+            if (ruleName != null) {
+                Spacer(modifier = Modifier.height(24.dp))
+                Text(
+                    text = "Rule: $ruleName",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.outline.copy(alpha = 0.7f),
+                    textAlign = TextAlign.Center
+                )
             }
         }
     }

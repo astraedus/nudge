@@ -58,22 +58,31 @@ class BlockEngine @Inject constructor(
         val wantsGrayscale = applicableRules.any { it.grayscale }
 
         // Check for unconditional HARD_BLOCK (no daily limit)
-        val unconditionalHardBlock = applicableRules.any {
+        val unconditionalHardBlockRule = applicableRules.firstOrNull {
             it.mode == BlockMode.HARD_BLOCK && it.dailyLimitMinutes == null
         }
-        if (unconditionalHardBlock) {
+        if (unconditionalHardBlockRule != null) {
             logger.i("block package=$packageName reason=unconditional_hard_block grayscale=$wantsGrayscale")
-            return BlockDecision.Block(BlockMode.HARD_BLOCK, grayscale = wantsGrayscale)
+            return BlockDecision.Block(
+                BlockMode.HARD_BLOCK,
+                grayscale = wantsGrayscale,
+                ruleName = unconditionalHardBlockRule.ruleName
+            )
         }
 
         // Check if any time budget is exceeded
-        val timeBudgetExceeded = applicableRules.any { rule ->
+        val timeBudgetRule = applicableRules.firstOrNull { rule ->
             rule.dailyLimitMinutes != null &&
                 dailyUsageMs >= rule.dailyLimitMinutes.toLong() * 60L * 1000L
         }
-        if (timeBudgetExceeded) {
+        if (timeBudgetRule != null) {
             logger.i("block package=$packageName reason=time_budget_exceeded grayscale=$wantsGrayscale")
-            return BlockDecision.Block(BlockMode.HARD_BLOCK, grayscale = wantsGrayscale)
+            val budgetRuleName = timeBudgetRule.ruleName?.let { "$it (limit reached)" }
+            return BlockDecision.Block(
+                BlockMode.HARD_BLOCK,
+                grayscale = wantsGrayscale,
+                ruleName = budgetRuleName
+            )
         }
 
         // Check for DELAY rules
@@ -83,7 +92,12 @@ class BlockEngine @Inject constructor(
                 "block package=$packageName reason=delay_rule " +
                     "delaySeconds=${delayRule.delaySeconds} grayscale=$wantsGrayscale"
             )
-            return BlockDecision.Block(BlockMode.DELAY, delayRule.delaySeconds, wantsGrayscale)
+            return BlockDecision.Block(
+                BlockMode.DELAY,
+                delayRule.delaySeconds,
+                wantsGrayscale,
+                ruleName = delayRule.ruleName
+            )
         }
 
         // Check for BREATHING rules
@@ -93,7 +107,12 @@ class BlockEngine @Inject constructor(
                 "block package=$packageName reason=breathing_rule " +
                     "delaySeconds=${breathingRule.delaySeconds} grayscale=$wantsGrayscale"
             )
-            return BlockDecision.Block(BlockMode.BREATHING, breathingRule.delaySeconds, wantsGrayscale)
+            return BlockDecision.Block(
+                BlockMode.BREATHING,
+                breathingRule.delaySeconds,
+                wantsGrayscale,
+                ruleName = breathingRule.ruleName
+            )
         }
 
         logger.d("allow package=$packageName reason=no_matching_block_mode")

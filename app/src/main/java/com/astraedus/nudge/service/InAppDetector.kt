@@ -61,8 +61,66 @@ class InAppDetector @Inject constructor(
     }
 
     private fun detectInstagram(root: AccessibilityNodeInfo): Feature? {
-        // Check for Reels: look for nodes with text/content-description "Reels"
-        // that are selected (indicating the Reels tab is active)
+        // Use resource IDs for reliable tab detection. Instagram's bottom nav tabs:
+        //   feed_tab (Home), clips_tab (Reels), search_tab (Search/Explore), profile_tab (Profile)
+        // The tab FrameLayout itself has selected=false, but its child tab_icon ImageView
+        // has selected=true for the active tab.
+        val activeTab = findActiveInstagramTab(root)
+        logger.d("instagram active tab: $activeTab")
+        return when (activeTab) {
+            "clips_tab" -> Feature.REELS
+            "search_tab" -> Feature.EXPLORE
+            "feed_tab" -> Feature.REELS  // Home feed = reels-equivalent
+            else -> {
+                // Fallback: text-based detection for older Instagram versions
+                detectInstagramByText(root)
+            }
+        }
+    }
+
+    /**
+     * Find which Instagram bottom nav tab is active by checking resource IDs.
+     * Returns the tab ID suffix (e.g. "feed_tab", "clips_tab") or null if not found.
+     */
+    private fun findActiveInstagramTab(root: AccessibilityNodeInfo): String? {
+        val tabIds = listOf("feed_tab", "clips_tab", "search_tab", "profile_tab")
+        for (tabId in tabIds) {
+            val nodes = root.findAccessibilityNodeInfosByViewId(
+                "com.instagram.android:id/$tabId"
+            )
+            if (nodes.isNotEmpty()) {
+                for (node in nodes) {
+                    if (isTabActive(node)) {
+                        recycleNodes(nodes)
+                        return tabId
+                    }
+                }
+                recycleNodes(nodes)
+            }
+        }
+        return null
+    }
+
+    /**
+     * Check if a tab node is active by looking for selected=true on the node
+     * itself or any of its descendants (up to 3 levels deep).
+     */
+    private fun isTabActive(node: AccessibilityNodeInfo): Boolean {
+        if (node.isSelected) return true
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            if (child.isSelected) return true
+            // Check grandchildren too
+            for (j in 0 until child.childCount) {
+                val grandchild = child.getChild(j) ?: continue
+                if (grandchild.isSelected) return true
+            }
+        }
+        return false
+    }
+
+    /** Fallback text-based detection for older Instagram versions. */
+    private fun detectInstagramByText(root: AccessibilityNodeInfo): Feature? {
         val reelsNodes = root.findAccessibilityNodeInfosByText("Reels")
         if (reelsNodes.isNotEmpty()) {
             for (node in reelsNodes) {
@@ -74,7 +132,6 @@ class InAppDetector @Inject constructor(
         }
         recycleNodes(reelsNodes)
 
-        // Check for Explore tab
         val exploreNodes = root.findAccessibilityNodeInfosByText("Explore")
         if (exploreNodes.isNotEmpty()) {
             for (node in exploreNodes) {
@@ -86,57 +143,7 @@ class InAppDetector @Inject constructor(
         }
         recycleNodes(exploreNodes)
 
-        // Home feed detection: Instagram's home feed also has scrollable reels-like content.
-        // If none of the non-home tabs (Reels, Explore, Shop, Profile, Search) are selected,
-        // the user is most likely on the home feed -- treat it as reels-equivalent so scrolling
-        // counts the same way.
-        if (isOnInstagramHomeFeed(root)) {
-            logger.d("instagram home feed detected, treating as REELS")
-            return Feature.REELS
-        }
-
         return null
-    }
-
-    /**
-     * Checks if the user is on Instagram's home feed by verifying that none of the
-     * non-home tabs are currently selected. Instagram's bottom nav typically has:
-     * Home, Search/Explore, Reels, Shop, Profile.
-     *
-     * If no known non-home tab text is found as selected, we assume home feed.
-     * We also look for the "Home" tab being selected as a positive signal.
-     */
-    private fun isOnInstagramHomeFeed(root: AccessibilityNodeInfo): Boolean {
-        // Positive signal: "Home" tab is selected
-        val homeNodes = root.findAccessibilityNodeInfosByText("Home")
-        if (homeNodes.isNotEmpty()) {
-            for (node in homeNodes) {
-                if (node.isSelected || isInSelectedTab(node)) {
-                    recycleNodes(homeNodes)
-                    return true
-                }
-            }
-        }
-        recycleNodes(homeNodes)
-
-        // Negative signal: check if any known non-home tab is selected
-        val nonHomeTabs = listOf("Search", "Explore", "Reels", "Shop", "Profile")
-        for (tabName in nonHomeTabs) {
-            val nodes = root.findAccessibilityNodeInfosByText(tabName)
-            if (nodes.isNotEmpty()) {
-                for (node in nodes) {
-                    if (node.isSelected || isInSelectedTab(node)) {
-                        recycleNodes(nodes)
-                        return false // A non-home tab is selected
-                    }
-                }
-            }
-            recycleNodes(nodes)
-        }
-
-        // No tab detected as selected -- could be home or an unknown screen.
-        // Conservatively return false to avoid false positives on DMs, stories, etc.
-        return false
     }
 
     private fun detectYouTube(root: AccessibilityNodeInfo): Feature? {
@@ -144,7 +151,7 @@ class InAppDetector @Inject constructor(
         val shortsNodes = root.findAccessibilityNodeInfosByText("Shorts")
         if (shortsNodes.isNotEmpty()) {
             for (node in shortsNodes) {
-                if (node.isSelected || isInSelectedTab(node)) {
+                if (node.isSelected || isInSelectedTab(node) || hasSelectedChild(node)) {
                     recycleNodes(shortsNodes)
                     return Feature.SHORTS
                 }
@@ -167,6 +174,19 @@ class InAppDetector @Inject constructor(
             val next = current.parent
             current = next
             depth++
+        }
+        return false
+    }
+
+    /**
+     * Check if any immediate child of the node is selected.
+     * Instagram sets selected=true on the child tab_icon ImageView, not the
+     * parent FrameLayout that carries the content-description.
+     */
+    private fun hasSelectedChild(node: AccessibilityNodeInfo): Boolean {
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            if (child.isSelected) return true
         }
         return false
     }

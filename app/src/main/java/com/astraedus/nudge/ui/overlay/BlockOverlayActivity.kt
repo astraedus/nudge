@@ -25,6 +25,7 @@ class BlockOverlayActivity : ComponentActivity() {
         const val EXTRA_DELAY_SECONDS = "delay_seconds"
         const val EXTRA_PACKAGE_NAME = "package_name"
         const val EXTRA_FEATURE_KEY = "feature_key"
+        const val EXTRA_RULE_NAME = "rule_name"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -40,6 +41,7 @@ class BlockOverlayActivity : ComponentActivity() {
         }
         val delaySeconds = intent.getIntExtra(EXTRA_DELAY_SECONDS, 15)
         val packageName = intent.getStringExtra(EXTRA_PACKAGE_NAME) ?: ""
+        val ruleName = intent.getStringExtra(EXTRA_RULE_NAME)
 
         setContent {
             NudgeTheme {
@@ -47,7 +49,8 @@ class BlockOverlayActivity : ComponentActivity() {
                     BlockMode.HARD_BLOCK -> {
                         HardBlockContent(
                             packageName = packageName,
-                            onGoBack = { navigateHome() }
+                            onGoBack = { navigateHome() },
+                            ruleName = ruleName
                         )
                     }
 
@@ -55,7 +58,8 @@ class BlockOverlayActivity : ComponentActivity() {
                         DelayContent(
                             delaySeconds = delaySeconds,
                             onComplete = { onTimerComplete() },
-                            onCancel = { navigateHome() }
+                            onCancel = { navigateHome() },
+                            ruleName = ruleName
                         )
                     }
 
@@ -63,7 +67,8 @@ class BlockOverlayActivity : ComponentActivity() {
                         BreathingContent(
                             delaySeconds = delaySeconds,
                             onComplete = { onTimerComplete() },
-                            onCancel = { navigateHome() }
+                            onCancel = { navigateHome() },
+                            ruleName = ruleName
                         )
                     }
                 }

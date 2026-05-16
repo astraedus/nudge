@@ -37,7 +37,8 @@ import kotlinx.coroutines.delay
 fun BreathingContent(
     delaySeconds: Int,
     onComplete: () -> Unit,
-    onCancel: () -> Unit
+    onCancel: () -> Unit,
+    ruleName: String? = null
 ) {
     val circleScale = remember { Animatable(0.6f) }
     var isInhaling by remember { mutableStateOf(true) }
@@ -155,6 +156,16 @@ fun BreathingContent(
 
             OutlinedButton(onClick = onCancel) {
                 Text("I changed my mind")
+            }
+
+            if (ruleName != null) {
+                Spacer(modifier = Modifier.height(24.dp))
+                Text(
+                    text = "Rule: $ruleName",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.outline.copy(alpha = 0.7f),
+                    textAlign = TextAlign.Center
+                )
             }
         }
     }

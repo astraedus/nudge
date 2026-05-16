@@ -24,7 +24,8 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun HardBlockContent(
     packageName: String,
-    onGoBack: () -> Unit
+    onGoBack: () -> Unit,
+    ruleName: String? = null
 ) {
     val message = remember { NudgeMessages.hardBlockMessages.random() }
 
@@ -76,6 +77,16 @@ fun HardBlockContent(
 
             Button(onClick = onGoBack) {
                 Text("Go Back")
+            }
+
+            if (ruleName != null) {
+                Spacer(modifier = Modifier.height(24.dp))
+                Text(
+                    text = "Rule: $ruleName",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.outline.copy(alpha = 0.7f),
+                    textAlign = TextAlign.Center
+                )
             }
         }
     }
