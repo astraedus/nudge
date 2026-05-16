@@ -1,0 +1,5 @@
+Rule editor clarity:
+* Renamed feature options so Reels, Explore, Shorts, and TikTok Feed clearly scope the rule instead of implying hard blocking
+* Added tooltips explaining rule hierarchy: Hard Block > Delay > Breathing
+* Clarified that whole-app rules apply on app open, while feature rules apply when Nudge detects that feature
+* Show Counter and Auto-close details in Active Rules summaries
