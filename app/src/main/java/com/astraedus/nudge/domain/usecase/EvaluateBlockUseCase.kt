@@ -24,8 +24,15 @@ class EvaluateBlockUseCase @Inject constructor(
      *
      * @param detectedFeature If the accessibility service detected an in-app feature
      *   (e.g. "REELS", "SHORTS"), pass it here so the engine can match feature-level rules.
+     * @param includeWholeAppRulesForFeature Whether feature evaluation should also consider
+     *   whole-app rules. This is disabled after a whole-app delay has completed so in-app rules
+     *   can still fire without looping the whole-app gate.
      */
-    suspend fun invoke(packageName: String, detectedFeature: String? = null): BlockDecision {
+    suspend fun invoke(
+        packageName: String,
+        detectedFeature: String? = null,
+        includeWholeAppRulesForFeature: Boolean = true
+    ): BlockDecision {
         val allRules = blockRuleRepository.getEnabledRules().first()
         val allGroups = blockRuleRepository.getAllGroups().first()
 
@@ -59,6 +66,12 @@ class EvaluateBlockUseCase @Inject constructor(
         val activeRules = ruleEvaluator.resolveRulesForPackage(packageName, ruleDataList, memberships)
         val dailyUsageMs = usageRepository.getDailyUsage(packageName).first()
 
-        return blockEngine.evaluate(packageName, activeRules, dailyUsageMs, detectedFeature)
+        return blockEngine.evaluate(
+            packageName = packageName,
+            activeRules = activeRules,
+            dailyUsageMs = dailyUsageMs,
+            detectedFeature = detectedFeature,
+            includeWholeAppRulesForFeature = includeWholeAppRulesForFeature
+        )
     }
 }

@@ -29,14 +29,45 @@ class PassthroughTest {
 
         assertTrue(cleared)
         assertNull(NudgeAccessibilityService.lastPassthroughPackage)
+        assertNull(NudgeAccessibilityService.lastPassthroughFeature)
         assertFalse(NudgeAccessibilityService.isPassthroughGranted("com.example.alpha"))
     }
 
     @Test
-    fun `passthrough prevents re-evaluation`() {
+    fun `package passthrough prevents foreground re-evaluation`() {
         NudgeAccessibilityService.grantPassthrough("com.example.alpha")
 
-        assertTrue(NudgeAccessibilityService.shouldSkipEvaluationForPassthrough("com.example.alpha"))
-        assertFalse(NudgeAccessibilityService.shouldSkipEvaluationForPassthrough("com.example.beta"))
+        assertTrue(NudgeAccessibilityService.shouldSkipForegroundEvaluationForPassthrough("com.example.alpha"))
+        assertFalse(NudgeAccessibilityService.shouldSkipForegroundEvaluationForPassthrough("com.example.beta"))
+    }
+
+    @Test
+    fun `whole-app passthrough does not skip feature evaluation`() {
+        NudgeAccessibilityService.grantPassthrough("com.example.alpha")
+
+        assertFalse(
+            NudgeAccessibilityService.shouldSkipFeatureEvaluationForPassthrough(
+                "com.example.alpha",
+                "REELS"
+            )
+        )
+    }
+
+    @Test
+    fun `feature passthrough skips the matching feature only`() {
+        NudgeAccessibilityService.grantPassthrough("com.example.alpha", "REELS")
+
+        assertTrue(
+            NudgeAccessibilityService.shouldSkipFeatureEvaluationForPassthrough(
+                "com.example.alpha",
+                "REELS"
+            )
+        )
+        assertFalse(
+            NudgeAccessibilityService.shouldSkipFeatureEvaluationForPassthrough(
+                "com.example.alpha",
+                "EXPLORE"
+            )
+        )
     }
 }
