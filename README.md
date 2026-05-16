@@ -9,7 +9,7 @@ App blockers ask for Accessibility Service permissions, the most powerful permis
 
 Most app blockers are closed-source. Some have been [acquired by data intelligence companies](https://sensortower.com/blog/actiondash-stayfree-acquisition-announcement). Their privacy policies are vague at best, alarming at worst. You're trusting a black box with root-level visibility into your digital life. I don't like that.
 
-And thjen, billions of dollars have been spent engineering the perfect attention trap. Every scroll, every notification, every autoplay video is designed to fragment your focus and keep you consuming. Instagram Reels, YouTube Shorts, TikTok  are all retention machines built on decades of behavioral psychology research.
+And then, billions of dollars have been spent engineering the perfect attention trap. Every scroll, every notification, every autoplay video is designed to fragment your focus and keep you consuming. Instagram Reels, YouTube Shorts, TikTok  are all retention machines built on decades of behavioral psychology research.
 
 Nudge is a small act of fighting back. It's open source, requests zero internet permissions, and keeps all your data on your device. You can read every line of code. No analytics. No telemetry. No data leaving your phone. Ever.
 
