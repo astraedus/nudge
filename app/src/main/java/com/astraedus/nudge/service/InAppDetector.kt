@@ -15,7 +15,7 @@ import javax.inject.Singleton
 @Singleton
 class InAppDetector @Inject constructor(
     private val logger: NudgeLogger
-) {
+) : InAppDetectorApi {
 
     enum class Feature(val displayName: String, val key: String) {
         REELS("Instagram Reels", "REELS"),
@@ -40,7 +40,7 @@ class InAppDetector @Inject constructor(
      * @return The detected [Feature], or null if no specific feature is detected
      *   (user is in a non-feature part of the app, or detection failed).
      */
-    fun detectFeature(packageName: String, rootNode: AccessibilityNodeInfo?): Feature? {
+    override fun detectFeature(packageName: String, rootNode: AccessibilityNodeInfo?): Feature? {
         if (rootNode == null) {
             logger.d("feature detection skipped package=$packageName reason=null_root")
             return null

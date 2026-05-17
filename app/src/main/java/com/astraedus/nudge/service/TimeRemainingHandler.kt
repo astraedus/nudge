@@ -2,10 +2,8 @@ package com.astraedus.nudge.service
 
 import android.content.Context
 import android.content.Intent
-import com.astraedus.nudge.data.preferences.NudgePreferences
-import com.astraedus.nudge.data.repository.UsageRepository
 import com.astraedus.nudge.ui.overlay.BlockOverlayActivity
-import com.astraedus.nudge.util.NudgeLogger
+import com.astraedus.nudge.domain.logging.NudgeLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -13,17 +11,51 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class TimeRemainingHandler(
-    private val timeRemainingOverlayManager: TimeRemainingOverlayManager,
-    private val usageRepository: UsageRepository,
-    private val preferences: NudgePreferences,
+    private val timeRemainingOverlayManager: TimeRemainingOverlayManagerApi,
+    private val usageRepository: UsageProvider,
+    private val preferences: GlobalEnabledProvider,
     private val counterCache: CounterCacheRefresher,
     private val passthroughManager: PassthroughManager,
-    private val logger: NudgeLogger,
-    private val context: Context,
-    private val serviceScope: CoroutineScope
-) {
+    private val logger: NudgeLog,
+    private val serviceScope: CoroutineScope,
+    private val onTimeLimitExceeded: (String, Int) -> Unit = { _, _ -> }
+) : TimeRemainingHandlerApi {
     private var lastUpdateMs: Long = 0L
     private val updateIntervalMs = 30_000L
+
+    /**
+     * Secondary constructor preserving the original call-site API (Context-based).
+     * Creates the onTimeLimitExceeded lambda from a Context + BlockOverlayActivity intent.
+     */
+    constructor(
+        timeRemainingOverlayManager: TimeRemainingOverlayManagerApi,
+        usageRepository: UsageProvider,
+        preferences: GlobalEnabledProvider,
+        counterCache: CounterCacheRefresher,
+        passthroughManager: PassthroughManager,
+        logger: NudgeLog,
+        context: Context,
+        serviceScope: CoroutineScope
+    ) : this(
+        timeRemainingOverlayManager = timeRemainingOverlayManager,
+        usageRepository = usageRepository,
+        preferences = preferences,
+        counterCache = counterCache,
+        passthroughManager = passthroughManager,
+        logger = logger,
+        serviceScope = serviceScope,
+        onTimeLimitExceeded = { packageName, dailyLimitMinutes ->
+            val intent = Intent(context, BlockOverlayActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                putExtra(BlockOverlayActivity.EXTRA_BLOCK_MODE, "HARD_BLOCK")
+                putExtra(BlockOverlayActivity.EXTRA_PACKAGE_NAME, packageName)
+                putExtra(BlockOverlayActivity.EXTRA_RULE_NAME, "Daily limit reached")
+                putExtra(BlockOverlayActivity.EXTRA_DAILY_TIME_REMAINING_MS, 0L)
+                putExtra(BlockOverlayActivity.EXTRA_DAILY_LIMIT_MINUTES, dailyLimitMinutes)
+            }
+            context.startActivity(intent)
+        }
+    )
 
     fun showIfNeeded(packageName: String) {
         val entry = counterCache.getEntry(packageName) ?: return
@@ -43,7 +75,7 @@ class TimeRemainingHandler(
         }
     }
 
-    fun maybeUpdate(packageName: String) {
+    override fun maybeUpdate(packageName: String) {
         val entry = counterCache.getEntry(packageName) ?: return
         if (!entry.showTimeRemaining || entry.dailyLimitMinutes == null) {
             timeRemainingOverlayManager.updateTimeRemaining(null, null)
@@ -67,15 +99,7 @@ class TimeRemainingHandler(
                     passthroughManager.clear()
                     withContext(Dispatchers.Main) {
                         timeRemainingOverlayManager.hide()
-                        val intent = Intent(context, BlockOverlayActivity::class.java).apply {
-                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                            putExtra(BlockOverlayActivity.EXTRA_BLOCK_MODE, "HARD_BLOCK")
-                            putExtra(BlockOverlayActivity.EXTRA_PACKAGE_NAME, packageName)
-                            putExtra(BlockOverlayActivity.EXTRA_RULE_NAME, "Daily limit reached")
-                            putExtra(BlockOverlayActivity.EXTRA_DAILY_TIME_REMAINING_MS, 0L)
-                            putExtra(BlockOverlayActivity.EXTRA_DAILY_LIMIT_MINUTES, entry.dailyLimitMinutes!!)
-                        }
-                        context.startActivity(intent)
+                        onTimeLimitExceeded(packageName, entry.dailyLimitMinutes)
                     }
                 }
             } catch (e: Exception) {
@@ -84,10 +108,10 @@ class TimeRemainingHandler(
         }
     }
 
-    fun resetDebounce() {
+    override fun resetDebounce() {
         lastUpdateMs = 0L
     }
 
-    fun hide() = timeRemainingOverlayManager.hide()
+    override fun hide() = timeRemainingOverlayManager.hide()
     fun isVisible() = timeRemainingOverlayManager.isVisible()
 }

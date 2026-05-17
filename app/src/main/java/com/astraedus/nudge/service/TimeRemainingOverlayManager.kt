@@ -18,7 +18,7 @@ import javax.inject.Singleton
 class TimeRemainingOverlayManager @Inject constructor(
     @ApplicationContext private val appContext: Context,
     private val logger: NudgeLogger
-) {
+) : TimeRemainingOverlayManagerApi {
     private var overlayView: View? = null
     private var windowManager: WindowManager? = null
     private var timeText: TextView? = null
@@ -38,7 +38,7 @@ class TimeRemainingOverlayManager @Inject constructor(
         serviceContext = null
     }
 
-    fun show() {
+    override fun show() {
         if (isShowing) return
         val ctx = serviceContext ?: return
 
@@ -69,7 +69,7 @@ class TimeRemainingOverlayManager @Inject constructor(
         }
     }
 
-    fun updateTimeRemaining(remainingMs: Long?, limitMinutes: Int?) {
+    override fun updateTimeRemaining(remainingMs: Long?, limitMinutes: Int?) {
         if (remainingMs == null || limitMinutes == null || limitMinutes <= 0) {
             hide()
             return
@@ -98,7 +98,7 @@ class TimeRemainingOverlayManager @Inject constructor(
         bg?.setColor(Color.argb(bgAlpha, 0, 0, 0))
     }
 
-    fun hide() {
+    override fun hide() {
         if (!isShowing) return
         try {
             windowManager?.removeView(overlayView)
@@ -108,7 +108,7 @@ class TimeRemainingOverlayManager @Inject constructor(
         resetViewState()
     }
 
-    fun isVisible(): Boolean = isShowing
+    override fun isVisible(): Boolean = isShowing
 
     private fun resetViewState() {
         overlayView = null

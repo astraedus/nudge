@@ -2,15 +2,15 @@ package com.astraedus.nudge.service
 
 import android.content.Intent
 import android.view.accessibility.AccessibilityNodeInfo
-import com.astraedus.nudge.util.NudgeLogger
+import com.astraedus.nudge.domain.logging.NudgeLog
 
 class InteractionHandler(
     private val interactionTracker: InteractionTracker,
-    private val counterOverlayManager: CounterOverlayManager,
-    private val inAppDetector: InAppDetector,
-    private val timeRemainingHandler: TimeRemainingHandler,
+    private val counterOverlayManager: CounterOverlayManagerApi,
+    private val inAppDetector: InAppDetectorApi,
+    private val timeRemainingHandler: TimeRemainingHandlerApi,
     private val counterCache: CounterCacheRefresher,
-    private val logger: NudgeLogger,
+    private val logger: NudgeLog,
     private val startActivity: (Intent) -> Unit
 ) {
     private var lastClickTime: Long = 0L

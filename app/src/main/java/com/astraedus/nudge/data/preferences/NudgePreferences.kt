@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.preferencesDataStore
+import com.astraedus.nudge.service.GlobalEnabledProvider
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -17,7 +18,7 @@ private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(na
 @Singleton
 class NudgePreferences @Inject constructor(
     @ApplicationContext private val context: Context
-) {
+) : GlobalEnabledProvider {
 
     private object Keys {
         val GLOBAL_ENABLED = booleanPreferencesKey("global_enabled")
@@ -25,7 +26,7 @@ class NudgePreferences @Inject constructor(
         val DEBUG_LOGGING_ENABLED = booleanPreferencesKey("debug_logging_enabled")
     }
 
-    val isGlobalEnabled: Flow<Boolean> = context.dataStore.data
+    override val isGlobalEnabled: Flow<Boolean> = context.dataStore.data
         .map { prefs -> prefs[Keys.GLOBAL_ENABLED] ?: true }
 
     suspend fun setGlobalEnabled(enabled: Boolean) {

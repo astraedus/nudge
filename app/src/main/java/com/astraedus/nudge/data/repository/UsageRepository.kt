@@ -5,6 +5,7 @@ import android.content.Context
 import com.astraedus.nudge.data.db.dao.UsageEventDao
 import com.astraedus.nudge.data.db.entity.UsageEvent
 import com.astraedus.nudge.domain.engine.TimeTracker
+import com.astraedus.nudge.service.UsageProvider
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -16,7 +17,7 @@ class UsageRepository @Inject constructor(
     @ApplicationContext private val context: Context,
     private val usageEventDao: UsageEventDao,
     private val timeTracker: TimeTracker
-) {
+) : UsageProvider {
 
     suspend fun logEvent(event: UsageEvent) = usageEventDao.insert(event)
 
@@ -32,7 +33,7 @@ class UsageRepository @Inject constructor(
      * More reliable than our custom durationMs field since it uses the OS-level tracking.
      * Returns time in milliseconds.
      */
-    fun getDailyForegroundTimeMs(packageName: String): Long {
+    override fun getDailyForegroundTimeMs(packageName: String): Long {
         return try {
             val usm = context.getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
                 ?: return 0L

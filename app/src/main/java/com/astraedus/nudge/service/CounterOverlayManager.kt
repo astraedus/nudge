@@ -18,7 +18,7 @@ import javax.inject.Singleton
 class CounterOverlayManager @Inject constructor(
     @ApplicationContext private val appContext: Context,
     private val logger: NudgeLogger
-) {
+) : CounterOverlayManagerApi {
     private var overlayView: View? = null
     private var windowManager: WindowManager? = null
     private var counterText: TextView? = null
@@ -54,7 +54,7 @@ class CounterOverlayManager @Inject constructor(
         serviceContext = null
     }
 
-    fun show(label: String = "taps") {
+    override fun show(label: String) {
         if (isShowing) return
 
         val ctx = serviceContext ?: run {
@@ -87,7 +87,7 @@ class CounterOverlayManager @Inject constructor(
         }
     }
 
-    fun updateCount(sessionCount: Int, dailyTotal: Int) {
+    override fun updateCount(sessionCount: Int, dailyTotal: Int) {
         if (!isShowing) return
         counterText?.text = sessionCount.toString()
         dailyText?.text = "today: $dailyTotal"
@@ -112,7 +112,7 @@ class CounterOverlayManager @Inject constructor(
         labelText?.text = label
     }
 
-    fun hide() {
+    override fun hide() {
         if (!isShowing) return
         try {
             windowManager?.removeView(overlayView)
@@ -123,7 +123,7 @@ class CounterOverlayManager @Inject constructor(
         logger.i("counter overlay hidden")
     }
 
-    fun isVisible(): Boolean = isShowing
+    override fun isVisible(): Boolean = isShowing
 
     private fun resetViewState() {
         overlayView = null
