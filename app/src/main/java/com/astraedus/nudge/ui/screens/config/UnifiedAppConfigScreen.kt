@@ -27,6 +27,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
@@ -258,6 +259,54 @@ fun UnifiedAppConfigScreen(
                         }
                     }
                 )
+            }
+
+            // Web domain blocking
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            "Block on web too",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Medium
+                        )
+                        InfoButton(
+                            "Also blocks this app's website in Chrome.\n\n" +
+                            "When you visit the website in Chrome, the same overlay (delay, " +
+                            "breathing, or hard block) will appear.\n\n" +
+                            "Currently supports Chrome only."
+                        )
+                    }
+                    Switch(
+                        checked = state.webDomainEnabled,
+                        onCheckedChange = viewModel::setWebDomainEnabled
+                    )
+                }
+
+                if (state.webDomainEnabled) {
+                    OutlinedTextField(
+                        value = state.webDomains,
+                        onValueChange = viewModel::setWebDomains,
+                        label = { Text("Domains (comma-separated)") },
+                        placeholder = { Text("instagram.com, www.instagram.com") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = false,
+                        maxLines = 3,
+                        textStyle = MaterialTheme.typography.bodySmall
+                    )
+                    Text(
+                        "Subdomains like www. and m. are matched automatically",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
 
             HorizontalDivider()

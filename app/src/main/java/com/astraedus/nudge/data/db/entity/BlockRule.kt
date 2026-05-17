@@ -28,5 +28,7 @@ data class BlockRule(
     // Show remaining daily time as overlay
     val showTimeRemaining: Boolean = false,
     // Cooldown after auto-kick in seconds (0 = no cooldown)
-    val autoKickCooldownSeconds: Int = 60
+    val autoKickCooldownSeconds: Int = 60,
+    // Web domain blocking (comma-separated: "instagram.com,www.instagram.com")
+    val webDomains: String? = null
 )

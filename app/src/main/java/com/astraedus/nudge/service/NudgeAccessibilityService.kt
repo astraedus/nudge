@@ -7,6 +7,7 @@ import com.astraedus.nudge.data.db.entity.UsageEvent
 import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.data.repository.BlockRuleRepository
 import com.astraedus.nudge.data.repository.UsageRepository
+import com.astraedus.nudge.domain.WebDomainMatcher
 import com.astraedus.nudge.domain.model.BlockDecision
 import com.astraedus.nudge.domain.usecase.EvaluateBlockUseCase
 import com.astraedus.nudge.ui.overlay.BlockOverlayActivity
@@ -39,6 +40,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         fun blockRuleRepository(): BlockRuleRepository
         fun nudgeLogger(): NudgeLogger
         fun passthroughManager(): PassthroughManager
+        fun webDomainDetector(): WebDomainDetector
     }
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -55,6 +57,10 @@ class NudgeAccessibilityService : AccessibilityService() {
 
     private val lastContentChangedTime = mutableMapOf<String, Long>()
     private val contentChangedDebounceMs = 2000L
+
+    // Web domain blocking state
+    @Volatile
+    private var lastBlockedDomain: String? = null
 
     @Volatile
     private var grayscaleActiveForPackage: String? = null
@@ -200,6 +206,13 @@ class NudgeAccessibilityService : AccessibilityService() {
             grayscaleActiveForPackage = null
         }
 
+        // If leaving a browser, clear web domain passthrough state
+        if (entryPoint.webDomainDetector().isBrowser(lastPackage ?: "") &&
+            !entryPoint.webDomainDetector().isBrowser(packageName)
+        ) {
+            lastBlockedDomain = null
+        }
+
         if (!counterCache.isEnabled(packageName)) {
             clearOverlays(packageName, "counter_disabled", markForeground = false)
         } else if (packageName != lastPackage) {
@@ -254,9 +267,52 @@ class NudgeAccessibilityService : AccessibilityService() {
             val globalEnabled = entryPoint.nudgePreferences().isGlobalEnabled.first()
             if (!globalEnabled) return@launch
 
-            val decision = entryPoint.evaluateBlockUseCase().invoke(packageName)
-            entryPoint.nudgeLogger().d("whole-app decision package=$packageName decision=$decision")
-            handleDecision(decision, packageName)
+            // For browsers, evaluate web domain blocking instead of (or alongside) app blocking
+            if (entryPoint.webDomainDetector().isBrowser(packageName)) {
+                evaluateWebDomain(packageName)
+            } else {
+                val decision = entryPoint.evaluateBlockUseCase().invoke(packageName)
+                entryPoint.nudgeLogger().d("whole-app decision package=$packageName decision=$decision")
+                handleDecision(decision, packageName)
+            }
+        }
+    }
+
+    private suspend fun evaluateWebDomain(browserPackage: String) {
+        val rootNode = withContext(Dispatchers.Main) {
+            try { rootInActiveWindow } catch (_: Exception) { null }
+        }
+        val urlBarText = entryPoint.webDomainDetector().detectUrl(rootNode)
+
+        if (urlBarText.isNullOrBlank()) {
+            entryPoint.nudgeLogger().d("web domain: no URL detected in browser")
+            return
+        }
+
+        val extractedDomain = WebDomainMatcher.extractDomain(urlBarText)
+
+        // If domain hasn't changed and we already blocked it, skip (passthrough)
+        if (extractedDomain != null && extractedDomain == lastBlockedDomain) {
+            entryPoint.nudgeLogger().d("web domain: passthrough for already-blocked domain=$extractedDomain")
+            return
+        }
+
+        // Domain changed -- clear passthrough
+        if (extractedDomain != lastBlockedDomain) {
+            lastBlockedDomain = null
+        }
+
+        val result = entryPoint.evaluateBlockUseCase().evaluateWebDomain(urlBarText)
+        entryPoint.nudgeLogger().d("web domain: url=$urlBarText decision=${result.decision}")
+
+        when (result.decision) {
+            is BlockDecision.Block -> {
+                lastBlockedDomain = extractedDomain
+                handleDecision(result.decision, result.trackingPackage ?: browserPackage)
+            }
+            is BlockDecision.Allow -> {
+                // Not blocked -- nothing to do
+            }
         }
     }
 
@@ -280,6 +336,21 @@ class NudgeAccessibilityService : AccessibilityService() {
     }
 
     private fun handleWindowContentChanged(packageName: String, event: AccessibilityEvent) {
+        // For browsers, content changes may indicate URL navigation -- re-evaluate web domain
+        if (entryPoint.webDomainDetector().isBrowser(packageName)) {
+            val now = System.currentTimeMillis()
+            val lastTime = lastContentChangedTime[packageName] ?: 0L
+            if ((now - lastTime) < contentChangedDebounceMs) return
+            lastContentChangedTime[packageName] = now
+
+            serviceScope.launch {
+                val globalEnabled = entryPoint.nudgePreferences().isGlobalEnabled.first()
+                if (!globalEnabled) return@launch
+                evaluateWebDomain(packageName)
+            }
+            return
+        }
+
         if (packageName !in InAppDetector.SUPPORTED_PACKAGES) {
             // For non-SUPPORTED packages (e.g., React Native apps like Discord that don't
             // fire TYPE_VIEW_CLICKED), use content changes as a proxy for user interaction.

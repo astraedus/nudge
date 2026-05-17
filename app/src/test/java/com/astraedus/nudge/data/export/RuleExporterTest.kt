@@ -185,4 +185,79 @@ class RuleExporterTest {
         assertTrue(json.contains("\n"))
         assertTrue(json.contains("  "))
     }
+
+    @Test
+    fun `roundtrip preserves webDomains field`() {
+        val rules = listOf(
+            BlockRule(
+                id = 1,
+                packageName = "com.instagram.android",
+                mode = "DELAY",
+                delaySeconds = 15,
+                enabled = true,
+                webDomains = "instagram.com,www.instagram.com"
+            )
+        )
+
+        val json = exporter.exportRules(rules, emptyList(), emptyMap())
+        val result = exporter.importRules(json)
+
+        assertNull(result.error)
+        assertEquals(1, result.rules.size)
+        assertEquals("instagram.com,www.instagram.com", result.rules[0].webDomains)
+    }
+
+    @Test
+    fun `export with null webDomains produces null in JSON`() {
+        val rules = listOf(
+            BlockRule(
+                id = 1,
+                packageName = "com.example.app",
+                mode = "HARD_BLOCK",
+                enabled = true,
+                webDomains = null
+            )
+        )
+
+        val json = exporter.exportRules(rules, emptyList(), emptyMap())
+        val parsed = JSONObject(json)
+        val rule = parsed.getJSONArray("rules").getJSONObject(0)
+
+        assertTrue(rule.isNull("webDomains"))
+    }
+
+    @Test
+    fun `import handles missing webDomains field gracefully`() {
+        // Simulate an export from an older version without webDomains
+        val json = """
+        {
+          "version": 1,
+          "exportedAt": 1700000000000,
+          "rules": [{
+            "packageName": "com.example.app",
+            "groupName": null,
+            "mode": "DELAY",
+            "delaySeconds": 15,
+            "dailyLimitMinutes": null,
+            "enabled": true,
+            "scheduleDays": null,
+            "scheduleStartMinute": null,
+            "scheduleEndMinute": null,
+            "inAppFeatures": null,
+            "grayscale": false,
+            "showCounter": false,
+            "autoKickAfter": null,
+            "showTimeRemaining": false,
+            "autoKickCooldownSeconds": 60
+          }],
+          "groups": []
+        }
+        """.trimIndent()
+
+        val result = exporter.importRules(json)
+
+        assertNull(result.error)
+        assertEquals(1, result.rules.size)
+        assertNull(result.rules[0].webDomains)
+    }
 }

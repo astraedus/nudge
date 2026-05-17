@@ -12,5 +12,6 @@ data class BlockRuleData(
     val scheduleStartMinute: Int? = null,
     val scheduleEndMinute: Int? = null,
     val inAppFeatures: List<String>? = null,
-    val grayscale: Boolean = false
+    val grayscale: Boolean = false,
+    val webDomains: String? = null              // comma-separated: "instagram.com,www.instagram.com"
 )

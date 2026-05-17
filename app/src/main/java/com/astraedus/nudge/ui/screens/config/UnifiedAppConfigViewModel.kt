@@ -95,6 +95,13 @@ class UnifiedAppConfigViewModel @Inject constructor(
             val scheduleStartMinute = scheduledAppRule?.scheduleStartMinute ?: 360
             val scheduleEndMinute = scheduledAppRule?.scheduleEndMinute ?: 540
 
+            // Web domain state: check if default app rule has webDomains
+            val existingWebDomains = defaultAppRule?.webDomains
+            val webDomainEnabled = existingWebDomains != null
+            val webDomainsValue = existingWebDomains
+                ?: UnifiedAppConfigState.DEFAULT_WEB_DOMAINS[packageName]
+                ?: ""
+
             _uiState.value = UnifiedAppConfigState(
                 packageName = packageName,
                 appName = appName,
@@ -105,6 +112,9 @@ class UnifiedAppConfigViewModel @Inject constructor(
                 showCounter = defaultAppRule?.showCounter ?: true,
                 showTimeRemaining = defaultAppRule?.showTimeRemaining ?: false,
                 grayscale = defaultAppRule?.grayscale ?: false,
+                // Web domain blocking
+                webDomainEnabled = webDomainEnabled,
+                webDomains = webDomainsValue,
                 // Default behavior
                 defaultMode = parseBlockMode(defaultAppRule?.mode),
                 defaultDelaySeconds = defaultAppRule?.delaySeconds ?: 15,
@@ -157,6 +167,10 @@ class UnifiedAppConfigViewModel @Inject constructor(
             blockRuleRepository.deleteDirectRulesForPackage(packageName)
 
             // 2. Create app-level default rule
+            val webDomains = if (state.webDomainEnabled && state.webDomains.isNotBlank()) {
+                state.webDomains.trim()
+            } else null
+
             blockRuleRepository.addRule(
                 BlockRule(
                     packageName = packageName,
@@ -168,7 +182,8 @@ class UnifiedAppConfigViewModel @Inject constructor(
                     showTimeRemaining = state.showTimeRemaining && state.dailyLimitEnabled,
                     grayscale = state.grayscale,
                     autoKickAfter = if (state.defaultAutoKickEnabled) state.defaultAutoKickAfter else null,
-                    autoKickCooldownSeconds = state.defaultAutoKickCooldownSeconds
+                    autoKickCooldownSeconds = state.defaultAutoKickCooldownSeconds,
+                    webDomains = webDomains
                 )
             )
 
@@ -286,6 +301,21 @@ class UnifiedAppConfigViewModel @Inject constructor(
 
     fun setGrayscale(enabled: Boolean) {
         _uiState.value = _uiState.value.copy(grayscale = enabled)
+    }
+
+    fun setWebDomainEnabled(enabled: Boolean) {
+        val state = _uiState.value
+        if (enabled && state.webDomains.isBlank()) {
+            // Auto-populate with known defaults for this package
+            val defaults = UnifiedAppConfigState.DEFAULT_WEB_DOMAINS[packageName] ?: ""
+            _uiState.value = state.copy(webDomainEnabled = true, webDomains = defaults)
+        } else {
+            _uiState.value = state.copy(webDomainEnabled = enabled)
+        }
+    }
+
+    fun setWebDomains(domains: String) {
+        _uiState.value = _uiState.value.copy(webDomains = domains)
     }
 
     // ═══ Default behavior ═══

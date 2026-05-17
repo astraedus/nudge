@@ -32,6 +32,10 @@ data class UnifiedAppConfigState(
     val showTimeRemaining: Boolean = false,
     val grayscale: Boolean = false,
 
+    // Web domain blocking
+    val webDomainEnabled: Boolean = false,
+    val webDomains: String = "",
+
     // Default behavior
     val defaultMode: BlockMode = BlockMode.DELAY,
     val defaultDelaySeconds: Int = 15,
@@ -77,6 +81,17 @@ data class UnifiedAppConfigState(
             "com.ss.android.ugc.trill" to listOf(
                 FeatureInfo("TIKTOK_FEED", "Feed")
             )
+        )
+
+        /**
+         * Default web domains for common social apps.
+         * Used to auto-populate when "Block on web too" is toggled on.
+         */
+        val DEFAULT_WEB_DOMAINS: Map<String, String> = mapOf(
+            "com.instagram.android" to "instagram.com,www.instagram.com",
+            "com.google.android.youtube" to "youtube.com,www.youtube.com,m.youtube.com",
+            "com.zhiliaoapp.musically" to "tiktok.com,www.tiktok.com",
+            "com.ss.android.ugc.trill" to "tiktok.com,www.tiktok.com"
         )
     }
 }
