@@ -38,6 +38,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         fun timeRemainingOverlayManager(): TimeRemainingOverlayManager
         fun blockRuleRepository(): BlockRuleRepository
         fun nudgeLogger(): NudgeLogger
+        fun passthroughManager(): PassthroughManager
     }
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -58,20 +59,15 @@ class NudgeAccessibilityService : AccessibilityService() {
     @Volatile
     private var grayscaleActiveForPackage: String? = null
 
-    private var lastClickTime: Long = 0L
-    private val clickDebounceMs = 300L
-    private var lastScrollTime: Long = 0L
-    private val scrollDebounceMs = 500L
-
     private val counterCache = CounterCacheRefresher()
 
-    private var lastTimeRemainingUpdateMs: Long = 0L
-    private val timeRemainingUpdateIntervalMs = 30_000L
+    private lateinit var interactionHandler: InteractionHandler
+    private lateinit var timeRemainingHandler: TimeRemainingHandler
 
     companion object {
         private const val DEBOUNCE_MS = 1000L
 
-        private val SYSTEM_PACKAGES = setOf(
+        val SYSTEM_PACKAGES = setOf(
             "com.android.systemui",
             "com.android.launcher",
             "com.android.launcher3",
@@ -85,7 +81,7 @@ class NudgeAccessibilityService : AccessibilityService() {
             "com.samsung.android.launcher",
         )
 
-        private val WINDOW_CHANGE_EVENT_TYPES = setOf(
+        val WINDOW_CHANGE_EVENT_TYPES = setOf(
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
             AccessibilityEvent.TYPE_WINDOWS_CHANGED
         )
@@ -94,46 +90,8 @@ class NudgeAccessibilityService : AccessibilityService() {
         var isOverlayActive = false
 
         @Volatile
-        var lastPassthroughPackage: String? = null
-        @Volatile
-        var lastPassthroughFeature: String? = null
-        @Volatile
-        var lastPassthroughTime: Long = 0L
-
-        fun grantPassthrough(packageName: String, featureKey: String? = null) {
-            lastPassthroughPackage = packageName
-            lastPassthroughFeature = featureKey
-            lastPassthroughTime = System.currentTimeMillis()
-        }
-
-        internal fun resetPassthroughForTests() {
-            lastPassthroughPackage = null
-            lastPassthroughFeature = null
-            lastPassthroughTime = 0L
-        }
-
-        internal fun isPassthroughGranted(packageName: String): Boolean {
-            return packageName == lastPassthroughPackage
-        }
-
-        internal fun shouldSkipForegroundEvaluationForPassthrough(packageName: String): Boolean {
-            return isPassthroughGranted(packageName)
-        }
-
-        internal fun shouldSkipFeatureEvaluationForPassthrough(
-            packageName: String,
-            featureKey: String
-        ): Boolean {
-            return isPassthroughGranted(packageName) && lastPassthroughFeature == featureKey
-        }
-
-        internal fun clearPassthroughIfAppChanged(packageName: String): Boolean {
-            if (lastPassthroughPackage == null || packageName == lastPassthroughPackage) return false
-            lastPassthroughPackage = null
-            lastPassthroughFeature = null
-            lastPassthroughTime = 0L
-            return true
-        }
+        var passthroughManagerInstance: PassthroughManager? = null
+            private set
 
         internal fun shouldClearForOwnPackageEvent(
             eventType: Int,
@@ -149,9 +107,33 @@ class NudgeAccessibilityService : AccessibilityService() {
         super.onServiceConnected()
         entryPoint.counterOverlayManager().setServiceContext(this)
         entryPoint.timeRemainingOverlayManager().setServiceContext(this)
+
+        val passthrough = entryPoint.passthroughManager()
+        passthroughManagerInstance = passthrough
+
+        timeRemainingHandler = TimeRemainingHandler(
+            timeRemainingOverlayManager = entryPoint.timeRemainingOverlayManager(),
+            usageRepository = entryPoint.usageRepository(),
+            preferences = entryPoint.nudgePreferences(),
+            counterCache = counterCache,
+            passthroughManager = passthrough,
+            logger = entryPoint.nudgeLogger(),
+            context = applicationContext,
+            serviceScope = serviceScope
+        )
+
+        interactionHandler = InteractionHandler(
+            interactionTracker = entryPoint.interactionTracker(),
+            counterOverlayManager = entryPoint.counterOverlayManager(),
+            inAppDetector = entryPoint.inAppDetector(),
+            timeRemainingHandler = timeRemainingHandler,
+            counterCache = counterCache,
+            logger = entryPoint.nudgeLogger(),
+            startActivity = { intent -> startActivity(intent) }
+        )
+
         entryPoint.nudgeLogger().i("accessibility service connected")
 
-        // Eagerly populate counter cache so the first scroll event works
         serviceScope.launch {
             counterCache.forceRefresh { loadCounterCacheEntries() }
             entryPoint.nudgeLogger().d("counter cache eagerly populated packages=${counterCache.snapshot().size}")
@@ -163,19 +145,19 @@ class NudgeAccessibilityService : AccessibilityService() {
         val packageName = event.packageName?.toString() ?: return
 
         if (isOverlayActive) {
-            clearCounterOverlay(applicationContext.packageName, "block_overlay_active")
+            clearOverlays(applicationContext.packageName, "block_overlay_active")
             return
         }
 
         if (packageName == applicationContext.packageName) {
             if (isOwnAppWindowEvent(event)) {
-                clearCounterOverlay(packageName, "own_app_window")
+                clearOverlays(packageName, "own_app_window")
             }
             return
         }
 
         if (packageName in SYSTEM_PACKAGES) {
-            clearCounterOverlay(packageName, "system_package")
+            clearOverlays(packageName, "system_package")
             return
         }
 
@@ -190,10 +172,12 @@ class NudgeAccessibilityService : AccessibilityService() {
                 handleWindowContentChanged(packageName, event)
             }
             AccessibilityEvent.TYPE_VIEW_CLICKED -> {
-                handleViewClicked(packageName)
+                interactionHandler.handleViewClicked(packageName)
             }
             AccessibilityEvent.TYPE_VIEW_SCROLLED -> {
-                handleViewScrolled(packageName)
+                interactionHandler.handleViewScrolled(packageName) {
+                    try { rootInActiveWindow } catch (_: Exception) { null }
+                }
             }
         }
     }
@@ -208,6 +192,7 @@ class NudgeAccessibilityService : AccessibilityService() {
 
     private fun evaluateForegroundPackage(packageName: String) {
         val now = System.currentTimeMillis()
+        val passthrough = entryPoint.passthroughManager()
 
         val grayscalePkg = grayscaleActiveForPackage
         if (grayscalePkg != null && grayscalePkg != packageName) {
@@ -216,11 +201,11 @@ class NudgeAccessibilityService : AccessibilityService() {
         }
 
         if (!counterCache.isEnabled(packageName)) {
-            clearCounterOverlay(packageName, "counter_disabled", markForeground = false)
+            clearOverlays(packageName, "counter_disabled", markForeground = false)
         } else if (packageName != lastPackage) {
-            activeReelLabel = null
-            entryPoint.interactionTracker().onAppChanged(packageName)
-            lastTimeRemainingUpdateMs = 0L
+            interactionHandler.activeReelLabel = null
+            interactionHandler.onAppChanged(packageName)
+            timeRemainingHandler.resetDebounce()
         }
 
         val tracker = entryPoint.interactionTracker()
@@ -241,32 +226,15 @@ class NudgeAccessibilityService : AccessibilityService() {
             return
         }
 
-        // Show time remaining overlay for apps with showTimeRemaining.
-        // This runs BEFORE passthrough check because awareness overlays should show
-        // even when the block overlay has been bypassed via passthrough.
-        val cacheEntry = counterCache.getEntry(packageName)
-        if (cacheEntry != null && cacheEntry.showTimeRemaining && cacheEntry.dailyLimitMinutes != null) {
-            serviceScope.launch {
-                val globalEnabled = entryPoint.nudgePreferences().isGlobalEnabled.first()
-                if (!globalEnabled) return@launch
+        // Show time remaining overlay before passthrough check (awareness overlays always show)
+        timeRemainingHandler.showIfNeeded(packageName)
 
-                val trManager = entryPoint.timeRemainingOverlayManager()
-                if (!trManager.isVisible()) {
-                    withContext(Dispatchers.Main) {
-                        trManager.show()
-                    }
-                }
-                lastTimeRemainingUpdateMs = 0L
-                maybeUpdateTimeRemaining(packageName, trManager)
-            }
-        }
-
-        if (shouldSkipForegroundEvaluationForPassthrough(packageName)) {
+        if (passthrough.shouldSkipForegroundEvaluation(packageName)) {
             entryPoint.nudgeLogger().d("skip evaluation package=$packageName reason=passthrough")
             return
         }
 
-        if (clearPassthroughIfAppChanged(packageName)) {
+        if (passthrough.clearIfAppChanged(packageName)) {
             entryPoint.nudgeLogger().d("passthrough cleared on app switch package=$packageName")
         }
 
@@ -288,29 +256,22 @@ class NudgeAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun clearCounterOverlay(
+    private fun clearOverlays(
         packageName: String,
         reason: String,
         markForeground: Boolean = true
     ) {
-        activeReelLabel = null
+        interactionHandler.activeReelLabel = null
         if (markForeground) {
             lastPackage = packageName
         }
-        entryPoint.interactionTracker().onAppChanged(packageName)
+        interactionHandler.onAppChanged(packageName)
 
         try {
-            val manager = entryPoint.counterOverlayManager()
-            if (manager.isVisible()) {
-                manager.hide()
-            }
-
-            val trManager = entryPoint.timeRemainingOverlayManager()
-            if (trManager.isVisible()) {
-                trManager.hide()
-            }
+            interactionHandler.hideCounter()
+            timeRemainingHandler.hide()
         } catch (e: Exception) {
-            entryPoint.nudgeLogger().w("counter overlay clear failed package=$packageName", e)
+            entryPoint.nudgeLogger().w("overlay clear failed package=$packageName", e)
         }
     }
 
@@ -326,9 +287,10 @@ class NudgeAccessibilityService : AccessibilityService() {
 
         val rootNode = try { rootInActiveWindow } catch (_: Exception) { null } ?: return
         val feature = entryPoint.inAppDetector().detectFeature(packageName, rootNode)
+        val passthrough = entryPoint.passthroughManager()
 
         if (feature != null) {
-            if (shouldSkipFeatureEvaluationForPassthrough(packageName, feature.key)) {
+            if (passthrough.shouldSkipFeatureEvaluation(packageName, feature.key)) {
                 return
             }
 
@@ -339,7 +301,7 @@ class NudgeAccessibilityService : AccessibilityService() {
                 val decision = entryPoint.evaluateBlockUseCase().invoke(
                     packageName = packageName,
                     detectedFeature = feature.key,
-                    includeWholeAppRulesForFeature = !shouldSkipForegroundEvaluationForPassthrough(packageName)
+                    includeWholeAppRulesForFeature = !passthrough.shouldSkipForegroundEvaluation(packageName)
                 )
                 handleDecision(decision, packageName, feature.key)
             }
@@ -395,151 +357,6 @@ class NudgeAccessibilityService : AccessibilityService() {
         }
     }
 
-    // --- Interaction counter ---
-
-    private var activeReelLabel: String? = null
-
-    private fun handleViewClicked(packageName: String) {
-        if (!counterCache.isEnabled(packageName)) return
-
-        val now = System.currentTimeMillis()
-        if ((now - lastClickTime) < clickDebounceMs) return
-        lastClickTime = now
-
-        if (packageName in InAppDetector.SUPPORTED_PACKAGES) return
-
-        val count = entryPoint.interactionTracker().recordInteraction(packageName)
-        showOrUpdateCounter(count, "taps")
-    }
-
-    private fun handleViewScrolled(packageName: String) {
-        if (!counterCache.isEnabled(packageName)) return
-
-        val now = System.currentTimeMillis()
-        if ((now - lastScrollTime) < scrollDebounceMs) return
-        lastScrollTime = now
-
-        if (packageName !in InAppDetector.SUPPORTED_PACKAGES) return
-
-        val label = activeReelLabel ?: run {
-            val rootNode = try { rootInActiveWindow } catch (_: Exception) { null }
-            val feature = if (rootNode != null) {
-                entryPoint.inAppDetector().detectFeature(packageName, rootNode)
-            } else null
-
-            when (feature) {
-                InAppDetector.Feature.SHORTS -> "shorts"
-                InAppDetector.Feature.REELS -> "reels"
-                InAppDetector.Feature.TIKTOK_FEED -> "videos"
-                InAppDetector.Feature.EXPLORE, null -> return
-            }.also { activeReelLabel = it }
-        }
-
-        val count = entryPoint.interactionTracker().recordInteraction(packageName)
-        showOrUpdateCounter(count, label)
-    }
-
-    private fun showOrUpdateCounter(
-        count: InteractionTracker.SessionCount,
-        label: String
-    ) {
-        try {
-            val manager = entryPoint.counterOverlayManager()
-            if (!manager.isVisible()) {
-                manager.show(label)
-            }
-            manager.updateCount(count.sessionCount, count.dailyTotal)
-
-            // Update time remaining overlay separately
-            val trManager = entryPoint.timeRemainingOverlayManager()
-            maybeUpdateTimeRemaining(count.packageName, trManager)
-
-            checkAutoKick(count, manager)
-        } catch (e: Exception) {
-            entryPoint.nudgeLogger().w(
-                "counter overlay update failed package=${count.packageName}", e
-            )
-        }
-    }
-
-    private fun checkAutoKick(
-        count: InteractionTracker.SessionCount,
-        manager: CounterOverlayManager
-    ) {
-        val cacheEntry = counterCache.getEntry(count.packageName) ?: return
-        val autoKickAfter = cacheEntry.autoKickAfter ?: return
-        if (count.sessionCount < autoKickAfter) return
-
-        entryPoint.nudgeLogger().i(
-            "auto-kick triggered package=${count.packageName} " +
-                "session=${count.sessionCount} threshold=$autoKickAfter"
-        )
-
-        val cooldownSeconds = cacheEntry.autoKickCooldownSeconds
-        if (cooldownSeconds > 0) {
-            entryPoint.interactionTracker().setCooldown(
-                count.packageName,
-                cooldownSeconds.toLong() * 1000L
-            )
-        }
-
-        val homeIntent = Intent(Intent.ACTION_MAIN).apply {
-            addCategory(Intent.CATEGORY_HOME)
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK
-        }
-        startActivity(homeIntent)
-
-        entryPoint.interactionTracker().resetSession(count.packageName)
-        manager.hide()
-    }
-
-    private fun maybeUpdateTimeRemaining(
-        packageName: String,
-        manager: TimeRemainingOverlayManager
-    ) {
-        val entry = counterCache.getEntry(packageName) ?: return
-        if (!entry.showTimeRemaining || entry.dailyLimitMinutes == null) {
-            manager.updateTimeRemaining(null, null)
-            return
-        }
-
-        val now = System.currentTimeMillis()
-        if ((now - lastTimeRemainingUpdateMs) < timeRemainingUpdateIntervalMs) return
-        lastTimeRemainingUpdateMs = now
-
-        serviceScope.launch {
-            try {
-                val usageMs = entryPoint.usageRepository().getDailyForegroundTimeMs(packageName)
-                val limitMs = entry.dailyLimitMinutes.toLong() * 60L * 1000L
-                val remainingMs = (limitMs - usageMs).coerceAtLeast(0L)
-                withContext(Dispatchers.Main) {
-                    manager.updateTimeRemaining(remainingMs, entry.dailyLimitMinutes)
-                }
-
-                if (remainingMs <= 0L) {
-                    lastPassthroughPackage = null
-                    lastPassthroughFeature = null
-                    lastPassthroughTime = 0L
-
-                    withContext(Dispatchers.Main) {
-                        manager.hide()
-                        val overlayIntent = Intent(applicationContext, BlockOverlayActivity::class.java).apply {
-                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                            putExtra(BlockOverlayActivity.EXTRA_BLOCK_MODE, "HARD_BLOCK")
-                            putExtra(BlockOverlayActivity.EXTRA_PACKAGE_NAME, packageName)
-                            putExtra(BlockOverlayActivity.EXTRA_RULE_NAME, "Daily limit reached")
-                            putExtra(BlockOverlayActivity.EXTRA_DAILY_TIME_REMAINING_MS, 0L)
-                            putExtra(BlockOverlayActivity.EXTRA_DAILY_LIMIT_MINUTES, entry.dailyLimitMinutes!!)
-                        }
-                        applicationContext.startActivity(overlayIntent)
-                    }
-                }
-            } catch (e: Exception) {
-                entryPoint.nudgeLogger().w("time remaining update failed", e)
-            }
-        }
-    }
-
     private fun refreshCounterCacheIfNeeded() {
         val now = System.currentTimeMillis()
         serviceScope.launch {
@@ -574,6 +391,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         super.onDestroy()
         entryPoint.counterOverlayManager().clearServiceContext()
         entryPoint.timeRemainingOverlayManager().clearServiceContext()
+        passthroughManagerInstance = null
         if (grayscaleActiveForPackage != null) {
             entryPoint.grayscaleManager().disableGrayscale()
             grayscaleActiveForPackage = null

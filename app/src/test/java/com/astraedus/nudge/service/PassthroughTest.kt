@@ -9,45 +9,47 @@ import org.junit.Test
 
 class PassthroughTest {
 
+    private lateinit var manager: PassthroughManager
+
     @Before
     fun setUp() {
-        NudgeAccessibilityService.resetPassthroughForTests()
+        manager = PassthroughManager()
     }
 
     @Test
     fun `grantPassthrough marks package as passed through`() {
-        NudgeAccessibilityService.grantPassthrough("com.example.alpha")
+        manager.grant("com.example.alpha")
 
-        assertTrue(NudgeAccessibilityService.isPassthroughGranted("com.example.alpha"))
-        assertFalse(NudgeAccessibilityService.isPassthroughGranted("com.example.beta"))
+        assertTrue(manager.isGranted("com.example.alpha"))
+        assertFalse(manager.isGranted("com.example.beta"))
     }
 
     @Test
     fun `passthrough clears on app switch`() {
-        NudgeAccessibilityService.grantPassthrough("com.example.alpha")
+        manager.grant("com.example.alpha")
 
-        val cleared = NudgeAccessibilityService.clearPassthroughIfAppChanged("com.example.beta")
+        val cleared = manager.clearIfAppChanged("com.example.beta")
 
         assertTrue(cleared)
-        assertNull(NudgeAccessibilityService.lastPassthroughPackage)
-        assertNull(NudgeAccessibilityService.lastPassthroughFeature)
-        assertFalse(NudgeAccessibilityService.isPassthroughGranted("com.example.alpha"))
+        assertNull(manager.lastPackage)
+        assertNull(manager.lastFeature)
+        assertFalse(manager.isGranted("com.example.alpha"))
     }
 
     @Test
     fun `package passthrough prevents foreground re-evaluation`() {
-        NudgeAccessibilityService.grantPassthrough("com.example.alpha")
+        manager.grant("com.example.alpha")
 
-        assertTrue(NudgeAccessibilityService.shouldSkipForegroundEvaluationForPassthrough("com.example.alpha"))
-        assertFalse(NudgeAccessibilityService.shouldSkipForegroundEvaluationForPassthrough("com.example.beta"))
+        assertTrue(manager.shouldSkipForegroundEvaluation("com.example.alpha"))
+        assertFalse(manager.shouldSkipForegroundEvaluation("com.example.beta"))
     }
 
     @Test
     fun `whole-app passthrough does not skip feature evaluation`() {
-        NudgeAccessibilityService.grantPassthrough("com.example.alpha")
+        manager.grant("com.example.alpha")
 
         assertFalse(
-            NudgeAccessibilityService.shouldSkipFeatureEvaluationForPassthrough(
+            manager.shouldSkipFeatureEvaluation(
                 "com.example.alpha",
                 "REELS"
             )
@@ -56,16 +58,16 @@ class PassthroughTest {
 
     @Test
     fun `feature passthrough skips the matching feature only`() {
-        NudgeAccessibilityService.grantPassthrough("com.example.alpha", "REELS")
+        manager.grant("com.example.alpha", "REELS")
 
         assertTrue(
-            NudgeAccessibilityService.shouldSkipFeatureEvaluationForPassthrough(
+            manager.shouldSkipFeatureEvaluation(
                 "com.example.alpha",
                 "REELS"
             )
         )
         assertFalse(
-            NudgeAccessibilityService.shouldSkipFeatureEvaluationForPassthrough(
+            manager.shouldSkipFeatureEvaluation(
                 "com.example.alpha",
                 "EXPLORE"
             )

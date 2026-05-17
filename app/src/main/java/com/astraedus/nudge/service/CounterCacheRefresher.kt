@@ -1,13 +1,13 @@
 package com.astraedus.nudge.service
 
-internal data class CounterCacheEntry(
+data class CounterCacheEntry(
     val autoKickAfter: Int? = null,
     val showTimeRemaining: Boolean = false,
     val dailyLimitMinutes: Int? = null,
     val autoKickCooldownSeconds: Int = 60
 )
 
-internal class CounterCacheRefresher(
+class CounterCacheRefresher(
     private val refreshIntervalMs: Long = 10_000L
 ) {
     // Atomic reference swap -- readers never see a half-populated map

@@ -8,6 +8,7 @@ import com.astraedus.nudge.data.db.entity.UsageEvent
 import com.astraedus.nudge.data.repository.UsageRepository
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.service.NudgeAccessibilityService
+import com.astraedus.nudge.service.PassthroughManager
 import com.astraedus.nudge.ui.theme.NudgeTheme
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
@@ -19,6 +20,7 @@ import javax.inject.Inject
 class BlockOverlayActivity : ComponentActivity() {
 
     @Inject lateinit var usageRepository: UsageRepository
+    @Inject lateinit var passthroughManager: PassthroughManager
 
     companion object {
         const val EXTRA_BLOCK_MODE = "block_mode"
@@ -100,7 +102,7 @@ class BlockOverlayActivity : ComponentActivity() {
     private fun onTimerComplete() {
         val pkg = intent.getStringExtra(EXTRA_PACKAGE_NAME) ?: ""
         if (pkg.isNotEmpty()) {
-            NudgeAccessibilityService.grantPassthrough(
+            passthroughManager.grant(
                 packageName = pkg,
                 featureKey = intent.getStringExtra(EXTRA_FEATURE_KEY)
             )
