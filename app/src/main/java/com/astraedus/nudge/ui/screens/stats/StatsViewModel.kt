@@ -4,14 +4,17 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.astraedus.nudge.data.db.entity.UsageEvent
 import com.astraedus.nudge.data.repository.InstalledAppsRepository
+import com.astraedus.nudge.data.repository.ScreenTimeProvider
 import com.astraedus.nudge.data.repository.UsageRepository
 import com.astraedus.nudge.domain.engine.TimeTracker
 import com.astraedus.nudge.ui.screens.stats.charts.DayData
 import com.astraedus.nudge.ui.screens.stats.charts.TrendDay
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.stateIn
 import androidx.compose.runtime.Immutable
 import javax.inject.Inject
@@ -39,6 +42,7 @@ data class StatsUiState(
 class StatsViewModel @Inject constructor(
     private val usageRepository: UsageRepository,
     private val installedAppsRepository: InstalledAppsRepository,
+    private val screenTimeProvider: ScreenTimeProvider,
     private val timeTracker: TimeTracker,
     private val statsCalculator: StatsCalculator
 ) : ViewModel() {
@@ -51,45 +55,68 @@ class StatsViewModel @Inject constructor(
         installedAppsRepository.getInstalledApps().associate { it.packageName to it.appName }
     }
 
-    private val todayEventsFlow = usageRepository.getUsageForDay(todayStart, todayEnd)
     private val weekEventsFlow = usageRepository.getEventsSince(weekStart)
 
+    /**
+     * Polls screen time data from UsageStatsManager every 30 seconds.
+     * Emits a triple: (totalTodayMs, weeklyDailyTotals, hourlyTodayMs).
+     */
+    private val screenTimeFlow = flow {
+        while (true) {
+            val total = screenTimeProvider.getTotalScreenTimeToday()
+            val weekly = screenTimeProvider.getDailyScreenTimesForWeek()
+            val hourly = screenTimeProvider.getHourlyScreenTimeToday()
+            val perApp = screenTimeProvider.getPerAppScreenTimeToday()
+            emit(ScreenTimeSnapshot(total, weekly, hourly, perApp))
+            delay(30_000L)
+        }
+    }
+
     val uiState: StateFlow<StatsUiState> = combine(
-        todayEventsFlow,
-        weekEventsFlow
-    ) { todayEvents, weekEvents ->
-        buildUiState(todayEvents, weekEvents)
+        weekEventsFlow,
+        screenTimeFlow
+    ) { weekEvents, screenTime ->
+        buildUiState(weekEvents, screenTime)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), StatsUiState())
 
-    private fun buildUiState(todayEvents: List<UsageEvent>, weekEvents: List<UsageEvent>): StatsUiState {
-        // Today's per-app stats
-        val byPackage = todayEvents.groupBy { it.packageName }
-            .mapValues { (_, evts) -> evts.sumOf { it.durationMs } }
-            .entries
+    private fun buildUiState(weekEvents: List<UsageEvent>, screenTime: ScreenTimeSnapshot): StatsUiState {
+        // Per-app stats from OS-level UsageStatsManager
+        val byPackage = screenTime.perApp.entries
             .sortedByDescending { it.value }
 
-        val totalMs = byPackage.sumOf { it.value }
         val maxMs = byPackage.maxOfOrNull { it.value } ?: 1L
 
-        val appStats = byPackage.map { (pkg, ms) ->
-            AppUsageStat(
-                packageName = pkg,
-                appName = appNameMap[pkg] ?: pkg,
-                durationMs = ms,
-                formattedDuration = timeTracker.formatDuration(ms),
-                fraction = (ms.toFloat() / maxMs.toFloat()).coerceIn(0.05f, 1f)
-            )
-        }
+        val appStats = byPackage
+            .filter { it.value > 0L }
+            .map { (pkg, ms) ->
+                AppUsageStat(
+                    packageName = pkg,
+                    appName = appNameMap[pkg] ?: pkg,
+                    durationMs = ms,
+                    formattedDuration = timeTracker.formatDuration(ms),
+                    fraction = (ms.toFloat() / maxMs.toFloat()).coerceIn(0.05f, 1f)
+                )
+            }
+
+        // Weekly bar chart from OS data
+        val weeklyData = statsCalculator.buildWeeklyDataFromTotals(screenTime.weeklyDailyTotals)
 
         return StatsUiState(
-            totalFormatted = timeTracker.formatDuration(totalMs),
+            totalFormatted = timeTracker.formatDuration(screenTime.totalTodayMs),
             appStats = appStats,
-            weeklyData = statsCalculator.buildWeeklyData(weekEvents),
+            weeklyData = weeklyData,
             trendData = statsCalculator.buildTrendData(weekEvents),
-            hourlyMs = statsCalculator.buildHourlyData(todayEvents),
+            hourlyMs = screenTime.hourlyTodayMs,
             streakDays = statsCalculator.calculateStreak(weekEvents)
         )
     }
+
+    private data class ScreenTimeSnapshot(
+        val totalTodayMs: Long,
+        val weeklyDailyTotals: List<Long>,
+        val hourlyTodayMs: List<Long>,
+        val perApp: Map<String, Long>
+    )
 
     companion object {
         private const val DAY_MS = 24L * 60L * 60L * 1000L

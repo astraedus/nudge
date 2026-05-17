@@ -4,13 +4,15 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.data.repository.BlockRuleRepository
+import com.astraedus.nudge.data.repository.ScreenTimeProvider
 import com.astraedus.nudge.data.repository.UsageRepository
 import com.astraedus.nudge.domain.engine.TimeTracker
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.Immutable
@@ -22,7 +24,8 @@ data class HomeUiState(
     val todayTotalUsageFormatted: String = "0s",
     val activeRuleCount: Int = 0,
     val blockedCountToday: Int = 0,
-    val changedMindCount: Int = 0
+    val changedMindCount: Int = 0,
+    val hasUsagePermission: Boolean = true
 )
 
 @HiltViewModel
@@ -30,26 +33,38 @@ class HomeViewModel @Inject constructor(
     private val nudgePreferences: NudgePreferences,
     private val usageRepository: UsageRepository,
     private val blockRuleRepository: BlockRuleRepository,
+    private val screenTimeProvider: ScreenTimeProvider,
     private val timeTracker: TimeTracker
 ) : ViewModel() {
 
     private val todayStart = timeTracker.startOfToday()
     private val todayEnd = todayStart + 24L * 60L * 60L * 1000L
 
+    /**
+     * Emits the current screen time every 30 seconds.
+     * UsageStatsManager is not reactive (no Flow), so we poll.
+     */
+    private val screenTimeFlow = flow {
+        while (true) {
+            emit(screenTimeProvider.getTotalScreenTimeToday())
+            delay(30_000L)
+        }
+    }
+
     val uiState: StateFlow<HomeUiState> = combine(
         nudgePreferences.isGlobalEnabled,
         blockRuleRepository.getEnabledRules(),
-        usageRepository.getUsageForDay(todayStart, todayEnd),
-        usageRepository.getChangedMindCountForDay(todayStart, todayEnd)
-    ) { enabled, rules, events, changedMind ->
-        val totalMs = events.sumOf { it.durationMs }
-        val blockedCount = events.count { it.wasBlocked }
+        usageRepository.getBlockedCountForDay(todayStart, todayEnd),
+        usageRepository.getChangedMindCountForDay(todayStart, todayEnd),
+        screenTimeFlow
+    ) { enabled, rules, blockedCount, changedMind, screenTimeMs ->
         HomeUiState(
             isGlobalEnabled = enabled,
-            todayTotalUsageFormatted = timeTracker.formatDuration(totalMs),
+            todayTotalUsageFormatted = timeTracker.formatDuration(screenTimeMs),
             activeRuleCount = rules.size,
             blockedCountToday = blockedCount,
-            changedMindCount = changedMind
+            changedMindCount = changedMind,
+            hasUsagePermission = screenTimeProvider.hasPermission()
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), HomeUiState())
 

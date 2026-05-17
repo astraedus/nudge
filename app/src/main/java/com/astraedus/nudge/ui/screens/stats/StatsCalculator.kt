@@ -35,6 +35,23 @@ class StatsCalculator @Inject constructor(
         return result
     }
 
+    /**
+     * Build weekly bar chart data from pre-computed daily totals (from UsageStatsManager).
+     * @param dailyTotals list of 7 entries, index 0 = 6 days ago, index 6 = today.
+     */
+    fun buildWeeklyDataFromTotals(dailyTotals: List<Long>): List<DayData> {
+        val result = mutableListOf<DayData>()
+
+        for (i in 6 downTo 0) {
+            val dayStart = todayStart - i * DAY_MS
+            val label = getDayLabel(dayStart)
+            val totalMs = dailyTotals.getOrElse(6 - i) { 0L }
+            result.add(DayData(label = label, totalMs = totalMs))
+        }
+
+        return result
+    }
+
     fun buildTrendData(weekEvents: List<UsageEvent>): List<TrendDay> {
         val result = mutableListOf<TrendDay>()
 

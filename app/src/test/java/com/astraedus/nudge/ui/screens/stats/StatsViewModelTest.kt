@@ -179,6 +179,69 @@ class StatsViewModelTest {
         assertEquals(1, today.walkedAwayCount)
     }
 
+    // --- buildWeeklyDataFromTotals tests ---
+
+    @Test
+    fun `buildWeeklyDataFromTotals returns 7 entries`() {
+        val totals = listOf(100L, 200L, 300L, 400L, 500L, 600L, 700L)
+        val weekly = calculator.buildWeeklyDataFromTotals(totals)
+        assertEquals(7, weekly.size)
+    }
+
+    @Test
+    fun `buildWeeklyDataFromTotals maps totals to correct days`() {
+        val totals = listOf(
+            60_000L,   // 6 days ago
+            120_000L,  // 5 days ago
+            180_000L,  // 4 days ago
+            240_000L,  // 3 days ago
+            300_000L,  // 2 days ago
+            360_000L,  // yesterday
+            420_000L   // today
+        )
+        val weekly = calculator.buildWeeklyDataFromTotals(totals)
+
+        // Index 0 is 6 days ago, index 6 is today
+        assertEquals(60_000L, weekly[0].totalMs)
+        assertEquals(420_000L, weekly[6].totalMs)
+        assertEquals(360_000L, weekly[5].totalMs)
+    }
+
+    @Test
+    fun `buildWeeklyDataFromTotals has correct day labels`() {
+        val totals = List(7) { 1000L }
+        val weekly = calculator.buildWeeklyDataFromTotals(totals)
+        val validLabels = setOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+        weekly.forEach { day ->
+            assertTrue("Label '${day.label}' not in valid set", day.label in validLabels)
+        }
+    }
+
+    @Test
+    fun `buildWeeklyDataFromTotals handles empty list gracefully`() {
+        val weekly = calculator.buildWeeklyDataFromTotals(emptyList())
+        assertEquals(7, weekly.size)
+        assertTrue("All should be 0 when no data", weekly.all { it.totalMs == 0L })
+    }
+
+    // --- Regression: durationMs=0 events produce zero screen time ---
+
+    @Test
+    fun `buildWeeklyData shows zero when events have no durationMs - documents the old bug`() {
+        val todayStart = timeTracker.startOfToday()
+
+        // Simulate real logged events: durationMs is always 0 (the bug's root cause)
+        val events = listOf(
+            makeEvent(todayStart + 1000, durationMs = 0L, wasBlocked = true),
+            makeEvent(todayStart + 5000, durationMs = 0L),
+            makeEvent(todayStart + 10000, durationMs = 0L, wasBlocked = true),
+        )
+
+        val weekly = calculator.buildWeeklyData(events)
+        // This is the documented bug: events logged without durationMs always sum to 0
+        assertEquals(0L, weekly.last().totalMs)
+    }
+
     // --- Helpers ---
 
     private fun makeEvent(

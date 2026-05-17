@@ -7,6 +7,7 @@ import com.astraedus.nudge.data.db.dao.UsageEventDao
 import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.data.repository.BlockRuleRepository
 import com.astraedus.nudge.data.repository.InstalledAppsRepository
+import com.astraedus.nudge.data.repository.ScreenTimeProvider
 import com.astraedus.nudge.data.repository.UsageRepository
 import com.astraedus.nudge.domain.engine.BlockEngine
 import com.astraedus.nudge.domain.engine.RuleEvaluator
@@ -74,4 +75,11 @@ object RepositoryModule {
 
     @Provides
     fun provideStatsCalculator(timeTracker: TimeTracker): StatsCalculator = StatsCalculator(timeTracker)
+
+    @Provides
+    @Singleton
+    fun provideScreenTimeProvider(
+        @ApplicationContext context: Context,
+        timeTracker: TimeTracker
+    ): ScreenTimeProvider = ScreenTimeProvider(context, timeTracker)
 }
