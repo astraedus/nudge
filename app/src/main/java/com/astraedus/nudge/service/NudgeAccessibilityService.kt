@@ -276,7 +276,12 @@ class NudgeAccessibilityService : AccessibilityService() {
     }
 
     private fun handleWindowContentChanged(packageName: String, event: AccessibilityEvent) {
-        if (packageName !in InAppDetector.SUPPORTED_PACKAGES) return
+        if (packageName !in InAppDetector.SUPPORTED_PACKAGES) {
+            // For non-SUPPORTED packages (e.g., React Native apps like Discord that don't
+            // fire TYPE_VIEW_CLICKED), use content changes as a proxy for user interaction.
+            interactionHandler.handleContentChanged(packageName)
+            return
+        }
 
         evaluateForegroundPackage(packageName)
 
