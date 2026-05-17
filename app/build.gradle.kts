@@ -18,14 +18,14 @@ val keystoreProperties = Properties().apply {
 
 android {
     namespace = "com.astraedus.nudge"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.astraedus.nudge"
+        applicationId = "dev.astraedus.nudge"
         minSdk = 26
-        targetSdk = 34
-        versionCode = 16
-        versionName = "1.4.3"
+        targetSdk = 35
+        versionCode = 17
+        versionName = "1.4.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

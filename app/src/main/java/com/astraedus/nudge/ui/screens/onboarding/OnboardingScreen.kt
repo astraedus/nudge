@@ -6,6 +6,7 @@ import android.provider.Settings
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -15,6 +16,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Accessibility
 import androidx.compose.material.icons.outlined.CheckCircle
@@ -145,10 +148,11 @@ private fun PermissionsPage(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(32.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+            .padding(24.dp)
+            .verticalScroll(rememberScrollState()),
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        Spacer(Modifier.height(24.dp))
         Text(
             "Permissions",
             style = MaterialTheme.typography.headlineMedium,
@@ -156,41 +160,67 @@ private fun PermissionsPage(
         )
         Spacer(Modifier.height(8.dp))
         Text(
-            "Nudge needs these permissions to work",
+            "Nudge needs these permissions to work. No data is ever sent anywhere — the app has no internet permission.",
             style = MaterialTheme.typography.bodyMedium,
+            textAlign = TextAlign.Center,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
-        Spacer(Modifier.height(32.dp))
+        Spacer(Modifier.height(24.dp))
 
-        OutlinedButton(
-            onClick = onGrantAccessibility,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Icon(Icons.Outlined.Accessibility, contentDescription = null)
-            Spacer(Modifier.size(8.dp))
-            Text("Accessibility Service")
-        }
+        PermissionCard(
+            icon = Icons.Outlined.Accessibility,
+            title = "Accessibility Service",
+            description = "Detects which app is in the foreground so Nudge can trigger your block rules. Also identifies in-app screens (like YouTube Shorts or Instagram Reels) by checking navigation elements. Does not read your messages, keystrokes, or screen content.",
+            onClick = onGrantAccessibility
+        )
 
         Spacer(Modifier.height(12.dp))
 
-        OutlinedButton(
-            onClick = onGrantOverlay,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Icon(Icons.Outlined.Layers, contentDescription = null)
-            Spacer(Modifier.size(8.dp))
-            Text("Overlay Permission")
-        }
+        PermissionCard(
+            icon = Icons.Outlined.Layers,
+            title = "Display Over Other Apps",
+            description = "Shows the delay countdown or breathing exercise overlay on top of blocked apps. This is how Nudge presents the pause before opening.",
+            onClick = onGrantOverlay
+        )
 
         Spacer(Modifier.height(12.dp))
 
-        OutlinedButton(
-            onClick = onGrantUsageStats,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Icon(Icons.Outlined.QueryStats, contentDescription = null)
-            Spacer(Modifier.size(8.dp))
-            Text("Usage Stats Access")
+        PermissionCard(
+            icon = Icons.Outlined.QueryStats,
+            title = "Usage Stats Access",
+            description = "Tracks how long you use each app per day to enforce daily time budgets. Usage data is stored locally on your device only.",
+            onClick = onGrantUsageStats
+        )
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
+@Composable
+private fun PermissionCard(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    description: String,
+    onClick: () -> Unit
+) {
+    androidx.compose.material3.Card(
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.size(12.dp))
+                Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            }
+            Spacer(Modifier.height(8.dp))
+            Text(
+                description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(12.dp))
+            OutlinedButton(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
+                Text("Grant Permission")
+            }
         }
     }
 }

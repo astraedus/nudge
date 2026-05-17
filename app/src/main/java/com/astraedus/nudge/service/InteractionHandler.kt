@@ -132,6 +132,8 @@ class InteractionHandler(
         showOrUpdateCounter(count, "taps")
     }
 
+    fun isCounterVisible(): Boolean = counterOverlayManager.isVisible()
+
     fun hideCounter() {
         if (counterOverlayManager.isVisible()) counterOverlayManager.hide()
     }

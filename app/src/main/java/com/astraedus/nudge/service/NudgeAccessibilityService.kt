@@ -231,6 +231,10 @@ class NudgeAccessibilityService : AccessibilityService() {
 
         if (passthrough.shouldSkipForegroundEvaluation(packageName)) {
             entryPoint.nudgeLogger().d("skip evaluation package=$packageName reason=passthrough")
+            // Ensure counter is visible post-delay (onAppChanged may not re-fire)
+            if (counterCache.isEnabled(packageName) && !interactionHandler.isCounterVisible()) {
+                interactionHandler.onAppChanged(packageName)
+            }
             return
         }
 
