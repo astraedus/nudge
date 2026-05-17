@@ -2,6 +2,11 @@
 
 All notable changes to Nudge are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.4.2] - 2026-05-17
+
+### Changed
+- **Time remaining is now a separate corner overlay**: Moved from a text line inside the centered counter pill to its own standalone floating pill in the top-right corner. Shows independently of the interaction counter -- works even when the counter is disabled. 15sp bold text, pill-shaped dark background, color-coded (green/orange/red). Background opacity increases as time runs low.
+
 ## [1.4.1] - 2026-05-17
 
 ### Fixed
