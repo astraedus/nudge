@@ -1,6 +1,6 @@
 # Privacy Policy
 
-**Last updated: 2026-05-16**
+**Last updated: 2026-05-17**
 
 Nudge is a privacy-first, open-source Android app blocker. This policy explains what data Nudge handles and how.
 
@@ -19,11 +19,31 @@ Nudge stores the following data **locally on your device only**, using Room (SQL
 
 ## Accessibility Service
 
-Nudge uses Android's Accessibility Service to detect which app is in the foreground. This is the only way Android allows an app to know what's currently on screen.
+Nudge uses Android's Accessibility Service for two things:
 
-- Nudge requests `canRetrieveWindowContent = false` -- it **cannot** read your screen content, text, or keystrokes
-- It only receives the **package name** of the foreground app (e.g. `com.instagram.android`)
-- This data is processed in real-time to evaluate block rules. It is never stored beyond usage event logs.
+1. **Foreground app detection** -- knowing which app you opened (e.g. `com.instagram.android`) to evaluate block rules.
+2. **In-app feature detection** -- identifying specific screens within an app (YouTube Shorts, Instagram Reels/Explore) so Nudge can block addictive feeds without blocking the entire app.
+
+### What it reads
+
+For foreground detection, Nudge receives the **package name** of the active app. For in-app detection, `canRetrieveWindowContent` is set to `true`, which allows Nudge to inspect the accessibility tree. Specifically, it reads:
+
+- **UI element resource IDs** (e.g. `reel_recycler`, `clips_tab`) to identify which screen you're on
+- **Element selection state** (e.g. which navigation tab is active)
+- **Specific navigation labels** (e.g. the text "Shorts") as a fallback when resource IDs aren't available
+
+### What it does NOT read
+
+- Arbitrary text on your screen (messages, posts, search queries)
+- Keystrokes or text input
+- Notification content
+- Any content beyond navigation elements needed for feature detection
+
+### How this data is handled
+
+- Processed in real-time, in memory only. Screen structure is never written to disk.
+- Only the **result** is stored: which app/feature was detected, and whether it was blocked (as a usage event log entry).
+- No internet permission means none of this can leave your device regardless.
 
 ## What Nudge does NOT do
 

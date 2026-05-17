@@ -102,9 +102,12 @@ Requires: JDK 17+, Android SDK with platform 34 and build-tools 34.
 ```
 AccessibilityService detects foreground app change
   -> BlockEngine evaluates rules for that app
+  -> If in-app rules exist: InAppDetector inspects navigation state
+     (checks resource IDs + tab selection to identify Shorts/Reels/Explore)
   -> Decision: ALLOW | HARD_BLOCK | DELAY | BREATHING
   -> If blocked: full-screen overlay appears
   -> User can wait through the timer, or go back home
+  -> After delay/breathing completes: passthrough until user leaves the app
 ```
 
 The delay/breathing modes are the core idea. They don't lock you out -- they insert a moment of intentional friction. Research shows this small pause is enough to break the automatic habit loop that drives most mindless phone usage.
@@ -115,7 +118,7 @@ Nudge requires three permissions. Here's exactly what each does and why:
 
 | Permission | Why | What it sees |
 |-----------|-----|-------------|
-| **Accessibility Service** | Detects which app is in the foreground to trigger block rules | Package name of the foreground app. `canRetrieveWindowContent` is set to `false` -- Nudge cannot read your screen content. |
+| **Accessibility Service** | Detects foreground app + in-app navigation (Shorts, Reels, Explore) | Package name of the foreground app, plus UI element IDs and selection state for in-app feature detection. Does **not** read arbitrary text, keystrokes, or notification content. See [privacy policy](PRIVACY.md) for details. |
 | **Display Over Other Apps** | Shows the block/delay overlay on top of blocked apps | Nothing. It's a display permission. |
 | **Usage Stats** | Tracks your daily screen time per app for time budgets | App usage durations. Stored locally in a Room database on your device. |
 
