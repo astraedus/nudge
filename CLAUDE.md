@@ -114,12 +114,13 @@ AccessibilityService: TYPE_WINDOW_STATE_CHANGED
 - **Auto-kick cooldown** — configurable per-rule (0-300 seconds, default 60s). After auto-kick, returning to the app forces a DELAY overlay for the remaining cooldown. Session counter preserved during cooldown. Stored as `autoKickCooldownSeconds` on BlockRule.
 - **Instagram home feed detection** — `InAppDetector` now detects Instagram's home feed (when Home tab is selected, no other tabs active) and treats it as REELS-equivalent. Home feed scrolling counts toward interaction counter and auto-kick the same as the Reels tab.
 - **Post-overlay passthrough** — after delay/breathing completes, skip re-evaluation until user leaves app. Prevents infinite overlay loop.
+- **Web domain blocking (Chrome v1)** — blocks websites in Chrome that match app rules. When Chrome is foregrounded, reads URL bar via accessibility tree (`WebDomainDetector`), extracts domain (`WebDomainMatcher`), matches against rules' `webDomains` field. Same overlay modes (HARD_BLOCK/DELAY/BREATHING). Passthrough prevents re-blocking same domain. Only Chrome for v1 (extensible via `BROWSER_PACKAGES`). UI toggle "Block on web too" auto-populates known domains (Instagram, YouTube, TikTok) or allows custom entry.
 - **Rule editor UX** — info tooltips on all sections, block mode descriptions, per-app rules summary with enable/disable
 - **Settings** — version links to GitHub repo, source code & feedback link
 
 ## Database
 
-Room DB version 6. Migrations: 1->2 (schedule/inapp/grayscale), 2->3 (userChangedMind), 3->4 (showCounter), 4->5 (autoKickAfter), 5->6 (showTimeRemaining, autoKickCooldownSeconds).
+Room DB version 7. Migrations: 1->2 (schedule/inapp/grayscale), 2->3 (userChangedMind), 3->4 (showCounter), 4->5 (autoKickAfter), 5->6 (showTimeRemaining, autoKickCooldownSeconds), 6->7 (webDomains).
 
 ## Counter overlay architecture
 
@@ -131,6 +132,15 @@ Room DB version 6. Migrations: 1->2 (schedule/inapp/grayscale), 2->3 (userChange
 - Auto-kick: optional per-rule threshold (`autoKickAfter`). When session count hits threshold, sends ACTION_MAIN/CATEGORY_HOME intent, sets cooldown, and resets session counter.
 - Auto-kick cooldown: configurable per-rule (default 60s). After auto-kick, re-opening the app shows a DELAY overlay for the remaining cooldown. Session counter NOT reset during cooldown.
 - Time remaining overlay: optional per-rule (`showTimeRemaining`). Uses UsageStatsManager to get actual foreground time, displays remaining daily limit as color-coded overlay line. Updated every 30 seconds.
+
+## Web domain blocking architecture
+
+- `domain/WebDomainMatcher.kt` — pure Kotlin (no Android deps). `extractDomain(urlBarText)` strips protocol/path/port, normalizes subdomains (www, m, mobile, l, lm). `matches(urlBarText, webDomains)` checks extracted domain against comma-separated rule domains.
+- `service/WebDomainDetector.kt` — `@Singleton`, reads Chrome URL bar via `findAccessibilityNodeInfosByViewId()`. Tries `url_bar` then `omnibox_url_text` resource IDs. `isBrowser(pkg)` checks against `BROWSER_PACKAGES` set.
+- Integration in `NudgeAccessibilityService`: on `TYPE_WINDOW_STATE_CHANGED`/`TYPE_WINDOW_CONTENT_CHANGED` for browser packages, calls `evaluateWebDomain()` which reads URL bar, extracts domain, queries `EvaluateBlockUseCase.evaluateWebDomain()`.
+- `EvaluateBlockUseCase.evaluateWebDomain()` finds all enabled rules with matching `webDomains`, converts to `ActiveRule` list, passes through `BlockEngine`.
+- Passthrough: `lastBlockedDomain` tracks currently-blocked domain. Same domain won't re-trigger until user navigates away. Clears on app switch away from browser.
+- UI: "Block on web too" toggle in `UnifiedAppConfigScreen`, auto-populates known domains per `DEFAULT_WEB_DOMAINS` map.
 
 ## Export/Import architecture
 
@@ -154,16 +164,38 @@ Room DB version 6. Migrations: 1->2 (schedule/inapp/grayscale), 2->3 (userChange
 
 Assets at `store-listing/` — feature graphic, screenshots, listing copy, batch config (`screenshots.json`).
 
+## Testing Philosophy — Never Regress
+
+**Every new feature MUST ship with tests that cover its core behavior.** The test suite is the safety net that lets us move fast without breaking existing functionality.
+
+Principles:
+- **Tests are not optional.** If you add a feature, you add tests. No exceptions.
+- **Test the contract, not the implementation.** Domain logic (BlockEngine, use cases, StatsCalculator) gets unit tests. UI gets integration tests for navigation/state.
+- **Run `./gradlew test` before every commit.** If tests fail, the feature isn't done.
+- **Regression = bug.** If a new feature breaks existing behavior, that's a blocker — fix it before merging.
+- **Domain layer is the priority.** Pure Kotlin with no Android deps = fast JVM tests. Test BlockEngine decisions, schedule evaluation, counter logic, export/import round-trips.
+- **When fixing a bug, write a test that reproduces it first.** Then fix. The test proves the fix works and prevents re-introduction.
+
+Test locations:
+- `app/src/test/` — JVM unit tests (domain, data, use cases)
+- `app/src/androidTest/` — instrumented tests (Room migrations, accessibility service behavior)
+
+Coverage targets (aspirational, enforce on new code):
+- Domain layer: >90% line coverage
+- Data layer (repositories, DAOs): >70%
+- UI ViewModels: key state transitions tested
+
 ## Post-feature checklist
 
 After any feature addition or significant change:
-1. Update CHANGELOG.md (under `[Unreleased]` section)
-2. Update this CLAUDE.md (architecture docs, feature descriptions)
-3. Run `./gradlew test` and verify all pass
-4. Build debug APK and install on Pixel 3 via ADB
-5. Test golden path + edge cases on real device
-6. Update store listing copy if user-facing
-7. Commit with descriptive message
+1. Write tests covering the new behavior (unit + integration as appropriate)
+2. Run `./gradlew test` and verify ALL tests pass (not just new ones)
+3. Update CHANGELOG.md (under `[Unreleased]` section)
+4. Update this CLAUDE.md (architecture docs, feature descriptions)
+5. Build debug APK and install on Pixel 3 via ADB
+6. Test golden path + edge cases on real device
+7. Update store listing copy if user-facing
+8. Commit with descriptive message
 
 ## Backlog
 
