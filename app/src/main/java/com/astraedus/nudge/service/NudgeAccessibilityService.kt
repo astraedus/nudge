@@ -515,6 +515,25 @@ class NudgeAccessibilityService : AccessibilityService() {
                 withContext(Dispatchers.Main) {
                     manager.updateTimeRemaining(remainingMs, entry.dailyLimitMinutes)
                 }
+
+                if (remainingMs <= 0L) {
+                    lastPassthroughPackage = null
+                    lastPassthroughFeature = null
+                    lastPassthroughTime = 0L
+
+                    withContext(Dispatchers.Main) {
+                        manager.hide()
+                        val overlayIntent = Intent(applicationContext, BlockOverlayActivity::class.java).apply {
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                            putExtra(BlockOverlayActivity.EXTRA_BLOCK_MODE, "HARD_BLOCK")
+                            putExtra(BlockOverlayActivity.EXTRA_PACKAGE_NAME, packageName)
+                            putExtra(BlockOverlayActivity.EXTRA_RULE_NAME, "Daily limit reached")
+                            putExtra(BlockOverlayActivity.EXTRA_DAILY_TIME_REMAINING_MS, 0L)
+                            putExtra(BlockOverlayActivity.EXTRA_DAILY_LIMIT_MINUTES, entry.dailyLimitMinutes!!)
+                        }
+                        applicationContext.startActivity(overlayIntent)
+                    }
+                }
             } catch (e: Exception) {
                 entryPoint.nudgeLogger().w("time remaining update failed", e)
             }
