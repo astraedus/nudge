@@ -2,6 +2,12 @@
 
 All notable changes to Nudge are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.4.1] - 2026-05-17
+
+### Fixed
+- **YouTube Shorts detected from home feed**: Tapping a Short from the YouTube home page now correctly triggers Shorts-specific rules. Previously only worked when navigating via the Shorts tab. Uses resource ID detection (`reel_recycler`, `reel_player_page_container`) as fallback when tab-based detection fails.
+- **Time remaining overlay now shows after delay passthrough**: The floating time-remaining overlay was never visible because the passthrough early-return blocked the overlay code. Moved awareness overlay logic before passthrough check so counter and timer show even after delay completes.
+
 ## [1.4.0] - 2026-05-17
 
 ### Added
