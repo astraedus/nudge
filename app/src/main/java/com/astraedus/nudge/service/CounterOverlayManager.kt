@@ -24,7 +24,6 @@ class CounterOverlayManager @Inject constructor(
     private var counterText: TextView? = null
     private var labelText: TextView? = null
     private var dailyText: TextView? = null
-    private var timeRemainingText: TextView? = null
     @Volatile
     private var isShowing = false
     private val density = appContext.resources.displayMetrics.density
@@ -109,25 +108,6 @@ class CounterOverlayManager @Inject constructor(
         }
     }
 
-    fun updateTimeRemaining(remainingMs: Long?, limitMinutes: Int?) {
-        val tv = timeRemainingText ?: return
-        if (remainingMs == null || limitMinutes == null || limitMinutes <= 0) {
-            tv.visibility = View.GONE
-            return
-        }
-        tv.visibility = View.VISIBLE
-        tv.text = "${formatCompactDuration(remainingMs)} left"
-
-        val limitMs = limitMinutes.toLong() * 60L * 1000L
-        val pct = if (limitMs > 0) remainingMs.toFloat() / limitMs else 1f
-        val color = when {
-            pct > 0.50f -> Color.argb(200, 100, 220, 100)
-            pct > 0.25f -> Color.argb(200, 255, 165, 0)
-            else -> Color.argb(220, 255, 0, 0)
-        }
-        tv.setTextColor(color)
-    }
-
     fun updateLabel(label: String) {
         labelText?.text = label
     }
@@ -150,7 +130,6 @@ class CounterOverlayManager @Inject constructor(
         counterText = null
         labelText = null
         dailyText = null
-        timeRemainingText = null
         windowManager = null
         isShowing = false
         currentBgIsAlert = false
@@ -195,15 +174,6 @@ class CounterOverlayManager @Inject constructor(
             gravity = Gravity.CENTER
         }
         container.addView(dailyText)
-
-        timeRemainingText = TextView(ctx).apply {
-            text = ""
-            setTextColor(Color.argb(200, 100, 220, 100))
-            textSize = 13f
-            gravity = Gravity.CENTER
-            visibility = View.GONE
-        }
-        container.addView(timeRemainingText)
 
         return container
     }

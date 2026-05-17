@@ -124,7 +124,8 @@ Room DB version 6. Migrations: 1->2 (schedule/inapp/grayscale), 2->3 (userChange
 ## Counter overlay architecture
 
 - `InteractionTracker` (@Singleton): in-memory session/daily counts per package. No DB writes per interaction. Also tracks cooldown state per package after auto-kick.
-- `CounterOverlayManager` (@Singleton): WindowManager overlay using service context (required for TYPE_ACCESSIBILITY_OVERLAY token). `setServiceContext()` called in `onServiceConnected()`. Centered on screen with escalating colors (white -> orange -> deep orange -> red) based on session count. Also displays time-remaining line with color escalation (green/orange/red based on % remaining).
+- `CounterOverlayManager` (@Singleton): WindowManager overlay using service context (required for TYPE_ACCESSIBILITY_OVERLAY token). `setServiceContext()` called in `onServiceConnected()`. Centered on screen with escalating colors (white -> orange -> deep orange -> red) based on session count.
+- `TimeRemainingOverlayManager` (@Singleton): Standalone floating overlay in top-right corner. Shows "Xm left" with color-coded text (green >50%, orange 25-50%, red <25%) and increasingly opaque background. Separate from counter overlay so both can show independently.
 - `activeReelLabel`: once Shorts/Reels feature detected, skip tree inspection on subsequent scrolls. Reset on app switch.
 - Counter-enabled packages cached every 10s via `CounterCacheRefresher` (Map<String, CounterCacheEntry> with autoKickAfter, showTimeRemaining, dailyLimitMinutes, autoKickCooldownSeconds per package).
 - Auto-kick: optional per-rule threshold (`autoKickAfter`). When session count hits threshold, sends ACTION_MAIN/CATEGORY_HOME intent, sets cooldown, and resets session counter.

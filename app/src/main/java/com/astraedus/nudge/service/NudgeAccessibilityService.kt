@@ -35,6 +35,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         fun grayscaleManager(): GrayscaleManager
         fun interactionTracker(): InteractionTracker
         fun counterOverlayManager(): CounterOverlayManager
+        fun timeRemainingOverlayManager(): TimeRemainingOverlayManager
         fun blockRuleRepository(): BlockRuleRepository
         fun nudgeLogger(): NudgeLogger
     }
@@ -147,6 +148,7 @@ class NudgeAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         entryPoint.counterOverlayManager().setServiceContext(this)
+        entryPoint.timeRemainingOverlayManager().setServiceContext(this)
         entryPoint.nudgeLogger().i("accessibility service connected")
 
         // Eagerly populate counter cache so the first scroll event works
@@ -239,7 +241,7 @@ class NudgeAccessibilityService : AccessibilityService() {
             return
         }
 
-        // Show counter/time remaining overlay for apps with showTimeRemaining.
+        // Show time remaining overlay for apps with showTimeRemaining.
         // This runs BEFORE passthrough check because awareness overlays should show
         // even when the block overlay has been bypassed via passthrough.
         val cacheEntry = counterCache.getEntry(packageName)
@@ -248,18 +250,14 @@ class NudgeAccessibilityService : AccessibilityService() {
                 val globalEnabled = entryPoint.nudgePreferences().isGlobalEnabled.first()
                 if (!globalEnabled) return@launch
 
-                val manager = entryPoint.counterOverlayManager()
-                withContext(Dispatchers.Main) {
-                    if (!manager.isVisible()) {
-                        manager.show("taps")
-                        manager.updateCount(
-                            entryPoint.interactionTracker().getSessionCount(packageName),
-                            entryPoint.interactionTracker().getDailyTotal(packageName)
-                        )
+                val trManager = entryPoint.timeRemainingOverlayManager()
+                if (!trManager.isVisible()) {
+                    withContext(Dispatchers.Main) {
+                        trManager.show()
                     }
                 }
                 lastTimeRemainingUpdateMs = 0L
-                maybeUpdateTimeRemaining(packageName, manager)
+                maybeUpdateTimeRemaining(packageName, trManager)
             }
         }
 
@@ -305,6 +303,11 @@ class NudgeAccessibilityService : AccessibilityService() {
             val manager = entryPoint.counterOverlayManager()
             if (manager.isVisible()) {
                 manager.hide()
+            }
+
+            val trManager = entryPoint.timeRemainingOverlayManager()
+            if (trManager.isVisible()) {
+                trManager.hide()
             }
         } catch (e: Exception) {
             entryPoint.nudgeLogger().w("counter overlay clear failed package=$packageName", e)
@@ -446,7 +449,11 @@ class NudgeAccessibilityService : AccessibilityService() {
                 manager.show(label)
             }
             manager.updateCount(count.sessionCount, count.dailyTotal)
-            maybeUpdateTimeRemaining(count.packageName, manager)
+
+            // Update time remaining overlay separately
+            val trManager = entryPoint.timeRemainingOverlayManager()
+            maybeUpdateTimeRemaining(count.packageName, trManager)
+
             checkAutoKick(count, manager)
         } catch (e: Exception) {
             entryPoint.nudgeLogger().w(
@@ -488,7 +495,7 @@ class NudgeAccessibilityService : AccessibilityService() {
 
     private fun maybeUpdateTimeRemaining(
         packageName: String,
-        manager: CounterOverlayManager
+        manager: TimeRemainingOverlayManager
     ) {
         val entry = counterCache.getEntry(packageName) ?: return
         if (!entry.showTimeRemaining || entry.dailyLimitMinutes == null) {
@@ -547,6 +554,7 @@ class NudgeAccessibilityService : AccessibilityService() {
     override fun onDestroy() {
         super.onDestroy()
         entryPoint.counterOverlayManager().clearServiceContext()
+        entryPoint.timeRemainingOverlayManager().clearServiceContext()
         if (grayscaleActiveForPackage != null) {
             entryPoint.grayscaleManager().disableGrayscale()
             grayscaleActiveForPackage = null
