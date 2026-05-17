@@ -2,6 +2,14 @@
 
 All notable changes to Nudge are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.4.3] - 2026-05-17
+
+### Changed
+- **Refactored NudgeAccessibilityService** (583 -> 401 lines): Extracted `PassthroughManager` (@Singleton, 41 lines), `TimeRemainingHandler` (93 lines), and `InteractionHandler` (99 lines). Service is now a thin event router. Passthrough state moved from static companion fields to injectable singleton -- testable and no global mutable state. BlockOverlayActivity uses injected PassthroughManager via Hilt.
+
+### Fixed
+- **Daily limit enforcement during passthrough**: When "time remaining" shows 0s, the app now hard-blocks immediately by clearing passthrough and launching the block overlay.
+
 ## [1.4.2] - 2026-05-17
 
 ### Changed
