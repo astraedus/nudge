@@ -43,22 +43,43 @@ class ScreenTimeProvider @Inject constructor(
     }
 
     /**
-     * Get per-app foreground time for today from UsageStatsManager.
-     * Returns a map of packageName to foreground time in milliseconds.
+     * Get per-app foreground time for today using event-based calculation.
+     * Uses queryEvents (ACTIVITY_RESUMED/PAUSED pairs) which is accurate in real-time,
+     * unlike queryUsageStats(INTERVAL_DAILY) which returns stale pre-aggregated buckets
+     * on Android 12+.
      */
     fun getPerAppScreenTimeToday(): Map<String, Long> {
         return try {
             val usm = usageStatsManager ?: return emptyMap()
             val todayStart = timeTracker.startOfToday()
             val now = System.currentTimeMillis()
-            val stats = usm.queryUsageStats(
-                UsageStatsManager.INTERVAL_DAILY,
-                todayStart,
-                now
-            ) ?: return emptyMap()
-            stats
-                .filter { it.totalTimeInForeground > 0L }
-                .associate { it.packageName to it.totalTimeInForeground }
+            val events = usm.queryEvents(todayStart, now) ?: return emptyMap()
+            val event = UsageEvents.Event()
+
+            val foregroundStarts = mutableMapOf<String, Long>()
+            val perApp = mutableMapOf<String, Long>()
+
+            while (events.hasNextEvent()) {
+                events.getNextEvent(event)
+                when (event.eventType) {
+                    UsageEvents.Event.ACTIVITY_RESUMED -> {
+                        foregroundStarts[event.packageName] = event.timeStamp
+                    }
+                    UsageEvents.Event.ACTIVITY_PAUSED -> {
+                        val startTime = foregroundStarts.remove(event.packageName)
+                        if (startTime != null) {
+                            perApp[event.packageName] =
+                                (perApp[event.packageName] ?: 0L) + (event.timeStamp - startTime)
+                        }
+                    }
+                }
+            }
+
+            for ((pkg, startTime) in foregroundStarts) {
+                perApp[pkg] = (perApp[pkg] ?: 0L) + (now - startTime)
+            }
+
+            perApp.filter { it.value > 0L }
         } catch (_: SecurityException) {
             emptyMap()
         }
@@ -66,19 +87,7 @@ class ScreenTimeProvider @Inject constructor(
 
     /** Get total screen time for today in milliseconds (all apps combined). */
     fun getTotalScreenTimeToday(): Long {
-        return try {
-            val usm = usageStatsManager ?: return 0L
-            val todayStart = timeTracker.startOfToday()
-            val now = System.currentTimeMillis()
-            val stats = usm.queryUsageStats(
-                UsageStatsManager.INTERVAL_DAILY,
-                todayStart,
-                now
-            ) ?: return 0L
-            stats.sumOf { it.totalTimeInForeground }
-        } catch (_: SecurityException) {
-            0L
-        }
+        return getPerAppScreenTimeToday().values.sum()
     }
 
     /**

@@ -1,5 +1,6 @@
 package com.astraedus.nudge.data.repository
 
+import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
 import android.content.Context
 import com.astraedus.nudge.data.db.dao.UsageEventDao
@@ -29,9 +30,9 @@ class UsageRepository @Inject constructor(
     }
 
     /**
-     * Get today's foreground usage time from Android's UsageStatsManager.
-     * More reliable than our custom durationMs field since it uses the OS-level tracking.
-     * Returns time in milliseconds.
+     * Get today's foreground usage time from queryEvents (ACTIVITY_RESUMED/PAUSED pairs).
+     * queryUsageStats(INTERVAL_DAILY) returns stale pre-aggregated buckets on Android 12+;
+     * event-based calculation gives accurate real-time data.
      */
     override fun getDailyForegroundTimeMs(packageName: String): Long {
         return try {
@@ -39,14 +40,29 @@ class UsageRepository @Inject constructor(
                 ?: return 0L
             val todayStart = timeTracker.startOfToday()
             val now = System.currentTimeMillis()
-            val stats = usm.queryUsageStats(
-                UsageStatsManager.INTERVAL_DAILY,
-                todayStart,
-                now
-            )
-            stats?.find { it.packageName == packageName }?.totalTimeInForeground ?: 0L
+            val events = usm.queryEvents(todayStart, now) ?: return 0L
+            val event = UsageEvents.Event()
+
+            var totalMs = 0L
+            var lastResumed = 0L
+
+            while (events.hasNextEvent()) {
+                events.getNextEvent(event)
+                if (event.packageName != packageName) continue
+                when (event.eventType) {
+                    UsageEvents.Event.ACTIVITY_RESUMED -> lastResumed = event.timeStamp
+                    UsageEvents.Event.ACTIVITY_PAUSED -> {
+                        if (lastResumed > 0L) {
+                            totalMs += event.timeStamp - lastResumed
+                            lastResumed = 0L
+                        }
+                    }
+                }
+            }
+
+            if (lastResumed > 0L) totalMs += now - lastResumed
+            totalMs
         } catch (_: SecurityException) {
-            // PACKAGE_USAGE_STATS permission not granted
             0L
         }
     }

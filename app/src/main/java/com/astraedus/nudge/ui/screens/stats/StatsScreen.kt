@@ -1,6 +1,9 @@
 package com.astraedus.nudge.ui.screens.stats
 
+import android.content.Intent
+import android.provider.Settings
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,6 +32,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -44,6 +48,7 @@ fun StatsScreen(
     onNavigateBack: () -> Unit
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val context = LocalContext.current
 
     Scaffold(
         topBar = {
@@ -65,11 +70,24 @@ fun StatsScreen(
         ) {
             // Today's total card
             item {
+                val cardModifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+                    .padding(top = 8.dp)
+                    .let { mod ->
+                        if (!state.hasUsagePermission) {
+                            mod.clickable {
+                                context.startActivity(
+                                    Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS).apply {
+                                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                    }
+                                )
+                            }
+                        } else mod
+                    }
+
                 Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp)
-                        .padding(top = 8.dp),
+                    modifier = cardModifier,
                     colors = CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.primaryContainer
                     )
@@ -86,11 +104,18 @@ fun StatsScreen(
                             color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
                         )
                         Text(
-                            state.totalFormatted,
+                            if (state.hasUsagePermission) state.totalFormatted else "--",
                             style = MaterialTheme.typography.headlineLarge,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onPrimaryContainer
                         )
+                        if (!state.hasUsagePermission) {
+                            Text(
+                                "Tap to enable usage access",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                        }
                     }
                 }
             }

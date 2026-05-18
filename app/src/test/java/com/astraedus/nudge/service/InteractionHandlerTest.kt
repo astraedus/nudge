@@ -245,6 +245,42 @@ class InteractionHandlerTest {
         assertEquals(0, tracker.getSessionCount("com.example.other"))
     }
 
+    // --- counter not shown when session is zero ---
+
+    @Test
+    fun `counterNotShownOnAppEntryWhenSessionCountIsZero`() {
+        enablePackage("com.example.notes")
+
+        // Enter the app for the first time -- session count is 0
+        handler.onAppChanged("com.example.notes")
+
+        // Counter overlay should NOT be shown (session count is 0)
+        assertFalse(overlayManager.visible)
+        assertNull(overlayManager.lastShowLabel)
+    }
+
+    @Test
+    fun `counter shown on app entry when session count is positive`() {
+        enablePackage("com.example.notes")
+
+        // Record some interactions first
+        handler.onAppChanged("com.example.notes")
+        handler.handleViewClicked("com.example.notes")
+        handler.handleViewClicked("com.example.notes")
+        assertTrue(overlayManager.visible)
+
+        // Switch away (hide overlay), then come back
+        overlayManager.visible = false
+        overlayManager.lastShowLabel = null
+        handler.onAppChanged("com.example.other")
+
+        // Return to notes -- session count persists (within expiry), overlay shows
+        handler.onAppChanged("com.example.notes")
+
+        assertTrue(overlayManager.visible)
+        assertEquals("taps", overlayManager.lastShowLabel)
+    }
+
     // --- hideCounter tests ---
 
     @Test

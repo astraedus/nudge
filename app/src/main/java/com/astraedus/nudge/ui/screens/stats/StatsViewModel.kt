@@ -35,7 +35,8 @@ data class StatsUiState(
     val weeklyData: List<DayData> = emptyList(),
     val trendData: List<TrendDay> = emptyList(),
     val hourlyMs: List<Long> = List(24) { 0L },
-    val streakDays: Int = 0
+    val streakDays: Int = 0,
+    val hasUsagePermission: Boolean = true
 )
 
 @HiltViewModel
@@ -80,6 +81,8 @@ class StatsViewModel @Inject constructor(
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), StatsUiState())
 
     private fun buildUiState(weekEvents: List<UsageEvent>, screenTime: ScreenTimeSnapshot): StatsUiState {
+        val hasPermission = screenTimeProvider.hasPermission()
+
         // Per-app stats from OS-level UsageStatsManager
         val byPackage = screenTime.perApp.entries
             .sortedByDescending { it.value }
@@ -101,13 +104,20 @@ class StatsViewModel @Inject constructor(
         // Weekly bar chart from OS data
         val weeklyData = statsCalculator.buildWeeklyDataFromTotals(screenTime.weeklyDailyTotals)
 
+        val totalFormatted = if (hasPermission && screenTime.totalTodayMs < 60_000L) {
+            "< 1m"
+        } else {
+            timeTracker.formatDuration(screenTime.totalTodayMs)
+        }
+
         return StatsUiState(
-            totalFormatted = timeTracker.formatDuration(screenTime.totalTodayMs),
+            totalFormatted = totalFormatted,
             appStats = appStats,
             weeklyData = weeklyData,
             trendData = statsCalculator.buildTrendData(weekEvents),
             hourlyMs = screenTime.hourlyTodayMs,
-            streakDays = statsCalculator.calculateStreak(weekEvents)
+            streakDays = statsCalculator.calculateStreak(weekEvents),
+            hasUsagePermission = hasPermission
         )
     }
 

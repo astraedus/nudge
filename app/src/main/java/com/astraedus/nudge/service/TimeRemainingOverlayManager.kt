@@ -70,7 +70,7 @@ class TimeRemainingOverlayManager @Inject constructor(
     }
 
     override fun updateTimeRemaining(remainingMs: Long?, limitMinutes: Int?) {
-        if (remainingMs == null || limitMinutes == null || limitMinutes <= 0) {
+        if (remainingMs == null || limitMinutes == null || limitMinutes <= 0 || remainingMs <= 0) {
             hide()
             return
         }

@@ -58,13 +58,18 @@ class HomeViewModel @Inject constructor(
         usageRepository.getChangedMindCountForDay(todayStart, todayEnd),
         screenTimeFlow
     ) { enabled, rules, blockedCount, changedMind, screenTimeMs ->
+        val hasPermission = screenTimeProvider.hasPermission()
         HomeUiState(
             isGlobalEnabled = enabled,
-            todayTotalUsageFormatted = timeTracker.formatDuration(screenTimeMs),
+            todayTotalUsageFormatted = if (hasPermission && screenTimeMs < 60_000L) {
+                "< 1m"
+            } else {
+                timeTracker.formatDuration(screenTimeMs)
+            },
             activeRuleCount = rules.size,
             blockedCountToday = blockedCount,
             changedMindCount = changedMind,
-            hasUsagePermission = screenTimeProvider.hasPermission()
+            hasUsagePermission = hasPermission
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), HomeUiState())
 

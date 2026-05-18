@@ -1,5 +1,7 @@
 package com.astraedus.nudge.ui.screens.home
 
+import android.content.Intent
+import android.provider.Settings
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -36,6 +38,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -50,6 +53,7 @@ fun HomeScreen(
     onNavigateToActiveRules: () -> Unit = {}
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val context = LocalContext.current
 
     Scaffold(
         topBar = {
@@ -90,8 +94,18 @@ fun HomeScreen(
                 StatCard(
                     icon = Icons.Outlined.Schedule,
                     label = "Screen Time",
-                    value = state.todayTotalUsageFormatted,
-                    modifier = Modifier.weight(1f)
+                    value = if (state.hasUsagePermission) state.todayTotalUsageFormatted else "--",
+                    subtitle = if (!state.hasUsagePermission) "Tap to enable" else null,
+                    modifier = Modifier.weight(1f),
+                    onClick = if (!state.hasUsagePermission) {
+                        {
+                            context.startActivity(
+                                Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS).apply {
+                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                }
+                            )
+                        }
+                    } else null
                 )
                 StatCard(
                     icon = Icons.Outlined.Shield,
@@ -160,6 +174,7 @@ private fun StatCard(
     label: String,
     value: String,
     modifier: Modifier = Modifier,
+    subtitle: String? = null,
     onClick: (() -> Unit)? = null
 ) {
     Card(
@@ -185,6 +200,13 @@ private fun StatCard(
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onPrimaryContainer
             )
+            if (subtitle != null) {
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
             Text(
                 label,
                 style = MaterialTheme.typography.labelSmall,

@@ -2,6 +2,15 @@
 
 All notable changes to Nudge are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.5.1] - 2026-05-18
+
+### Fixed
+- **Screen time showing "0s"**: Switched from `queryUsageStats(INTERVAL_DAILY)` to event-based `queryEvents()` for both total and per-app screen time. The daily interval query returns stale pre-aggregated buckets on Android 12+ that often read zero. Event-based calculation (ACTIVITY_RESUMED/PAUSED pairs) gives accurate real-time data.
+- **Screen time permission handling**: Home screen and stats page now show "--" with "Tap to enable" when Usage Access permission is missing (tappable to open Settings), and "< 1m" for sub-minute values instead of the confusing "0s".
+- **Tap counter resets on app close/reopen**: Session counter now persists for 5 minutes after leaving an app. Previously, closing Discord and reopening it reset the tap count to 0, letting users game auto-kick. Counter only resets after being away > 5 minutes or after auto-kick cooldown expires.
+- **Counter overlay showing "0" on app entry**: The floating counter no longer appears with a "0" count when first entering an app. It now only shows after the first interaction.
+- **Time remaining overlay showing "0s left"**: Overlay now hides instead of displaying "0s left" when daily time runs out.
+
 ## [1.4.3] - 2026-05-17
 
 ### Changed

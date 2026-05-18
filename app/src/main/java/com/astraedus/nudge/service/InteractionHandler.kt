@@ -98,18 +98,21 @@ class InteractionHandler(
      */
     fun onAppChanged(packageName: String) {
         interactionTracker.onAppChanged(packageName)
-        // Show counter immediately on app entry so user sees it right away
+        // Show counter on app entry only if there is a persisted session count > 0
+        // (avoids showing a confusing "0" when the user first opens an app)
         if (counterCache.isEnabled(packageName)) {
             val sessionCount = interactionTracker.getSessionCount(packageName)
             val dailyTotal = interactionTracker.getDailyTotal(packageName)
-            val label = activeReelLabel ?: "taps"
-            try {
-                if (!counterOverlayManager.isVisible()) {
-                    counterOverlayManager.show(label)
+            if (sessionCount > 0) {
+                val label = activeReelLabel ?: "taps"
+                try {
+                    if (!counterOverlayManager.isVisible()) {
+                        counterOverlayManager.show(label)
+                    }
+                    counterOverlayManager.updateCount(sessionCount, dailyTotal)
+                } catch (e: Exception) {
+                    logger.w("counter overlay show on app entry failed package=$packageName", e)
                 }
-                counterOverlayManager.updateCount(sessionCount, dailyTotal)
-            } catch (e: Exception) {
-                logger.w("counter overlay show on app entry failed package=$packageName", e)
             }
         }
     }

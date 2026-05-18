@@ -9,10 +9,13 @@ import org.junit.Test
 class InteractionTrackerCooldownTest {
 
     private lateinit var tracker: InteractionTracker
+    private var fakeTime = 1_000_000L
 
     @Before
     fun setUp() {
+        fakeTime = 1_000_000L
         tracker = InteractionTracker()
+        tracker.clock = { fakeTime }
     }
 
     @Test
@@ -22,7 +25,6 @@ class InteractionTrackerCooldownTest {
 
     @Test
     fun `isInCooldown returns true during cooldown period`() {
-        // Set a cooldown that should be active right now (far future expiry)
         tracker.setCooldown("com.example.alpha", 60_000L)
         assertTrue(tracker.isInCooldown("com.example.alpha"))
     }
@@ -74,17 +76,18 @@ class InteractionTrackerCooldownTest {
     }
 
     @Test
-    fun `onAppChanged resets session normally when not in cooldown`() {
+    fun `onAppChanged resets session after expiry when not in cooldown`() {
         tracker.onAppChanged("com.example.alpha")
         tracker.recordInteraction("com.example.alpha")
         tracker.recordInteraction("com.example.alpha")
         assertEquals(2, tracker.getSessionCount("com.example.alpha"))
 
-        // Switch away and back without cooldown
+        // Switch away, advance past session expiry, then switch back
         tracker.onAppChanged("com.example.beta")
+        fakeTime += InteractionTracker.SESSION_EXPIRY_MS + 1
         tracker.onAppChanged("com.example.alpha")
 
-        // Session count should be reset
+        // Session count should be reset (away longer than expiry, no cooldown)
         assertEquals(0, tracker.getSessionCount("com.example.alpha"))
     }
 }
