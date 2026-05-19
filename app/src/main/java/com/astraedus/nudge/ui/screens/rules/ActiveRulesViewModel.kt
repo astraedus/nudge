@@ -1,7 +1,9 @@
 package com.astraedus.nudge.ui.screens.rules
 
+import android.graphics.drawable.Drawable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.astraedus.nudge.data.db.entity.BlockRule
 import com.astraedus.nudge.data.export.ImportResult
 import com.astraedus.nudge.data.repository.BlockRuleRepository
 import com.astraedus.nudge.data.repository.InstalledAppsRepository
@@ -12,7 +14,6 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.Immutable
 import javax.inject.Inject
@@ -21,7 +22,10 @@ import javax.inject.Inject
 data class ActiveRulesGroup(
     val packageName: String,
     val appName: String,
-    val rules: List<RuleSummary>
+    val appIcon: Drawable?,
+    val enabled: Boolean,
+    val summaryText: String,
+    val ruleCount: Int
 )
 
 @Immutable
@@ -51,7 +55,7 @@ class ActiveRulesViewModel @Inject constructor(
 
     private fun loadActiveRules() {
         viewModelScope.launch {
-            blockRuleRepository.getEnabledRules().collect { rules ->
+            blockRuleRepository.getAllRules().collect { rules ->
                 val appInfoMap = installedAppsRepository.getInstalledApps()
                     .associateBy { it.packageName }
 
@@ -59,39 +63,19 @@ class ActiveRulesViewModel @Inject constructor(
                     .filter { it.packageName != null }
                     .groupBy { it.packageName!! }
                     .map { (pkg, pkgRules) ->
-                        val appName = appInfoMap[pkg]?.appName ?: pkg
-                        val summaries = pkgRules.map { rule ->
-                            val modeLabel = when (rule.mode) {
-                                "HARD_BLOCK" -> "Hard Block"
-                                "DELAY" -> "Delay ${rule.delaySeconds}s"
-                                "BREATHING" -> "Breathing ${rule.delaySeconds}s"
-                                else -> rule.mode
-                            }
-                            val features = rule.inAppFeatures?.split(",")?.filter { it.isNotBlank() } ?: emptyList()
-                            val featureLabel = if (features.isNotEmpty()) {
-                                features.joinToString(", ") { it.lowercase().replaceFirstChar { c -> c.uppercase() } }
-                            } else "Whole app"
+                        val appInfo = appInfoMap[pkg]
+                        val appName = appInfo?.appName ?: pkg
+                        val appIcon = appInfo?.icon
+                        val enabled = pkgRules.any { it.enabled }
+                        val summaryText = buildSummaryText(pkgRules)
 
-                            val extras = buildList {
-                                if (rule.dailyLimitMinutes != null) add("${rule.dailyLimitMinutes}min/day limit")
-                                if (rule.scheduleDays != null) add("Scheduled")
-                                if (rule.grayscale) add("Grayscale")
-                                if (rule.showCounter) add("Counter")
-                                if (rule.autoKickAfter != null) add("Auto-close@${rule.autoKickAfter}")
-                            }
-                            val extraStr = if (extras.isNotEmpty()) " + ${extras.joinToString(", ")}" else ""
-
-                            RuleSummary(
-                                id = rule.id,
-                                mode = rule.mode,
-                                enabled = rule.enabled,
-                                description = "$featureLabel: $modeLabel$extraStr"
-                            )
-                        }
                         ActiveRulesGroup(
                             packageName = pkg,
                             appName = appName,
-                            rules = summaries
+                            appIcon = appIcon,
+                            enabled = enabled,
+                            summaryText = summaryText,
+                            ruleCount = pkgRules.size
                         )
                     }
                     .sortedBy { it.appName.lowercase() }
@@ -101,11 +85,9 @@ class ActiveRulesViewModel @Inject constructor(
         }
     }
 
-    fun toggleRuleEnabled(ruleId: Long, currentlyEnabled: Boolean) {
+    fun toggleAppEnabled(packageName: String, currentlyEnabled: Boolean) {
         viewModelScope.launch {
-            val rules = blockRuleRepository.getAllRules().firstOrNull() ?: return@launch
-            val rule = rules.find { it.id == ruleId } ?: return@launch
-            blockRuleRepository.updateRule(rule.copy(enabled = !currentlyEnabled))
+            blockRuleRepository.setEnabledForPackage(packageName, !currentlyEnabled)
         }
     }
 
@@ -148,5 +130,62 @@ class ActiveRulesViewModel @Inject constructor(
 
     fun clearImportOutcome() {
         _uiState.value = _uiState.value.copy(importOutcome = null, importError = null)
+    }
+
+    companion object {
+        /**
+         * Builds a human-readable summary from all BlockRule rows for one package.
+         *
+         * Examples:
+         *   "Hard Block"
+         *   "Delay 15s - 30min daily limit"
+         *   "Delay 15s - Reels: Hard Block"
+         *   "Breathing - Scheduled"
+         */
+        fun buildSummaryText(rules: List<BlockRule>): String {
+            val defaultRule = rules.find { it.inAppFeatures.isNullOrBlank() }
+            val featureRules = rules.filter { !it.inAppFeatures.isNullOrBlank() }
+
+            val parts = mutableListOf<String>()
+
+            // Default rule mode
+            if (defaultRule != null) {
+                parts.add(formatMode(defaultRule.mode, defaultRule.delaySeconds))
+
+                if (defaultRule.dailyLimitMinutes != null) {
+                    parts.add("${defaultRule.dailyLimitMinutes}min limit")
+                }
+
+                if (defaultRule.scheduleDays != null || defaultRule.scheduleStartMinute != null) {
+                    parts.add("Scheduled")
+                }
+            }
+
+            // Feature overrides
+            for (featureRule in featureRules) {
+                val features = featureRule.inAppFeatures!!
+                    .split(",")
+                    .filter { it.isNotBlank() }
+                    .joinToString("/") { it.trim().lowercase().replaceFirstChar { c -> c.uppercase() } }
+                val mode = formatMode(featureRule.mode, featureRule.delaySeconds)
+                parts.add("$features: $mode")
+            }
+
+            // If no default and no features somehow, fall back
+            if (parts.isEmpty()) {
+                return "Configured"
+            }
+
+            return parts.joinToString(" · ")
+        }
+
+        private fun formatMode(mode: String, delaySeconds: Int): String {
+            return when (mode) {
+                "HARD_BLOCK" -> "Hard Block"
+                "DELAY" -> "Delay ${delaySeconds}s"
+                "BREATHING" -> "Breathing ${delaySeconds}s"
+                else -> mode
+            }
+        }
     }
 }

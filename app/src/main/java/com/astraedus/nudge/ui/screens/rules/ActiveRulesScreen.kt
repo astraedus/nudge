@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -14,6 +15,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -40,10 +43,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
+import androidx.core.graphics.drawable.toBitmap
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import java.io.File
 
@@ -176,7 +182,7 @@ fun ActiveRulesScreen(
                 .padding(padding)
                 .padding(horizontal = 16.dp)
                 .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Spacer(Modifier.height(8.dp))
 
@@ -189,56 +195,86 @@ fun ActiveRulesScreen(
             }
 
             state.groups.forEach { group ->
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        group.appName,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Medium,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { onNavigateToRuleEditor(group.packageName, group.rules.first().id) }
-                            .padding(vertical = 4.dp)
-                    )
-
-                    group.rules.forEach { rule ->
-                        Card(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { onNavigateToRuleEditor(group.packageName, rule.id) },
-                            colors = CardDefaults.cardColors(
-                                containerColor = if (rule.enabled)
-                                    MaterialTheme.colorScheme.surfaceVariant
-                                else
-                                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                            )
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text(
-                                    rule.description,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    modifier = Modifier.weight(1f),
-                                    color = if (rule.enabled)
-                                        MaterialTheme.colorScheme.onSurfaceVariant
-                                    else
-                                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                                )
-                                Switch(
-                                    checked = rule.enabled,
-                                    onCheckedChange = { viewModel.toggleRuleEnabled(rule.id, rule.enabled) }
-                                )
-                            }
-                        }
-                    }
-                }
+                AppRuleCard(
+                    group = group,
+                    onToggle = { viewModel.toggleAppEnabled(group.packageName, group.enabled) },
+                    onClick = { onNavigateToRuleEditor(group.packageName, 0L) }
+                )
             }
 
             Spacer(Modifier.height(16.dp))
+        }
+    }
+}
+
+@Composable
+private fun AppRuleCard(
+    group: ActiveRulesGroup,
+    onToggle: () -> Unit,
+    onClick: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        colors = CardDefaults.cardColors(
+            containerColor = if (group.enabled)
+                MaterialTheme.colorScheme.surfaceVariant
+            else
+                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // App icon
+            val icon = group.appIcon
+            if (icon != null) {
+                val bitmap = remember(icon) { icon.toBitmap(48, 48).asImageBitmap() }
+                Image(
+                    bitmap = bitmap,
+                    contentDescription = group.appName,
+                    modifier = Modifier.size(40.dp)
+                )
+                Spacer(Modifier.width(12.dp))
+            }
+
+            // App name + summary
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                Text(
+                    group.appName,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Medium,
+                    color = if (group.enabled)
+                        MaterialTheme.colorScheme.onSurface
+                    else
+                        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                )
+                Text(
+                    group.summaryText,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (group.enabled)
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    else
+                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            Spacer(Modifier.width(8.dp))
+
+            // Toggle switch for all rules
+            Switch(
+                checked = group.enabled,
+                onCheckedChange = { onToggle() }
+            )
         }
     }
 }

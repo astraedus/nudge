@@ -37,4 +37,7 @@ interface BlockRuleDao {
 
     @Query("DELETE FROM block_rules WHERE packageName = :packageName")
     suspend fun deleteByPackageName(packageName: String)
+
+    @Query("UPDATE block_rules SET enabled = :enabled WHERE packageName = :packageName")
+    suspend fun setEnabledForPackage(packageName: String, enabled: Boolean)
 }
