@@ -56,6 +56,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.astraedus.nudge.domain.model.BlockMode
+import com.astraedus.nudge.ui.components.CustomTimeDialog
+import com.astraedus.nudge.ui.components.formatMinutesDisplay
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -233,16 +235,43 @@ fun RuleEditorScreen(
                         fontWeight = FontWeight.Medium
                     )
 
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    val delayPresets = remember { listOf(5, 15, 30, 60) }
+                    var showDelayDialog by remember { mutableStateOf(false) }
+                    val isCustomDelay = state.delaySeconds !in delayPresets
+
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        remember { listOf(5, 15, 30, 60) }.forEach { seconds ->
+                        delayPresets.forEach { seconds ->
                             FilterChip(
                                 selected = state.delaySeconds == seconds,
                                 onClick = { viewModel.setDelaySeconds(seconds) },
                                 label = { Text("${seconds}s") }
                             )
                         }
+                        FilterChip(
+                            selected = isCustomDelay,
+                            onClick = { showDelayDialog = true },
+                            label = {
+                                Text(if (isCustomDelay) "${state.delaySeconds}s" else "Custom")
+                            }
+                        )
+                    }
+
+                    if (showDelayDialog) {
+                        CustomTimeDialog(
+                            title = "Custom Delay Duration",
+                            unit = "seconds",
+                            currentValue = state.delaySeconds,
+                            min = 1,
+                            max = 300,
+                            onConfirm = { seconds ->
+                                viewModel.setDelaySeconds(seconds)
+                                showDelayDialog = false
+                            },
+                            onDismiss = { showDelayDialog = false }
+                        )
                     }
                 }
             }
@@ -278,16 +307,47 @@ fun RuleEditorScreen(
                 }
 
                 if (state.dailyLimitEnabled) {
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    val dailyPresets = remember { listOf(15, 30, 60, 120) }
+                    val dailyPresetLabels = remember { mapOf(15 to "15m", 30 to "30m", 60 to "1h", 120 to "2h") }
+                    var showDailyLimitDialog by remember { mutableStateOf(false) }
+                    val isCustomDaily = state.dailyLimitMinutes !in dailyPresets
+
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        remember { listOf(15 to "15m", 30 to "30m", 60 to "1h", 120 to "2h") }.forEach { (minutes, label) ->
+                        dailyPresets.forEach { minutes ->
                             FilterChip(
                                 selected = state.dailyLimitMinutes == minutes,
                                 onClick = { viewModel.setDailyLimitMinutes(minutes) },
-                                label = { Text(label) }
+                                label = { Text(dailyPresetLabels[minutes] ?: "${minutes}m") }
                             )
                         }
+                        FilterChip(
+                            selected = isCustomDaily,
+                            onClick = { showDailyLimitDialog = true },
+                            label = {
+                                Text(
+                                    if (isCustomDaily) formatMinutesDisplay(state.dailyLimitMinutes)
+                                    else "Custom"
+                                )
+                            }
+                        )
+                    }
+
+                    if (showDailyLimitDialog) {
+                        CustomTimeDialog(
+                            title = "Custom Daily Limit",
+                            unit = "minutes",
+                            currentValue = state.dailyLimitMinutes,
+                            min = 1,
+                            max = 480,
+                            onConfirm = { minutes ->
+                                viewModel.setDailyLimitMinutes(minutes)
+                                showDailyLimitDialog = false
+                            },
+                            onDismiss = { showDailyLimitDialog = false }
+                        )
                     }
 
                     // Show time remaining overlay toggle

@@ -54,6 +54,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.domain.model.FeatureMode
+import com.astraedus.nudge.ui.components.CustomTimeDialog
+import com.astraedus.nudge.ui.components.formatMinutesDisplay
 import com.astraedus.nudge.ui.hasGrayscalePermission
 import kotlinx.coroutines.launch
 
@@ -152,14 +154,47 @@ fun UnifiedAppConfigScreen(
                 }
 
                 if (state.dailyLimitEnabled) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf(15 to "15m", 30 to "30m", 60 to "1h", 120 to "2h").forEach { (minutes, label) ->
+                    val dailyPresets = remember { listOf(15, 30, 60, 120) }
+                    val dailyPresetLabels = remember { mapOf(15 to "15m", 30 to "30m", 60 to "1h", 120 to "2h") }
+                    var showDailyLimitDialog by remember { mutableStateOf(false) }
+                    val isCustomDaily = state.dailyLimitMinutes !in dailyPresets
+
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        dailyPresets.forEach { minutes ->
                             FilterChip(
                                 selected = state.dailyLimitMinutes == minutes,
                                 onClick = { viewModel.setDailyLimitMinutes(minutes) },
-                                label = { Text(label) }
+                                label = { Text(dailyPresetLabels[minutes] ?: "${minutes}m") }
                             )
                         }
+                        FilterChip(
+                            selected = isCustomDaily,
+                            onClick = { showDailyLimitDialog = true },
+                            label = {
+                                Text(
+                                    if (isCustomDaily) formatMinutesDisplay(state.dailyLimitMinutes)
+                                    else "Custom"
+                                )
+                            }
+                        )
+                    }
+
+                    if (showDailyLimitDialog) {
+                        CustomTimeDialog(
+                            title = "Custom Daily Limit",
+                            unit = "minutes",
+                            currentValue = state.dailyLimitMinutes,
+                            min = 1,
+                            max = 480,
+                            onConfirm = { minutes ->
+                                viewModel.setDailyLimitMinutes(minutes)
+                                showDailyLimitDialog = false
+                            },
+                            onDismiss = { showDailyLimitDialog = false }
+                        )
                     }
 
                     // Show time remaining sub-toggle
