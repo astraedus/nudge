@@ -397,14 +397,43 @@ fun UnifiedAppConfigScreen(
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Medium
                     )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf(5, 15, 30, 60).forEach { seconds ->
+                    val delayPresets = remember { listOf(5, 15, 30, 60) }
+                    var showDelayDialog by remember { mutableStateOf(false) }
+                    val isCustomDelay = state.defaultDelaySeconds !in delayPresets
+
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        delayPresets.forEach { seconds ->
                             FilterChip(
                                 selected = state.defaultDelaySeconds == seconds,
                                 onClick = { viewModel.setDefaultDelaySeconds(seconds) },
                                 label = { Text("${seconds}s") }
                             )
                         }
+                        FilterChip(
+                            selected = isCustomDelay,
+                            onClick = { showDelayDialog = true },
+                            label = {
+                                Text(if (isCustomDelay) "${state.defaultDelaySeconds}s" else "Custom")
+                            }
+                        )
+                    }
+
+                    if (showDelayDialog) {
+                        CustomTimeDialog(
+                            title = "Custom Delay Duration",
+                            unit = "seconds",
+                            currentValue = state.defaultDelaySeconds,
+                            min = 1,
+                            max = 300,
+                            onConfirm = { seconds ->
+                                viewModel.setDefaultDelaySeconds(seconds)
+                                showDelayDialog = false
+                            },
+                            onDismiss = { showDelayDialog = false }
+                        )
                     }
                 }
             }
