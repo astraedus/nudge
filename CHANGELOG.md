@@ -2,6 +2,16 @@
 
 All notable changes to Nudge are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.5.2] - 2026-05-20
+
+### Changed
+- **Active Rules collapsed to one card per app**: Previously showed separate cards for each internal rule (whole-app, feature overrides, schedule) with individual enable/disable toggles. Now shows one card per app with icon, name, summary text (e.g. "Delay 15s · Reels: Hard Block"), and a single app-level toggle. Tapping navigates to the unified config screen.
+- **Home screen "Active Rules" renamed to "Active Apps"**: Count now reflects distinct apps being blocked, not internal rule count.
+- **Home screen shows Today + All Time stats**: Blocked and Walked Away counts now displayed in two sections ("Today" and "All Time") instead of just today's numbers. Resolves confusion where stats appeared to "reset" on app update -- they were always per-day.
+
+### Fixed
+- **Stale migration test**: `NudgeDatabaseMigrationTest` now covers all migrations through DB version 7.
+
 ## [1.5.1] - 2026-05-18
 
 ### Fixed

@@ -221,7 +221,7 @@ private fun AppRuleCard(
             containerColor = if (group.enabled)
                 MaterialTheme.colorScheme.surfaceVariant
             else
-                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                MaterialTheme.colorScheme.surfaceContainerLow
         )
     ) {
         Row(
@@ -237,7 +237,8 @@ private fun AppRuleCard(
                 Image(
                     bitmap = bitmap,
                     contentDescription = group.appName,
-                    modifier = Modifier.size(40.dp)
+                    modifier = Modifier.size(40.dp),
+                    alpha = if (group.enabled) 1f else 0.4f
                 )
                 Spacer(Modifier.width(12.dp))
             }

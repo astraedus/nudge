@@ -4,7 +4,7 @@ Privacy-first app blocker with delay-to-open (breathing exercises before opening
 
 - GitHub: https://github.com/astraedus/nudge
 - F-Droid MR: https://gitlab.com/fdroid/fdroiddata/-/merge_requests/38398
-- v1.4.3 (current)
+- v1.5.2 (current)
 - See CHANGELOG.md for release history
 
 ## Build
@@ -190,12 +190,17 @@ Coverage targets (aspirational, enforce on new code):
 After any feature addition or significant change:
 1. Write tests covering the new behavior (unit + integration as appropriate)
 2. Run `./gradlew test` and verify ALL tests pass (not just new ones)
-3. Update CHANGELOG.md (under `[Unreleased]` section)
-4. Update this CLAUDE.md (architecture docs, feature descriptions)
-5. Build debug APK and install on Pixel 3 via ADB
-6. Test golden path + edge cases on real device
-7. Update store listing copy if user-facing
-8. Commit with descriptive message
+3. Build debug APK: `./gradlew assembleDebug`
+4. Install on Pixel 3: `adb -s 192.168.1.68:5555 install -r app/build/outputs/apk/debug/app-debug.apk`
+5. **QA on device** — spawn `device-tester` agent with specific test cases. PASS required before push.
+6. If QA passes: bump `versionCode` + `versionName` (patch) in `app/build.gradle.kts`
+7. Update CHANGELOG.md with version + date + changes
+8. Update this CLAUDE.md (architecture docs, feature descriptions) if applicable
+9. Commit all changes, tag, push: `git push origin main --tags`
+10. Create GitHub release (fast path): `gh release create vX.Y.Z nudge-vX.Y.Z.apk --title "vX.Y.Z" --generate-notes`
+11. Update store listing copy if user-facing
+
+**This is the standard ship flow. Every change that touches user-facing behavior gets a device QA gate before push.**
 
 ## Backlog
 
