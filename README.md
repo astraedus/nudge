@@ -26,16 +26,17 @@
 ---
 
 ## Why
+This app is the product of a disdain for subscription services for things that should be free, a disdain for all infinite scrolling short content and about 2 doses of ritalin built over a weekend.
 
-App blockers ask for Accessibility Service permissions, the most powerful permission on Android. It can see everything on your screen. Every keystroke, every notification, every app you open.
 
-Most app blockers are closed-source. Some have been [acquired by data intelligence companies](https://sensortower.com/blog/actiondash-stayfree-acquisition-announcement). Their privacy policies are vague at best, alarming at worst. You're trusting a black box with root-level visibility into your digital life. I don't like that. I also **hate** spending money on apps that should be free.
+App blockers ask for Accessibility Service permissions. It can see everything on your screen. Every keystroke, every notification.
 
-Billions of dollars have been spent engineering the perfect attention trap. Every scroll, every notification, every autoplay video is designed to fragment your focus and keep you consuming. Instagram Reels, YouTube Shorts, TikTok are all retention machines built on decades of behavioral psychology research.
+Most app blockers are closed-source. Some have been [acquired by data intelligence companies](https://sensortower.com/blog/actiondash-stayfree-acquisition-announcement). Their privacy policies are... Interesting. These apps can be good! But it's also trusting a closed project with root-level visibility into your digital life. I don't like that. I also **hate** spending money on apps that should be free.
 
-This app is the product of a disdain for subscription services for things that should be free, a disdain for all infinite scrolling short content and about 2 doses of ritalin.
+In another realm, billions of dollars have been spent engineering the perfect attention trap. Every scroll, notification, and autoplay video is designed to fragment your focus and keep you consuming. Instagram Reels, YouTube Shorts, TikTok are all retention machines built on decades of behavioral psychology research.
 
-Nudge is open source, requests zero internet permissions, and keeps all your data on your device. You can read every line of code. No analytics. No telemetry. No data leaving your phone. Ever. On principle.
+
+Nudge is open source, requests zero internet permissions, and keeps all your data on your device. You can read every line of code. Always. On principle.
 
 ## Features
 
