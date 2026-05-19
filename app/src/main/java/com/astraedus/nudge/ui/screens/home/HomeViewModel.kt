@@ -24,7 +24,9 @@ data class HomeUiState(
     val todayTotalUsageFormatted: String = "0s",
     val activeRuleCount: Int = 0,
     val blockedCountToday: Int = 0,
-    val changedMindCount: Int = 0,
+    val changedMindCountToday: Int = 0,
+    val allTimeBlockedCount: Int = 0,
+    val allTimeChangedMindCount: Int = 0,
     val hasUsagePermission: Boolean = true
 )
 
@@ -51,13 +53,22 @@ class HomeViewModel @Inject constructor(
         }
     }
 
+    // Combine today + all-time counts into a single flow to stay within combine's 5-param limit
+    private val countsFlow = combine(
+        usageRepository.getBlockedCountForDay(todayStart, todayEnd),
+        usageRepository.getChangedMindCountForDay(todayStart, todayEnd),
+        usageRepository.getAllTimeBlockedCount(),
+        usageRepository.getAllTimeChangedMindCount()
+    ) { blockedToday, changedMindToday, allTimeBlocked, allTimeChangedMind ->
+        CountsSnapshot(blockedToday, changedMindToday, allTimeBlocked, allTimeChangedMind)
+    }
+
     val uiState: StateFlow<HomeUiState> = combine(
         nudgePreferences.isGlobalEnabled,
         blockRuleRepository.getEnabledRules(),
-        usageRepository.getBlockedCountForDay(todayStart, todayEnd),
-        usageRepository.getChangedMindCountForDay(todayStart, todayEnd),
+        countsFlow,
         screenTimeFlow
-    ) { enabled, rules, blockedCount, changedMind, screenTimeMs ->
+    ) { enabled, rules, counts, screenTimeMs ->
         val hasPermission = screenTimeProvider.hasPermission()
         HomeUiState(
             isGlobalEnabled = enabled,
@@ -66,12 +77,24 @@ class HomeViewModel @Inject constructor(
             } else {
                 timeTracker.formatDuration(screenTimeMs)
             },
-            activeRuleCount = rules.size,
-            blockedCountToday = blockedCount,
-            changedMindCount = changedMind,
+            activeRuleCount = rules
+                .mapNotNull { it.packageName }
+                .distinct()
+                .size,
+            blockedCountToday = counts.blockedToday,
+            changedMindCountToday = counts.changedMindToday,
+            allTimeBlockedCount = counts.allTimeBlocked,
+            allTimeChangedMindCount = counts.allTimeChangedMind,
             hasUsagePermission = hasPermission
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), HomeUiState())
+
+    private data class CountsSnapshot(
+        val blockedToday: Int,
+        val changedMindToday: Int,
+        val allTimeBlocked: Int,
+        val allTimeChangedMind: Int
+    )
 
     fun toggleGlobalEnabled() {
         viewModelScope.launch {

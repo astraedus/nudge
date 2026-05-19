@@ -109,12 +109,19 @@ fun HomeScreen(
                 )
                 StatCard(
                     icon = Icons.Outlined.Shield,
-                    label = "Active Rules",
+                    label = "Active Apps",
                     value = state.activeRuleCount.toString(),
                     modifier = Modifier.weight(1f),
                     onClick = onNavigateToActiveRules
                 )
             }
+
+            Text(
+                "Today",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+            )
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -129,7 +136,32 @@ fun HomeScreen(
                 StatCard(
                     icon = Icons.Outlined.ThumbUp,
                     label = "Walked Away",
-                    value = state.changedMindCount.toString(),
+                    value = state.changedMindCountToday.toString(),
+                    modifier = Modifier.weight(1f)
+                )
+            }
+
+            Text(
+                "All Time",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                StatCard(
+                    icon = Icons.Outlined.Block,
+                    label = "Blocked",
+                    value = state.allTimeBlockedCount.toString(),
+                    modifier = Modifier.weight(1f)
+                )
+                StatCard(
+                    icon = Icons.Outlined.ThumbUp,
+                    label = "Walked Away",
+                    value = state.allTimeChangedMindCount.toString(),
                     modifier = Modifier.weight(1f)
                 )
             }

@@ -49,16 +49,29 @@ class NudgeDatabaseMigrationTest {
     }
 
     @Test
+    fun `MIGRATION_6_7 adds webDomains column`() {
+        val db = RecordingDatabase()
+
+        NudgeDatabase.MIGRATION_6_7.migrate(db.proxy)
+
+        assertEquals(
+            listOf("ALTER TABLE block_rules ADD COLUMN webDomains TEXT DEFAULT NULL"),
+            db.sql
+        )
+    }
+
+    @Test
     fun `all migrations registered from version 1 to current`() {
         val allMigrations = listOf(
             NudgeDatabase.MIGRATION_1_2,
             NudgeDatabase.MIGRATION_2_3,
             NudgeDatabase.MIGRATION_3_4,
             NudgeDatabase.MIGRATION_4_5,
-            NudgeDatabase.MIGRATION_5_6
+            NudgeDatabase.MIGRATION_5_6,
+            NudgeDatabase.MIGRATION_6_7
         )
 
-        val currentVersion = 6
+        val currentVersion = 7
 
         // Every version gap from 1 to current must have a migration
         for (v in 1 until currentVersion) {
