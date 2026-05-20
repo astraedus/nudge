@@ -84,6 +84,25 @@ class StatsCalculator @Inject constructor(
     }
 
     /**
+     * Build trend data (blocked + walked away) for a specific app package.
+     * Filters weekEvents by packageName before computing per-day counts.
+     */
+    fun buildAppTrendData(weekEvents: List<UsageEvent>, packageName: String): List<TrendDay> {
+        val result = mutableListOf<TrendDay>()
+        for (i in 6 downTo 0) {
+            val dayStart = todayStart - i * DAY_MS
+            val dayEnd = dayStart + DAY_MS
+            val dayEvents = weekEvents
+                .filter { it.packageName == packageName && it.timestamp in dayStart until dayEnd }
+            val blockedCount = dayEvents.count { it.wasBlocked }
+            val walkedAwayCount = dayEvents.count { it.userChangedMind }
+            val label = getDayLabel(dayStart)
+            result.add(TrendDay(label = label, blockedCount = blockedCount, walkedAwayCount = walkedAwayCount))
+        }
+        return result
+    }
+
+    /**
      * Calculate streak: consecutive days (ending today or yesterday) where
      * the user had at least one nudge interaction (blocked or walked away).
      * If today has no events at all, it's skipped (user hasn't used phone yet).

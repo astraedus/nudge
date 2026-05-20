@@ -45,7 +45,8 @@ import com.astraedus.nudge.ui.screens.stats.charts.WeeklyBarChart
 @Composable
 fun StatsScreen(
     viewModel: StatsViewModel,
-    onNavigateBack: () -> Unit
+    onNavigateBack: () -> Unit,
+    onNavigateToAppDetail: (String) -> Unit = {}
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -173,7 +174,12 @@ fun StatsScreen(
                 }
 
                 items(state.appStats, key = { it.packageName }) { stat ->
-                    UsageBar(stat = stat, modifier = Modifier.padding(horizontal = 16.dp))
+                    UsageBar(
+                        stat = stat,
+                        modifier = Modifier
+                            .padding(horizontal = 16.dp)
+                            .clickable { onNavigateToAppDetail(stat.packageName) }
+                    )
                 }
             } else {
                 item {

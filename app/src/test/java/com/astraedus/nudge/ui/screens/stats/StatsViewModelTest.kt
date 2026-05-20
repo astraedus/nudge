@@ -242,6 +242,45 @@ class StatsViewModelTest {
         assertEquals(0L, weekly.last().totalMs)
     }
 
+    // --- Per-app trend data tests ---
+
+    @Test
+    fun `buildAppTrendData returns 7 entries`() {
+        val trend = calculator.buildAppTrendData(emptyList(), "com.test.app")
+        assertEquals(7, trend.size)
+    }
+
+    @Test
+    fun `buildAppTrendData filters by package name`() {
+        val todayStart = timeTracker.startOfToday()
+
+        val events = listOf(
+            makeEvent(todayStart + 1000, wasBlocked = true, packageName = "com.test.app"),
+            makeEvent(todayStart + 2000, wasBlocked = true, packageName = "com.other.app"),
+            makeEvent(todayStart + 3000, userChangedMind = true, packageName = "com.test.app"),
+        )
+
+        val trend = calculator.buildAppTrendData(events, "com.test.app")
+        val today = trend.last()
+        assertEquals(1, today.blockedCount)
+        assertEquals(1, today.walkedAwayCount)
+    }
+
+    @Test
+    fun `buildAppTrendData ignores events from other packages`() {
+        val todayStart = timeTracker.startOfToday()
+
+        val events = listOf(
+            makeEvent(todayStart + 1000, wasBlocked = true, packageName = "com.other.app"),
+            makeEvent(todayStart + 2000, userChangedMind = true, packageName = "com.other.app"),
+        )
+
+        val trend = calculator.buildAppTrendData(events, "com.test.app")
+        val today = trend.last()
+        assertEquals(0, today.blockedCount)
+        assertEquals(0, today.walkedAwayCount)
+    }
+
     // --- Helpers ---
 
     private fun makeEvent(

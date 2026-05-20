@@ -1,6 +1,7 @@
 package com.astraedus.nudge.ui.screens.stats.charts
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -13,6 +14,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
@@ -21,6 +26,8 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -58,12 +65,37 @@ fun BlockedTrendChart(
     }
 
     val maxCount = days.maxOf { maxOf(it.blockedCount, it.walkedAwayCount) }.coerceAtLeast(1)
+    var selectedIndex by remember { mutableStateOf<Int?>(null) }
 
     Column(modifier = modifier.fillMaxWidth()) {
+        if (selectedIndex != null) {
+            val day = days.getOrNull(selectedIndex!!)
+            if (day != null) {
+                Text(
+                    "${day.label}: ${day.blockedCount} blocked, ${day.walkedAwayCount} walked away",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(bottom = 4.dp)
+                )
+            }
+        }
+
         Canvas(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(80.dp)
+                .pointerInput(days) {
+                    detectTapGestures { offset ->
+                        val barCount = days.size
+                        val spacing = 8.dp.toPx()
+                        val totalSpacing = (barCount - 1) * spacing
+                        val barWidth = (size.width - totalSpacing) / barCount
+                        val step = barWidth + spacing
+                        val index = (offset.x / step).toInt().coerceIn(0, days.lastIndex)
+                        selectedIndex = if (selectedIndex == index) null else index
+                    }
+                }
         ) {
             val barCount = days.size
             val totalSpacing = (barCount - 1) * 8.dp.toPx()
@@ -77,8 +109,9 @@ fun BlockedTrendChart(
                 val barHeight = (chartHeight * fraction).coerceAtLeast(if (day.blockedCount > 0) 3.dp.toPx() else 0f)
 
                 if (barHeight > 0f) {
+                    val barAlpha = if (selectedIndex != null && selectedIndex != index) 0.15f else 0.3f
                     drawRoundRect(
-                        color = primaryColor.copy(alpha = 0.3f),
+                        color = primaryColor.copy(alpha = barAlpha),
                         topLeft = Offset(x, chartHeight - barHeight + 8.dp.toPx()),
                         size = Size(barWidth, barHeight),
                         cornerRadius = CornerRadius(4.dp.toPx())
@@ -112,10 +145,16 @@ fun BlockedTrendChart(
                 )
 
                 // Draw dots
-                points.forEach { point ->
+                points.forEachIndexed { index, point ->
+                    val dotRadius = if (selectedIndex == index) 4.dp.toPx() else 3.dp.toPx()
+                    val dotColor = if (selectedIndex != null && selectedIndex != index) {
+                        secondaryColor.copy(alpha = 0.4f)
+                    } else {
+                        secondaryColor
+                    }
                     drawCircle(
-                        color = secondaryColor,
-                        radius = 3.dp.toPx(),
+                        color = dotColor,
+                        radius = dotRadius,
                         center = point
                     )
                 }

@@ -26,6 +26,8 @@ import com.astraedus.nudge.ui.screens.rules.RuleEditorScreen
 import com.astraedus.nudge.ui.screens.rules.RuleEditorViewModel
 import com.astraedus.nudge.ui.screens.settings.GrayscaleGuideScreen
 import com.astraedus.nudge.ui.screens.settings.SettingsScreen
+import com.astraedus.nudge.ui.screens.stats.AppDetailScreen
+import com.astraedus.nudge.ui.screens.stats.AppDetailViewModel
 import com.astraedus.nudge.ui.screens.stats.StatsScreen
 import com.astraedus.nudge.ui.screens.stats.StatsViewModel
 import kotlinx.coroutines.launch
@@ -46,6 +48,9 @@ sealed class Screen(val route: String) {
     data object ActiveRules : Screen("active_rules")
     data object AppConfig : Screen("app_config/{packageName}") {
         fun createRoute(packageName: String) = "app_config/$packageName"
+    }
+    data object AppDetail : Screen("app_detail/{packageName}") {
+        fun createRoute(packageName: String) = "app_detail/$packageName"
     }
 }
 
@@ -156,6 +161,20 @@ fun NudgeNavGraph(
         composable(Screen.Stats.route) {
             val viewModel: StatsViewModel = hiltViewModel()
             StatsScreen(
+                viewModel = viewModel,
+                onNavigateBack = { navController.popBackStack() },
+                onNavigateToAppDetail = { pkg ->
+                    navController.navigate(Screen.AppDetail.createRoute(pkg))
+                }
+            )
+        }
+
+        composable(
+            route = Screen.AppDetail.route,
+            arguments = listOf(navArgument("packageName") { type = NavType.StringType })
+        ) {
+            val viewModel: AppDetailViewModel = hiltViewModel()
+            AppDetailScreen(
                 viewModel = viewModel,
                 onNavigateBack = { navController.popBackStack() }
             )

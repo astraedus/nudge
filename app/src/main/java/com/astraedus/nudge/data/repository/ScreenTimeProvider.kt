@@ -165,6 +165,72 @@ class ScreenTimeProvider @Inject constructor(
     }
 
     /**
+     * Get daily screen time totals for a specific app over the last 7 days.
+     * Returns a list of 7 entries, index 0 = 6 days ago, index 6 = today.
+     */
+    fun getPerAppDailyScreenTimesForWeek(packageName: String): List<Long> {
+        return try {
+            val usm = usageStatsManager ?: return List(7) { 0L }
+            val todayStart = timeTracker.startOfToday()
+            val dayMs = 24L * 60L * 60L * 1000L
+
+            (6 downTo 0).map { daysAgo ->
+                val dayStart = todayStart - daysAgo * dayMs
+                val dayEnd = if (daysAgo == 0) System.currentTimeMillis() else dayStart + dayMs
+                val stats = usm.queryUsageStats(
+                    UsageStatsManager.INTERVAL_DAILY,
+                    dayStart,
+                    dayEnd
+                ) ?: emptyList()
+                stats.filter { it.packageName == packageName }
+                    .sumOf { it.totalTimeInForeground }
+            }
+        } catch (_: SecurityException) {
+            List(7) { 0L }
+        }
+    }
+
+    /**
+     * Get per-hour screen time breakdown for today for a specific app.
+     * Returns a list of 24 entries (index = hour 0-23), each value in milliseconds.
+     */
+    fun getPerAppHourlyScreenTimeToday(packageName: String): List<Long> {
+        return try {
+            val usm = usageStatsManager ?: return List(24) { 0L }
+            val todayStart = timeTracker.startOfToday()
+            val now = System.currentTimeMillis()
+            val hourMs = 60L * 60L * 1000L
+            val hourly = MutableList(24) { 0L }
+
+            val events = usm.queryEvents(todayStart, now) ?: return hourly
+            val event = UsageEvents.Event()
+            val foregroundStarts = mutableMapOf<String, Long>()
+
+            while (events.hasNextEvent()) {
+                events.getNextEvent(event)
+                if (event.packageName != packageName) continue
+                when (event.eventType) {
+                    UsageEvents.Event.ACTIVITY_RESUMED -> foregroundStarts[event.packageName] = event.timeStamp
+                    UsageEvents.Event.ACTIVITY_PAUSED -> {
+                        val startTime = foregroundStarts.remove(event.packageName)
+                        if (startTime != null) {
+                            distributeToHours(hourly, startTime, event.timeStamp, todayStart, hourMs)
+                        }
+                    }
+                }
+            }
+
+            for ((_, startTime) in foregroundStarts) {
+                distributeToHours(hourly, startTime, now, todayStart, hourMs)
+            }
+
+            hourly
+        } catch (_: SecurityException) {
+            List(24) { 0L }
+        }
+    }
+
+    /**
      * Distribute a foreground session's duration across hourly buckets.
      */
     private fun distributeToHours(
