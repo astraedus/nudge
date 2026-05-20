@@ -79,8 +79,8 @@ class AppListViewModel @Inject constructor(
 
     fun toggleBlockRule(packageName: String, currentlyBlocked: Boolean, ruleId: Long?) {
         viewModelScope.launch {
-            if (currentlyBlocked && ruleId != null) {
-                blockRuleRepository.deleteRule(ruleId)
+            if (ruleId != null) {
+                blockRuleRepository.setEnabledForPackage(packageName, !currentlyBlocked)
             } else {
                 blockRuleRepository.addRule(
                     BlockRule(
