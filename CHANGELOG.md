@@ -2,6 +2,12 @@
 
 All notable changes to Nudge are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.5.3] - 2026-05-20
+
+### Fixed
+- **Rules no longer deleted when toggled off**: Disabling a rule from Manage Apps previously deleted it permanently, losing all configuration. Now it disables the rule (preserving settings) so it can be re-enabled later. Disabled rules appear dimmed in Active Rules.
+- **Removed stray APK from git repo**: Release APKs now only live in GitHub Releases, not committed to the repo.
+
 ## [1.5.2] - 2026-05-20
 
 ### Changed
