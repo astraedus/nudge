@@ -51,8 +51,7 @@ class AppDetailViewModel @Inject constructor(
     private val weekStart = todayStart - 6 * DAY_MS
 
     private val appName: String by lazy {
-        installedAppsRepository.getInstalledApps()
-            .firstOrNull { it.packageName == packageName }?.appName ?: packageName
+        installedAppsRepository.resolveAppName(packageName)
     }
 
     private val weekEventsFlow = usageRepository.getEventsSince(weekStart)

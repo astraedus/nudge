@@ -62,6 +62,16 @@ class InstalledAppsRepository @Inject constructor(
             .sortedBy { it.appName.lowercase() }
     }
 
+    fun resolveAppName(packageName: String): String {
+        return try {
+            val pm = context.packageManager
+            val appInfo = pm.getApplicationInfo(packageName, 0)
+            pm.getApplicationLabel(appInfo).toString()
+        } catch (_: PackageManager.NameNotFoundException) {
+            packageName
+        }
+    }
+
     companion object {
         private val EXCLUDED_PACKAGES = setOf(
             "com.android.systemui",

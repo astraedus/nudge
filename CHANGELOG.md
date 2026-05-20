@@ -2,6 +2,15 @@
 
 All notable changes to Nudge are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.5.4] - 2026-05-21
+
+### Added
+- **Interactive charts**: Tap any bar/cell in the weekly chart, blocked trend chart, or hourly heatmap to see exact numbers. Selected elements highlight while others dim. Tap again to deselect.
+- **Per-app detail screen**: Tap any app in the Usage Stats "App Usage" list to see a deep-dive view with weekly screen time, hourly usage pattern, nudge effectiveness trend, blocked/walked-away counts (today + all time), and block mode breakdown.
+
+### Fixed
+- **App names showing as package names in stats**: Usage Stats now shows human-readable app names (e.g. "Settings" instead of "com.android.settings") for all apps including system apps. Previously only launcher-category apps had proper names.
+
 ## [1.5.3] - 2026-05-20
 
 ### Fixed

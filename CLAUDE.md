@@ -18,7 +18,7 @@ export ANDROID_HOME=$HOME/Android/Sdk
 adb install -r app/build/outputs/apk/debug/app-debug.apk  # Install on device
 ```
 
-Test device: Pixel 3 on ADB at `192.168.1.73:5555` (Android 12, API 31).
+Test device: Pixel 3 on ADB at `192.168.1.68:5555` (Android 12, API 31).
 
 ## Releasing
 

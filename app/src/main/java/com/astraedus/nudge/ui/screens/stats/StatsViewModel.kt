@@ -52,8 +52,12 @@ class StatsViewModel @Inject constructor(
     private val todayEnd = todayStart + DAY_MS
     private val weekStart = todayStart - 6 * DAY_MS
 
-    private val appNameMap: Map<String, String> by lazy {
-        installedAppsRepository.getInstalledApps().associate { it.packageName to it.appName }
+    private val appNameCache = mutableMapOf<String, String>()
+
+    private fun resolveAppName(packageName: String): String {
+        return appNameCache.getOrPut(packageName) {
+            installedAppsRepository.resolveAppName(packageName)
+        }
     }
 
     private val weekEventsFlow = usageRepository.getEventsSince(weekStart)
@@ -94,7 +98,7 @@ class StatsViewModel @Inject constructor(
             .map { (pkg, ms) ->
                 AppUsageStat(
                     packageName = pkg,
-                    appName = appNameMap[pkg] ?: pkg,
+                    appName = resolveAppName(pkg),
                     durationMs = ms,
                     formattedDuration = timeTracker.formatDuration(ms),
                     fraction = (ms.toFloat() / maxMs.toFloat()).coerceIn(0.05f, 1f)
