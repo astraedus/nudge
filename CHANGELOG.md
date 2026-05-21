@@ -2,6 +2,11 @@
 
 All notable changes to Nudge are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.5.5] - 2026-05-22
+
+### Added
+- **Day-by-day navigation on stats screens**: Browse previous days' usage data with back/forward arrows on both the overall Usage Stats screen and per-app detail screen. Forward arrow disabled when viewing today. Weekly chart and hourly pattern shift to the selected date's window.
+
 ## [1.5.4] - 2026-05-21
 
 ### Added
