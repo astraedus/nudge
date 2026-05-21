@@ -281,6 +281,123 @@ class StatsViewModelTest {
         assertEquals(0, today.walkedAwayCount)
     }
 
+    // --- Date-parameterized referenceDayStartMs tests ---
+
+    @Test
+    fun `buildWeeklyData with past reference day includes correct window`() {
+        val todayStart = timeTracker.startOfToday()
+        val dayMs = 24L * 60L * 60L * 1000L
+        // Reference day = yesterday
+        val yesterdayStart = todayStart - dayMs
+
+        val events = listOf(
+            // Event on yesterday
+            makeEvent(yesterdayStart + 1000, durationMs = 50000),
+            // Event 2 days ago (within yesterday's 7-day window)
+            makeEvent(yesterdayStart - dayMs + 1000, durationMs = 30000),
+            // Event on today (outside yesterday's 7-day ending window)
+            makeEvent(todayStart + 1000, durationMs = 99000),
+        )
+
+        val weekly = calculator.buildWeeklyData(events, referenceDayStartMs = yesterdayStart)
+        // Last entry should be yesterday, so today's event should NOT appear
+        assertEquals(50000L, weekly.last().totalMs)
+        assertEquals(30000L, weekly[weekly.size - 2].totalMs)
+    }
+
+    @Test
+    fun `buildTrendData with past reference day scopes correctly`() {
+        val todayStart = timeTracker.startOfToday()
+        val dayMs = 24L * 60L * 60L * 1000L
+        val yesterdayStart = todayStart - dayMs
+
+        val events = listOf(
+            makeEvent(yesterdayStart + 1000, wasBlocked = true),
+            makeEvent(todayStart + 1000, wasBlocked = true),
+        )
+
+        val trend = calculator.buildTrendData(events, referenceDayStartMs = yesterdayStart)
+        // Last entry is yesterday
+        val lastDay = trend.last()
+        assertEquals(1, lastDay.blockedCount)
+    }
+
+    @Test
+    fun `calculateStreak with past reference day uses correct anchor`() {
+        val todayStart = timeTracker.startOfToday()
+        val dayMs = 24L * 60L * 60L * 1000L
+        val yesterdayStart = todayStart - dayMs
+
+        val events = listOf(
+            makeEvent(yesterdayStart + 1000, wasBlocked = true),
+            makeEvent(yesterdayStart - dayMs + 1000, wasBlocked = true),
+        )
+
+        val streak = calculator.calculateStreak(events, referenceDayStartMs = yesterdayStart)
+        assertEquals(2, streak)
+    }
+
+    @Test
+    fun `buildWeeklyDataFromTotals with past reference day produces correct labels`() {
+        val todayStart = timeTracker.startOfToday()
+        val dayMs = 24L * 60L * 60L * 1000L
+        val yesterdayStart = todayStart - dayMs
+
+        val totals = listOf(10L, 20L, 30L, 40L, 50L, 60L, 70L)
+        val weekly = calculator.buildWeeklyDataFromTotals(totals, referenceDayStartMs = yesterdayStart)
+
+        assertEquals(7, weekly.size)
+        // Last entry should use yesterday's day label
+        assertEquals(70L, weekly.last().totalMs)
+        val validLabels = setOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+        weekly.forEach { day ->
+            assertTrue("Label '${day.label}' not in valid set", day.label in validLabels)
+        }
+    }
+
+    @Test
+    fun `buildAppTrendData with past reference day scopes to correct window`() {
+        val todayStart = timeTracker.startOfToday()
+        val dayMs = 24L * 60L * 60L * 1000L
+        val yesterdayStart = todayStart - dayMs
+
+        val events = listOf(
+            makeEvent(yesterdayStart + 1000, wasBlocked = true, packageName = "com.test.app"),
+            makeEvent(todayStart + 1000, wasBlocked = true, packageName = "com.test.app"),
+        )
+
+        val trend = calculator.buildAppTrendData(events, "com.test.app", referenceDayStartMs = yesterdayStart)
+        val lastDay = trend.last()
+        // Only yesterday's event should be in the last slot
+        assertEquals(1, lastDay.blockedCount)
+    }
+
+    // --- formatDateLabel tests ---
+
+    @Test
+    fun `formatDateLabel produces readable output`() {
+        val date = java.time.LocalDate.of(2026, 5, 21)
+        val label = StatsViewModel.formatDateLabel(date)
+        // May 21, 2026 is a Thursday
+        assertTrue("Label should contain 'Thu', got: $label", label.contains("Thu"))
+        assertTrue("Label should contain 'May', got: $label", label.contains("May"))
+        assertTrue("Label should contain '21', got: $label", label.contains("21"))
+    }
+
+    @Test
+    fun `toEpochMs converts LocalDate to midnight epoch millis`() {
+        val date = java.time.LocalDate.of(2026, 1, 1)
+        val epochMs = with(StatsViewModel.Companion) { date.toEpochMs() }
+        // Should be a positive value at midnight
+        assertTrue("Epoch ms should be positive", epochMs > 0)
+        // Should be at midnight (no fractional day)
+        val cal = Calendar.getInstance(TimeZone.getDefault())
+        cal.timeInMillis = epochMs
+        assertEquals(0, cal.get(Calendar.HOUR_OF_DAY))
+        assertEquals(0, cal.get(Calendar.MINUTE))
+        assertEquals(0, cal.get(Calendar.SECOND))
+    }
+
     // --- Helpers ---
 
     private fun makeEvent(

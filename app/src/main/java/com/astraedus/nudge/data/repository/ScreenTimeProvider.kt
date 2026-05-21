@@ -43,17 +43,22 @@ class ScreenTimeProvider @Inject constructor(
     }
 
     /**
-     * Get per-app foreground time for today using event-based calculation.
+     * Get per-app foreground time for an arbitrary time range using event-based calculation.
      * Uses queryEvents (ACTIVITY_RESUMED/PAUSED pairs) which is accurate in real-time,
      * unlike queryUsageStats(INTERVAL_DAILY) which returns stale pre-aggregated buckets
      * on Android 12+.
+     *
+     * @param dayStartMs start of the range (inclusive), epoch millis
+     * @param dayEndMs end of the range (exclusive), epoch millis
      */
-    fun getPerAppScreenTimeToday(): Map<String, Long> {
+    fun getPerAppScreenTime(dayStartMs: Long, dayEndMs: Long): Map<String, Long> {
         return try {
             val usm = usageStatsManager ?: return emptyMap()
-            val todayStart = timeTracker.startOfToday()
             val now = System.currentTimeMillis()
-            val events = usm.queryEvents(todayStart, now) ?: return emptyMap()
+            val effectiveEnd = dayEndMs.coerceAtMost(now)
+            if (dayStartMs >= effectiveEnd) return emptyMap()
+
+            val events = usm.queryEvents(dayStartMs, effectiveEnd) ?: return emptyMap()
             val event = UsageEvents.Event()
 
             val foregroundStarts = mutableMapOf<String, Long>()
@@ -75,8 +80,11 @@ class ScreenTimeProvider @Inject constructor(
                 }
             }
 
-            for ((pkg, startTime) in foregroundStarts) {
-                perApp[pkg] = (perApp[pkg] ?: 0L) + (now - startTime)
+            // Only add still-open sessions if the range includes "now"
+            if (dayEndMs >= now) {
+                for ((pkg, startTime) in foregroundStarts) {
+                    perApp[pkg] = (perApp[pkg] ?: 0L) + (now - startTime)
+                }
             }
 
             perApp.filter { it.value > 0L }
@@ -85,25 +93,39 @@ class ScreenTimeProvider @Inject constructor(
         }
     }
 
-    /** Get total screen time for today in milliseconds (all apps combined). */
+    /** Convenience: get per-app foreground time for today. */
+    fun getPerAppScreenTimeToday(): Map<String, Long> {
+        val todayStart = timeTracker.startOfToday()
+        val now = System.currentTimeMillis()
+        return getPerAppScreenTime(todayStart, now)
+    }
+
+    /** Get total screen time for an arbitrary range in milliseconds. */
+    fun getTotalScreenTime(dayStartMs: Long, dayEndMs: Long): Long {
+        return getPerAppScreenTime(dayStartMs, dayEndMs).values.sum()
+    }
+
+    /** Convenience: get total screen time for today in milliseconds. */
     fun getTotalScreenTimeToday(): Long {
         return getPerAppScreenTimeToday().values.sum()
     }
 
     /**
-     * Get daily screen time totals for the last 7 days.
-     * Returns a list of 7 entries, index 0 = 6 days ago, index 6 = today.
-     * Each value is total foreground time in milliseconds for that day.
+     * Get daily screen time totals for 7 days ending at [lastDayStartMs].
+     * Returns a list of 7 entries, index 0 = 6 days before lastDay, index 6 = lastDay.
+     *
+     * @param lastDayStartMs start-of-day epoch millis for the last day of the window (default: today)
      */
-    fun getDailyScreenTimesForWeek(): List<Long> {
+    fun getDailyScreenTimesForWeek(lastDayStartMs: Long = timeTracker.startOfToday()): List<Long> {
         return try {
             val usm = usageStatsManager ?: return List(7) { 0L }
-            val todayStart = timeTracker.startOfToday()
+            val now = System.currentTimeMillis()
             val dayMs = 24L * 60L * 60L * 1000L
 
             (6 downTo 0).map { daysAgo ->
-                val dayStart = todayStart - daysAgo * dayMs
-                val dayEnd = if (daysAgo == 0) System.currentTimeMillis() else dayStart + dayMs
+                val dayStart = lastDayStartMs - daysAgo * dayMs
+                val dayEnd = if (dayStart + dayMs > now) now else dayStart + dayMs
+                if (dayStart >= now) return@map 0L
                 val stats = usm.queryUsageStats(
                     UsageStatsManager.INTERVAL_DAILY,
                     dayStart,
@@ -117,25 +139,25 @@ class ScreenTimeProvider @Inject constructor(
     }
 
     /**
-     * Get per-hour screen time breakdown for today.
+     * Get per-hour screen time breakdown for an arbitrary day.
      * Returns a list of 24 entries (index = hour 0-23), each value in milliseconds.
      *
-     * Uses UsageEvents to determine which hours had foreground activity.
-     * This is an approximation: for each foreground session, we distribute time
-     * across the hours the session spans.
+     * @param dayStartMs start of the day (midnight), epoch millis
+     * @param dayEndMs end of the day (next midnight or now for today), epoch millis
      */
-    fun getHourlyScreenTimeToday(): List<Long> {
+    fun getHourlyScreenTime(dayStartMs: Long, dayEndMs: Long): List<Long> {
         return try {
             val usm = usageStatsManager ?: return List(24) { 0L }
-            val todayStart = timeTracker.startOfToday()
             val now = System.currentTimeMillis()
+            val effectiveEnd = dayEndMs.coerceAtMost(now)
+            if (dayStartMs >= effectiveEnd) return List(24) { 0L }
+
             val hourMs = 60L * 60L * 1000L
             val hourly = MutableList(24) { 0L }
 
-            val events = usm.queryEvents(todayStart, now) ?: return hourly
+            val events = usm.queryEvents(dayStartMs, effectiveEnd) ?: return hourly
             val event = UsageEvents.Event()
 
-            // Track foreground start times per package
             val foregroundStarts = mutableMapOf<String, Long>()
 
             while (events.hasNextEvent()) {
@@ -147,15 +169,16 @@ class ScreenTimeProvider @Inject constructor(
                     UsageEvents.Event.ACTIVITY_PAUSED -> {
                         val startTime = foregroundStarts.remove(event.packageName)
                         if (startTime != null) {
-                            distributeToHours(hourly, startTime, event.timeStamp, todayStart, hourMs)
+                            distributeToHours(hourly, startTime, event.timeStamp, dayStartMs, hourMs)
                         }
                     }
                 }
             }
 
-            // Handle still-open sessions (app currently in foreground)
-            for ((_, startTime) in foregroundStarts) {
-                distributeToHours(hourly, startTime, now, todayStart, hourMs)
+            if (dayEndMs >= now) {
+                for ((_, startTime) in foregroundStarts) {
+                    distributeToHours(hourly, startTime, now, dayStartMs, hourMs)
+                }
             }
 
             hourly
@@ -164,19 +187,30 @@ class ScreenTimeProvider @Inject constructor(
         }
     }
 
+    /** Convenience: get per-hour screen time breakdown for today. */
+    fun getHourlyScreenTimeToday(): List<Long> {
+        val todayStart = timeTracker.startOfToday()
+        val now = System.currentTimeMillis()
+        return getHourlyScreenTime(todayStart, now)
+    }
+
     /**
-     * Get daily screen time totals for a specific app over the last 7 days.
-     * Returns a list of 7 entries, index 0 = 6 days ago, index 6 = today.
+     * Get daily screen time totals for a specific app over 7 days ending at [lastDayStartMs].
+     * Returns a list of 7 entries, index 0 = 6 days before lastDay, index 6 = lastDay.
+     *
+     * @param packageName the app's package name
+     * @param lastDayStartMs start-of-day epoch millis for the last day of the window (default: today)
      */
-    fun getPerAppDailyScreenTimesForWeek(packageName: String): List<Long> {
+    fun getPerAppDailyScreenTimesForWeek(packageName: String, lastDayStartMs: Long = timeTracker.startOfToday()): List<Long> {
         return try {
             val usm = usageStatsManager ?: return List(7) { 0L }
-            val todayStart = timeTracker.startOfToday()
+            val now = System.currentTimeMillis()
             val dayMs = 24L * 60L * 60L * 1000L
 
             (6 downTo 0).map { daysAgo ->
-                val dayStart = todayStart - daysAgo * dayMs
-                val dayEnd = if (daysAgo == 0) System.currentTimeMillis() else dayStart + dayMs
+                val dayStart = lastDayStartMs - daysAgo * dayMs
+                val dayEnd = if (dayStart + dayMs > now) now else dayStart + dayMs
+                if (dayStart >= now) return@map 0L
                 val stats = usm.queryUsageStats(
                     UsageStatsManager.INTERVAL_DAILY,
                     dayStart,
@@ -191,18 +225,23 @@ class ScreenTimeProvider @Inject constructor(
     }
 
     /**
-     * Get per-hour screen time breakdown for today for a specific app.
-     * Returns a list of 24 entries (index = hour 0-23), each value in milliseconds.
+     * Get per-hour screen time breakdown for a specific app on an arbitrary day.
+     *
+     * @param packageName the app's package name
+     * @param dayStartMs start of the day (midnight), epoch millis
+     * @param dayEndMs end of the day (next midnight or now for today), epoch millis
      */
-    fun getPerAppHourlyScreenTimeToday(packageName: String): List<Long> {
+    fun getPerAppHourlyScreenTime(packageName: String, dayStartMs: Long, dayEndMs: Long): List<Long> {
         return try {
             val usm = usageStatsManager ?: return List(24) { 0L }
-            val todayStart = timeTracker.startOfToday()
             val now = System.currentTimeMillis()
+            val effectiveEnd = dayEndMs.coerceAtMost(now)
+            if (dayStartMs >= effectiveEnd) return List(24) { 0L }
+
             val hourMs = 60L * 60L * 1000L
             val hourly = MutableList(24) { 0L }
 
-            val events = usm.queryEvents(todayStart, now) ?: return hourly
+            val events = usm.queryEvents(dayStartMs, effectiveEnd) ?: return hourly
             val event = UsageEvents.Event()
             val foregroundStarts = mutableMapOf<String, Long>()
 
@@ -214,20 +253,29 @@ class ScreenTimeProvider @Inject constructor(
                     UsageEvents.Event.ACTIVITY_PAUSED -> {
                         val startTime = foregroundStarts.remove(event.packageName)
                         if (startTime != null) {
-                            distributeToHours(hourly, startTime, event.timeStamp, todayStart, hourMs)
+                            distributeToHours(hourly, startTime, event.timeStamp, dayStartMs, hourMs)
                         }
                     }
                 }
             }
 
-            for ((_, startTime) in foregroundStarts) {
-                distributeToHours(hourly, startTime, now, todayStart, hourMs)
+            if (dayEndMs >= now) {
+                for ((_, startTime) in foregroundStarts) {
+                    distributeToHours(hourly, startTime, now, dayStartMs, hourMs)
+                }
             }
 
             hourly
         } catch (_: SecurityException) {
             List(24) { 0L }
         }
+    }
+
+    /** Convenience: get per-hour screen time for a specific app today. */
+    fun getPerAppHourlyScreenTimeToday(packageName: String): List<Long> {
+        val todayStart = timeTracker.startOfToday()
+        val now = System.currentTimeMillis()
+        return getPerAppHourlyScreenTime(packageName, todayStart, now)
     }
 
     /**

@@ -11,6 +11,9 @@ import javax.inject.Inject
 /**
  * Pure calculation logic for stats screen, extracted for testability.
  * No Android dependencies -- operates only on data models.
+ *
+ * Methods that take a [referenceDayStartMs] use that as the "anchor" day
+ * (the last day of a 7-day window). When omitted, defaults to today.
  */
 class StatsCalculator @Inject constructor(
     private val timeTracker: TimeTracker
@@ -18,11 +21,11 @@ class StatsCalculator @Inject constructor(
 
     private val todayStart: Long get() = timeTracker.startOfToday()
 
-    fun buildWeeklyData(weekEvents: List<UsageEvent>): List<DayData> {
+    fun buildWeeklyData(weekEvents: List<UsageEvent>, referenceDayStartMs: Long = todayStart): List<DayData> {
         val result = mutableListOf<DayData>()
 
         for (i in 6 downTo 0) {
-            val dayStart = todayStart - i * DAY_MS
+            val dayStart = referenceDayStartMs - i * DAY_MS
             val dayEnd = dayStart + DAY_MS
             val dayTotal = weekEvents
                 .filter { it.timestamp in dayStart until dayEnd }
@@ -37,13 +40,14 @@ class StatsCalculator @Inject constructor(
 
     /**
      * Build weekly bar chart data from pre-computed daily totals (from UsageStatsManager).
-     * @param dailyTotals list of 7 entries, index 0 = 6 days ago, index 6 = today.
+     * @param dailyTotals list of 7 entries, index 0 = 6 days ago, index 6 = reference day.
+     * @param referenceDayStartMs the anchor day (for day labels). Defaults to today.
      */
-    fun buildWeeklyDataFromTotals(dailyTotals: List<Long>): List<DayData> {
+    fun buildWeeklyDataFromTotals(dailyTotals: List<Long>, referenceDayStartMs: Long = todayStart): List<DayData> {
         val result = mutableListOf<DayData>()
 
         for (i in 6 downTo 0) {
-            val dayStart = todayStart - i * DAY_MS
+            val dayStart = referenceDayStartMs - i * DAY_MS
             val label = getDayLabel(dayStart)
             val totalMs = dailyTotals.getOrElse(6 - i) { 0L }
             result.add(DayData(label = label, totalMs = totalMs))
@@ -52,11 +56,11 @@ class StatsCalculator @Inject constructor(
         return result
     }
 
-    fun buildTrendData(weekEvents: List<UsageEvent>): List<TrendDay> {
+    fun buildTrendData(weekEvents: List<UsageEvent>, referenceDayStartMs: Long = todayStart): List<TrendDay> {
         val result = mutableListOf<TrendDay>()
 
         for (i in 6 downTo 0) {
-            val dayStart = todayStart - i * DAY_MS
+            val dayStart = referenceDayStartMs - i * DAY_MS
             val dayEnd = dayStart + DAY_MS
             val dayEvents = weekEvents.filter { it.timestamp in dayStart until dayEnd }
 
@@ -87,10 +91,14 @@ class StatsCalculator @Inject constructor(
      * Build trend data (blocked + walked away) for a specific app package.
      * Filters weekEvents by packageName before computing per-day counts.
      */
-    fun buildAppTrendData(weekEvents: List<UsageEvent>, packageName: String): List<TrendDay> {
+    fun buildAppTrendData(
+        weekEvents: List<UsageEvent>,
+        packageName: String,
+        referenceDayStartMs: Long = todayStart
+    ): List<TrendDay> {
         val result = mutableListOf<TrendDay>()
         for (i in 6 downTo 0) {
-            val dayStart = todayStart - i * DAY_MS
+            val dayStart = referenceDayStartMs - i * DAY_MS
             val dayEnd = dayStart + DAY_MS
             val dayEvents = weekEvents
                 .filter { it.packageName == packageName && it.timestamp in dayStart until dayEnd }
@@ -103,15 +111,15 @@ class StatsCalculator @Inject constructor(
     }
 
     /**
-     * Calculate streak: consecutive days (ending today or yesterday) where
+     * Calculate streak: consecutive days (ending at reference day or the day before) where
      * the user had at least one nudge interaction (blocked or walked away).
-     * If today has no events at all, it's skipped (user hasn't used phone yet).
+     * If the reference day has no events at all, it's skipped (user hasn't used phone yet).
      */
-    fun calculateStreak(weekEvents: List<UsageEvent>): Int {
+    fun calculateStreak(weekEvents: List<UsageEvent>, referenceDayStartMs: Long = todayStart): Int {
         var streak = 0
 
         for (i in 0..6) {
-            val dayStart = todayStart - i * DAY_MS
+            val dayStart = referenceDayStartMs - i * DAY_MS
             val dayEnd = dayStart + DAY_MS
             val dayEvents = weekEvents.filter { it.timestamp in dayStart until dayEnd }
 
@@ -121,7 +129,6 @@ class StatsCalculator @Inject constructor(
             if (hadWalkedAway || hadBlocked) {
                 streak++
             } else if (i == 0 && dayEvents.isEmpty()) {
-                // Today with no events at all -- early in the day, skip
                 continue
             } else {
                 break

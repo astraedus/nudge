@@ -18,6 +18,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -31,6 +33,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -69,12 +72,25 @@ fun StatsScreen(
                 .padding(padding),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            // Date navigation row
+            item {
+                DateNavigationRow(
+                    dateLabel = state.dateLabel,
+                    isToday = state.isToday,
+                    onPreviousDay = { viewModel.goToPreviousDay() },
+                    onNextDay = { viewModel.goToNextDay() },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp)
+                        .padding(top = 4.dp)
+                )
+            }
+
             // Today's total card
             item {
                 val cardModifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp)
-                    .padding(top = 8.dp)
                     .let { mod ->
                         if (!state.hasUsagePermission) {
                             mod.clickable {
@@ -100,7 +116,7 @@ fun StatsScreen(
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Text(
-                            "Today",
+                            state.dateLabel,
                             style = MaterialTheme.typography.labelLarge,
                             color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
                         )
@@ -151,9 +167,11 @@ fun StatsScreen(
                 }
             }
 
-            // Today's pattern (hourly heatmap)
+            // Hourly pattern heatmap
             item {
-                SectionCard(title = "Today's Pattern") {
+                val patternLabel = if (state.isToday) "Today's Pattern"
+                    else "${state.dateLabel}'s Pattern"
+                SectionCard(title = patternLabel) {
                     HourlyHeatmap(
                         hourlyMs = state.hourlyMs,
                         modifier = Modifier.padding(horizontal = 4.dp)
@@ -199,6 +217,50 @@ fun StatsScreen(
             }
 
             item { Spacer(Modifier.height(16.dp)) }
+        }
+    }
+}
+
+/**
+ * Reusable date navigation row with back/forward arrows and a centered date label.
+ * The forward arrow is disabled (greyed out) when viewing the latest available date.
+ */
+@Composable
+fun DateNavigationRow(
+    dateLabel: String,
+    isToday: Boolean,
+    onPreviousDay: () -> Unit,
+    onNextDay: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        IconButton(onClick = onPreviousDay) {
+            Icon(
+                Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                contentDescription = "Previous day",
+                tint = MaterialTheme.colorScheme.onSurface
+            )
+        }
+        Text(
+            dateLabel,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        IconButton(
+            onClick = onNextDay,
+            enabled = !isToday
+        ) {
+            Icon(
+                Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = "Next day",
+                tint = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.alpha(if (isToday) 0.3f else 1f)
+            )
         }
     }
 }

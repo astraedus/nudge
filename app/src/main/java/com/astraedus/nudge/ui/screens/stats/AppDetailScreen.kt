@@ -57,13 +57,26 @@ fun AppDetailScreen(
                 .padding(padding),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // Today's total for this app
+            // Date navigation row
+            item {
+                DateNavigationRow(
+                    dateLabel = state.dateLabel,
+                    isToday = state.isToday,
+                    onPreviousDay = { viewModel.goToPreviousDay() },
+                    onNextDay = { viewModel.goToNextDay() },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp)
+                        .padding(top = 4.dp)
+                )
+            }
+
+            // Screen time for selected day
             item {
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp)
-                        .padding(top = 8.dp),
+                        .padding(horizontal = 16.dp),
                     colors = CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.primaryContainer
                     )
@@ -75,7 +88,7 @@ fun AppDetailScreen(
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Text(
-                            "Today",
+                            state.dateLabel,
                             style = MaterialTheme.typography.labelLarge,
                             color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
                         )
@@ -99,9 +112,11 @@ fun AppDetailScreen(
                 }
             }
 
-            // Today's Pattern heatmap
+            // Hourly pattern heatmap
             item {
-                DetailSectionCard(title = "Today's Pattern") {
+                val patternLabel = if (state.isToday) "Today's Pattern"
+                    else "${state.dateLabel}'s Pattern"
+                DetailSectionCard(title = patternLabel) {
                     HourlyHeatmap(
                         hourlyMs = state.hourlyMs,
                         modifier = Modifier.padding(horizontal = 4.dp)
@@ -121,14 +136,15 @@ fun AppDetailScreen(
 
             // Nudge Activity stats
             item {
+                val dayLabel = if (state.isToday) "Today" else state.dateLabel
                 DetailSectionCard(title = "Nudge Activity") {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceEvenly
                         ) {
-                            StatItem(label = "Blocked Today", value = "${state.blockedCountToday}")
-                            StatItem(label = "Walked Away Today", value = "${state.walkedAwayCountToday}")
+                            StatItem(label = "Blocked $dayLabel", value = "${state.blockedCountToday}")
+                            StatItem(label = "Walked Away $dayLabel", value = "${state.walkedAwayCountToday}")
                         }
                         Row(
                             modifier = Modifier.fillMaxWidth(),
