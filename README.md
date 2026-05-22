@@ -25,7 +25,7 @@
 
 <p align="center">
 
-https://github.com/user-attachments/assets/5eb45dd8-f2ee-4f99-9302-16fc8744ab80
+![Nudge Demo](https://github.com/user-attachments/assets/5eb45dd8-f2ee-4f99-9302-16fc8744ab80)
 
 </p>
 
