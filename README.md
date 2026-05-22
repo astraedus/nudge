@@ -24,11 +24,9 @@
 </p>
 
 <p align="center">
-  <a href="https://www.youtube.com/watch?v=2z9pYYAmIYc">
-    <img src="https://img.youtube.com/vi/2z9pYYAmIYc/maxresdefault.jpg" alt="Watch Demo" width="70%">
-  </a>
-  <br>
-  <sub>45-second demo -- click to watch on YouTube</sub>
+
+https://github.com/user-attachments/assets/5eb45dd8-f2ee-4f99-9302-16fc8744ab80
+
 </p>
 
 ---
