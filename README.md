@@ -23,6 +23,12 @@
   <img src="store-listing/screenshots/03-block-shorts.png" width="24%" alt="Block YouTube Shorts">
 </p>
 
+<p align="center">
+  <a href="https://github.com/astraedus/nudge/releases/download/v0.1.0-demo/nudge-demo.mp4">
+    <img src="https://img.shields.io/badge/▶_Watch_Demo-45s-8b1a2b?style=for-the-badge&logo=youtube&logoColor=white" alt="Watch Demo">
+  </a>
+</p>
+
 ---
 
 ## Why
