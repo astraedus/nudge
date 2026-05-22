@@ -24,9 +24,11 @@
 </p>
 
 <p align="center">
-
-https://github.com/astraedus/nudge/releases/download/v0.1.0-demo/nudge-demo.mp4
-
+  <a href="https://www.youtube.com/watch?v=2z9pYYAmIYc">
+    <img src="https://img.youtube.com/vi/2z9pYYAmIYc/maxresdefault.jpg" alt="Watch Demo" width="70%">
+  </a>
+  <br>
+  <sub>45-second demo -- click to watch on YouTube</sub>
 </p>
 
 ---
