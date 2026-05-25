@@ -30,13 +30,18 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.astraedus.nudge.ui.components.AccessibilityDisclosureDialog
 import kotlinx.coroutines.launch
 
 @Composable
@@ -145,6 +150,20 @@ private fun PermissionsPage(
     onGrantOverlay: () -> Unit,
     onGrantUsageStats: () -> Unit
 ) {
+    var showAccessibilityDisclosure by remember { mutableStateOf(false) }
+
+    if (showAccessibilityDisclosure) {
+        AccessibilityDisclosureDialog(
+            onConfirm = {
+                showAccessibilityDisclosure = false
+                onGrantAccessibility()
+            },
+            onDismiss = {
+                showAccessibilityDisclosure = false
+            }
+        )
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -171,7 +190,7 @@ private fun PermissionsPage(
             icon = Icons.Outlined.Accessibility,
             title = "Accessibility Service",
             description = "Detects which app is in the foreground so Nudge can trigger your block rules. Also identifies in-app screens (like YouTube Shorts or Instagram Reels) by checking navigation elements. Does not read your messages, keystrokes, or screen content.",
-            onClick = onGrantAccessibility
+            onClick = { showAccessibilityDisclosure = true }
         )
 
         Spacer(Modifier.height(12.dp))

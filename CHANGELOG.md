@@ -2,6 +2,11 @@
 
 All notable changes to Nudge are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.5.6] - 2026-05-26
+
+### Fixed
+- **Google Play policy compliance**: Added prominent disclosure dialog for Accessibility Service usage, shown before requesting the permission. Dialog explains what data is accessed (foreground app names only), why it's needed (to trigger block rules), and how it's used (locally, never sent anywhere). Two-button consent (I Understand / Not Now) as required by Google Play policy.
+
 ## [1.5.5] - 2026-05-22
 
 ### Added

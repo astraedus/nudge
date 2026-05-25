@@ -49,6 +49,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.astraedus.nudge.data.preferences.NudgePreferences
+import com.astraedus.nudge.ui.components.AccessibilityDisclosureDialog
 import com.astraedus.nudge.ui.hasGrayscalePermission
 import kotlinx.coroutines.launch
 
@@ -67,6 +68,19 @@ fun SettingsScreen(
     val coroutineScope = rememberCoroutineScope()
     var versionTapCount by rememberSaveable { mutableIntStateOf(0) }
     var developerOptionsVisible by rememberSaveable { mutableStateOf(false) }
+    var showAccessibilityDisclosure by remember { mutableStateOf(false) }
+
+    if (showAccessibilityDisclosure) {
+        AccessibilityDisclosureDialog(
+            onConfirm = {
+                showAccessibilityDisclosure = false
+                context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            },
+            onDismiss = {
+                showAccessibilityDisclosure = false
+            }
+        )
+    }
 
     Scaffold(
         topBar = {
@@ -100,7 +114,7 @@ fun SettingsScreen(
                 granted = accessibilityEnabled,
                 icon = { Icon(Icons.Outlined.Accessibility, contentDescription = null) },
                 onClick = {
-                    context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                    showAccessibilityDisclosure = true
                 }
             )
 
