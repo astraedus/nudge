@@ -4,7 +4,7 @@ Privacy-first app blocker with delay-to-open (breathing exercises before opening
 
 - GitHub: https://github.com/astraedus/nudge
 - F-Droid MR: https://gitlab.com/fdroid/fdroiddata/-/merge_requests/38398
-- v1.5.2 (current)
+- v1.5.6 (current)
 - See CHANGELOG.md for release history
 
 ## Build
@@ -159,6 +159,16 @@ Room DB version 7. Migrations: 1->2 (schedule/inapp/grayscale), 2->3 (userChange
 - `ui/screens/stats/charts/HourlyHeatmap.kt` — 24-cell row, color intensity from surfaceVariant to primary
 - `ui/screens/stats/charts/StreakCounter.kt` — flame icon + streak count + "X days streak" label
 - All charts use Material 3 colorScheme exclusively, handle empty states, no external dependencies.
+
+## Google Play compliance
+
+### AccessibilityService prominent disclosure (required by Google Play policy)
+- `ui/components/AccessibilityDisclosureDialog.kt` — Material 3 AlertDialog shown BEFORE requesting Accessibility Service permission
+- Two buttons: "I Understand" (accept) / "Not Now" (decline). Back/tap-outside = decline, NOT consent.
+- Explains: WHY (detect foreground apps), WHAT data (package names only), HOW used (locally, never sent)
+- Wired into: `OnboardingScreen.kt` (onboarding flow) and `SettingsScreen.kt` (settings page)
+- Demo video (unlisted): https://youtube.com/shorts/0ZN77tEcFzQ — linked in Play Console Accessibility Services declaration
+- If Google rejects again: check the specific reason. The dialog text, button labels, and dismiss behavior all matter. See https://support.google.com/googleplay/android-developer/answer/10964491 for full requirements.
 
 ## Store listing
 
