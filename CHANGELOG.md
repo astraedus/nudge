@@ -2,6 +2,11 @@
 
 All notable changes to Nudge are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.5.7] - 2026-06-05
+
+### Fixed
+- **Web domain HARD_BLOCK now re-blocks on return**: Previously, visiting a hard-blocked domain (e.g. instagram.com) in Chrome would show the block overlay once, but returning to Chrome after dismissing it would silently let the user through. The `lastBlockedDomain` passthrough was incorrectly set for HARD_BLOCK mode, which has no "completed" state. Now only DELAY and BREATHING modes set the passthrough (after the user completes the exercise), while HARD_BLOCK always re-evaluates the domain.
+
 ## [1.5.6] - 2026-05-26
 
 ### Fixed

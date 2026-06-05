@@ -20,6 +20,8 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk  # Install on device
 
 Test device: Pixel 3 on ADB at `192.168.1.68:5555` (Android 12, API 31).
 
+**Gradle version: stay on 8.x.** Do NOT upgrade to Gradle 9.x -- it removed `JvmVendorSpec.IBM_SEMERU` which the React Native / Android Gradle plugins still reference. Gradle 8.13 is the latest compatible version. Currently on 8.7.
+
 ## Releasing
 
 Two paths: fast (instant) or CI (verified).

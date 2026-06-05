@@ -48,6 +48,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.astraedus.nudge.BuildConfig
 import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.ui.components.AccessibilityDisclosureDialog
 import com.astraedus.nudge.ui.hasGrayscalePermission
@@ -163,7 +164,9 @@ fun SettingsScreen(
 
             ListItem(
                 headlineContent = { Text("Version") },
-                supportingContent = { Text(com.astraedus.nudge.BuildConfig.VERSION_NAME) },
+                supportingContent = {
+                    Text("Nudge v${BuildConfig.VERSION_NAME} (build ${BuildConfig.VERSION_CODE})")
+                },
                 leadingContent = { Icon(Icons.Outlined.Info, contentDescription = null) },
                 modifier = Modifier.clickable {
                     if (!developerOptionsVisible) {

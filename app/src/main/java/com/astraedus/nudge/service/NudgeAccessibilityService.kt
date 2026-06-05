@@ -9,6 +9,7 @@ import com.astraedus.nudge.data.repository.BlockRuleRepository
 import com.astraedus.nudge.data.repository.UsageRepository
 import com.astraedus.nudge.domain.WebDomainMatcher
 import com.astraedus.nudge.domain.model.BlockDecision
+import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.domain.usecase.EvaluateBlockUseCase
 import com.astraedus.nudge.ui.overlay.BlockOverlayActivity
 import com.astraedus.nudge.util.NudgeLogger
@@ -307,7 +308,11 @@ class NudgeAccessibilityService : AccessibilityService() {
 
         when (result.decision) {
             is BlockDecision.Block -> {
-                lastBlockedDomain = extractedDomain
+                // Only set passthrough for delay/breathing (user completed the exercise).
+                // HARD_BLOCK has no "completed" state — always re-evaluate on return.
+                if (result.decision.mode != BlockMode.HARD_BLOCK) {
+                    lastBlockedDomain = extractedDomain
+                }
                 handleDecision(result.decision, result.trackingPackage ?: browserPackage)
             }
             is BlockDecision.Allow -> {
