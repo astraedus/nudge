@@ -59,9 +59,9 @@ class AppDetailViewModel @Inject constructor(
     private val _selectedDate = MutableStateFlow(LocalDate.now())
     val selectedDate: StateFlow<LocalDate> = _selectedDate
 
-    private val appName: String by lazy {
+    // Resolved lazily off the main thread on first build; cached in the repo.
+    private suspend fun appName(): String =
         installedAppsRepository.resolveAppName(packageName)
-    }
 
     fun goToPreviousDay() {
         _selectedDate.value = _selectedDate.value.minusDays(1)
@@ -107,7 +107,7 @@ class AppDetailViewModel @Inject constructor(
         buildUiState(weekEvents, allEvents, screenTime, date)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AppDetailUiState())
 
-    private fun buildUiState(
+    private suspend fun buildUiState(
         weekEvents: List<UsageEvent>,
         allEvents: List<UsageEvent>,
         screenTime: AppScreenTimeSnapshot,
@@ -136,7 +136,7 @@ class AppDetailViewModel @Inject constructor(
 
         return AppDetailUiState(
             packageName = packageName,
-            appName = appName,
+            appName = appName(),
             todayFormatted = todayFormatted,
             weeklyData = statsCalculator.buildWeeklyDataFromTotals(screenTime.weeklyTotals, dayStartMs),
             hourlyMs = screenTime.hourlyMs,

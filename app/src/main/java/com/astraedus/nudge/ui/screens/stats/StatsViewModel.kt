@@ -61,13 +61,9 @@ class StatsViewModel @Inject constructor(
     private val _selectedDate = MutableStateFlow(LocalDate.now())
     val selectedDate: StateFlow<LocalDate> = _selectedDate
 
-    private val appNameCache = mutableMapOf<String, String>()
-
-    private fun resolveAppName(packageName: String): String {
-        return appNameCache.getOrPut(packageName) {
-            installedAppsRepository.resolveAppName(packageName)
-        }
-    }
+    // Name caching now lives in InstalledAppsRepository (per-package, off-main-thread).
+    private suspend fun resolveAppName(packageName: String): String =
+        installedAppsRepository.resolveAppName(packageName)
 
     fun goToPreviousDay() {
         _selectedDate.value = _selectedDate.value.minusDays(1)
@@ -110,7 +106,7 @@ class StatsViewModel @Inject constructor(
         buildUiState(weekEvents, screenTime, date)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), StatsUiState())
 
-    private fun buildUiState(
+    private suspend fun buildUiState(
         weekEvents: List<UsageEvent>,
         screenTime: ScreenTimeSnapshot,
         date: LocalDate

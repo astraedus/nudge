@@ -2,6 +2,11 @@
 
 All notable changes to Nudge are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.5.8] - 2026-06-16
+
+### Fixed
+- **Faster screen navigation**: Opening Active Rules, Manage Apps, app config, and stats screens no longer stutters. Loading installed-app names and icons (a heavy PackageManager operation) was running on the main/UI thread and recomputing on every navigation. It now runs off the main thread (`Dispatchers.IO`) and is cached in the installed-apps repository, so the first visit pays the cost once and every later visit is instant. Active Rules also no longer re-fetches the app list on every rule change.
+
 ## [1.5.7] - 2026-06-05
 
 ### Fixed

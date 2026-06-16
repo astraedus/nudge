@@ -55,10 +55,12 @@ class ActiveRulesViewModel @Inject constructor(
 
     private fun loadActiveRules() {
         viewModelScope.launch {
-            blockRuleRepository.getAllRules().collect { rules ->
-                val appInfoMap = installedAppsRepository.getInstalledApps()
-                    .associateBy { it.packageName }
+            // Resolve the installed-app map ONCE (cached in the repo), not on every
+            // rules-flow emission — the heavy PackageManager work must not re-run per collect.
+            val appInfoMap = installedAppsRepository.getInstalledApps()
+                .associateBy { it.packageName }
 
+            blockRuleRepository.getAllRules().collect { rules ->
                 val grouped = rules
                     .filter { it.packageName != null }
                     .groupBy { it.packageName!! }

@@ -34,10 +34,8 @@ class UnifiedAppConfigViewModel @Inject constructor(
 
     private fun loadState() {
         viewModelScope.launch {
-            // Resolve app name
-            val appName = installedAppsRepository.getInstalledApps()
-                .firstOrNull { it.packageName == packageName }
-                ?.appName ?: packageName
+            // Resolve app name (single cached PackageManager lookup, off the main thread)
+            val appName = installedAppsRepository.resolveAppName(packageName)
 
             // Get available features for this package
             val availableFeatures = UnifiedAppConfigState.FEATURES_BY_PACKAGE[packageName] ?: emptyList()
