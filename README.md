@@ -30,6 +30,7 @@
 </p>
 
 ---
+## Play Store Download: [Play Store Here](https://play.google.com/store/apps/details?id=dev.astraedus.nudge&hl=en_AU)
 
 ## Why
 This app is the product of a disdain for subscription services for things that should be free, a disdain for all infinite scrolling short content and about 2 doses of ritalin built over a weekend.
