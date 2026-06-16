@@ -1,6 +1,8 @@
 package com.astraedus.nudge.domain.usecase
 
+import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.data.repository.BlockRuleRepository
+import com.astraedus.nudge.data.repository.ContentFilter
 import com.astraedus.nudge.data.repository.UsageRepository
 import com.astraedus.nudge.domain.WebDomainMatcher
 import com.astraedus.nudge.domain.engine.BlockEngine
@@ -17,7 +19,9 @@ class EvaluateBlockUseCase @Inject constructor(
     private val blockRuleRepository: BlockRuleRepository,
     private val usageRepository: UsageRepository,
     private val blockEngine: BlockEngine,
-    private val ruleEvaluator: RuleEvaluator
+    private val ruleEvaluator: RuleEvaluator,
+    private val preferences: NudgePreferences,
+    private val contentFilter: ContentFilter
 ) {
 
     /**
@@ -95,7 +99,9 @@ class EvaluateBlockUseCase @Inject constructor(
         }
 
         if (matchingRules.isEmpty()) {
-            return WebDomainBlockResult(BlockDecision.Allow, null)
+            // No explicit per-rule web domain match. Fall through to the generic
+            // content filter (bundled blocklist + keywords) if it is enabled.
+            return evaluateContentFilter(urlBarText)
         }
 
         // Convert matching rules to ActiveRules for BlockEngine evaluation
@@ -127,6 +133,50 @@ class EvaluateBlockUseCase @Inject constructor(
         return WebDomainBlockResult(decision, trackingPackage)
     }
 
+    /**
+     * Generic content-filter evaluation: when enabled, blocks [urlBarText] if it
+     * matches the bundled blocklist or a high-signal keyword, using the
+     * user-configured content-filter mode. The rule name surfaced on the overlay
+     * is intentionally generic ("Restricted content").
+     */
+    private suspend fun evaluateContentFilter(urlBarText: String): WebDomainBlockResult {
+        if (!preferences.contentFilterEnabled.first()) {
+            return WebDomainBlockResult(BlockDecision.Allow, null)
+        }
+        if (!contentFilter.isBlocked(urlBarText)) {
+            return WebDomainBlockResult(BlockDecision.Allow, null)
+        }
+
+        val mode = try {
+            BlockMode.valueOf(preferences.contentFilterMode.first())
+        } catch (_: Exception) {
+            BlockMode.HARD_BLOCK
+        }
+
+        // Track usage under a synthetic "web" package, consistent with how
+        // web-domain rules without an associated app are tracked.
+        val trackingPackage = "web"
+        val dailyUsageMs = usageRepository.getDailyUsage(trackingPackage).first()
+
+        val activeRule = ActiveRule(
+            mode = mode,
+            delaySeconds = CONTENT_FILTER_DELAY_SECONDS,
+            dailyLimitMinutes = null,
+            enabled = true,
+            inAppFeatures = null,
+            grayscale = false,
+            ruleName = "Restricted content"
+        )
+
+        val decision = blockEngine.evaluate(
+            packageName = trackingPackage,
+            activeRules = listOf(activeRule),
+            dailyUsageMs = dailyUsageMs
+        )
+
+        return WebDomainBlockResult(decision, trackingPackage)
+    }
+
     private fun buildWebDomainRuleName(packageName: String?, mode: String): String {
         val modeName = when (mode) {
             "HARD_BLOCK" -> "Hard Block"
@@ -135,6 +185,12 @@ class EvaluateBlockUseCase @Inject constructor(
             else -> mode
         }
         return "Web - $modeName"
+    }
+
+    private companion object {
+        // Default delay applied when content filter mode is DELAY (no per-rule
+        // delay exists for the generic filter).
+        const val CONTENT_FILTER_DELAY_SECONDS = 15
     }
 }
 

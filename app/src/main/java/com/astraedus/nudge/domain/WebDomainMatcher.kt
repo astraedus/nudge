@@ -76,7 +76,7 @@ object WebDomainMatcher {
      * "m.youtube.com" -> "youtube.com"
      * "instagram.com" -> "instagram.com"
      */
-    private fun normalizeToBaseDomain(host: String): String {
+    fun normalizeToBaseDomain(host: String): String {
         val parts = host.split('.')
         if (parts.size <= 2) return host
 
