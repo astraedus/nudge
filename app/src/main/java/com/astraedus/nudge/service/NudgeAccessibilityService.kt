@@ -283,7 +283,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         val rootNode = withContext(Dispatchers.Main) {
             try { rootInActiveWindow } catch (_: Exception) { null }
         }
-        val urlBarText = entryPoint.webDomainDetector().detectUrl(rootNode)
+        val urlBarText = entryPoint.webDomainDetector().detectUrl(rootNode, browserPackage)
 
         if (urlBarText.isNullOrBlank()) {
             entryPoint.nudgeLogger().d("web domain: no URL detected in browser")

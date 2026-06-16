@@ -6,6 +6,8 @@ import com.astraedus.nudge.data.db.dao.BlockRuleDao
 import com.astraedus.nudge.data.db.dao.UsageEventDao
 import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.data.repository.BlockRuleRepository
+import com.astraedus.nudge.data.repository.ContentFilter
+import com.astraedus.nudge.data.repository.ContentFilterRepository
 import com.astraedus.nudge.data.repository.InstalledAppsRepository
 import com.astraedus.nudge.data.repository.ScreenTimeProvider
 import com.astraedus.nudge.data.repository.UsageRepository
@@ -47,6 +49,12 @@ object RepositoryModule {
     fun provideNudgePreferences(
         @ApplicationContext context: Context
     ): NudgePreferences = NudgePreferences(context)
+
+    @Provides
+    @Singleton
+    fun provideContentFilter(
+        @ApplicationContext context: Context
+    ): ContentFilter = ContentFilterRepository(context)
 
     @Provides
     @Singleton

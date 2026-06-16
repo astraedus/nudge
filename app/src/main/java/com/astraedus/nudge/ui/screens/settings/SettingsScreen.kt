@@ -23,6 +23,7 @@ import androidx.compose.material.icons.outlined.InvertColors
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Layers
 import androidx.compose.material.icons.outlined.QueryStats
+import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -66,6 +67,7 @@ fun SettingsScreen(
     val usageStatsEnabled by remember { mutableStateOf(hasUsageStatsPermission(context)) }
     val preferences = remember { NudgePreferences(context.applicationContext) }
     val debugLoggingEnabled by preferences.isDebugLoggingEnabled.collectAsStateWithLifecycle(initialValue = false)
+    val contentFilterEnabled by preferences.contentFilterEnabled.collectAsStateWithLifecycle(initialValue = false)
     val coroutineScope = rememberCoroutineScope()
     var versionTapCount by rememberSaveable { mutableIntStateOf(0) }
     var developerOptionsVisible by rememberSaveable { mutableStateOf(false) }
@@ -150,6 +152,39 @@ fun SettingsScreen(
                 granted = hasGrayscalePermission(context),
                 icon = { Icon(Icons.Outlined.InvertColors, contentDescription = null) },
                 onClick = onNavigateToGrayscaleGuide
+            )
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+            Text(
+                "Content Filter",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                color = MaterialTheme.colorScheme.primary
+            )
+
+            ListItem(
+                headlineContent = { Text("Block restricted websites") },
+                supportingContent = {
+                    Text("Filters websites against a built-in content list. Works in supported browsers.")
+                },
+                leadingContent = { Icon(Icons.Outlined.Shield, contentDescription = null) },
+                trailingContent = {
+                    Switch(
+                        checked = contentFilterEnabled,
+                        onCheckedChange = { enabled ->
+                            coroutineScope.launch {
+                                preferences.setContentFilterEnabled(enabled)
+                            }
+                        }
+                    )
+                },
+                modifier = Modifier.clickable {
+                    coroutineScope.launch {
+                        preferences.setContentFilterEnabled(!contentFilterEnabled)
+                    }
+                }
             )
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))

@@ -138,11 +138,23 @@ Room DB version 7. Migrations: 1->2 (schedule/inapp/grayscale), 2->3 (userChange
 ## Web domain blocking architecture
 
 - `domain/WebDomainMatcher.kt` — pure Kotlin (no Android deps). `extractDomain(urlBarText)` strips protocol/path/port, normalizes subdomains (www, m, mobile, l, lm). `matches(urlBarText, webDomains)` checks extracted domain against comma-separated rule domains.
-- `service/WebDomainDetector.kt` — `@Singleton`, reads Chrome URL bar via `findAccessibilityNodeInfosByViewId()`. Tries `url_bar` then `omnibox_url_text` resource IDs. `isBrowser(pkg)` checks against `BROWSER_PACKAGES` set.
+- `service/WebDomainDetector.kt` — `@Singleton`, reads the URL bar via `findAccessibilityNodeInfosByViewId()`. Multi-browser: `BROWSER_URL_BAR_IDS` maps each package to ordered candidate view-id suffixes (Chrome/Brave/Edge/Kiwi `url_bar`+`omnibox_url_text`, Firefox/Fenix `mozac_browser_toolbar_url_view`, Samsung Internet `location_bar_edit_text`, Opera `url_field`, DuckDuckGo `omnibarTextInput`). `detectUrl(root, pkg)` probes that package's ids; `urlBarViewIdsFor(pkg)` is the pure (unit-tested) id resolver. `isBrowser(pkg)` checks map membership.
 - Integration in `NudgeAccessibilityService`: on `TYPE_WINDOW_STATE_CHANGED`/`TYPE_WINDOW_CONTENT_CHANGED` for browser packages, calls `evaluateWebDomain()` which reads URL bar, extracts domain, queries `EvaluateBlockUseCase.evaluateWebDomain()`.
 - `EvaluateBlockUseCase.evaluateWebDomain()` finds all enabled rules with matching `webDomains`, converts to `ActiveRule` list, passes through `BlockEngine`.
 - Passthrough: `lastBlockedDomain` tracks currently-blocked domain. Same domain won't re-trigger until user navigates away. Clears on app switch away from browser.
 - UI: "Block on web too" toggle in `UnifiedAppConfigScreen`, auto-populates known domains per `DEFAULT_WEB_DOMAINS` map.
+
+## Content filter architecture (generic "restricted content" web blocker)
+
+Generic, opt-in master switch that blocks websites against a large bundled blocklist + keyword list across supported browsers. **Framing constraint: NOTHING user-facing reveals the adult/restricted-content purpose** — the blocklist and keywords live only in code/assets. UI strings say "Block restricted websites" / overlay rule name "Restricted content".
+
+- `app/src/main/assets/content_filter_domains.txt` — ~274k newline-separated lowercased base domains (4.5MB). Packaged into the APK.
+- `data/repository/ContentFilterRepository.kt` (`@Singleton`, impl of `ContentFilter` interface) — lazily loads the asset into an in-memory `HashSet<String>` on **first** `isBlocked()` call (not at app/service start), on `Dispatchers.IO`, guarded by a `Mutex` so concurrent callers load once. Fails open to empty set if the asset is unreadable. The `ContentFilter` interface lets `EvaluateBlockUseCase` be unit-tested without loading the asset.
+- `domain/ContentFilterMatcher.kt` — pure Kotlin. `matchesDomain(url, blocklist)` extracts the base domain via `WebDomainMatcher.extractDomain` then checks it + progressively-stripped parent domains against the set (subdomains of a blocked base match). `matchesKeyword(url, keywords)` does case-insensitive substring matching of `DEFAULT_KEYWORDS` against the raw URL (catches search queries + unknown domains). Keyword list deliberately avoids short ambiguous tokens (no bare "sex"/"anal") to prevent false positives like sussex/essex/analysis.
+- `EvaluateBlockUseCase.evaluateWebDomain()` — after the per-rule `webDomains` check finds no match, falls through to `evaluateContentFilter()`: if `contentFilterEnabled` and `ContentFilter.isBlocked(url)`, builds an `ActiveRule` with the configured `contentFilterMode` (tracking package `"web"`, ruleName "Restricted content") and runs it through `BlockEngine`. Reuses the existing overlay/passthrough path (HARD_BLOCK never sets passthrough, so it always re-blocks).
+- Prefs: `NudgePreferences.contentFilterEnabled` (default **false**, opt-in) + `contentFilterMode` (default `"HARD_BLOCK"`).
+- UI: "Content Filter" section in `SettingsScreen.kt` — single "Block restricted websites" switch, wired via the direct-`NudgePreferences` pattern (no ViewModel).
+- Tests: `ContentFilterMatcherTest` (domain/keyword/false-positive guards), `WebDomainDetectorTest` (multi-browser id resolution + mockk node reads), `EvaluateBlockContentFilterTest` (enabled/disabled/mode wiring, repo mocked — never loads the asset).
 
 ## Export/Import architecture
 
