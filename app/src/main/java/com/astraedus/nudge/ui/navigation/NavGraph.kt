@@ -25,6 +25,7 @@ import com.astraedus.nudge.ui.screens.rules.ActiveRulesViewModel
 import com.astraedus.nudge.ui.screens.rules.RuleEditorScreen
 import com.astraedus.nudge.ui.screens.rules.RuleEditorViewModel
 import com.astraedus.nudge.ui.screens.settings.GrayscaleGuideScreen
+import com.astraedus.nudge.ui.screens.settings.MessagesEditorScreen
 import com.astraedus.nudge.ui.screens.settings.SettingsScreen
 import com.astraedus.nudge.ui.screens.stats.AppDetailScreen
 import com.astraedus.nudge.ui.screens.stats.AppDetailViewModel
@@ -45,6 +46,7 @@ sealed class Screen(val route: String) {
     data object Settings : Screen("settings")
     data object Onboarding : Screen("onboarding")
     data object GrayscaleGuide : Screen("grayscale_guide")
+    data object MessagesEditor : Screen("messages_editor")
     data object ActiveRules : Screen("active_rules")
     data object AppConfig : Screen("app_config/{packageName}") {
         fun createRoute(packageName: String) = "app_config/$packageName"
@@ -185,12 +187,21 @@ fun NudgeNavGraph(
                 onNavigateBack = { navController.popBackStack() },
                 onNavigateToGrayscaleGuide = {
                     navController.navigate(Screen.GrayscaleGuide.route)
+                },
+                onNavigateToMessagesEditor = {
+                    navController.navigate(Screen.MessagesEditor.route)
                 }
             )
         }
 
         composable(Screen.GrayscaleGuide.route) {
             GrayscaleGuideScreen(
+                onNavigateBack = { navController.popBackStack() }
+            )
+        }
+
+        composable(Screen.MessagesEditor.route) {
+            MessagesEditorScreen(
                 onNavigateBack = { navController.popBackStack() }
             )
         }

@@ -19,6 +19,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.Accessibility
 import androidx.compose.material.icons.outlined.Code
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.InvertColors
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Layers
@@ -59,7 +60,8 @@ import kotlinx.coroutines.launch
 @Composable
 fun SettingsScreen(
     onNavigateBack: () -> Unit,
-    onNavigateToGrayscaleGuide: () -> Unit = {}
+    onNavigateToGrayscaleGuide: () -> Unit = {},
+    onNavigateToMessagesEditor: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val accessibilityEnabled by remember { mutableStateOf(isAccessibilityEnabled(context)) }
@@ -185,6 +187,25 @@ fun SettingsScreen(
                         preferences.setContentFilterEnabled(!contentFilterEnabled)
                     }
                 }
+            )
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+            Text(
+                "Personalize",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                color = MaterialTheme.colorScheme.primary
+            )
+
+            ListItem(
+                headlineContent = { Text("Edit block messages") },
+                supportingContent = {
+                    Text("Customize the motivational text shown on block and delay screens.")
+                },
+                leadingContent = { Icon(Icons.Outlined.Edit, contentDescription = null) },
+                modifier = Modifier.clickable(onClick = onNavigateToMessagesEditor)
             )
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))

@@ -27,6 +27,9 @@ class NudgePreferences @Inject constructor(
         val DEBUG_LOGGING_ENABLED = booleanPreferencesKey("debug_logging_enabled")
         val CONTENT_FILTER_ENABLED = booleanPreferencesKey("content_filter_enabled")
         val CONTENT_FILTER_MODE = stringPreferencesKey("content_filter_mode")
+        val CUSTOM_DELAY_TITLES = stringPreferencesKey("custom_delay_titles")
+        val CUSTOM_DELAY_SUBTITLES = stringPreferencesKey("custom_delay_subtitles")
+        val CUSTOM_HARD_BLOCK_MESSAGES = stringPreferencesKey("custom_hard_block_messages")
     }
 
     override val isGlobalEnabled: Flow<Boolean> = context.dataStore.data
@@ -73,6 +76,37 @@ class NudgePreferences @Inject constructor(
     suspend fun setContentFilterMode(mode: String) {
         context.dataStore.edit { prefs ->
             prefs[Keys.CONTENT_FILTER_MODE] = mode
+        }
+    }
+
+    /**
+     * User-edited overlay messages, one per line. Empty string ("") means "use the
+     * built-in defaults" — resolved via [com.astraedus.nudge.ui.overlay.NudgeMessages.resolvePool].
+     */
+    val customDelayTitles: Flow<String> = context.dataStore.data
+        .map { prefs -> prefs[Keys.CUSTOM_DELAY_TITLES] ?: "" }
+
+    suspend fun setCustomDelayTitles(value: String) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.CUSTOM_DELAY_TITLES] = value
+        }
+    }
+
+    val customDelaySubtitles: Flow<String> = context.dataStore.data
+        .map { prefs -> prefs[Keys.CUSTOM_DELAY_SUBTITLES] ?: "" }
+
+    suspend fun setCustomDelaySubtitles(value: String) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.CUSTOM_DELAY_SUBTITLES] = value
+        }
+    }
+
+    val customHardBlockMessages: Flow<String> = context.dataStore.data
+        .map { prefs -> prefs[Keys.CUSTOM_HARD_BLOCK_MESSAGES] ?: "" }
+
+    suspend fun setCustomHardBlockMessages(value: String) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.CUSTOM_HARD_BLOCK_MESSAGES] = value
         }
     }
 }

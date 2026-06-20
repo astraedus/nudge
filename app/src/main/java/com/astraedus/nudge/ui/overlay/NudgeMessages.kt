@@ -29,4 +29,17 @@ object NudgeMessages {
         get() = delayTitles + delaySubtitles + hardBlockMessages
 
     fun getRandom(): String = allMessages.random()
+
+    /**
+     * Resolves the pool of messages to display, given the user's custom multiline text
+     * and the built-in default list.
+     *
+     * The custom text is one message per line; lines are trimmed and blanks dropped.
+     * If the result is empty (null/blank/whitespace-only custom text), falls back to
+     * [default]. Pure (no Android imports) so it is JVM-unit-testable.
+     */
+    fun resolvePool(customRaw: String?, default: List<String>): List<String> {
+        val lines = customRaw?.split("\n")?.map(String::trim)?.filter(String::isNotBlank) ?: emptyList()
+        return lines.ifEmpty { default }
+    }
 }

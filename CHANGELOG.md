@@ -2,6 +2,14 @@
 
 All notable changes to Nudge are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.6.0] - 2026-06-20
+
+### Added
+- **Edit your own block messages**: The motivational messages shown on the block, delay, and breathing overlays are now fully customizable. A new **Settings → Personalize → "Edit block messages"** screen lets you rewrite the delay title, delay subtitle, and hard-block message — one message per line (a random one is shown each time a block fires, as before). Leave a field empty (or tap "Reset to defaults") to fall back to the built-in messages. Stored locally on-device like everything else.
+
+### Fixed
+- **Web blocking now works in Firefox**: Domain blocking ("Block on web too") previously did nothing in Firefox — modern Firefox switched to a Compose-based toolbar that exposes the URL differently (as a bare test tag, with the address in the accessibility content description rather than the text). Nudge now reads the Firefox address bar via a tree traversal and correctly blocks matching domains. Chrome and other Chromium browsers are unaffected.
+
 ## [1.5.8] - 2026-06-16
 
 ### Fixed

@@ -5,6 +5,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import com.astraedus.nudge.data.db.entity.UsageEvent
+import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.data.repository.UsageRepository
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.service.NudgeAccessibilityService
@@ -13,7 +14,9 @@ import com.astraedus.nudge.ui.theme.NudgeTheme
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -21,6 +24,7 @@ class BlockOverlayActivity : ComponentActivity() {
 
     @Inject lateinit var usageRepository: UsageRepository
     @Inject lateinit var passthroughManager: PassthroughManager
+    @Inject lateinit var nudgePreferences: NudgePreferences
 
     companion object {
         const val EXTRA_BLOCK_MODE = "block_mode"
@@ -56,6 +60,26 @@ class BlockOverlayActivity : ComponentActivity() {
             packageManager.getApplicationLabel(appInfo).toString()
         } catch (_: Exception) { null }
 
+        // Read the user's custom overlay messages BEFORE setContent so the first
+        // composition already has the resolved pool. The overlay is shown instantly
+        // on top of the blocked app, so a flash from default->custom message would be a
+        // visible bug. DataStore reads of a tiny single-key prefs file are fast, so a
+        // brief runBlocking on first-key emission here is acceptable and avoids that flash.
+        val titlePool: List<String>
+        val subtitlePool: List<String>
+        val hardBlockPool: List<String>
+        runBlocking {
+            titlePool = NudgeMessages.resolvePool(
+                nudgePreferences.customDelayTitles.first(), NudgeMessages.delayTitles
+            )
+            subtitlePool = NudgeMessages.resolvePool(
+                nudgePreferences.customDelaySubtitles.first(), NudgeMessages.delaySubtitles
+            )
+            hardBlockPool = NudgeMessages.resolvePool(
+                nudgePreferences.customHardBlockMessages.first(), NudgeMessages.hardBlockMessages
+            )
+        }
+
         setContent {
             NudgeTheme {
                 when (mode) {
@@ -66,7 +90,8 @@ class BlockOverlayActivity : ComponentActivity() {
                             dailyTimeRemainingMs = dailyTimeRemainingMs,
                             dailyLimitMinutes = dailyLimitMinutes,
                             onGoBack = { navigateHome() },
-                            ruleName = ruleName
+                            ruleName = ruleName,
+                            messagePool = hardBlockPool
                         )
                     }
 
@@ -78,7 +103,9 @@ class BlockOverlayActivity : ComponentActivity() {
                             dailyLimitMinutes = dailyLimitMinutes,
                             onComplete = { onTimerComplete() },
                             onCancel = { navigateHome() },
-                            ruleName = ruleName
+                            ruleName = ruleName,
+                            titlePool = titlePool,
+                            subtitlePool = subtitlePool
                         )
                     }
 
@@ -90,7 +117,8 @@ class BlockOverlayActivity : ComponentActivity() {
                             dailyLimitMinutes = dailyLimitMinutes,
                             onComplete = { onTimerComplete() },
                             onCancel = { navigateHome() },
-                            ruleName = ruleName
+                            ruleName = ruleName,
+                            subtitlePool = subtitlePool
                         )
                     }
                 }

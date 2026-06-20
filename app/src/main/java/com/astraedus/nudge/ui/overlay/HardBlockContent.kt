@@ -28,9 +28,10 @@ fun HardBlockContent(
     ruleName: String? = null,
     appLabel: String? = null,
     dailyTimeRemainingMs: Long? = null,
-    dailyLimitMinutes: Int? = null
+    dailyLimitMinutes: Int? = null,
+    messagePool: List<String> = NudgeMessages.hardBlockMessages
 ) {
-    val message = remember { NudgeMessages.hardBlockMessages.random() }
+    val message = remember { messagePool.random() }
 
     Surface(
         modifier = Modifier.fillMaxSize(),

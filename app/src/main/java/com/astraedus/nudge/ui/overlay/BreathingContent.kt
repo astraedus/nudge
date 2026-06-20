@@ -41,8 +41,10 @@ fun BreathingContent(
     ruleName: String? = null,
     appLabel: String? = null,
     dailyTimeRemainingMs: Long? = null,
-    dailyLimitMinutes: Int? = null
+    dailyLimitMinutes: Int? = null,
+    subtitlePool: List<String> = NudgeMessages.delaySubtitles
 ) {
+    val subtitle = remember { subtitlePool.random() }
     val circleScale = remember { Animatable(0.6f) }
     var isInhaling by remember { mutableStateOf(true) }
     var overallProgress by remember { mutableFloatStateOf(0f) }
@@ -123,7 +125,16 @@ fun BreathingContent(
                 textAlign = TextAlign.Center
             )
 
-            Spacer(modifier = Modifier.height(40.dp))
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center
+            )
+
+            Spacer(modifier = Modifier.height(32.dp))
 
             Box(
                 contentAlignment = Alignment.Center,

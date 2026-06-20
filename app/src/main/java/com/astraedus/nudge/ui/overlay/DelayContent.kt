@@ -36,10 +36,12 @@ fun DelayContent(
     ruleName: String? = null,
     appLabel: String? = null,
     dailyTimeRemainingMs: Long? = null,
-    dailyLimitMinutes: Int? = null
+    dailyLimitMinutes: Int? = null,
+    titlePool: List<String> = NudgeMessages.delayTitles,
+    subtitlePool: List<String> = NudgeMessages.delaySubtitles
 ) {
-    val title = remember { NudgeMessages.delayTitles.random() }
-    val subtitle = remember { NudgeMessages.delaySubtitles.random() }
+    val title = remember { titlePool.random() }
+    val subtitle = remember { subtitlePool.random() }
     var remainingSeconds by remember { mutableIntStateOf(delaySeconds) }
 
     val progress by animateFloatAsState(
