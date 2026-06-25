@@ -2,6 +2,12 @@
 
 All notable changes to Nudge are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.7.0] - 2026-06-25
+
+### Added
+- **Strict Mode (commitment lock)**: A new **Settings → Commitment Lock → "Lock my settings"** switch turns Nudge into a real commitment device. While Strict Mode is on, any action that *weakens* your protection requires typing a randomly generated unlock code first — turning Nudge off, disabling or deleting a rule, shortening a delay, softening a block mode, or even turning Strict Mode itself back off. Strengthening your protection (adding apps, longer delays, harder modes) is never gated. Pick a difficulty (Easy 12 / Medium 24 / Hard 48 characters); the code can't be pasted.
+- **Escape-route guarding**: Strict Mode also closes the obvious bypasses. While locked, opening Nudge's **Accessibility settings page** (to switch the service off) or its **App Info page** (Force stop / Uninstall) brings up the same unlock challenge over the system screen. Solve it and you get a 60-second window to make your change; back out and you're returned home. The accessibility *list* page is deliberately left alone so you can still browse your other services.
+
 ## [1.6.0] - 2026-06-20
 
 ### Added

@@ -3,14 +3,17 @@ package com.astraedus.nudge.service
 import android.accessibilityservice.AccessibilityService
 import android.content.Intent
 import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityNodeInfo
 import com.astraedus.nudge.data.db.entity.UsageEvent
 import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.data.repository.BlockRuleRepository
 import com.astraedus.nudge.data.repository.UsageRepository
 import com.astraedus.nudge.domain.WebDomainMatcher
+import com.astraedus.nudge.domain.lock.StrictModeEscapeGuard
 import com.astraedus.nudge.domain.model.BlockDecision
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.domain.usecase.EvaluateBlockUseCase
+import com.astraedus.nudge.ui.lock.StrictModeGuardActivity
 import com.astraedus.nudge.ui.overlay.BlockOverlayActivity
 import com.astraedus.nudge.util.NudgeLogger
 import dagger.hilt.EntryPoint
@@ -42,6 +45,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         fun nudgeLogger(): NudgeLogger
         fun passthroughManager(): PassthroughManager
         fun webDomainDetector(): WebDomainDetector
+        fun strictModeEscapeManager(): StrictModeEscapeManager
     }
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -74,6 +78,9 @@ class NudgeAccessibilityService : AccessibilityService() {
     companion object {
         private const val DEBOUNCE_MS = 1000L
 
+        /** Upper bound on nodes scanned when harvesting Settings window text (bounded traversal). */
+        private const val MAX_NODES_SCANNED = 800
+
         val SYSTEM_PACKAGES = setOf(
             "com.android.systemui",
             "com.android.launcher",
@@ -100,6 +107,31 @@ class NudgeAccessibilityService : AccessibilityService() {
         var passthroughManagerInstance: PassthroughManager? = null
             private set
 
+        /**
+         * The running service instance, used so the Strict Mode guard overlay can request a
+         * reliable "go home" via [AccessibilityService.performGlobalAction]. Null when the service
+         * is not connected; callers MUST provide their own fallback (a HOME intent) so the user is
+         * never trapped on a Settings screen.
+         */
+        @Volatile
+        private var instance: NudgeAccessibilityService? = null
+
+        /**
+         * Send the user to the home screen. Uses [AccessibilityService.GLOBAL_ACTION_HOME] when the
+         * service is connected (cleanly exits whatever Settings screen they are on). Returns true if
+         * the global action was dispatched; false if the service was unavailable so the caller can
+         * fall back to a HOME intent. Either way the user must end up home — this is a safety-critical
+         * "never trap the user" path.
+         */
+        fun requestGoHome(): Boolean {
+            val service = instance ?: return false
+            return try {
+                service.performGlobalAction(GLOBAL_ACTION_HOME)
+            } catch (_: Exception) {
+                false
+            }
+        }
+
         internal fun shouldClearForOwnPackageEvent(
             eventType: Int,
             className: String?,
@@ -110,8 +142,30 @@ class NudgeAccessibilityService : AccessibilityService() {
         }
     }
 
+    /** Cached once: our own user-visible app label, used to anchor escape-screen detection. */
+    private val ownAppLabel: String by lazy {
+        try {
+            val info = packageManager.getApplicationInfo(applicationContext.packageName, 0)
+            packageManager.getApplicationLabel(info).toString()
+        } catch (_: Exception) {
+            ""
+        }
+    }
+
+    /** Debounce: don't re-launch the guard overlay repeatedly for the same Settings window burst. */
+    private var lastStrictGuardLaunchTime: Long = 0L
+
+    /**
+     * Cached Strict Mode state, collected off-main so the hot accessibility-event path never blocks
+     * on DataStore. Read on the main thread when deciding whether to guard a Settings escape screen.
+     */
+    @Volatile private var strictModeEnabledCached: Boolean = false
+    @Volatile private var strictModeChallengeLengthCached: Int =
+        com.astraedus.nudge.domain.lock.StrictModeChallenge.DEFAULT_LENGTH
+
     override fun onServiceConnected() {
         super.onServiceConnected()
+        instance = this
         entryPoint.counterOverlayManager().setServiceContext(this)
         entryPoint.timeRemainingOverlayManager().setServiceContext(this)
 
@@ -141,6 +195,17 @@ class NudgeAccessibilityService : AccessibilityService() {
 
         entryPoint.nudgeLogger().i("accessibility service connected")
 
+        // Keep Strict Mode state cached so the hot accessibility-event path can read it without
+        // blocking on DataStore.
+        serviceScope.launch {
+            entryPoint.nudgePreferences().isStrictModeEnabled.collect { strictModeEnabledCached = it }
+        }
+        serviceScope.launch {
+            entryPoint.nudgePreferences().strictModeChallengeLength.collect {
+                strictModeChallengeLengthCached = it
+            }
+        }
+
         serviceScope.launch {
             counterCache.forceRefresh { loadCounterCacheEntries() }
             entryPoint.nudgeLogger().d("counter cache eagerly populated packages=${counterCache.snapshot().size}")
@@ -161,6 +226,17 @@ class NudgeAccessibilityService : AccessibilityService() {
                 clearOverlays(packageName, "own_app_window")
             }
             return
+        }
+
+        // Strict Mode Phase 2: guard the OS escape routes (Settings → Accessibility toggle,
+        // App Info → Force stop / Uninstall) BEFORE the SYSTEM_PACKAGES early-return swallows
+        // settings events. Only inspects window content on settings packages and only on window
+        // change events; cheap pure checks gate the (more expensive) node-tree read.
+        if (packageName in StrictModeEscapeGuard.SETTINGS_PACKAGES &&
+            event.eventType in WINDOW_CHANGE_EVENT_TYPES
+        ) {
+            maybeGuardSettingsEscape(packageName)
+            // fall through to the SYSTEM_PACKAGES handling below (clears any stale counter overlays)
         }
 
         if (packageName in SYSTEM_PACKAGES) {
@@ -195,6 +271,77 @@ class NudgeAccessibilityService : AccessibilityService() {
             className = event.className?.toString(),
             ownPackageName = applicationContext.packageName
         )
+    }
+
+    /**
+     * Strict Mode Phase 2: if the user has landed on a protected Settings escape route (the Nudge
+     * accessibility-service toggle, or Nudge's App Info / Force-stop / Uninstall page), intercept
+     * with the unlock challenge. Reads the foreground node tree to harvest visible text, runs the
+     * pure [StrictModeEscapeGuard.shouldGuardSettingsScreen] matcher, and launches
+     * [StrictModeGuardActivity] on a match.
+     *
+     * Safety: Strict Mode OFF or an active grace window short-circuits inside the matcher; the
+     * node read is wrapped so an exception can never crash the service or trap the user.
+     */
+    private fun maybeGuardSettingsEscape(packageName: String) {
+        // Cheap, non-blocking gates BEFORE touching the node tree (the expensive part). State is
+        // read from the cached flags so this hot path never blocks on DataStore.
+        if (!strictModeEnabledCached) return
+        val escapeManager = entryPoint.strictModeEscapeManager()
+        if (escapeManager.isWithinGrace()) return
+        // The guard overlay is itself a Nudge activity; don't re-guard while it's up.
+        if (StrictModeGuardActivity.isActive) return
+
+        val now = System.currentTimeMillis()
+        if ((now - lastStrictGuardLaunchTime) < DEBOUNCE_MS) return
+
+        val windowText = harvestWindowText()
+        if (windowText.isEmpty()) return
+
+        val shouldGuard = StrictModeEscapeGuard.shouldGuardSettingsScreen(
+            foregroundPkg = packageName,
+            windowText = windowText,
+            appLabel = ownAppLabel,
+            strictEnabled = true,
+            withinGrace = false
+        )
+        if (!shouldGuard) return
+
+        lastStrictGuardLaunchTime = now
+        entryPoint.nudgeLogger().i("strict mode: guarding settings escape screen package=$packageName")
+
+        val intent = Intent(applicationContext, StrictModeGuardActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            putExtra(StrictModeGuardActivity.EXTRA_CHALLENGE_LENGTH, strictModeChallengeLengthCached)
+        }
+        applicationContext.startActivity(intent)
+    }
+
+    /**
+     * Concatenate the visible text + content descriptions of the foreground window's node tree into
+     * one lowercase-able blob for the escape matcher. Bounded traversal (≤ [MAX_NODES_SCANNED]) so a
+     * pathological tree can't stall the service. Returns "" on any failure (fail closed: no guard).
+     */
+    private fun harvestWindowText(): String {
+        val root = try { rootInActiveWindow } catch (_: Exception) { null } ?: return ""
+        val sb = StringBuilder()
+        var scanned = 0
+        val queue = ArrayDeque<AccessibilityNodeInfo>()
+        queue.add(root)
+        try {
+            while (queue.isNotEmpty() && scanned < MAX_NODES_SCANNED) {
+                val node = queue.removeFirst()
+                scanned++
+                node.text?.let { if (it.isNotBlank()) sb.append(it).append('\n') }
+                node.contentDescription?.let { if (it.isNotBlank()) sb.append(it).append('\n') }
+                for (i in 0 until node.childCount) {
+                    node.getChild(i)?.let { queue.add(it) }
+                }
+            }
+        } catch (_: Exception) {
+            return ""
+        }
+        return sb.toString()
     }
 
     private fun evaluateForegroundPackage(packageName: String) {
@@ -474,6 +621,7 @@ class NudgeAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         super.onDestroy()
+        if (instance === this) instance = null
         entryPoint.counterOverlayManager().clearServiceContext()
         entryPoint.timeRemainingOverlayManager().clearServiceContext()
         passthroughManagerInstance = null

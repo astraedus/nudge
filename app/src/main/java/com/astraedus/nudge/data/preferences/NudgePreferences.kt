@@ -5,6 +5,7 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.astraedus.nudge.service.GlobalEnabledProvider
@@ -30,6 +31,8 @@ class NudgePreferences @Inject constructor(
         val CUSTOM_DELAY_TITLES = stringPreferencesKey("custom_delay_titles")
         val CUSTOM_DELAY_SUBTITLES = stringPreferencesKey("custom_delay_subtitles")
         val CUSTOM_HARD_BLOCK_MESSAGES = stringPreferencesKey("custom_hard_block_messages")
+        val STRICT_MODE_ENABLED = booleanPreferencesKey("strict_mode_enabled")
+        val STRICT_MODE_CHALLENGE_LENGTH = intPreferencesKey("strict_mode_challenge_length")
     }
 
     override val isGlobalEnabled: Flow<Boolean> = context.dataStore.data
@@ -107,6 +110,36 @@ class NudgePreferences @Inject constructor(
     suspend fun setCustomHardBlockMessages(value: String) {
         context.dataStore.edit { prefs ->
             prefs[Keys.CUSTOM_HARD_BLOCK_MESSAGES] = value
+        }
+    }
+
+    /**
+     * Strict Mode ("commitment lock") master switch. Opt-in: defaults to false. While on, any
+     * action that WEAKENS protection — including turning this off — requires passing the unlock
+     * challenge. Strengthening protection is always free.
+     */
+    val isStrictModeEnabled: Flow<Boolean> = context.dataStore.data
+        .map { prefs -> prefs[Keys.STRICT_MODE_ENABLED] ?: false }
+
+    suspend fun setStrictModeEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.STRICT_MODE_ENABLED] = enabled
+        }
+    }
+
+    /**
+     * Strict Mode challenge difficulty: number of raw characters the user must type to unlock.
+     * Defaults to [com.astraedus.nudge.domain.lock.StrictModeChallenge.DEFAULT_LENGTH] (24).
+     */
+    val strictModeChallengeLength: Flow<Int> = context.dataStore.data
+        .map { prefs ->
+            prefs[Keys.STRICT_MODE_CHALLENGE_LENGTH]
+                ?: com.astraedus.nudge.domain.lock.StrictModeChallenge.DEFAULT_LENGTH
+        }
+
+    suspend fun setStrictModeChallengeLength(length: Int) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.STRICT_MODE_CHALLENGE_LENGTH] = length
         }
     }
 }

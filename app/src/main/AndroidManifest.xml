@@ -52,6 +52,16 @@
             android:taskAffinity=""
             android:theme="@style/Theme.Nudge.Overlay" />
 
+        <!-- Strict Mode Phase 2: full-screen unlock challenge shown over protected Settings
+             escape routes (accessibility toggle, App Info / Force stop / Uninstall). -->
+        <activity
+            android:name=".ui.lock.StrictModeGuardActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleInstance"
+            android:taskAffinity=""
+            android:theme="@style/Theme.Nudge.Overlay" />
+
         <service
             android:name=".service.NudgeAccessibilityService"
             android:exported="false"

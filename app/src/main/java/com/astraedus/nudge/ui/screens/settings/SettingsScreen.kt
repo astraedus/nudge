@@ -23,10 +23,12 @@ import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.InvertColors
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Layers
+import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.QueryStats
 import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -52,8 +54,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.astraedus.nudge.BuildConfig
 import com.astraedus.nudge.data.preferences.NudgePreferences
+import com.astraedus.nudge.domain.lock.StrictModeChallenge
 import com.astraedus.nudge.ui.components.AccessibilityDisclosureDialog
+import com.astraedus.nudge.ui.components.ChallengeDialog
 import com.astraedus.nudge.ui.hasGrayscalePermission
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -70,10 +76,29 @@ fun SettingsScreen(
     val preferences = remember { NudgePreferences(context.applicationContext) }
     val debugLoggingEnabled by preferences.isDebugLoggingEnabled.collectAsStateWithLifecycle(initialValue = false)
     val contentFilterEnabled by preferences.contentFilterEnabled.collectAsStateWithLifecycle(initialValue = false)
+    val strictModeEnabled by preferences.isStrictModeEnabled.collectAsStateWithLifecycle(initialValue = false)
+    val strictModeLength by preferences.strictModeChallengeLength.collectAsStateWithLifecycle(
+        initialValue = StrictModeChallenge.DEFAULT_LENGTH
+    )
     val coroutineScope = rememberCoroutineScope()
     var versionTapCount by rememberSaveable { mutableIntStateOf(0) }
     var developerOptionsVisible by rememberSaveable { mutableStateOf(false) }
     var showAccessibilityDisclosure by remember { mutableStateOf(false) }
+    // Strict Mode: turning OFF is gated by the unlock challenge. We hold the active target here;
+    // a fresh one is generated each time the user attempts to turn Strict Mode off.
+    var strictModeOffChallenge by remember { mutableStateOf<String?>(null) }
+
+    strictModeOffChallenge?.let { target ->
+        ChallengeDialog(
+            target = target,
+            prompt = "Turn off Strict Mode",
+            onUnlock = {
+                strictModeOffChallenge = null
+                coroutineScope.launch { preferences.setStrictModeEnabled(false) }
+            },
+            onCancel = { strictModeOffChallenge = null }
+        )
+    }
 
     if (showAccessibilityDisclosure) {
         AccessibilityDisclosureDialog(
@@ -192,6 +217,71 @@ fun SettingsScreen(
             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
             Text(
+                "Commitment Lock",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                color = MaterialTheme.colorScheme.primary
+            )
+
+            ListItem(
+                headlineContent = { Text("Lock my settings (Strict Mode)") },
+                supportingContent = {
+                    Text("While on, undoing any protection — or turning this off — requires typing the unlock challenge.")
+                },
+                leadingContent = { Icon(Icons.Outlined.Lock, contentDescription = null) },
+                trailingContent = {
+                    Switch(
+                        checked = strictModeEnabled,
+                        onCheckedChange = { wantOn ->
+                            if (wantOn) {
+                                // Turning Strict Mode ON is immediate.
+                                coroutineScope.launch { preferences.setStrictModeEnabled(true) }
+                            } else {
+                                // Turning OFF is gated: surface a fresh challenge.
+                                strictModeOffChallenge = StrictModeChallenge.generate(strictModeLength)
+                            }
+                        }
+                    )
+                },
+                modifier = Modifier.clickable {
+                    if (strictModeEnabled) {
+                        strictModeOffChallenge = StrictModeChallenge.generate(strictModeLength)
+                    } else {
+                        coroutineScope.launch { preferences.setStrictModeEnabled(true) }
+                    }
+                }
+            )
+
+            // Difficulty selector. Changing difficulty is not a weakening action (it doesn't undo
+            // any block), so it's editable freely even while Strict Mode is on.
+            Row(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                StrictModeDifficultyChip(
+                    label = "Easy",
+                    length = StrictModeChallenge.LENGTH_EASY,
+                    selected = strictModeLength == StrictModeChallenge.LENGTH_EASY,
+                    onSelect = { coroutineScope.launch { preferences.setStrictModeChallengeLength(it) } }
+                )
+                StrictModeDifficultyChip(
+                    label = "Medium",
+                    length = StrictModeChallenge.LENGTH_MEDIUM,
+                    selected = strictModeLength == StrictModeChallenge.LENGTH_MEDIUM,
+                    onSelect = { coroutineScope.launch { preferences.setStrictModeChallengeLength(it) } }
+                )
+                StrictModeDifficultyChip(
+                    label = "Hard",
+                    length = StrictModeChallenge.LENGTH_HARD,
+                    selected = strictModeLength == StrictModeChallenge.LENGTH_HARD,
+                    onSelect = { coroutineScope.launch { preferences.setStrictModeChallengeLength(it) } }
+                )
+            }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+            Text(
                 "Personalize",
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.Medium,
@@ -288,6 +378,21 @@ fun SettingsScreen(
             Spacer(Modifier.height(16.dp))
         }
     }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun StrictModeDifficultyChip(
+    label: String,
+    length: Int,
+    selected: Boolean,
+    onSelect: (Int) -> Unit
+) {
+    FilterChip(
+        selected = selected,
+        onClick = { onSelect(length) },
+        label = { Text("$label ($length)") }
+    )
 }
 
 @Composable

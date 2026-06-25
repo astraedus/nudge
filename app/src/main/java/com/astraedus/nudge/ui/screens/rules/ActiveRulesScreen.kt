@@ -51,6 +51,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import androidx.core.graphics.drawable.toBitmap
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.astraedus.nudge.ui.components.StrictModeChallengeHost
 import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -61,8 +62,15 @@ fun ActiveRulesScreen(
     onNavigateToRuleEditor: (String, Long) -> Unit
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val challenge by viewModel.challenge.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var showMenu by remember { mutableStateOf(false) }
+
+    StrictModeChallengeHost(
+        challenge = challenge,
+        onVerify = viewModel::verifyChallenge,
+        onCancel = viewModel::cancelChallenge
+    )
 
     // File picker for import
     val importLauncher = rememberLauncherForActivityResult(

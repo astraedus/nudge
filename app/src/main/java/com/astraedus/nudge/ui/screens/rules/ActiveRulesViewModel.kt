@@ -5,11 +5,14 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.astraedus.nudge.data.db.entity.BlockRule
 import com.astraedus.nudge.data.export.ImportResult
+import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.data.repository.BlockRuleRepository
 import com.astraedus.nudge.data.repository.InstalledAppsRepository
+import com.astraedus.nudge.domain.lock.ChallengeState
 import com.astraedus.nudge.domain.usecase.ExportRulesUseCase
 import com.astraedus.nudge.domain.usecase.ImportOutcome
 import com.astraedus.nudge.domain.usecase.ImportRulesUseCase
+import com.astraedus.nudge.ui.lock.StrictModeGate
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -43,11 +46,17 @@ class ActiveRulesViewModel @Inject constructor(
     private val blockRuleRepository: BlockRuleRepository,
     private val installedAppsRepository: InstalledAppsRepository,
     private val exportRulesUseCase: ExportRulesUseCase,
-    private val importRulesUseCase: ImportRulesUseCase
+    private val importRulesUseCase: ImportRulesUseCase,
+    nudgePreferences: NudgePreferences
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ActiveRulesUiState())
     val uiState: StateFlow<ActiveRulesUiState> = _uiState.asStateFlow()
+
+    private val strictModeGate = StrictModeGate(nudgePreferences)
+
+    /** Active Strict Mode unlock challenge, if a weakening action is pending. */
+    val challenge: StateFlow<ChallengeState?> = strictModeGate.challenge
 
     init {
         loadActiveRules()
@@ -89,8 +98,26 @@ class ActiveRulesViewModel @Inject constructor(
 
     fun toggleAppEnabled(packageName: String, currentlyEnabled: Boolean) {
         viewModelScope.launch {
-            blockRuleRepository.setEnabledForPackage(packageName, !currentlyEnabled)
+            // Disabling a rule (enabled -> false) weakens protection; gate it under Strict Mode.
+            // Re-enabling is free.
+            if (currentlyEnabled) {
+                strictModeGate.run(prompt = "Disable blocking for this app") {
+                    blockRuleRepository.setEnabledForPackage(packageName, false)
+                }
+            } else {
+                blockRuleRepository.setEnabledForPackage(packageName, true)
+            }
         }
+    }
+
+    /** Called from the challenge dialog; runs the pending weakening action on exact match. */
+    fun verifyChallenge(input: String) {
+        viewModelScope.launch { strictModeGate.verifyAndRun(input) }
+    }
+
+    /** Called when the user cancels the challenge dialog. */
+    fun cancelChallenge() {
+        strictModeGate.cancel()
     }
 
     // --- Export/Import ---

@@ -156,6 +156,24 @@ Generic, opt-in master switch that blocks websites against a large bundled block
 - UI: "Content Filter" section in `SettingsScreen.kt` — single "Block restricted websites" switch, wired via the direct-`NudgePreferences` pattern (no ViewModel).
 - Tests: `ContentFilterMatcherTest` (domain/keyword/false-positive guards), `WebDomainDetectorTest` (multi-browser id resolution + mockk node reads), `EvaluateBlockContentFilterTest` (enabled/disabled/mode wiring, repo mocked — never loads the asset).
 
+## Strict Mode (commitment lock) architecture — v1.7.0
+
+Opt-in lock that gates every protection-WEAKENING action behind a typed unlock challenge. Strengthening is never gated. Two layers: in-app gate + OS escape-route guard.
+
+- **Prefs** (`NudgePreferences`): `strictModeEnabled` (default false) + `strictModeChallengeLength` (default 24; Easy 12 / Medium 24 / Hard 48). Same `Flow` + setter pattern as `globalEnabled`.
+- **`domain/lock/StrictModeChallenge.kt`** — pure Kotlin. `generate(length)` (unambiguous charset, excludes 0/O/1/l/I), `forDisplay` (dash-grouped chunks of 5), `normalize`/`rawLength` (dash- + whitespace-strip), `verify(input, target)` (case-sensitive, dash-insensitive **both** directions). The dialog counter and `verify` share `normalize`, so "x/y" can never disagree with what's compared.
+- **`domain/lock/RuleWeakening.kt`** — pure `isWeakening(old, new)`: disable, mode softening (HARD_BLOCK>DELAY>BREATHING>none), shorter delay, lowered/removed daily limit.
+- **`ui/lock/StrictModeGate.kt`** — ViewModel-side helper: `run(prompt, action)` runs immediately if Strict Mode off, else defers the action and emits a `ChallengeState` the screen renders. Used by `HomeViewModel` (global toggle ON→OFF only), `ActiveRulesViewModel` (rule disable), `UnifiedAppConfigViewModel` (weakening save / delete). Settings gates Strict-Mode-OFF with its own local challenge.
+- **`ui/components/ChallengeDialog.kt`** — the unlock UI. Paste/copy suppressed via a no-op `LocalTextToolbar`; `imeAction=Done` clears focus to dismiss the keyboard. Fresh target per open.
+- **Escape-route guard** (the OS-bypass layer):
+  - `domain/lock/StrictModeEscapeGuard.kt` — pure `shouldGuardSettingsScreen(foregroundPkg, windowText, appLabel, strictEnabled, withinGrace)`. Fails CLOSED (blank/empty/exception → no guard); biased to fewer false positives (requires a settings package AND the app label AND a strong escape signal).
+  - **Detection signatures** (tuned against live AOSP Settings on the Pixel 3, Android 12; app label "Nudge - App Blocker"): a11y **detail** page (`com.android.settings/.SubSettings`) keys on the label + **"shortcut"** / **"use <label>"** — NOT the bare word "accessibility", because the a11y **list** page also shows our label (that was the false-positive to avoid). App Info page (`.applications.InstalledAppDetails`) keys on label + **"Force stop"** + **"Uninstall"**.
+  - `service/StrictModeEscapeManager.kt` (`@Singleton`) — in-memory 60s grace window (modeled on `PassthroughManager`); while in grace the service short-circuits so a committed user can complete their toggle/uninstall.
+  - `ui/lock/StrictModeGuardActivity.kt` — full-screen overlay reusing `ChallengeDialog`; unlock → `grantGrace()` + finish (back to Settings); cancel/back/dismiss → reliable `GLOBAL_ACTION_HOME` (HOME-intent fallback). Registered in manifest like `BlockOverlayActivity` (singleInstance, excludeFromRecents, empty taskAffinity).
+  - `NudgeAccessibilityService` guards in `onAccessibilityEvent` before the `SYSTEM_PACKAGES` early-return; bounded node-text harvest (≤800 nodes); Strict Mode flags cached off-main so the hot path never blocks on DataStore. `accessibility_service_config.xml` gained `flagRetrieveInteractiveWindows`.
+  - **OEM/locale caveat**: detection is best-effort, verified only on AOSP/English. Other settings packages are tolerated in `SETTINGS_PACKAGES` but unverified; an untuned OEM/locale screen simply isn't guarded (a miss, never a trap). Safety invariant: the lock can never hard-trap the user — cancel always goes home, the challenge is always solvable, Strict Mode off disables all guarding.
+- **Tests**: `StrictModeChallengeTest` (charset/length/uniqueness, verify exact + dash/whitespace-insensitive both directions), `RuleWeakeningTest` (every axis both directions), `StrictModeGateTest` (off=immediate, on=deferred-then-run/cancel), `StrictModeEscapeGuardTest` (guard/no-guard matrix + list-page-not-trapped, fail-closed, OEM pkg), `StrictModeEscapeManagerTest` (grace open/expire/clear/re-grant).
+
 ## Export/Import architecture
 
 - `data/export/RuleExportData.kt` — data classes: `NudgeExport`, `ExportedRule`, `ExportedGroup`

@@ -7,6 +7,8 @@ import com.astraedus.nudge.data.repository.BlockRuleRepository
 import com.astraedus.nudge.data.repository.ScreenTimeProvider
 import com.astraedus.nudge.data.repository.UsageRepository
 import com.astraedus.nudge.domain.engine.TimeTracker
+import com.astraedus.nudge.domain.lock.ChallengeState
+import com.astraedus.nudge.ui.lock.StrictModeGate
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.SharingStarted
@@ -38,6 +40,11 @@ class HomeViewModel @Inject constructor(
     private val screenTimeProvider: ScreenTimeProvider,
     private val timeTracker: TimeTracker
 ) : ViewModel() {
+
+    private val strictModeGate = StrictModeGate(nudgePreferences)
+
+    /** Active Strict Mode unlock challenge, if a weakening action is pending. */
+    val challenge: StateFlow<ChallengeState?> = strictModeGate.challenge
 
     private val todayStart = timeTracker.startOfToday()
     private val todayEnd = todayStart + 24L * 60L * 60L * 1000L
@@ -99,7 +106,24 @@ class HomeViewModel @Inject constructor(
     fun toggleGlobalEnabled() {
         viewModelScope.launch {
             val current = uiState.value.isGlobalEnabled
-            nudgePreferences.setGlobalEnabled(!current)
+            // Turning protection ON is free; only ON -> OFF (weakening) is gated by Strict Mode.
+            if (current) {
+                strictModeGate.run(prompt = "Turn off all blocking") {
+                    nudgePreferences.setGlobalEnabled(false)
+                }
+            } else {
+                nudgePreferences.setGlobalEnabled(true)
+            }
         }
+    }
+
+    /** Called from the challenge dialog; runs the pending weakening action on exact match. */
+    fun verifyChallenge(input: String) {
+        viewModelScope.launch { strictModeGate.verifyAndRun(input) }
+    }
+
+    /** Called when the user cancels the challenge dialog. */
+    fun cancelChallenge() {
+        strictModeGate.cancel()
     }
 }

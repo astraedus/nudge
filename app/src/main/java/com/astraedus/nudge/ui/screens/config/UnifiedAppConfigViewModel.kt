@@ -4,10 +4,14 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.astraedus.nudge.data.db.entity.BlockRule
+import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.data.repository.BlockRuleRepository
 import com.astraedus.nudge.data.repository.InstalledAppsRepository
+import com.astraedus.nudge.domain.lock.ChallengeState
+import com.astraedus.nudge.domain.lock.RuleWeakening
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.domain.model.FeatureMode
+import com.astraedus.nudge.ui.lock.StrictModeGate
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -20,13 +24,26 @@ import javax.inject.Inject
 class UnifiedAppConfigViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
     private val blockRuleRepository: BlockRuleRepository,
-    private val installedAppsRepository: InstalledAppsRepository
+    private val installedAppsRepository: InstalledAppsRepository,
+    nudgePreferences: NudgePreferences
 ) : ViewModel() {
 
     private val packageName: String = savedStateHandle.get<String>("packageName") ?: ""
 
     private val _uiState = MutableStateFlow(UnifiedAppConfigState(packageName = packageName))
     val uiState: StateFlow<UnifiedAppConfigState> = _uiState.asStateFlow()
+
+    private val strictModeGate = StrictModeGate(nudgePreferences)
+
+    /** Active Strict Mode unlock challenge, if a weakening action is pending. */
+    val challenge: StateFlow<ChallengeState?> = strictModeGate.challenge
+
+    /**
+     * Snapshot of the existing default app rule at load time, used to decide whether a save
+     * WEAKENS protection (and therefore needs the Strict Mode challenge). Null = no rule existed,
+     * so a save is creation, never weakening.
+     */
+    private var existingDefaultRule: BlockRule? = null
 
     init {
         loadState()
@@ -48,6 +65,7 @@ class UnifiedAppConfigViewModel @Inject constructor(
             val defaultAppRule = directRules.firstOrNull {
                 it.inAppFeatures.isNullOrEmpty() && it.scheduleDays == null
             }
+            existingDefaultRule = defaultAppRule
             val scheduledAppRule = directRules.firstOrNull {
                 it.inAppFeatures.isNullOrEmpty() && it.scheduleDays != null
             }
@@ -157,36 +175,99 @@ class UnifiedAppConfigViewModel @Inject constructor(
 
     // ═══ Save logic ═══
 
+    /** Builds the app-level default rule that [save] would persist for the current state. */
+    private fun buildDefaultRule(state: UnifiedAppConfigState): BlockRule {
+        val webDomains = if (state.webDomainEnabled && state.webDomains.isNotBlank()) {
+            state.webDomains.trim()
+        } else null
+
+        return BlockRule(
+            packageName = packageName,
+            mode = state.defaultMode.name,
+            delaySeconds = state.defaultDelaySeconds,
+            dailyLimitMinutes = if (state.dailyLimitEnabled) state.dailyLimitMinutes else null,
+            enabled = state.enabled,
+            showCounter = state.showCounter,
+            showTimeRemaining = state.showTimeRemaining && state.dailyLimitEnabled,
+            grayscale = state.grayscale,
+            autoKickAfter = if (state.defaultAutoKickEnabled) state.defaultAutoKickAfter else null,
+            autoKickCooldownSeconds = state.defaultAutoKickCooldownSeconds,
+            webDomains = webDomains
+        )
+    }
+
     fun save() {
         viewModelScope.launch {
             val state = _uiState.value
+            val newDefault = buildDefaultRule(state)
+            val old = existingDefaultRule
 
-            // 1. Clean slate: delete all direct rules for this package
-            blockRuleRepository.deleteDirectRulesForPackage(packageName)
+            // A save only needs the challenge when it weakens an EXISTING rule. Creating a fresh
+            // rule (no prior rule) is strengthening, so it saves freely even under Strict Mode.
+            val weakens = old != null && RuleWeakening.isWeakening(old, newDefault)
+            if (weakens) {
+                strictModeGate.run(prompt = "Weaken blocking for this app") {
+                    performSave(state, newDefault)
+                }
+            } else {
+                performSave(state, newDefault)
+            }
+        }
+    }
 
-            // 2. Create app-level default rule
-            val webDomains = if (state.webDomainEnabled && state.webDomains.isNotBlank()) {
-                state.webDomains.trim()
-            } else null
+    private suspend fun performSave(state: UnifiedAppConfigState, newDefault: BlockRule) {
+        // 1. Clean slate: delete all direct rules for this package
+        blockRuleRepository.deleteDirectRulesForPackage(packageName)
 
+        // 2. Create app-level default rule
+        blockRuleRepository.addRule(newDefault)
+        // Keep the snapshot in sync so a second save in the same session compares correctly.
+        existingDefaultRule = newDefault
+
+        // 3. Create feature override rules (non-INHERIT only)
+        for ((featureKey, override) in state.featureOverrides) {
+            if (override.mode == FeatureMode.INHERIT) continue
+            val ruleMode = when (override.mode) {
+                FeatureMode.BLOCK -> "HARD_BLOCK"
+                FeatureMode.DELAY -> "DELAY"
+                FeatureMode.BREATHING -> "BREATHING"
+                else -> continue
+            }
             blockRuleRepository.addRule(
                 BlockRule(
                     packageName = packageName,
-                    mode = state.defaultMode.name,
-                    delaySeconds = state.defaultDelaySeconds,
-                    dailyLimitMinutes = if (state.dailyLimitEnabled) state.dailyLimitMinutes else null,
+                    mode = ruleMode,
+                    delaySeconds = override.delaySeconds,
                     enabled = state.enabled,
-                    showCounter = state.showCounter,
-                    showTimeRemaining = state.showTimeRemaining && state.dailyLimitEnabled,
-                    grayscale = state.grayscale,
-                    autoKickAfter = if (state.defaultAutoKickEnabled) state.defaultAutoKickAfter else null,
-                    autoKickCooldownSeconds = state.defaultAutoKickCooldownSeconds,
-                    webDomains = webDomains
+                    inAppFeatures = featureKey,
+                    autoKickAfter = if (override.autoKickEnabled) override.autoKickAfter else null,
+                    autoKickCooldownSeconds = override.autoKickCooldownSeconds,
+                    showCounter = state.showCounter
+                )
+            )
+        }
+
+        // 4. Create scheduled override rules
+        if (state.scheduledOverrideEnabled) {
+            val scheduleDaysStr = state.scheduleDays.sorted().joinToString(",")
+            val startMin = state.scheduleStartHour * 60 + state.scheduleStartMinute
+            val endMin = state.scheduleEndHour * 60 + state.scheduleEndMinute
+
+            // Scheduled app-level rule
+            blockRuleRepository.addRule(
+                BlockRule(
+                    packageName = packageName,
+                    mode = state.scheduledMode.name,
+                    delaySeconds = state.scheduledDelaySeconds,
+                    enabled = state.enabled,
+                    scheduleDays = scheduleDaysStr,
+                    scheduleStartMinute = startMin,
+                    scheduleEndMinute = endMin
                 )
             )
 
-            // 3. Create feature override rules (non-INHERIT only)
-            for ((featureKey, override) in state.featureOverrides) {
+            // Scheduled feature override rules
+            for ((featureKey, override) in state.scheduledFeatureOverrides) {
                 if (override.mode == FeatureMode.INHERIT) continue
                 val ruleMode = when (override.mode) {
                     FeatureMode.BLOCK -> "HARD_BLOCK"
@@ -203,68 +284,48 @@ class UnifiedAppConfigViewModel @Inject constructor(
                         inAppFeatures = featureKey,
                         autoKickAfter = if (override.autoKickEnabled) override.autoKickAfter else null,
                         autoKickCooldownSeconds = override.autoKickCooldownSeconds,
-                        showCounter = state.showCounter
-                    )
-                )
-            }
-
-            // 4. Create scheduled override rules
-            if (state.scheduledOverrideEnabled) {
-                val scheduleDaysStr = state.scheduleDays.sorted().joinToString(",")
-                val startMin = state.scheduleStartHour * 60 + state.scheduleStartMinute
-                val endMin = state.scheduleEndHour * 60 + state.scheduleEndMinute
-
-                // Scheduled app-level rule
-                blockRuleRepository.addRule(
-                    BlockRule(
-                        packageName = packageName,
-                        mode = state.scheduledMode.name,
-                        delaySeconds = state.scheduledDelaySeconds,
-                        enabled = state.enabled,
+                        showCounter = state.showCounter,
                         scheduleDays = scheduleDaysStr,
                         scheduleStartMinute = startMin,
                         scheduleEndMinute = endMin
                     )
                 )
-
-                // Scheduled feature override rules
-                for ((featureKey, override) in state.scheduledFeatureOverrides) {
-                    if (override.mode == FeatureMode.INHERIT) continue
-                    val ruleMode = when (override.mode) {
-                        FeatureMode.BLOCK -> "HARD_BLOCK"
-                        FeatureMode.DELAY -> "DELAY"
-                        FeatureMode.BREATHING -> "BREATHING"
-                        else -> continue
-                    }
-                    blockRuleRepository.addRule(
-                        BlockRule(
-                            packageName = packageName,
-                            mode = ruleMode,
-                            delaySeconds = override.delaySeconds,
-                            enabled = state.enabled,
-                            inAppFeatures = featureKey,
-                            autoKickAfter = if (override.autoKickEnabled) override.autoKickAfter else null,
-                            autoKickCooldownSeconds = override.autoKickCooldownSeconds,
-                            showCounter = state.showCounter,
-                            scheduleDays = scheduleDaysStr,
-                            scheduleStartMinute = startMin,
-                            scheduleEndMinute = endMin
-                        )
-                    )
-                }
             }
-
-            _uiState.value = state.copy(isSaved = true)
         }
+
+        _uiState.value = state.copy(isSaved = true)
     }
 
     // ═══ Delete ═══
 
     fun deleteAllRules() {
         viewModelScope.launch {
-            blockRuleRepository.deleteDirectRulesForPackage(packageName)
-            _uiState.value = _uiState.value.copy(isSaved = true)
+            // Deleting an existing rule weakens protection; gate it under Strict Mode.
+            // (No existing rule = nothing to weaken; delete proceeds freely.)
+            if (existingDefaultRule != null) {
+                strictModeGate.run(prompt = "Delete blocking for this app") {
+                    performDelete()
+                }
+            } else {
+                performDelete()
+            }
         }
+    }
+
+    private suspend fun performDelete() {
+        blockRuleRepository.deleteDirectRulesForPackage(packageName)
+        existingDefaultRule = null
+        _uiState.value = _uiState.value.copy(isSaved = true)
+    }
+
+    /** Called from the challenge dialog; runs the pending weakening action on exact match. */
+    fun verifyChallenge(input: String) {
+        viewModelScope.launch { strictModeGate.verifyAndRun(input) }
+    }
+
+    /** Called when the user cancels the challenge dialog. */
+    fun cancelChallenge() {
+        strictModeGate.cancel()
     }
 
     fun showDeleteConfirmation() {

@@ -55,6 +55,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.domain.model.FeatureMode
 import com.astraedus.nudge.ui.components.CustomTimeDialog
+import com.astraedus.nudge.ui.components.StrictModeChallengeHost
 import com.astraedus.nudge.ui.components.formatMinutesDisplay
 import com.astraedus.nudge.ui.hasGrayscalePermission
 import kotlinx.coroutines.launch
@@ -66,6 +67,7 @@ fun UnifiedAppConfigScreen(
     onNavigateBack: () -> Unit
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val challenge by viewModel.challenge.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -73,6 +75,12 @@ fun UnifiedAppConfigScreen(
     LaunchedEffect(state.isSaved) {
         if (state.isSaved) onNavigateBack()
     }
+
+    StrictModeChallengeHost(
+        challenge = challenge,
+        onVerify = viewModel::verifyChallenge,
+        onCancel = viewModel::cancelChallenge
+    )
 
     Scaffold(
         topBar = {
