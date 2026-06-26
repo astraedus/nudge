@@ -87,7 +87,7 @@ NOTES="$(awk -v ver="$VERSION" '
   $0 ~ "^## \\[" ver "\\]" {grab=1; next}
   grab && /^## \[/ {exit}
   grab {print}
-' "$ROOT/CHANGELOG.md" | sed 's/\*\*//g; s/^- /• /' | sed '/^### /d' | grep -v '^[[:space:]]*$' | head -8)"
+' "$ROOT/CHANGELOG.md" | sed 's/\*\*//g; s/^- /• /' | sed '/^### /d' | grep -v '^[[:space:]]*$')"
 [ -n "$NOTES" ] && NOTES="What's new in v${VERSION}:
 ${NOTES}" || NOTES="Bug fixes and improvements (v${VERSION})."
 # Google Play hard-caps release notes at 500 chars/locale; trim the FINAL string.

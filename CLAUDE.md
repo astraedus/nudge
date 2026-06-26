@@ -259,7 +259,8 @@ After any feature addition or significant change:
 8. Update this CLAUDE.md (architecture docs, feature descriptions) if applicable
 9. Commit all changes, tag, push: `git push origin main --tags`
 10. Create GitHub release (fast path): `gh release create vX.Y.Z nudge-vX.Y.Z.apk --title "vX.Y.Z" --generate-notes`
-11. Update store listing copy if user-facing
+11. **Publish to Google Play** — the standing default so Play never drifts behind GitHub again. After CI attaches the AAB, run `scripts/publish-to-play.sh X.Y.Z` (stages a production DRAFT to verify), then `STATUS=completed ROLLOUT=1.0 scripts/publish-to-play.sh X.Y.Z` for full rollout (or `STATUS=inProgress ROLLOUT=0.2 …` for a staged, halt-able rollout). Play credentials stay on the laptop — never in CI. See the **Releasing → Google Play** section for the security rationale.
+12. Update store listing copy if user-facing
 
 **This is the standard ship flow. Every change that touches user-facing behavior gets a device QA gate before push.**
 
