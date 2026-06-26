@@ -47,7 +47,26 @@ git push origin main --tags
 # GitHub Action builds release APK, tests, creates release automatically
 ```
 
-CI runs on every tag push (`.github/workflows/release.yml`). Builds `assembleRelease` using secrets (`KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`). If a release already exists (fast path), CI updates it with the CI-built APK.
+CI runs on every tag push (`.github/workflows/release.yml`). Builds `assembleRelease` (APK) **and `bundleRelease` (AAB)** using secrets (`KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`); both are attached to the GitHub Release (APK for direct download + F-Droid; AAB for Google Play). Also exposes `workflow_dispatch` so a Play-ready AAB can be rebuilt from `main` without re-tagging. If a release already exists (fast path), CI updates it.
+
+### Google Play release (catch Play up after a GitHub release)
+
+GitHub releases are automatic; **Google Play is a separate, deliberate step** that runs **from the laptop, not CI**:
+
+```bash
+# Safe verify: upload as a production DRAFT (no users affected).
+scripts/publish-to-play.sh 1.7.0
+# Go live to a 20% staged rollout (halt-able from Play Console).
+STATUS=inProgress ROLLOUT=0.2 scripts/publish-to-play.sh 1.7.0
+# Full rollout once confident.
+STATUS=completed ROLLOUT=1.0 scripts/publish-to-play.sh 1.7.0
+```
+
+The script pulls the CI-built AAB from the GitHub Release (or `SOURCE=run` for a `workflow_dispatch` artifact), runs `gplay preflight` (offline secret/compliance scan), then `gplay release` to the chosen track with release notes auto-extracted from `CHANGELOG.md`.
+
+**Why local, not CI (open-source security):** the repo is PUBLIC, so we never put the Google Play API credential in GitHub Actions — a malicious PR or compromised action could exfiltrate it. CI only ever holds the **upload key** (`KEYSTORE_BASE64`), and because Nudge is enrolled in **Play App Signing** (mandatory for apps first published after Aug 2021), Google holds the real app-signing key — a leaked upload key can be rotated in Play Console without bricking installed users. The powerful `gplay` admin service-account key stays on the laptop (chmod 600, gitignored). To go fully tag-triggered later, create a **dedicated, least-privilege** Play service account (Nudge-only, "release manager" — never the account admin key) and store it as a GitHub secret; only then is CI-side Play upload acceptable. Ref: `~/ops/references/play-console-cli.md`.
+
+> Play track state is queryable: `gplay status --package dev.astraedus.nudge --pretty`. As of the AAB-pipeline addition, Play production was on 1.5.6 (versionCode 27) while the repo was at 1.7.0 (versionCode 31) — i.e. Play had drifted 4 versions behind because the push was manual. This script closes that gap.
 
 ## Release Signing
 
