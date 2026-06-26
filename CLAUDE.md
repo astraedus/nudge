@@ -244,6 +244,8 @@ After any feature addition or significant change:
 
 **This is the standard ship flow. Every change that touches user-facing behavior gets a device QA gate before push.**
 
+**SHIP AUTONOMOUSLY — do NOT ask for permission once the device-QA gate passes.** This is a documented, reversible, owned release flow (own-the-last-mile rule). When QA is green: bump the version, update CHANGELOG/docs, commit, build `assembleRelease`, tag, `git push origin main --tags`, and `gh release create` — end to end, no confirmation step. Asking "should I push?" on a verified change is the exact anti-pattern this repo's flow exists to prevent. The ONLY things that still warrant a pause are the universal ones: money, real-world identity, known-contact email, ban-risk platform actions, or destructive/irreversible deletion — none of which a Nudge release involves.
+
 ## Backlog
 
 ### v1.2 in progress
