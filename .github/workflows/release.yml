@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
 
 jobs:
   release:
@@ -38,17 +39,47 @@ jobs:
           keyPassword=${{ secrets.KEYSTORE_PASSWORD }}
           PROPS
 
+      - name: Resolve version
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION=$(sed -n 's/.*versionName = "\([0-9][0-9.]*\)".*/\1/p' app/build.gradle.kts | head -1)
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "Resolved version: $VERSION"
+
       - name: Build release APK
         run: ./gradlew assembleRelease
 
       - name: Rename APK
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          cp app/build/outputs/apk/release/app-release.apk "nudge-v${VERSION}.apk"
+        run: cp app/build/outputs/apk/release/app-release.apk "nudge-v${VERSION}.apk"
+
+      # AAB (Android App Bundle) is the format Google Play requires for production
+      # uploads. Play App Signing re-signs it with the app key Google holds; the
+      # keystore above is only the UPLOAD key. APK is kept for direct GitHub
+      # downloads + F-Droid.
+      - name: Build release AAB (Google Play)
+        run: ./gradlew bundleRelease
+
+      - name: Rename AAB
+        run: cp app/build/outputs/bundle/release/app-release.aab "nudge-v${VERSION}.aab"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nudge-release-${{ env.VERSION }}
+          path: |
+            nudge-v*.apk
+            nudge-v*.aab
+          if-no-files-found: error
 
       - name: Create or update GitHub Release
+        if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
-          files: nudge-v*.apk
+          files: |
+            nudge-v*.apk
+            nudge-v*.aab
           fail_on_unmatched_files: false
