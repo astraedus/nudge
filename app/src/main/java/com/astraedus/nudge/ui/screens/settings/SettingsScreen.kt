@@ -17,6 +17,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.ManageSearch
 import androidx.compose.material.icons.outlined.Accessibility
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.Edit
@@ -76,6 +77,7 @@ fun SettingsScreen(
     val preferences = remember { NudgePreferences(context.applicationContext) }
     val debugLoggingEnabled by preferences.isDebugLoggingEnabled.collectAsStateWithLifecycle(initialValue = false)
     val contentFilterEnabled by preferences.contentFilterEnabled.collectAsStateWithLifecycle(initialValue = false)
+    val contentFilterStrictKeywords by preferences.contentFilterStrictKeywords.collectAsStateWithLifecycle(initialValue = false)
     val strictModeEnabled by preferences.isStrictModeEnabled.collectAsStateWithLifecycle(initialValue = false)
     val strictModeLength by preferences.strictModeChallengeLength.collectAsStateWithLifecycle(
         initialValue = StrictModeChallenge.DEFAULT_LENGTH
@@ -210,6 +212,29 @@ fun SettingsScreen(
                 modifier = Modifier.clickable {
                     coroutineScope.launch {
                         preferences.setContentFilterEnabled(!contentFilterEnabled)
+                    }
+                }
+            )
+
+            ListItem(
+                headlineContent = { Text("Strict keyword matching") },
+                supportingContent = {
+                    Text("Also blocks matching terms found in search queries.")
+                },
+                leadingContent = { Icon(Icons.AutoMirrored.Outlined.ManageSearch, contentDescription = null) },
+                trailingContent = {
+                    Switch(
+                        checked = contentFilterStrictKeywords,
+                        onCheckedChange = { enabled ->
+                            coroutineScope.launch {
+                                preferences.setContentFilterStrictKeywords(enabled)
+                            }
+                        }
+                    )
+                },
+                modifier = Modifier.clickable {
+                    coroutineScope.launch {
+                        preferences.setContentFilterStrictKeywords(!contentFilterStrictKeywords)
                     }
                 }
             )

@@ -2,6 +2,12 @@
 
 All notable changes to Nudge are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.8.0] - 2026-07-02
+
+### Added
+- **Stronger content filter matching**: The optional **Settings → Content Filter → "Block restricted websites"** filter now recognises many more sites out of the box, and catches flagged terms inside search queries (including image searches) rather than only whole domains — so restricted results are blocked at the search stage across supported browsers, Firefox included.
+- **Strict keyword matching**: A new opt-in sub-toggle (**Settings → Content Filter → "Strict keyword matching"**, off by default) also blocks ambiguous shorthand terms when they appear as whole words in a search query — while leaving normal websites reachable (e.g. searching a flagged term is blocked, but visiting a legitimate site that merely shares the name is not). Everything stays on-device; no browsing data leaves the phone.
+
 ## [1.7.0] - 2026-06-25
 
 ### Added

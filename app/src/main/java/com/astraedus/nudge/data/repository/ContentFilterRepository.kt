@@ -15,8 +15,13 @@ import javax.inject.Singleton
  * can be unit-tested without loading the ~274k-entry bundled asset.
  */
 interface ContentFilter {
-    /** True if [urlBarText] matches the bundled blocklist or a high-signal keyword. */
-    suspend fun isBlocked(urlBarText: String): Boolean
+    /**
+     * True if [urlBarText] matches the bundled blocklist or a high-signal keyword.
+     *
+     * @param strictKeywords when true, ALSO matches ambiguous slang keywords found as
+     *   whole words in the URL's search query (opt-in; a no-op otherwise).
+     */
+    suspend fun isBlocked(urlBarText: String, strictKeywords: Boolean): Boolean
 }
 
 /**
@@ -44,11 +49,14 @@ class ContentFilterRepository @Inject constructor(
     private var blocklist: Set<String>? = null
     private val loadMutex = Mutex()
 
-    override suspend fun isBlocked(urlBarText: String): Boolean {
+    override suspend fun isBlocked(urlBarText: String, strictKeywords: Boolean): Boolean {
         if (urlBarText.isBlank()) return false
         val list = ensureLoaded()
         return ContentFilterMatcher.matchesDomain(urlBarText, list) ||
-            ContentFilterMatcher.matchesKeyword(urlBarText, ContentFilterMatcher.DEFAULT_KEYWORDS)
+            ContentFilterMatcher.matchesKeyword(urlBarText, ContentFilterMatcher.DEFAULT_KEYWORDS) ||
+            (strictKeywords && ContentFilterMatcher.matchesQueryKeyword(
+                urlBarText, ContentFilterMatcher.AMBIGUOUS_QUERY_KEYWORDS
+            ))
     }
 
     private suspend fun ensureLoaded(): Set<String> {

@@ -143,7 +143,8 @@ class EvaluateBlockUseCase @Inject constructor(
         if (!preferences.contentFilterEnabled.first()) {
             return WebDomainBlockResult(BlockDecision.Allow, null)
         }
-        if (!contentFilter.isBlocked(urlBarText)) {
+        val strict = preferences.contentFilterStrictKeywords.first()
+        if (!contentFilter.isBlocked(urlBarText, strict)) {
             return WebDomainBlockResult(BlockDecision.Allow, null)
         }
 

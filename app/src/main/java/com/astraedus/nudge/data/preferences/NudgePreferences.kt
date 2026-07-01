@@ -28,6 +28,7 @@ class NudgePreferences @Inject constructor(
         val DEBUG_LOGGING_ENABLED = booleanPreferencesKey("debug_logging_enabled")
         val CONTENT_FILTER_ENABLED = booleanPreferencesKey("content_filter_enabled")
         val CONTENT_FILTER_MODE = stringPreferencesKey("content_filter_mode")
+        val CONTENT_FILTER_STRICT_KEYWORDS = booleanPreferencesKey("content_filter_strict_keywords")
         val CUSTOM_DELAY_TITLES = stringPreferencesKey("custom_delay_titles")
         val CUSTOM_DELAY_SUBTITLES = stringPreferencesKey("custom_delay_subtitles")
         val CUSTOM_HARD_BLOCK_MESSAGES = stringPreferencesKey("custom_hard_block_messages")
@@ -79,6 +80,20 @@ class NudgePreferences @Inject constructor(
     suspend fun setContentFilterMode(mode: String) {
         context.dataStore.edit { prefs ->
             prefs[Keys.CONTENT_FILTER_MODE] = mode
+        }
+    }
+
+    /**
+     * Opt-in sub-toggle of the content filter that also matches ambiguous keyword terms
+     * found in a URL's search query. Defaults to false so the general userbase is
+     * unaffected; only matters when [contentFilterEnabled] is also on.
+     */
+    val contentFilterStrictKeywords: Flow<Boolean> = context.dataStore.data
+        .map { prefs -> prefs[Keys.CONTENT_FILTER_STRICT_KEYWORDS] ?: false }
+
+    suspend fun setContentFilterStrictKeywords(enabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.CONTENT_FILTER_STRICT_KEYWORDS] = enabled
         }
     }
 
