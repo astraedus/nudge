@@ -1,5 +1,9 @@
 name: Release
 
+# RELEASE CONVENTION (portfolio standard, set 2026-07-03): 'v*' tag -> production release
+# build; workflow_dispatch -> manual dev/test build. Never auto-build on a branch push.
+# EAS cloud builds are reserved for prod/iOS only (all Android builds use this free CI).
+
 on:
   push:
     tags:
