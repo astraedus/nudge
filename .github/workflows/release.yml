@@ -1,11 +1,13 @@
 name: Release
 
-# RELEASE CONVENTION (portfolio standard, set 2026-07-03): 'v*' tag -> production release
-# build; workflow_dispatch -> manual dev/test build. Never auto-build on a branch push.
-# EAS cloud builds are reserved for prod/iOS only (all Android builds use this free CI).
+# RELEASE CONVENTION (updated 2026-07-05): push to main -> rolling 'main-latest' dev-build
+# prerelease (an installable signed APK per merge to main, tests gated); 'v*' tag -> versioned
+# production release; workflow_dispatch -> one-off manual build (run artifact, no release).
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
   workflow_dispatch:
@@ -87,3 +89,23 @@ jobs:
             nudge-v*.apk
             nudge-v*.aab
           fail_on_unmatched_files: false
+
+      # --- main push: publish/refresh a rolling "latest main" PRERELEASE carrying the
+      #     signed APK, so every merge to main yields an installable dev build at a stable
+      #     URL (…/releases/tag/main-latest). NOT a versioned release — the gradle version
+      #     isn't bumped between releases; this is the bleeding-edge build for testers
+      #     (already tests-gated by the `./gradlew test` step above). Real installs use a
+      #     v* release / Play. The rolling tag is deleted+recreated so it always points at
+      #     the newest main. ---
+      - name: Publish rolling dev build (main)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="main-latest"
+          gh release delete "$TAG" --cleanup-tag --yes 2>/dev/null || true
+          gh release create "$TAG" "nudge-v${VERSION}.apk#nudge-main.apk" \
+            --title "Nudge — latest main (dev build)" \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --notes "Automated development build from the latest \`main\` (commit ${GITHUB_SHA::7}, v${VERSION}). Installable signed APK reflecting current main — NOT a versioned release. For stable installs use a \`v*\` release / the Play Store."
