@@ -49,6 +49,8 @@ git push origin main --tags
 
 CI runs on every tag push (`.github/workflows/release.yml`). Builds `assembleRelease` (APK) **and `bundleRelease` (AAB)** using secrets (`KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`); both are attached to the GitHub Release (APK for direct download + F-Droid; AAB for Google Play). Also exposes `workflow_dispatch` so a Play-ready AAB can be rebuilt from `main` without re-tagging. If a release already exists (fast path), CI updates it.
 
+**Every push to `main`** (added 2026-07-05) also auto-builds the signed APK (tests-gated by `./gradlew test`) and publishes/refreshes a rolling **`main-latest` PRERELEASE** (`…/releases/tag/main-latest`, always the newest main) — an installable dev build per merge, asset `nudge-main.apk`. NOT a versioned release; `v*` tags remain the real releases. Watch: `gh run list --repo astraedus/nudge --branch main`.
+
 ### Google Play release (catch Play up after a GitHub release)
 
 GitHub releases are automatic; **Google Play is a separate, deliberate step** that runs **from the laptop, not CI**:
