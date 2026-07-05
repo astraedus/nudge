@@ -103,8 +103,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="main-latest"
+          # Rename to a STABLE filename so the download URL never changes
+          # (…/main-latest/nudge-main.apk) — the `#label` gh syntax only sets a
+          # display label, leaving the asset filename versioned, so copy instead.
+          cp "nudge-v${VERSION}.apk" nudge-main.apk
           gh release delete "$TAG" --cleanup-tag --yes 2>/dev/null || true
-          gh release create "$TAG" "nudge-v${VERSION}.apk#nudge-main.apk" \
+          gh release create "$TAG" nudge-main.apk \
             --title "Nudge — latest main (dev build)" \
             --target "$GITHUB_SHA" \
             --prerelease \
