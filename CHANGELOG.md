@@ -2,6 +2,12 @@
 
 All notable changes to Nudge are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.9.0] - 2026-07-05
+
+### Added
+- **Daily 1-minute pass (emergency escape hatch)**: On any block screen (delay, breathing, or hard block) a subtle **"Use for 1 minute · once a day"** button now lets you into a blocked app for a single 60-second window. When the minute is up, Nudge sends you back to the home screen and normal blocking resumes. Each blocked app gets its own pass, and after you use one it's locked for a full 24 hours — the button is replaced by a muted "Daily pass used · next in Xh" note. Built for the genuine "I need this app for one thing right now" moment without giving up your protection for the day.
+- **Respects Strict Mode & fully optional**: The pass never appears while **Strict Mode** is on (a commitment lock shouldn't have a one-tap escape). You can also turn it off entirely for everyone in **Settings → Escape Hatch → "Daily 1-minute pass"** (on by default). Everything stays on-device.
+
 ## [1.8.0] - 2026-07-02
 
 ### Added

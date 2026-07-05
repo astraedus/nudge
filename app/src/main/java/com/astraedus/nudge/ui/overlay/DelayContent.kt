@@ -38,7 +38,11 @@ fun DelayContent(
     dailyTimeRemainingMs: Long? = null,
     dailyLimitMinutes: Int? = null,
     titlePool: List<String> = NudgeMessages.delayTitles,
-    subtitlePool: List<String> = NudgeMessages.delaySubtitles
+    subtitlePool: List<String> = NudgeMessages.delaySubtitles,
+    canUseEmergencyPass: Boolean = false,
+    emergencyLocked: Boolean = false,
+    nextPassMs: Long = 0L,
+    onUseEmergencyPass: () -> Unit = {}
 ) {
     val title = remember { titlePool.random() }
     val subtitle = remember { subtitlePool.random() }
@@ -128,6 +132,13 @@ fun DelayContent(
             OutlinedButton(onClick = onCancel) {
                 Text("I changed my mind")
             }
+
+            EmergencyPassAction(
+                canUse = canUseEmergencyPass,
+                locked = emergencyLocked,
+                nextPassMs = nextPassMs,
+                onUse = onUseEmergencyPass
+            )
 
             if (ruleName != null) {
                 Spacer(modifier = Modifier.height(24.dp))

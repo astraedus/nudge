@@ -42,7 +42,11 @@ fun BreathingContent(
     appLabel: String? = null,
     dailyTimeRemainingMs: Long? = null,
     dailyLimitMinutes: Int? = null,
-    subtitlePool: List<String> = NudgeMessages.delaySubtitles
+    subtitlePool: List<String> = NudgeMessages.delaySubtitles,
+    canUseEmergencyPass: Boolean = false,
+    emergencyLocked: Boolean = false,
+    nextPassMs: Long = 0L,
+    onUseEmergencyPass: () -> Unit = {}
 ) {
     val subtitle = remember { subtitlePool.random() }
     val circleScale = remember { Animatable(0.6f) }
@@ -187,6 +191,13 @@ fun BreathingContent(
             OutlinedButton(onClick = onCancel) {
                 Text("I changed my mind")
             }
+
+            EmergencyPassAction(
+                canUse = canUseEmergencyPass,
+                locked = emergencyLocked,
+                nextPassMs = nextPassMs,
+                onUse = onUseEmergencyPass
+            )
 
             if (ruleName != null) {
                 Spacer(modifier = Modifier.height(24.dp))

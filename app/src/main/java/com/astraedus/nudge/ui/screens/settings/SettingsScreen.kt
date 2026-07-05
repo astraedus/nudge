@@ -28,6 +28,7 @@ import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.QueryStats
 import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.outlined.Terminal
+import androidx.compose.material.icons.outlined.Timer
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -82,6 +83,7 @@ fun SettingsScreen(
     val strictModeLength by preferences.strictModeChallengeLength.collectAsStateWithLifecycle(
         initialValue = StrictModeChallenge.DEFAULT_LENGTH
     )
+    val emergencyPassEnabled by preferences.emergencyPassEnabled.collectAsStateWithLifecycle(initialValue = true)
     val coroutineScope = rememberCoroutineScope()
     var versionTapCount by rememberSaveable { mutableIntStateOf(0) }
     var developerOptionsVisible by rememberSaveable { mutableStateOf(false) }
@@ -303,6 +305,40 @@ fun SettingsScreen(
                     onSelect = { coroutineScope.launch { preferences.setStrictModeChallengeLength(it) } }
                 )
             }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+            Text(
+                "Escape Hatch",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                color = MaterialTheme.colorScheme.primary
+            )
+
+            ListItem(
+                headlineContent = { Text("Daily 1-minute pass") },
+                supportingContent = {
+                    Text("Allow one 60-second escape per blocked app, once a day. Disabled while Strict Mode is on.")
+                },
+                leadingContent = { Icon(Icons.Outlined.Timer, contentDescription = null) },
+                trailingContent = {
+                    Switch(
+                        checked = emergencyPassEnabled,
+                        enabled = !strictModeEnabled,
+                        onCheckedChange = { enabled ->
+                            coroutineScope.launch {
+                                preferences.setEmergencyPassEnabled(enabled)
+                            }
+                        }
+                    )
+                },
+                modifier = Modifier.clickable(enabled = !strictModeEnabled) {
+                    coroutineScope.launch {
+                        preferences.setEmergencyPassEnabled(!emergencyPassEnabled)
+                    }
+                }
+            )
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 

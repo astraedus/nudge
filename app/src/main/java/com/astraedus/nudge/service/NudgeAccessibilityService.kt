@@ -46,6 +46,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         fun passthroughManager(): PassthroughManager
         fun webDomainDetector(): WebDomainDetector
         fun strictModeEscapeManager(): StrictModeEscapeManager
+        fun emergencyPassManager(): EmergencyPassManager
     }
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -367,6 +368,18 @@ class NudgeAccessibilityService : AccessibilityService() {
             interactionHandler.activeReelLabel = null
             interactionHandler.onAppChanged(packageName)
             timeRemainingHandler.resetDebounce()
+        }
+
+        // Emergency "1-minute daily pass": while a free window is open for this app, let it through —
+        // overriding normal evaluation AND any auto-kick cooldown (placed before the cooldown block so
+        // the user gets genuinely free use). At expiry the manager kicks home and the next foreground
+        // event re-blocks normally as a backstop.
+        if (entryPoint.emergencyPassManager().isPassActive(packageName)) {
+            entryPoint.nudgeLogger().d("skip evaluation package=$packageName reason=emergency_pass")
+            if (counterCache.isEnabled(packageName) && !interactionHandler.isCounterVisible()) {
+                interactionHandler.onAppChanged(packageName)
+            }
+            return
         }
 
         val tracker = entryPoint.interactionTracker()

@@ -7,7 +7,9 @@ import androidx.activity.compose.setContent
 import com.astraedus.nudge.data.db.entity.UsageEvent
 import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.data.repository.UsageRepository
+import com.astraedus.nudge.domain.emergency.EmergencyPass
 import com.astraedus.nudge.domain.model.BlockMode
+import com.astraedus.nudge.service.EmergencyPassManager
 import com.astraedus.nudge.service.NudgeAccessibilityService
 import com.astraedus.nudge.service.PassthroughManager
 import com.astraedus.nudge.ui.theme.NudgeTheme
@@ -25,6 +27,7 @@ class BlockOverlayActivity : ComponentActivity() {
     @Inject lateinit var usageRepository: UsageRepository
     @Inject lateinit var passthroughManager: PassthroughManager
     @Inject lateinit var nudgePreferences: NudgePreferences
+    @Inject lateinit var emergencyPassManager: EmergencyPassManager
 
     companion object {
         const val EXTRA_BLOCK_MODE = "block_mode"
@@ -68,6 +71,12 @@ class BlockOverlayActivity : ComponentActivity() {
         val titlePool: List<String>
         val subtitlePool: List<String>
         val hardBlockPool: List<String>
+        // Emergency "1-minute daily pass" UI state, computed once alongside the message pools so the
+        // button/hint is correct on first composition. Skipped for the "web"/content-filter
+        // pseudo-package (per-app pass is meaningless there).
+        var canUseEmergencyPass = false
+        var emergencyLocked = false
+        var nextPassMs = 0L
         runBlocking {
             titlePool = NudgeMessages.resolvePool(
                 nudgePreferences.customDelayTitles.first(), NudgeMessages.delayTitles
@@ -78,6 +87,29 @@ class BlockOverlayActivity : ComponentActivity() {
             hardBlockPool = NudgeMessages.resolvePool(
                 nudgePreferences.customHardBlockMessages.first(), NudgeMessages.hardBlockMessages
             )
+
+            if (packageName.isNotEmpty() && packageName != "web") {
+                val strictOn = nudgePreferences.isStrictModeEnabled.first()
+                val passEnabled = nudgePreferences.emergencyPassEnabled.first()
+                val usage = EmergencyPass.parse(nudgePreferences.emergencyPassUsage.first())
+                val now = System.currentTimeMillis()
+                canUseEmergencyPass = !strictOn && passEnabled &&
+                    EmergencyPass.canUse(usage, packageName, now, EmergencyPass.LOCKOUT_MS)
+                // Show the "next pass in Xh" hint only when the feature is on but spent — never when
+                // Strict Mode is on or the feature is disabled (button is hidden entirely then).
+                emergencyLocked = !strictOn && passEnabled && !canUseEmergencyPass
+                nextPassMs = if (emergencyLocked) {
+                    EmergencyPass.nextAvailableMs(usage, packageName, now, EmergencyPass.LOCKOUT_MS)
+                } else 0L
+            }
+        }
+
+        // Grant the pass and return to the blocked app. finish() brings it back to the foreground;
+        // the service's isPassActive check then lets it through. NOT navigateHome and NOT a
+        // "changed my mind" event — this is a deliberate escape, not a walk-away.
+        val onUsePass = {
+            emergencyPassManager.usePass(packageName)
+            finish()
         }
 
         setContent {
@@ -91,7 +123,11 @@ class BlockOverlayActivity : ComponentActivity() {
                             dailyLimitMinutes = dailyLimitMinutes,
                             onGoBack = { navigateHome() },
                             ruleName = ruleName,
-                            messagePool = hardBlockPool
+                            messagePool = hardBlockPool,
+                            canUseEmergencyPass = canUseEmergencyPass,
+                            emergencyLocked = emergencyLocked,
+                            nextPassMs = nextPassMs,
+                            onUseEmergencyPass = onUsePass
                         )
                     }
 
@@ -105,7 +141,11 @@ class BlockOverlayActivity : ComponentActivity() {
                             onCancel = { navigateHome() },
                             ruleName = ruleName,
                             titlePool = titlePool,
-                            subtitlePool = subtitlePool
+                            subtitlePool = subtitlePool,
+                            canUseEmergencyPass = canUseEmergencyPass,
+                            emergencyLocked = emergencyLocked,
+                            nextPassMs = nextPassMs,
+                            onUseEmergencyPass = onUsePass
                         )
                     }
 
@@ -118,7 +158,11 @@ class BlockOverlayActivity : ComponentActivity() {
                             onComplete = { onTimerComplete() },
                             onCancel = { navigateHome() },
                             ruleName = ruleName,
-                            subtitlePool = subtitlePool
+                            subtitlePool = subtitlePool,
+                            canUseEmergencyPass = canUseEmergencyPass,
+                            emergencyLocked = emergencyLocked,
+                            nextPassMs = nextPassMs,
+                            onUseEmergencyPass = onUsePass
                         )
                     }
                 }

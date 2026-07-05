@@ -11,6 +11,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.astraedus.nudge.service.GlobalEnabledProvider
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -34,6 +35,8 @@ class NudgePreferences @Inject constructor(
         val CUSTOM_HARD_BLOCK_MESSAGES = stringPreferencesKey("custom_hard_block_messages")
         val STRICT_MODE_ENABLED = booleanPreferencesKey("strict_mode_enabled")
         val STRICT_MODE_CHALLENGE_LENGTH = intPreferencesKey("strict_mode_challenge_length")
+        val EMERGENCY_PASS_ENABLED = booleanPreferencesKey("emergency_pass_enabled")
+        val EMERGENCY_PASS_USAGE = stringPreferencesKey("emergency_pass_usage")
     }
 
     override val isGlobalEnabled: Flow<Boolean> = context.dataStore.data
@@ -156,5 +159,51 @@ class NudgePreferences @Inject constructor(
         context.dataStore.edit { prefs ->
             prefs[Keys.STRICT_MODE_CHALLENGE_LENGTH] = length
         }
+    }
+
+    /**
+     * Master toggle for the "1-minute daily pass" emergency escape hatch. Defaults to true (the
+     * escape hatch is available out of the box); users can disable it entirely. Independent of Strict
+     * Mode, which hides the pass button while it is on.
+     */
+    val emergencyPassEnabled: Flow<Boolean> = context.dataStore.data
+        .map { prefs -> prefs[Keys.EMERGENCY_PASS_ENABLED] ?: true }
+
+    suspend fun setEmergencyPassEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.EMERGENCY_PASS_ENABLED] = enabled
+        }
+    }
+
+    /**
+     * Serialized per-app emergency-pass usage ledger (`pkg=epochMillis;…`), holding each app's last
+     * pass use for the rolling 24h lockout. Empty string = no passes used yet. Parsed/serialized via
+     * [com.astraedus.nudge.domain.emergency.EmergencyPass].
+     */
+    val emergencyPassUsage: Flow<String> = context.dataStore.data
+        .map { prefs -> prefs[Keys.EMERGENCY_PASS_USAGE] ?: "" }
+
+    suspend fun setEmergencyPassUsage(raw: String) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.EMERGENCY_PASS_USAGE] = raw
+        }
+    }
+
+    /**
+     * Record that [pkg] used its emergency pass at [now] (read-modify-write the serialized ledger).
+     * Prunes entries older than the lockout window — they are irrelevant (the app could be passed
+     * again anyway) — so the ledger stays bounded to apps used within the last 24h.
+     */
+    suspend fun recordEmergencyPassUsed(pkg: String, now: Long) {
+        val current = com.astraedus.nudge.domain.emergency.EmergencyPass
+            .parse(emergencyPassUsage.first())
+        val updated = com.astraedus.nudge.domain.emergency.EmergencyPass
+            .record(current, pkg, now)
+            .filterValues {
+                now - it < com.astraedus.nudge.domain.emergency.EmergencyPass.LOCKOUT_MS
+            }
+        setEmergencyPassUsage(
+            com.astraedus.nudge.domain.emergency.EmergencyPass.serialize(updated)
+        )
     }
 }

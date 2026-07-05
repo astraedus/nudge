@@ -29,7 +29,11 @@ fun HardBlockContent(
     appLabel: String? = null,
     dailyTimeRemainingMs: Long? = null,
     dailyLimitMinutes: Int? = null,
-    messagePool: List<String> = NudgeMessages.hardBlockMessages
+    messagePool: List<String> = NudgeMessages.hardBlockMessages,
+    canUseEmergencyPass: Boolean = false,
+    emergencyLocked: Boolean = false,
+    nextPassMs: Long = 0L,
+    onUseEmergencyPass: () -> Unit = {}
 ) {
     val message = remember { messagePool.random() }
 
@@ -91,6 +95,13 @@ fun HardBlockContent(
             Button(onClick = onGoBack) {
                 Text("Go Back")
             }
+
+            EmergencyPassAction(
+                canUse = canUseEmergencyPass,
+                locked = emergencyLocked,
+                nextPassMs = nextPassMs,
+                onUse = onUseEmergencyPass
+            )
 
             if (ruleName != null) {
                 Spacer(modifier = Modifier.height(24.dp))
