@@ -79,6 +79,9 @@ jobs:
             nudge-v*.apk
             nudge-v*.aab
           if-no-files-found: error
+          # The APK/AAB's durable home is the GitHub Release below; the run
+          # artifact is a redundant copy, so keep it short-lived.
+          retention-days: 3
 
       - name: Create or update GitHub Release
         if: github.ref_type == 'tag'
