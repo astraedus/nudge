@@ -106,4 +106,56 @@ class PassthroughTest {
             )
         )
     }
+
+    // --- Overlay-bypass detection: tabbing out of a blocked app and back in must re-block. ---
+
+    @Test
+    fun `blocked app returning to foreground while overlay flag set is treated as bypass`() {
+        // The user tabbed out and re-opened the blocked app; its task comes forward directly,
+        // orphaning the overlay. A real foreground switch must clear the stale flag so we re-block.
+        assertTrue(
+            NudgeAccessibilityService.isOverlayBypassedByForeground(
+                eventType = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
+                packageName = "com.instagram.android",
+                ownPackageName = "com.astraedus.nudge"
+            )
+        )
+    }
+
+    @Test
+    fun `own package window event does not count as overlay bypass`() {
+        // The overlay's own window appearing is not a bypass — keep swallowing it.
+        assertFalse(
+            NudgeAccessibilityService.isOverlayBypassedByForeground(
+                eventType = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
+                packageName = "com.astraedus.nudge",
+                ownPackageName = "com.astraedus.nudge"
+            )
+        )
+    }
+
+    @Test
+    fun `system window while overlay up does not count as overlay bypass`() {
+        // Launcher / systemui surfacing over the overlay is not the user re-entering the app.
+        assertFalse(
+            NudgeAccessibilityService.isOverlayBypassedByForeground(
+                eventType = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
+                packageName = "com.android.systemui",
+                ownPackageName = "com.astraedus.nudge"
+            )
+        )
+    }
+
+    @Test
+    fun `content change churn under a live overlay does not count as overlay bypass`() {
+        // The blocked app animating/loading underneath a genuinely-live overlay must NOT clear the
+        // flag — only a real foreground switch (WINDOW_STATE_CHANGED) does.
+        assertFalse(
+            NudgeAccessibilityService.isOverlayBypassedByForeground(
+                eventType = AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
+                packageName = "com.instagram.android",
+                ownPackageName = "com.astraedus.nudge"
+            )
+        )
+    }
 }

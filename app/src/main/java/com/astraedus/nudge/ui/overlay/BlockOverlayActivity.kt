@@ -41,9 +41,25 @@ class BlockOverlayActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
         NudgeAccessibilityService.isOverlayActive = true
+        render(intent)
+    }
 
+    /**
+     * This activity is [android.R.attr.launchMode] singleInstance, so a re-block for a new app or
+     * mode (e.g. the user tabbed out of a blocked app and back in, and the service re-fired) is
+     * delivered here via [onNewIntent] — NOT onCreate, which never runs a second time. Adopt the
+     * new intent so [onTimerComplete] / [navigateHome] read the right package, re-assert the
+     * overlay flag, and rebuild the content for the new block instead of showing the stale one.
+     */
+    override fun onNewIntent(newIntent: Intent) {
+        super.onNewIntent(newIntent)
+        setIntent(newIntent)
+        NudgeAccessibilityService.isOverlayActive = true
+        render(newIntent)
+    }
+
+    private fun render(intent: Intent) {
         val modeName = intent.getStringExtra(EXTRA_BLOCK_MODE) ?: BlockMode.HARD_BLOCK.name
         val mode = try {
             BlockMode.valueOf(modeName)

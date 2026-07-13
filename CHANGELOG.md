@@ -2,6 +2,11 @@
 
 All notable changes to Nudge are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.9.1] - 2026-07-13
+
+### Fixed
+- **Block screens can no longer be bypassed by leaving and re-opening the app**: Previously, if you hit a delay/breathing/hard-block screen and then switched to Home (or Recents) and re-opened the blocked app, Nudge would sometimes let you straight in without re-showing the block. The block overlay lives in its own task, so re-entering the app could orphan it while Nudge still thought it was on screen. Nudge now detects when a blocked app returns to the foreground and re-asserts the block. Completing a delay still grants normal passthrough, so this adds no extra nagging once you've genuinely waited it out.
+
 ## [1.9.0] - 2026-07-05
 
 ### Added
