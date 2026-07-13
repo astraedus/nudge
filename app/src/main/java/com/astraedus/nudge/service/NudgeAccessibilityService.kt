@@ -141,6 +141,30 @@ class NudgeAccessibilityService : AccessibilityService() {
             return eventType in WINDOW_CHANGE_EVENT_TYPES &&
                 className?.startsWith(ownPackageName) == true
         }
+
+        /**
+         * True when a foreground event means the block overlay has been BYPASSED and the flag is
+         * stale. The overlay lives in its own task ([BlockOverlayActivity] is singleInstance with an
+         * empty taskAffinity), so the user can bring the blocked app's task back to the foreground
+         * directly — e.g. tapping the app icon or Recents after leaving the block screen — which
+         * orphans the overlay in a background task while [isOverlayActive] is still true. When that
+         * happens a real (non-own, non-system) app fires a genuine foreground switch
+         * (TYPE_WINDOW_STATE_CHANGED). We must treat the overlay as gone and re-evaluate so the block
+         * re-asserts, instead of swallowing the event as "overlay is handling it".
+         *
+         * Restricted to TYPE_WINDOW_STATE_CHANGED (a true foreground change): content-change churn
+         * from the app underneath a genuinely-live overlay must NOT clear the flag. Own-package and
+         * system-package events are also excluded (the overlay itself / launcher / systemui).
+         */
+        internal fun isOverlayBypassedByForeground(
+            eventType: Int,
+            packageName: String,
+            ownPackageName: String
+        ): Boolean {
+            return eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
+                packageName != ownPackageName &&
+                packageName !in SYSTEM_PACKAGES
+        }
     }
 
     /** Cached once: our own user-visible app label, used to anchor escape-screen detection. */
@@ -218,8 +242,26 @@ class NudgeAccessibilityService : AccessibilityService() {
         val packageName = event.packageName?.toString() ?: return
 
         if (isOverlayActive) {
-            clearOverlays(applicationContext.packageName, "block_overlay_active")
-            return
+            // If a real app has come to the foreground, the overlay is no longer covering it — the
+            // user tabbed out and back into the blocked app, orphaning the overlay in its own task.
+            // Clear the stale flag and fall through to normal evaluation so the block re-asserts.
+            // (Same-package trailing events within DEBOUNCE_MS are still absorbed downstream, so a
+            // genuinely-live overlay doesn't re-fire.) Everything else — the overlay's own window,
+            // system windows, content-change churn under a live overlay — is swallowed as before.
+            if (isOverlayBypassedByForeground(
+                    event.eventType,
+                    packageName,
+                    applicationContext.packageName
+                )
+            ) {
+                isOverlayActive = false
+                entryPoint.nudgeLogger().i(
+                    "block overlay bypassed by foreground switch — re-evaluating package=$packageName"
+                )
+            } else {
+                clearOverlays(applicationContext.packageName, "block_overlay_active")
+                return
+            }
         }
 
         if (packageName == applicationContext.packageName) {
@@ -396,6 +438,10 @@ class NudgeAccessibilityService : AccessibilityService() {
                 putExtra(BlockOverlayActivity.EXTRA_PACKAGE_NAME, packageName)
                 putExtra(BlockOverlayActivity.EXTRA_RULE_NAME, "Auto-kick cooldown")
             }
+            // Mark the overlay active synchronously (before any further event) so the flag is
+            // authoritative even if the singleInstance activity is re-delivered via onNewIntent
+            // (which never re-runs onCreate).
+            isOverlayActive = true
             applicationContext.startActivity(overlayIntent)
             return
         }
@@ -591,6 +637,10 @@ class NudgeAccessibilityService : AccessibilityService() {
                         putExtra(BlockOverlayActivity.EXTRA_DAILY_LIMIT_MINUTES, it)
                     }
                 }
+                // Mark the overlay active synchronously (before any further event) so the flag is
+                // authoritative even if the singleInstance activity is re-delivered via onNewIntent
+                // (which never re-runs onCreate).
+                isOverlayActive = true
                 applicationContext.startActivity(overlayIntent)
             }
 
