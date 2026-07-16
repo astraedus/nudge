@@ -103,8 +103,10 @@ Uses Accessibility Service to detect in-app navigation to these screens.
 
 ## Install
 
+**Android:** Nudge is on the [Google Play Store](https://play.google.com/store/apps/details?id=dev.astraedus.nudge&hl=en_AU). No account, no sign-in, no internet permission.
+
 ### Download APK
-Download the latest APK from [**Releases**](https://github.com/astraedus/nudge/releases) and sideload it.
+Prefer installing outside Play? Download the latest APK from [**Releases**](https://github.com/astraedus/nudge/releases) and sideload it.
 
 ### Build from source
 ```bash
