@@ -17,15 +17,17 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Runtime owner of the "1-minute daily pass" emergency escape hatch.
+ * Runtime owner of the "2-minute daily pass" emergency escape hatch.
  *
  * Modeled on [PassthroughManager] (a small, thread-safe, process-lifetime singleton) plus the
  * "never fail to go home" kick used by the Strict Mode guard.
  *
  * When granted, the app is usable for [EmergencyPass.PASS_DURATION_MS]; the accessibility service
- * short-circuits normal evaluation while [isPassActive] is true. At expiry a scheduled kick sends the
- * user home and clears the window, and the next foreground event re-blocks normally as a backstop.
- * The lockout is persisted per-package so it survives a process restart; the active window is
+ * short-circuits normal evaluation while [isPassActive] is true. The active free window stays scoped
+ * to the app it was granted on (per-package [activeUntil]); the LOCKOUT it records is GLOBAL — once
+ * spent, the pass is unavailable for every app for [EmergencyPass.LOCKOUT_MS]. At expiry a scheduled
+ * kick sends the user home and clears the window, and the next foreground event re-blocks normally as
+ * a backstop. The lockout is persisted so it survives a process restart; the active window is
  * in-memory only (a restart simply ends the window — fail-safe toward re-blocking).
  */
 @Singleton
@@ -46,41 +48,37 @@ class EmergencyPassManager @Inject constructor(
         (activeUntil[pkg] ?: 0L) > System.currentTimeMillis()
 
     /**
-     * Whether a pass can be granted for [pkg] right now: the feature must be enabled AND the app must
-     * be outside its rolling 24h lockout. Does NOT consider Strict Mode — the overlay Activity is the
-     * source of truth for hiding the button when Strict Mode is on.
-     */
-    suspend fun canUsePass(pkg: String): Boolean {
-        if (!prefs.emergencyPassEnabled.first()) return false
-        val usage = EmergencyPass.parse(prefs.emergencyPassUsage.first())
-        return EmergencyPass.canUse(usage, pkg, System.currentTimeMillis(), EmergencyPass.LOCKOUT_MS)
-    }
-
-    /** Remaining lockout in ms for [pkg] (0 if available now). For the locked-out UI hint. */
-    suspend fun nextAvailableMs(pkg: String): Long {
-        val usage = EmergencyPass.parse(prefs.emergencyPassUsage.first())
-        return EmergencyPass.nextAvailableMs(usage, pkg, System.currentTimeMillis(), EmergencyPass.LOCKOUT_MS)
-    }
-
-    /**
-     * Grant a free window for [pkg]: opens the in-memory window, persists the lockout, and schedules
-     * the kick-home at expiry (replacing any prior kick for the same app). Caller is responsible for
-     * gating this (Strict Mode off, feature enabled, outside lockout) — see the overlay Activity.
+     * Grant a free window for [pkg]: opens the in-memory (per-app) window, persists the GLOBAL
+     * lockout, and schedules the kick-home at expiry (replacing any prior kick for the same app).
+     * Caller is responsible for gating this (Strict Mode off, feature enabled, outside lockout) —
+     * see the overlay Activity.
      */
     fun usePass(pkg: String) {
         if (pkg.isBlank()) return
         val now = System.currentTimeMillis()
         activeUntil[pkg] = now + EmergencyPass.PASS_DURATION_MS
 
-        scope.launch { prefs.recordEmergencyPassUsed(pkg, now) }
+        scope.launch { prefs.recordEmergencyPassUsed(now) }
 
         kickJobs.remove(pkg)?.cancel()
         kickJobs[pkg] = scope.launch {
             delay(EmergencyPass.PASS_DURATION_MS)
             activeUntil.remove(pkg)
             kickJobs.remove(pkg)
-            kickHome()
+            // Don't yank the user home if Nudge was globally disabled while the window was open — a
+            // disabled Nudge must behave as if uninstalled (Bug 3 invariant).
+            if (prefs.isGlobalEnabled.first()) kickHome()
         }
+    }
+
+    /**
+     * Cancel every active free window and its pending kick. Called when Nudge is globally disabled so
+     * a scheduled expiry-kick can never fire while enforcement is off.
+     */
+    fun cancelAll() {
+        kickJobs.values.forEach { it.cancel() }
+        kickJobs.clear()
+        activeUntil.clear()
     }
 
     /**
@@ -100,9 +98,5 @@ class EmergencyPassManager @Inject constructor(
         }
     }
 
-    fun resetForTests() {
-        kickJobs.values.forEach { it.cancel() }
-        kickJobs.clear()
-        activeUntil.clear()
-    }
+    fun resetForTests() = cancelAll()
 }

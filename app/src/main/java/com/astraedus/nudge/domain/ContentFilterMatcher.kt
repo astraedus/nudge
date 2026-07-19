@@ -22,6 +22,30 @@ object ContentFilterMatcher {
     )
 
     /**
+     * Mainstream mixed-content platforms that must NEVER be domain-blocked, even if a regenerated
+     * blocklist re-introduces them. This is a regression guard: the upstream blocklist wrongly
+     * included reddit.com (a mainstream platform), which surfaced as plain Reddit browsing being
+     * blocked. Checked in [matchesDomain] BEFORE the blocklist, over the parent-strip walk so
+     * subdomains (i.redd.it, i.imgur.com, en.wikipedia.org) are covered too.
+     *
+     * Scope: this exempts the DOMAIN match ONLY. Keyword matching on the raw URL is deliberately NOT
+     * exempted — a URL like reddit.com/r/porn still blocks via [matchesKeyword], which is correct.
+     */
+    val ALLOWLIST: Set<String> = setOf(
+        "reddit.com",
+        "redd.it",
+        "redditmedia.com",
+        "redditstatic.com",
+        "twitter.com",
+        "x.com",
+        "imgur.com",
+        "discord.com",
+        "discordapp.com",
+        "tumblr.com",
+        "wikipedia.org"
+    )
+
+    /**
      * High-signal explicit tokens used for keyword matching against the raw URL.
      *
      * False-positive reasoning:
@@ -137,11 +161,29 @@ object ContentFilterMatcher {
     fun matchesDomain(urlBarText: String, blocklist: Set<String>): Boolean {
         if (blocklist.isEmpty()) return false
         val base = WebDomainMatcher.extractDomain(urlBarText) ?: return false
+        // Regression guard: mainstream mixed-content platforms are never domain-blocked, even if a
+        // regenerated blocklist re-introduces them. Wins over the blocklist unconditionally.
+        if (isAllowlisted(base)) return false
         // Check the extracted base domain, then progressively strip the leftmost
         // label so subdomains of a blocked base also match.
         var candidate = base
         while (candidate.contains('.')) {
             if (candidate in blocklist) return true
+            val dot = candidate.indexOf('.')
+            candidate = candidate.substring(dot + 1)
+        }
+        return false
+    }
+
+    /**
+     * True if [host] (or any of its parent domains) is a mainstream mixed-content platform in
+     * [ALLOWLIST]. Takes an already-extracted host, so "i.redd.it" → parent "redd.it" matches, while
+     * a lookalike like "redditorporn.com" does not (it is a distinct base domain).
+     */
+    fun isAllowlisted(host: String): Boolean {
+        var candidate = host
+        while (candidate.contains('.')) {
+            if (candidate in ALLOWLIST) return true
             val dot = candidate.indexOf('.')
             candidate = candidate.substring(dot + 1)
         }

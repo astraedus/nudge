@@ -124,4 +124,10 @@ class InteractionTracker @Inject constructor() {
     fun clearCooldown(packageName: String) {
         cooldownUntil.remove(packageName)
     }
+
+    /** Clear ALL auto-kick cooldowns. Called when Nudge is globally disabled so a lingering cooldown
+     *  can't kick the user (a disabled Nudge must behave as if uninstalled). */
+    fun clearAllCooldowns() {
+        cooldownUntil.clear()
+    }
 }

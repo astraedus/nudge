@@ -317,9 +317,9 @@ fun SettingsScreen(
             )
 
             ListItem(
-                headlineContent = { Text("Daily 1-minute pass") },
+                headlineContent = { Text("Daily 2-minute pass") },
                 supportingContent = {
-                    Text("Allow one 60-second escape per blocked app, once a day. Disabled while Strict Mode is on.")
+                    Text("Allow one 2-minute escape a day, shared across all blocked apps. Disabled while Strict Mode is on.")
                 },
                 leadingContent = { Icon(Icons.Outlined.Timer, contentDescription = null) },
                 trailingContent = {

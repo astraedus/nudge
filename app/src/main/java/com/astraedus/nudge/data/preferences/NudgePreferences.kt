@@ -162,7 +162,7 @@ class NudgePreferences @Inject constructor(
     }
 
     /**
-     * Master toggle for the "1-minute daily pass" emergency escape hatch. Defaults to true (the
+     * Master toggle for the "2-minute daily pass" emergency escape hatch. Defaults to true (the
      * escape hatch is available out of the box); users can disable it entirely. Independent of Strict
      * Mode, which hides the pass button while it is on.
      */
@@ -176,9 +176,10 @@ class NudgePreferences @Inject constructor(
     }
 
     /**
-     * Serialized per-app emergency-pass usage ledger (`pkg=epochMillis;…`), holding each app's last
-     * pass use for the rolling 24h lockout. Empty string = no passes used yet. Parsed/serialized via
-     * [com.astraedus.nudge.domain.emergency.EmergencyPass].
+     * Serialized emergency-pass usage ledger (`pkg=epochMillis;…`), holding the pass's last use for
+     * the rolling 24h GLOBAL lockout. Empty string = never used. A legacy per-app ledger migrates
+     * transparently — [com.astraedus.nudge.domain.emergency.EmergencyPass.globalLastUsed] reads the
+     * MAX timestamp across entries. A fresh use collapses it to the single global entry.
      */
     val emergencyPassUsage: Flow<String> = context.dataStore.data
         .map { prefs -> prefs[Keys.EMERGENCY_PASS_USAGE] ?: "" }
@@ -190,20 +191,14 @@ class NudgePreferences @Inject constructor(
     }
 
     /**
-     * Record that [pkg] used its emergency pass at [now] (read-modify-write the serialized ledger).
-     * Prunes entries older than the lockout window — they are irrelevant (the app could be passed
-     * again anyway) — so the ledger stays bounded to apps used within the last 24h.
+     * Record that the emergency pass was used at [now]. The lockout is GLOBAL (across every app), so
+     * this overwrites the ledger with a single global entry — no read-modify-merge needed.
      */
-    suspend fun recordEmergencyPassUsed(pkg: String, now: Long) {
-        val current = com.astraedus.nudge.domain.emergency.EmergencyPass
-            .parse(emergencyPassUsage.first())
-        val updated = com.astraedus.nudge.domain.emergency.EmergencyPass
-            .record(current, pkg, now)
-            .filterValues {
-                now - it < com.astraedus.nudge.domain.emergency.EmergencyPass.LOCKOUT_MS
-            }
+    suspend fun recordEmergencyPassUsed(now: Long) {
         setEmergencyPassUsage(
-            com.astraedus.nudge.domain.emergency.EmergencyPass.serialize(updated)
+            com.astraedus.nudge.domain.emergency.EmergencyPass.serialize(
+                com.astraedus.nudge.domain.emergency.EmergencyPass.recordGlobal(now)
+            )
         )
     }
 }

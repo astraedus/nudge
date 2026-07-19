@@ -60,6 +60,21 @@ class InteractionTrackerCooldownTest {
     }
 
     @Test
+    fun `clearAllCooldowns removes every cooldown`() {
+        // Bug 3: toggling Nudge off must neutralize ALL lingering auto-kick cooldowns so no app can
+        // still kick the user while enforcement is disabled.
+        tracker.setCooldown("com.example.alpha", 60_000L)
+        tracker.setCooldown("com.example.beta", 60_000L)
+        assertTrue(tracker.isInCooldown("com.example.alpha"))
+        assertTrue(tracker.isInCooldown("com.example.beta"))
+
+        tracker.clearAllCooldowns()
+
+        assertFalse(tracker.isInCooldown("com.example.alpha"))
+        assertFalse(tracker.isInCooldown("com.example.beta"))
+    }
+
+    @Test
     fun `onAppChanged does not reset session during cooldown`() {
         tracker.onAppChanged("com.example.alpha")
         tracker.recordInteraction("com.example.alpha")

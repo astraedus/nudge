@@ -2,6 +2,15 @@
 
 All notable changes to Nudge are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.9.2] - 2026-07-19
+
+### Fixed
+- **Reddit is no longer blocked by the content filter**: The optional "Block restricted websites" filter was wrongly treating reddit.com (and its media domains) as restricted, so plain Reddit browsing got blocked. Reddit, and other mainstream mixed-content platforms (X/Twitter, Imgur, Discord, Tumblr, Wikipedia), are now on a permanent never-block allowlist so a future blocklist update can't re-introduce them. Genuinely explicit URLs are still caught by keyword matching regardless of the site.
+- **Turning Nudge off now actually turns everything off**: Toggling the master switch off on the home screen previously left some enforcement running — an app already in an auto-kick cooldown or over its time limit could still kick you out. The switch now suppresses *all* blocking, cooldowns, counters, and overlays instantly; with Nudge off it behaves as if uninstalled. (Strict Mode still guards turning the switch off.)
+
+### Changed
+- **Daily pass is now one 2-minute pass across all apps** (was one 1-minute pass per app). Using the escape pass on any block screen gives you 2 minutes in that app and then locks the pass for every app for 24 hours. On other block screens the pass shows as a greyed-out "Daily pass used" control so you can see it exists but is spent for the day. Still hidden while Strict Mode is on, still optional in Settings → Escape Hatch.
+
 ## [1.9.1] - 2026-07-13
 
 ### Fixed

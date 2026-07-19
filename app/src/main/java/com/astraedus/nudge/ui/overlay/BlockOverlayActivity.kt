@@ -87,9 +87,10 @@ class BlockOverlayActivity : ComponentActivity() {
         val titlePool: List<String>
         val subtitlePool: List<String>
         val hardBlockPool: List<String>
-        // Emergency "1-minute daily pass" UI state, computed once alongside the message pools so the
-        // button/hint is correct on first composition. Skipped for the "web"/content-filter
-        // pseudo-package (per-app pass is meaningless there).
+        // Emergency "2-minute daily pass" UI state, computed once alongside the message pools so the
+        // button/hint is correct on first composition. The lockout is GLOBAL (one pass per 24h across
+        // all apps); the free window it grants is scoped to this app. Skipped for the "web"/content-
+        // filter pseudo-package (granting a per-app window is meaningless there).
         var canUseEmergencyPass = false
         var emergencyLocked = false
         var nextPassMs = 0L
@@ -110,12 +111,12 @@ class BlockOverlayActivity : ComponentActivity() {
                 val usage = EmergencyPass.parse(nudgePreferences.emergencyPassUsage.first())
                 val now = System.currentTimeMillis()
                 canUseEmergencyPass = !strictOn && passEnabled &&
-                    EmergencyPass.canUse(usage, packageName, now, EmergencyPass.LOCKOUT_MS)
-                // Show the "next pass in Xh" hint only when the feature is on but spent — never when
-                // Strict Mode is on or the feature is disabled (button is hidden entirely then).
+                    EmergencyPass.canUseGlobal(usage, now, EmergencyPass.LOCKOUT_MS)
+                // Show the disabled "next pass in Xh" hint only when the feature is on but spent —
+                // never when Strict Mode is on or the feature is disabled (button hidden entirely).
                 emergencyLocked = !strictOn && passEnabled && !canUseEmergencyPass
                 nextPassMs = if (emergencyLocked) {
-                    EmergencyPass.nextAvailableMs(usage, packageName, now, EmergencyPass.LOCKOUT_MS)
+                    EmergencyPass.nextAvailableGlobalMs(usage, now, EmergencyPass.LOCKOUT_MS)
                 } else 0L
             }
         }

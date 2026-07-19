@@ -64,6 +64,82 @@ class ContentFilterMatcherTest {
         assertFalse(ContentFilterMatcher.matchesDomain("blockedsite.com", emptySet()))
     }
 
+    // ---- ALLOWLIST regression guard (mainstream mixed-content platforms) ----
+
+    // Simulate a regenerated blocklist that WRONGLY re-introduces the mainstream platforms. The
+    // allowlist must win over the blocklist for these hosts so Reddit/etc. can never be re-blocked.
+    private val blocklistWithAllowlisted = setOf(
+        "blockedsite.com",
+        "reddit.com",
+        "redd.it",
+        "twitter.com",
+        "x.com",
+        "imgur.com",
+        "discord.com",
+        "discordapp.com",
+        "tumblr.com",
+        "wikipedia.org"
+    )
+
+    @Test
+    fun `allowlist exempts reddit even when present in blocklist`() {
+        assertFalse(ContentFilterMatcher.matchesDomain("https://reddit.com", blocklistWithAllowlisted))
+        assertFalse(ContentFilterMatcher.matchesDomain("https://www.reddit.com/r/all", blocklistWithAllowlisted))
+        assertFalse(ContentFilterMatcher.matchesDomain("https://m.reddit.com", blocklistWithAllowlisted))
+        // Subdomains resolve to the allowlisted parent via the parent-strip walk.
+        assertFalse(ContentFilterMatcher.matchesDomain("https://i.redd.it/abc.jpg", blocklistWithAllowlisted))
+    }
+
+    @Test
+    fun `allowlist exempts every mainstream platform`() {
+        for (url in listOf(
+            "https://twitter.com/home",
+            "https://x.com/explore",
+            "https://imgur.com/gallery/x",
+            "https://i.imgur.com/x.png",
+            "https://discord.com/channels/1",
+            "https://discordapp.com/app",
+            "https://www.tumblr.com/dashboard",
+            "https://en.wikipedia.org/wiki/Cat"
+        )) {
+            assertFalse("$url should be allowlisted", ContentFilterMatcher.matchesDomain(url, blocklistWithAllowlisted))
+        }
+    }
+
+    @Test
+    fun `allowlist does not exempt a genuinely-blocked domain`() {
+        // Non-allowlisted entry in the same blocklist still matches — the guard is targeted, not global.
+        assertTrue(ContentFilterMatcher.matchesDomain("https://blockedsite.com/x", blocklistWithAllowlisted))
+    }
+
+    @Test
+    fun `allowlist does not exempt lookalike domains`() {
+        // Typosquat / third-party reddit-adjacent hosts are NOT the mainstream base domain, so if the
+        // blocklist has them they still match.
+        val bl = setOf("redditorporn.com", "tumblrgirls.net")
+        assertTrue(ContentFilterMatcher.matchesDomain("https://redditorporn.com", bl))
+        assertTrue(ContentFilterMatcher.matchesDomain("https://tumblrgirls.net", bl))
+    }
+
+    @Test
+    fun `isAllowlisted covers host and parents but not lookalikes`() {
+        assertTrue(ContentFilterMatcher.isAllowlisted("reddit.com"))
+        assertTrue(ContentFilterMatcher.isAllowlisted("i.redd.it"))
+        assertTrue(ContentFilterMatcher.isAllowlisted("en.wikipedia.org"))
+        assertFalse(ContentFilterMatcher.isAllowlisted("redditorporn.com"))
+        assertFalse(ContentFilterMatcher.isAllowlisted("notreddit.com"))
+        assertFalse(ContentFilterMatcher.isAllowlisted("example.com"))
+    }
+
+    @Test
+    fun `allowlist exempts the DOMAIN match only - keyword path is unaffected`() {
+        // Anti's rule: the allowlist exempts the DOMAIN match; a URL whose raw text contains an
+        // explicit NSFW keyword still blocks regardless of host. reddit.com/r/porn → domain exempt,
+        // keyword still fires.
+        assertFalse(ContentFilterMatcher.matchesDomain("https://reddit.com/r/porn", blocklistWithAllowlisted))
+        assertTrue(ContentFilterMatcher.matchesKeyword("https://reddit.com/r/porn", ContentFilterMatcher.DEFAULT_KEYWORDS))
+    }
+
     // ---- matchesKeyword ----
 
     private val keywords = ContentFilterMatcher.DEFAULT_KEYWORDS

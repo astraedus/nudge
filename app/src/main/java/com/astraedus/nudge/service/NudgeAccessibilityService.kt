@@ -188,6 +188,15 @@ class NudgeAccessibilityService : AccessibilityService() {
     @Volatile private var strictModeChallengeLengthCached: Int =
         com.astraedus.nudge.domain.lock.StrictModeChallenge.DEFAULT_LENGTH
 
+    /**
+     * Cached global-enabled state (the home-screen master toggle), collected off-main so the hot
+     * accessibility-event path can gate ALL enforcement synchronously without blocking on DataStore.
+     * Defaults to true (fail toward enforcement) until the first emission corrects it — the pref
+     * itself defaults to true. When it flips OFF, [onGlobalDisabled] neutralizes any active
+     * enforcement state so a disabled Nudge behaves as if uninstalled.
+     */
+    @Volatile private var globalEnabledCached: Boolean = true
+
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
@@ -228,6 +237,17 @@ class NudgeAccessibilityService : AccessibilityService() {
         serviceScope.launch {
             entryPoint.nudgePreferences().strictModeChallengeLength.collect {
                 strictModeChallengeLengthCached = it
+            }
+        }
+
+        // Cache the global master toggle so the hot path can gate all enforcement synchronously.
+        // On a true→false transition, neutralize any live enforcement state immediately (toggle off
+        // = behave as if uninstalled).
+        serviceScope.launch {
+            entryPoint.nudgePreferences().isGlobalEnabled.collect { enabled ->
+                val wasEnabled = globalEnabledCached
+                globalEnabledCached = enabled
+                if (wasEnabled && !enabled) onGlobalDisabled()
             }
         }
 
@@ -284,6 +304,18 @@ class NudgeAccessibilityService : AccessibilityService() {
 
         if (packageName in SYSTEM_PACKAGES) {
             clearOverlays(packageName, "system_package")
+            return
+        }
+
+        // Global master-toggle gate (Bug 3): when Nudge is disabled, do NO enforcement of any kind —
+        // no rule evaluation, no auto-kick cooldown overlay, no auto-kick, no counter/time-remaining
+        // overlays, no web-domain/content-filter blocking, no in-app feature detection. This runs on
+        // the cached flag so it is synchronous and correct on the hot path (the async globalEnabled
+        // reads deeper in the pipeline were bypassed by the cooldown block that fired before them).
+        // The Strict Mode escape guard above is intentionally independent — it is a commitment lock,
+        // not app-blocking enforcement.
+        if (!globalEnabledCached) {
+            hideAllOverlays()
             return
         }
 
@@ -412,10 +444,11 @@ class NudgeAccessibilityService : AccessibilityService() {
             timeRemainingHandler.resetDebounce()
         }
 
-        // Emergency "1-minute daily pass": while a free window is open for this app, let it through —
+        // Emergency "2-minute daily pass": while a free window is open for this app, let it through —
         // overriding normal evaluation AND any auto-kick cooldown (placed before the cooldown block so
-        // the user gets genuinely free use). At expiry the manager kicks home and the next foreground
-        // event re-blocks normally as a backstop.
+        // the user gets genuinely free use). The window is per-app; the lockout it recorded is global.
+        // At expiry the manager kicks home and the next foreground event re-blocks normally as a
+        // backstop.
         if (entryPoint.emergencyPassManager().isPassActive(packageName)) {
             entryPoint.nudgeLogger().d("skip evaluation package=$packageName reason=emergency_pass")
             if (counterCache.isEnabled(packageName) && !interactionHandler.isCounterVisible()) {
@@ -544,6 +577,31 @@ class NudgeAccessibilityService : AccessibilityService() {
         } catch (e: Exception) {
             entryPoint.nudgeLogger().w("overlay clear failed package=$packageName", e)
         }
+    }
+
+    /**
+     * Hide the awareness overlays (interaction counter + time-remaining). Called on the accessibility
+     * hot path (already the main thread) when Nudge is globally disabled, so no stale overlay lingers.
+     */
+    private fun hideAllOverlays() {
+        try {
+            if (::interactionHandler.isInitialized) interactionHandler.hideCounter()
+            if (::timeRemainingHandler.isInitialized) timeRemainingHandler.hide()
+        } catch (e: Exception) {
+            entryPoint.nudgeLogger().w("overlay hide-all failed", e)
+        }
+    }
+
+    /**
+     * React to the master toggle flipping OFF: neutralize all active enforcement state so a disabled
+     * Nudge behaves as if uninstalled. Clears auto-kick cooldowns, cancels any emergency-pass windows
+     * and their scheduled home-kicks, and tears down awareness overlays (posted to the main thread —
+     * this runs on the collector's IO scope). New events are already gated by [globalEnabledCached].
+     */
+    private fun onGlobalDisabled() {
+        entryPoint.interactionTracker().clearAllCooldowns()
+        entryPoint.emergencyPassManager().cancelAll()
+        serviceScope.launch(Dispatchers.Main) { hideAllOverlays() }
     }
 
     private fun handleWindowContentChanged(packageName: String, event: AccessibilityEvent) {
