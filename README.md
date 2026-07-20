@@ -32,6 +32,8 @@
 ---
 ## Play Store Download: [Play Store Here](https://play.google.com/store/apps/details?id=dev.astraedus.nudge&hl=en_AU)
 
+<a href="https://www.saashub.com/nudge-adhd-app-blocker?utm_source=badge"><img src="https://cdn-b.saashub.com/img/badges/approved-color.png?v=1" alt="Nudge - ADHD App Blocker | Featured on SaaSHub" width="150"></a>
+
 ## Why
 This app is the product of a disdain for subscription services for things that should be free, a disdain for all infinite scrolling short content and about 2 doses of ritalin built over a weekend.
 
