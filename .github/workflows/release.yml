@@ -105,14 +105,43 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
           TAG="main-latest"
           # Rename to a STABLE filename so the download URL never changes
           # (…/main-latest/nudge-main.apk) — the `#label` gh syntax only sets a
           # display label, leaving the asset filename versioned, so copy instead.
           cp "nudge-v${VERSION}.apk" nudge-main.apk
-          gh release delete "$TAG" --cleanup-tag --yes 2>/dev/null || true
-          gh release create "$TAG" nudge-main.apk \
-            --title "Nudge — latest main (dev build)" \
-            --target "$GITHUB_SHA" \
-            --prerelease \
-            --notes "Automated development build from the latest \`main\` (commit ${GITHUB_SHA::7}, v${VERSION}). Installable signed APK reflecting current main — NOT a versioned release. For stable installs use a \`v*\` release / the Play Store."
+
+          # The GitHub REST API intermittently returns transient 5xx/timeout
+          # errors (e.g. "error checking for existing release: HTTP 503"), which
+          # previously failed the ENTIRE Release run even though build + tests +
+          # artifact upload all succeeded (run 29710052363, 2026-07-20). Publish
+          # the rolling tag as an idempotent delete-then-create unit and retry it
+          # with exponential backoff so a momentary API blip on this convenience
+          # step can't sink the pipeline. A persistent failure still fails loudly.
+          publish_rolling_build() {
+            # delete is best-effort: a missing tag (first run) or a transient
+            # error is fine — the retried create is what must ultimately succeed,
+            # and any stale release left by a failed delete is cleared by the
+            # delete at the start of the next attempt before create re-runs.
+            gh release delete "$TAG" --cleanup-tag --yes 2>/dev/null || true
+            gh release create "$TAG" nudge-main.apk \
+              --title "Nudge — latest main (dev build)" \
+              --target "$GITHUB_SHA" \
+              --prerelease \
+              --notes "Automated development build from the latest \`main\` (commit ${GITHUB_SHA::7}, v${VERSION}). Installable signed APK reflecting current main — NOT a versioned release. For stable installs use a \`v*\` release / the Play Store."
+          }
+
+          attempt=1
+          max_attempts=5
+          delay=10
+          until publish_rolling_build; do
+            if [ "$attempt" -ge "$max_attempts" ]; then
+              echo "::error::Rolling dev build publish failed after $max_attempts attempts"
+              exit 1
+            fi
+            echo "Publish attempt $attempt/$max_attempts failed (likely a transient GitHub API error); retrying in ${delay}s..."
+            sleep "$delay"
+            attempt=$((attempt + 1))
+            delay=$((delay * 2))
+          done
