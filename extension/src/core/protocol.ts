@@ -8,7 +8,12 @@
  */
 
 import type { BlockDecision, BlockMode } from './types';
-import type { NudgeSettings, SiteRule } from './settingsSchema';
+import type {
+  ChannelEntry,
+  ChannelListMode,
+  NudgeSettings,
+  SiteRule,
+} from './settingsSchema';
 
 /** Everything the block page needs to render, fetched in one round trip. */
 export interface BlockContext {
@@ -98,6 +103,22 @@ export interface YoutubeConfig {
   /** The resolved mode for /shorts/*, already accounting for INHERIT. */
   shortsMode: BlockMode | 'ALLOW';
   shortsDelaySeconds: number;
+
+  // --- v1.1 ---
+  /** How `channels` is interpreted: off / listed-are-blocked / only-listed-are-allowed. */
+  channelMode: ChannelListMode;
+  /** The list itself. BOTH identifiers travel so the page can match on either. */
+  channels: ChannelEntry[];
+  /** Mode applied to a channel the list disallows. */
+  channelBlockMode: BlockMode;
+  channelDelaySeconds: number;
+  /** Grayscale all of YouTube; allowed channels flip back to colour. */
+  grayScreen: boolean;
+  hideHomeFeed: boolean;
+  hideSidebarRecs: boolean;
+  hideEndScreen: boolean;
+  hideComments: boolean;
+  disableAutoplay: boolean;
 }
 
 export interface ResponseMap {

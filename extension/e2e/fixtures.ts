@@ -25,6 +25,7 @@ import {
   type BrowserContext,
   type Worker,
 } from '@playwright/test';
+import { DEFAULT_SETTINGS, SCHEMA_VERSION } from '../src/core/settingsSchema';
 import type { NudgeSettings, SiteRule } from '../src/core/settingsSchema';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -252,14 +253,15 @@ export async function sendFromExtensionPage<T>(
 /** A minimal valid settings object for tests to spread over. */
 export function baseSettings(overrides: Partial<NudgeSettings> = {}): Partial<NudgeSettings> {
   return {
-    schemaVersion: 1,
+    schemaVersion: SCHEMA_VERSION,
     globalEnabled: true,
     onboardingComplete: true,
     rules: [],
     messages: { delayTitles: [], delaySubtitles: [], hardBlockMessages: [] },
     strictMode: { enabled: false, challengeLength: 24 },
     emergencyPass: { enabled: true },
-    youtube: { shortsMode: 'INHERIT', hideShortsShelf: false, shortsDelaySeconds: 15 },
+    // Spread the REAL defaults so adding a settings field never breaks the whole suite.
+    youtube: { ...DEFAULT_SETTINGS.youtube },
     tempAllowMinutes: 10,
     ...overrides,
   };

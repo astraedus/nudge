@@ -308,3 +308,140 @@ export function pageTypeFor(url: string): YoutubePageType {
   if (CHANNEL_PATH.test(parsed.pathname) || parsed.pathname.startsWith('/@')) return 'channel';
   return 'other';
 }
+
+/* ============================================================ v1.1: channels */
+
+/**
+ * Channel-name/link elements, tried in order (ext-03 §3, from
+ * `allenlsy/yt-channels-chrome-extension`'s CHANNEL_ELEMENTS).
+ *
+ * Scoped to a feed card this identifies the card's channel; unscoped on a watch page it
+ * identifies the video's uploader. The `href^=` rungs are last because they are the most
+ * generic, but they are NOT marked `fallback`: on YouTube a bare `/@handle` link is a
+ * perfectly normal, stable way to express a channel, so matching one is not evidence that
+ * the DOM moved. Reserving the fallback warning for genuine churn keeps it meaningful.
+ */
+export const CHANNEL_ELEMENTS: SelectorRule[] = [
+  { selector: 'ytd-channel-name a.yt-formatted-string', note: 'Standard channel-name link.' },
+  { selector: '#channel-name a.yt-formatted-string', note: 'Id-anchored variant.' },
+  { selector: 'a.ytd-channel-name' },
+  { selector: 'a[href^="/channel/"]', note: 'Canonical /channel/UCxxxx link.' },
+  { selector: 'a[href^="/@"]', note: 'Handle link.' },
+  { selector: 'a[href^="/c/"]', note: 'Legacy custom-URL link.' },
+  { selector: 'a[href^="/user/"]', note: 'Legacy /user/ link.' },
+];
+
+/**
+ * Feed-card wrappers (ext-03 §3 VIDEO_RENDERERS). Each is one video in a feed, and the
+ * channel chain above is run SCOPED TO IT, that scoping is the whole feed-composition
+ * mechanism, because an unscoped query would return the first channel on the page for
+ * every card.
+ */
+export const VIDEO_RENDERERS: string[] = [
+  'ytd-video-renderer',
+  'ytd-rich-item-renderer',
+  'ytd-grid-video-renderer',
+  'ytd-compact-video-renderer',
+  'ytd-playlist-video-renderer',
+  'ytd-channel-video-renderer',
+  'ytd-reel-item-renderer',
+];
+
+/** One selector matching every feed card on the page. */
+export const VIDEO_RENDERER_SELECTOR = VIDEO_RENDERERS.join(', ');
+
+/**
+ * Decorations YouTube wraps around an accessible channel name, stripped before display.
+ * `aria-label` is preferred over `textContent` (ext-03 §3: more reliable) but it is phrased
+ * for screen readers, so it arrives as "Go to channel Foo" rather than "Foo".
+ */
+export const CHANNEL_NAME_NOISE: RegExp[] = [/^go to channel\s*/i, /\s*-\s*channel$/i];
+
+/** The class flipped onto <html> when the current channel is allowed to be in colour. */
+export const COLOR_CLASS = 'nudge-color';
+
+/** Marks a feed card the channel filter has hidden, distinct from Shorts hiding. */
+export const CHANNEL_HIDDEN_CLASS = 'nudge-channel-hidden';
+
+/* ====================================================== v1.1: hide toggles */
+
+/** The independent Unhook-parity toggles (settings keys, so they can be looked up directly). */
+export type HideToggle =
+  | 'hideHomeFeed'
+  | 'hideSidebarRecs'
+  | 'hideEndScreen'
+  | 'hideComments';
+
+export interface HideSurface {
+  id: string;
+  /** The settings flag that turns this surface off. */
+  toggle: HideToggle;
+  /** Page types the surface exists on, elsewhere we don't even look for it. */
+  pages: YoutubePageType[];
+  chain: SelectorRule[];
+}
+
+/**
+ * Selector sets from ext-03 §5 (`tobiasdalhof/sanersocialmedia` + DF Tube), per page type
+ * so one breaking upstream doesn't take the others with it.
+ */
+export const HIDE_SURFACES: HideSurface[] = [
+  {
+    id: 'home-feed',
+    toggle: 'hideHomeFeed',
+    pages: ['home'],
+    chain: [
+      {
+        selector: 'ytd-browse[page-subtype="home"] #contents',
+        note: 'Home feed contents (sanersocialmedia).',
+      },
+      { selector: 'ytd-browse[page-subtype="home"] #primary' },
+      { selector: '#feed', note: 'DF Tube hide_feed.css target.' },
+    ],
+  },
+  {
+    id: 'sidebar-recs',
+    toggle: 'hideSidebarRecs',
+    pages: ['watch'],
+    chain: [
+      { selector: '#secondary #related', note: 'Watch-page sidebar recommendations.' },
+      { selector: '#related' },
+    ],
+  },
+  {
+    id: 'end-screen',
+    toggle: 'hideEndScreen',
+    pages: ['watch', 'shorts'],
+    chain: [
+      { selector: '.ytp-endscreen-content', note: 'End-of-video suggestion grid (DF Tube).' },
+      { selector: '.ytp-ce-video', note: 'In-player card suggestions.' },
+      { selector: '.ytp-ce-element' },
+    ],
+  },
+  {
+    id: 'comments',
+    toggle: 'hideComments',
+    pages: ['watch', 'shorts'],
+    chain: [
+      { selector: '#comments #contents', note: 'Comment list (sanersocialmedia).' },
+      { selector: '#comments' },
+      { selector: '#watch-discussion', note: 'DF Tube hide_comments.css target.' },
+    ],
+  },
+];
+
+/**
+ * The player's autoplay switch.
+ *
+ * This one is a genuine DOM INTERACTION rather than a hide: there is no supported API to
+ * turn autoplay off, so we click the control when `aria-checked="true"`. That makes it
+ * best-effort, YouTube re-renders the player on navigation and can restore its own state,
+ * so we re-check on every SPA nav and the click is idempotent by construction (we only ever
+ * click a switch that is currently ON, so we can never toggle it back on).
+ */
+export const AUTOPLAY_TOGGLE: SelectorRule[] = [
+  { selector: '.ytp-autonav-toggle-button[aria-checked="true"]', note: 'Autoplay switch, on.' },
+  {
+    selector: 'button[data-tooltip-target-id="ytp-autonav-toggle-button"][aria-checked="true"]',
+  },
+];

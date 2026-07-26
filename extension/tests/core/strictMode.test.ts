@@ -417,7 +417,7 @@ describe('strictMode: isWeakening() — tempAllowMinutes axis', () => {
 describe('strictMode: isWeakening() — youtube.shortsMode axis', () => {
   function withShorts(mode: 'INHERIT' | 'HARD_BLOCK' | 'DELAY' | 'BREATHING'): NudgeSettings {
     return baseSettings({
-      youtube: { shortsMode: mode, hideShortsShelf: false, shortsDelaySeconds: 15 },
+      youtube: { ...DEFAULT_SETTINGS.youtube, shortsMode: mode },
     });
   }
 

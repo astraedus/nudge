@@ -10,7 +10,16 @@
 
 import type { BlockMode } from './types';
 
-export const SCHEMA_VERSION = 1;
+/**
+ * 1 -> 2 (Phase 4): YouTube channel lists, gray-screen mode, and the Unhook-parity hide
+ * toggles.
+ *
+ * Purely ADDITIVE, and every new default is "off", so a v1 user's protection is neither
+ * weakened nor silently strengthened by the upgrade. `migrateSettings` is the ONLY migration
+ * path and is already total — it rebuilds every field from whatever it is handed — so there
+ * is no per-version branch to keep in sync as the schema grows.
+ */
+export const SCHEMA_VERSION = 2;
 
 /** Delay presets, seconds (Android parity). Custom range 1–300. */
 export const DELAY_PRESETS = [5, 15, 30, 60] as const;
@@ -87,13 +96,59 @@ export interface EmergencyPassSettings {
   enabled: boolean;
 }
 
-/** YouTube feature rule — the Android "Feature Rules" analog. */
+/**
+ * How the channel list is interpreted. The list itself is one array either way — the mode
+ * decides whether being ON it means "block this" or "this is the only thing allowed".
+ */
+export type ChannelListMode = 'OFF' | 'BLACKLIST' | 'WHITELIST';
+
+/**
+ * One channel in the list.
+ *
+ * BOTH identifiers are stored and EITHER matches. They are captured from different places
+ * and neither is always available: a feed card usually exposes only `/@handle`, while the
+ * watch page's player response gives the canonical `UCxxxx` id. Storing one and hoping is
+ * how a whitelist silently fails to recognise a channel the user added.
+ */
+export interface ChannelEntry {
+  /** Canonical channel id, `UCxxxx…`. null when the user supplied only a handle. */
+  channelId: string | null;
+  /** Handle WITHOUT the leading '@', lowercased. null when only an id is known. */
+  handle: string | null;
+  /** What the UI shows. Falls back to the handle or id when YouTube never told us a name. */
+  displayName: string;
+  addedAt: number;
+}
+
+/** YouTube feature rules — the Android "Feature Rules" analog, plus the v1.1 additions. */
 export interface YoutubeSettings {
   /** 'INHERIT' defers to the site rule for youtube.com (if any). */
   shortsMode: 'INHERIT' | BlockMode;
   /** Hide the Shorts shelf/tab/cards across YouTube surfaces. */
   hideShortsShelf: boolean;
   shortsDelaySeconds: number;
+
+  // --- v1.1: channel lists ---
+  channelMode: ChannelListMode;
+  channels: ChannelEntry[];
+  /** The block mode applied to a channel the list disallows. */
+  channelBlockMode: BlockMode;
+  channelDelaySeconds: number;
+
+  // --- v1.1: gray-screen mode ---
+  /**
+   * Grayscale ALL of YouTube; whitelisted channels come back in colour. Nobody else ships
+   * this (ext-02), and it is the softest possible intervention: the content is still there,
+   * it just stops being candy.
+   */
+  grayScreen: boolean;
+
+  // --- v1.1: Unhook-parity hide toggles, each independent, all default off ---
+  hideHomeFeed: boolean;
+  hideSidebarRecs: boolean;
+  hideEndScreen: boolean;
+  hideComments: boolean;
+  disableAutoplay: boolean;
 }
 
 export interface NudgeSettings {
@@ -121,6 +176,16 @@ export const DEFAULT_SETTINGS: NudgeSettings = {
     shortsMode: 'INHERIT',
     hideShortsShelf: false,
     shortsDelaySeconds: DEFAULT_DELAY_SECONDS,
+    channelMode: 'OFF',
+    channels: [],
+    channelBlockMode: 'DELAY',
+    channelDelaySeconds: DEFAULT_DELAY_SECONDS,
+    grayScreen: false,
+    hideHomeFeed: false,
+    hideSidebarRecs: false,
+    hideEndScreen: false,
+    hideComments: false,
+    disableAutoplay: false,
   },
   tempAllowMinutes: DEFAULT_TEMP_ALLOW_MINUTES,
 };
@@ -144,6 +209,76 @@ function coerceMode(value: unknown, fallback: BlockMode): BlockMode {
 function coerceShortsMode(value: unknown): 'INHERIT' | BlockMode {
   if (value === 'INHERIT') return 'INHERIT';
   return VALID_MODES.includes(value as BlockMode) ? (value as BlockMode) : 'INHERIT';
+}
+
+const VALID_CHANNEL_MODES: readonly ChannelListMode[] = ['OFF', 'BLACKLIST', 'WHITELIST'];
+
+function coerceChannelMode(value: unknown): ChannelListMode {
+  return VALID_CHANNEL_MODES.includes(value as ChannelListMode)
+    ? (value as ChannelListMode)
+    : 'OFF';
+}
+
+/**
+ * Normalize one stored channel entry.
+ *
+ * An entry with NEITHER identifier is dropped: it could never match anything, so keeping it
+ * would only show the user a list row that silently does nothing.
+ */
+function coerceChannel(value: unknown): ChannelEntry | null {
+  if (!value || typeof value !== 'object') return null;
+  const raw = value as Partial<ChannelEntry>;
+
+  const channelId =
+    typeof raw.channelId === 'string' && raw.channelId.trim() !== ''
+      ? raw.channelId.trim()
+      : null;
+  const handle =
+    typeof raw.handle === 'string' && raw.handle.trim() !== ''
+      ? raw.handle.trim().replace(/^@/, '').toLowerCase()
+      : null;
+  if (channelId === null && handle === null) return null;
+
+  const displayName =
+    typeof raw.displayName === 'string' && raw.displayName.trim() !== ''
+      ? raw.displayName.trim()
+      : (handle !== null ? `@${handle}` : (channelId ?? ''));
+
+  return {
+    channelId,
+    handle,
+    displayName,
+    addedAt: typeof raw.addedAt === 'number' ? raw.addedAt : 0,
+  };
+}
+
+/**
+ * De-duplicate a channel list, merging entries that describe the same channel.
+ *
+ * The same channel can be added twice by different routes (once by handle from a feed card,
+ * once by id from a watch page). Left un-merged, a whitelist would show it twice and a
+ * blacklist would look inconsistent, so entries that share EITHER identifier are folded
+ * together — which also fills in the identifier the other copy was missing.
+ */
+function dedupeChannels(entries: readonly ChannelEntry[]): ChannelEntry[] {
+  const merged: ChannelEntry[] = [];
+  for (const entry of entries) {
+    const existing = merged.find(
+      (candidate) =>
+        (entry.channelId !== null && candidate.channelId === entry.channelId) ||
+        (entry.handle !== null && candidate.handle === entry.handle),
+    );
+    if (existing === undefined) {
+      merged.push(entry);
+      continue;
+    }
+    existing.channelId ??= entry.channelId;
+    existing.handle ??= entry.handle;
+    if (existing.displayName.startsWith('@') && !entry.displayName.startsWith('@')) {
+      existing.displayName = entry.displayName;
+    }
+  }
+  return merged;
 }
 
 function coerceStringArray(value: unknown): string[] {
@@ -247,6 +382,28 @@ export function migrateSettings(raw: unknown): NudgeSettings {
         DELAY_MIN_SECONDS,
         DELAY_MAX_SECONDS,
       ),
+      // v2 fields. A v1 settings object has none of these, so each falls back to its
+      // default — all "off", so upgrading never changes what a user is protected from.
+      channelMode: coerceChannelMode(yt.channelMode),
+      channels: dedupeChannels(
+        Array.isArray(yt.channels)
+          ? yt.channels.map(coerceChannel).filter((c): c is ChannelEntry => c !== null)
+          : [],
+      ),
+      channelBlockMode: coerceMode(yt.channelBlockMode, 'DELAY'),
+      channelDelaySeconds: clamp(
+        typeof yt.channelDelaySeconds === 'number'
+          ? yt.channelDelaySeconds
+          : DEFAULT_DELAY_SECONDS,
+        DELAY_MIN_SECONDS,
+        DELAY_MAX_SECONDS,
+      ),
+      grayScreen: yt.grayScreen === true,
+      hideHomeFeed: yt.hideHomeFeed === true,
+      hideSidebarRecs: yt.hideSidebarRecs === true,
+      hideEndScreen: yt.hideEndScreen === true,
+      hideComments: yt.hideComments === true,
+      disableAutoplay: yt.disableAutoplay === true,
     },
     tempAllowMinutes: clamp(
       typeof input.tempAllowMinutes === 'number'

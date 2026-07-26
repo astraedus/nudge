@@ -332,11 +332,22 @@ export interface YoutubeController {
   stop: () => void;
 }
 
+/** Everything off. What the script assumes until the worker answers. */
 const IDLE_CONFIG: YoutubeConfig = {
   enabled: false,
   hideShortsShelf: false,
   shortsMode: 'ALLOW',
   shortsDelaySeconds: 15,
+  channelMode: 'OFF',
+  channels: [],
+  channelBlockMode: 'DELAY',
+  channelDelaySeconds: 15,
+  grayScreen: false,
+  hideHomeFeed: false,
+  hideSidebarRecs: false,
+  hideEndScreen: false,
+  hideComments: false,
+  disableAutoplay: false,
 };
 
 /**

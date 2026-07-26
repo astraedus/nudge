@@ -24,6 +24,9 @@ export default defineConfig({
       'unlimitedStorage',
       'alarms',
       'idle',
+      // Gray-screen mode registers grayscale.css as a DYNAMIC content script so it can be
+      // turned off AND still inject before first paint. No install-time warning.
+      'scripting',
     ],
     host_permissions: ['<all_urls>'],
     // A DNR `redirect.extensionPath` target MUST be web-accessible or the redirect

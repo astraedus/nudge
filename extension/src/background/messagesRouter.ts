@@ -266,14 +266,49 @@ async function addSite(
   return { ok: true };
 }
 
+/**
+ * The v1.1 YouTube feature fields, passed through verbatim.
+ *
+ * Kept as one helper so the "globally disabled" branch and the live branch can never drift
+ * apart — a field added to one and forgotten in the other is exactly how a toggle ends up
+ * silently dead on one path.
+ */
+function youtubeFeatureFields(
+  settings: NudgeSettings,
+): Omit<YoutubeConfig, 'enabled' | 'hideShortsShelf' | 'shortsMode' | 'shortsDelaySeconds'> {
+  const yt = settings.youtube;
+  return {
+    channelMode: yt.channelMode,
+    channels: yt.channels,
+    channelBlockMode: yt.channelBlockMode,
+    channelDelaySeconds: yt.channelDelaySeconds,
+    grayScreen: yt.grayScreen,
+    hideHomeFeed: yt.hideHomeFeed,
+    hideSidebarRecs: yt.hideSidebarRecs,
+    hideEndScreen: yt.hideEndScreen,
+    hideComments: yt.hideComments,
+    disableAutoplay: yt.disableAutoplay,
+  };
+}
+
 async function buildYoutubeConfig(now: Date): Promise<YoutubeConfig> {
   const settings = await loadSettings();
   if (!settings.globalEnabled) {
+    // The master toggle means "behave as if uninstalled": every feature off, not just
+    // blocking. Otherwise a disabled Nudge would still be greying YouTube out.
     return {
       enabled: false,
       hideShortsShelf: false,
       shortsMode: 'ALLOW',
       shortsDelaySeconds: settings.youtube.shortsDelaySeconds,
+      ...youtubeFeatureFields(settings),
+      channelMode: 'OFF',
+      grayScreen: false,
+      hideHomeFeed: false,
+      hideSidebarRecs: false,
+      hideEndScreen: false,
+      hideComments: false,
+      disableAutoplay: false,
     };
   }
 
@@ -296,6 +331,7 @@ async function buildYoutubeConfig(now: Date): Promise<YoutubeConfig> {
     hideShortsShelf: settings.youtube.hideShortsShelf,
     shortsMode,
     shortsDelaySeconds: settings.youtube.shortsDelaySeconds,
+    ...youtubeFeatureFields(settings),
   };
 }
 

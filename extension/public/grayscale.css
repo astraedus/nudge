@@ -1,0 +1,27 @@
+/*
+ * Gray-screen mode.
+ *
+ * NOT listed in the manifest. The service worker registers this file as a DYNAMIC content
+ * script (chrome.scripting.registerContentScripts) only while the feature is on, and
+ * unregisters it when off. That is what makes the feature gateable with ZERO colour flash:
+ * the docs guarantee registered CSS is injected "before any DOM is constructed or displayed",
+ * whereas a manifest entry is static (always on) and anything JS-driven has to wait for an
+ * async storage read and therefore paints in colour first.
+ *
+ * See src/background/grayscale.ts and the CLAUDE.md note on the flash tradeoff.
+ */
+
+html {
+  filter: grayscale(1) !important;
+}
+
+/*
+ * The colour reward. src/content/youtube.ts adds this class once it has confirmed the
+ * current channel is one the user allowed. Going gray -> colour therefore flashes once,
+ * after the channel check resolves; that direction is unavoidable and deliberate — a brief
+ * gray frame on an allowed video is a far better failure than a colour frame on every
+ * video the user is trying not to be pulled into.
+ */
+html.nudge-color {
+  filter: none !important;
+}
