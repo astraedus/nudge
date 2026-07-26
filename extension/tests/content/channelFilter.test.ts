@@ -9,7 +9,11 @@ import {
 } from '../../src/content/channelFilter';
 import { CHANNEL_HIDDEN_CLASS, COLOR_CLASS } from '../../src/content/selectors';
 import type { ChannelEntry } from '../../src/core/settingsSchema';
-import { FEED_ALL_IDENTIFIABLE_HTML, FEED_MULTI_CHANNEL_HTML } from './fixtures/feedPage';
+import {
+  FEED_ALL_IDENTIFIABLE_HTML,
+  FEED_MULTI_CHANNEL_HTML,
+  FEED_WITH_ADS_AND_SHORTS_HTML,
+} from './fixtures/feedPage';
 import {
   WATCH_FIXTURE_VIDEO_ID,
   WATCH_NOTHING_HTML,
@@ -337,6 +341,54 @@ describe('when YouTube changes its DOM and channels stop being identifiable', ()
     applyChannelFilter(document, config({ channelMode: 'OFF' }), {
       warn: (message) => warnings.push(message),
     });
+
+    expect(warnings).toEqual([]);
+  });
+});
+
+describe('the degraded-detection canary on an ordinary feed', () => {
+  /**
+   * REGRESSION (live QA, 2026-07-26): the canary counted ads and Shorts lockups, which have
+   * no channel by nature, as unidentifiable, so it cried "YouTube changed its DOM" on every
+   * normal home feed (~15 cards). A warning that fires when nothing is wrong is a warning
+   * nobody reads, which would have cost us the real signal.
+   */
+  function runOnMixedFeed(): { warnings: string[]; unidentified: number } {
+    document.body.innerHTML = FEED_WITH_ADS_AND_SHORTS_HTML;
+    const warnings: string[] = [];
+    const result = applyChannelFilter(
+      document,
+      config({ channelMode: 'WHITELIST', channels: [channel({ channelId: ALPHA })] }),
+      { warn: (message) => warnings.push(message) },
+    );
+    return { warnings, unidentified: result.unidentified };
+  }
+
+  it('counts only the organic video it genuinely could not identify', () => {
+    // One organic mystery card; the ad and both Shorts lockups must not count.
+    expect(runOnMixedFeed().unidentified).toBe(1);
+  });
+
+  it('still leaves every unidentifiable card visible', () => {
+    runOnMixedFeed();
+
+    const mystery = document.querySelector('[data-testid="card-organic-unreadable"]');
+    const ad = document.querySelector('[data-testid="card-ad"]');
+    expect(mystery?.classList.contains(CHANNEL_HIDDEN_CLASS)).toBe(false);
+    expect(ad?.classList.contains(CHANNEL_HIDDEN_CLASS)).toBe(false);
+  });
+
+  it('stays quiet on a feed whose only unidentifiable cards are ads and Shorts', () => {
+    document.body.innerHTML = FEED_WITH_ADS_AND_SHORTS_HTML;
+    const organic = document.querySelector('[data-testid="card-organic-unreadable"]');
+    organic?.remove();
+
+    const warnings: string[] = [];
+    applyChannelFilter(
+      document,
+      config({ channelMode: 'WHITELIST', channels: [channel({ channelId: ALPHA })] }),
+      { warn: (message) => warnings.push(message) },
+    );
 
     expect(warnings).toEqual([]);
   });

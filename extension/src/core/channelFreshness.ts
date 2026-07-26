@@ -44,6 +44,25 @@ export function channelKey(
  */
 export const SETTLE_MS = 6_000;
 
+/**
+ * A SHORTER backstop for the colour decision than for the block verdict.
+ *
+ * The two decisions carry different risk, so they get different patience:
+ *
+ *  - The VERDICT (interstitial) keeps the full `SETTLE_MS`. Gating the wrong video is the
+ *    most damaging thing we can do, so we wait as long as it takes to be sure.
+ *  - COLOUR is cosmetic in one direction and not the other. Staying gray a moment too long
+ *    on an allowed video is a mild annoyance; flashing colour onto a channel someone is
+ *    avoiding is the hit the feature exists to remove.
+ *
+ * Why it needs its own value at all: on a hop between two videos BY THE SAME CHANNEL the
+ * byline never changes, so nothing can ever confirm freshness and only the backstop ends the
+ * wait. With one shared 6s value, watching several videos from a channel you deliberately
+ * whitelisted would sit in grayscale for six seconds each time, the feature would read as
+ * broken. This bounds that to a beat while leaving the verdict's caution untouched.
+ */
+export const SETTLE_COLOR_MS = 2_500;
+
 export type Freshness = 'CONFIRMED' | 'SETTLING';
 
 export interface FreshnessInput {

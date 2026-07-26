@@ -12,7 +12,7 @@
  */
 
 import { decideChannel, shouldShowInColor, type ChannelProbe } from '../core/channels';
-import { channelFreshness, channelKey } from '../core/channelFreshness';
+import { channelFreshness, channelKey, SETTLE_COLOR_MS } from '../core/channelFreshness';
 import type { YoutubeConfig } from '../core/protocol';
 import {
   detectCardChannel,
@@ -21,7 +21,13 @@ import {
   inlineVideoId,
   videoIdFromUrl,
 } from './channelDetection';
-import { CHANNEL_HIDDEN_CLASS, COLOR_CLASS, NUDGE_OVERLAY_ID, pageTypeFor } from './selectors';
+import {
+  CHANNEL_HIDDEN_CLASS,
+  COLOR_CLASS,
+  isChannellessCard,
+  NUDGE_OVERLAY_ID,
+  pageTypeFor,
+} from './selectors';
 
 /** The slice of config this module needs. */
 export type ChannelConfig = Pick<
@@ -70,7 +76,9 @@ export function applyChannelFilter(
       if (card.id === NUDGE_OVERLAY_ID || card.closest(`#${NUDGE_OVERLAY_ID}`)) continue;
       const detected = detectCardChannel(card);
       if (detected === null) {
-        result.unidentified += 1;
+        // Only count cards that SHOULD have had a channel. Ads and Shorts lockups never do,
+        // so counting them made the degraded-detection canary fire on every normal feed.
+        if (!isChannellessCard(card)) result.unidentified += 1;
         continue;
       }
       const verdict = decideChannel({
@@ -219,6 +227,8 @@ export function applyGrayColor(
       detectedKey: channelKey(detected),
       previousKey: options.previousKey ?? null,
       msSinceNav: options.msSinceNav ?? Number.POSITIVE_INFINITY,
+      // Colour gets the shorter backstop, see SETTLE_COLOR_MS.
+      settleMs: SETTLE_COLOR_MS,
     }) === 'SETTLING';
 
   const inColor =

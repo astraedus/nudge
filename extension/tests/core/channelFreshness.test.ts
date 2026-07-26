@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   channelFreshness,
   channelKey,
+  SETTLE_COLOR_MS,
   SETTLE_MS,
   SETTLE_RECHECK_MS,
   type FreshnessInput,
@@ -130,5 +131,35 @@ describe('the post-navigation re-check schedule', () => {
     const sorted = [...SETTLE_RECHECK_MS].sort((a, b) => a - b);
     expect(SETTLE_RECHECK_MS).toEqual(sorted);
     expect(new Set(SETTLE_RECHECK_MS).size).toBe(SETTLE_RECHECK_MS.length);
+  });
+});
+
+describe('colour is less patient than the block verdict', () => {
+  /**
+   * Two videos by the SAME channel is the case that needs this: the byline never changes, so
+   * nothing can confirm freshness and only the backstop ends the wait. Sharing one 6s value
+   * meant watching several videos from a channel you deliberately whitelisted sat in
+   * grayscale for six seconds each time, which reads as the feature being broken.
+   */
+  const sameChannelHop = () => input({ detectedKey: ALLOWED, previousKey: ALLOWED });
+
+  it('restores colour sooner than it would deliver a verdict', () => {
+    expect(SETTLE_COLOR_MS).toBeLessThan(SETTLE_MS);
+  });
+
+  it('is still withholding both a moment after the hop', () => {
+    const justAfter = { ...sameChannelHop(), msSinceNav: 200 };
+
+    expect(channelFreshness({ ...justAfter, settleMs: SETTLE_COLOR_MS })).toBe('SETTLING');
+    expect(channelFreshness(justAfter)).toBe('SETTLING');
+  });
+
+  it('gives colour back while the verdict is still deliberately waiting', () => {
+    const midWindow = { ...sameChannelHop(), msSinceNav: SETTLE_COLOR_MS };
+
+    // Cosmetic decision: settled.
+    expect(channelFreshness({ ...midWindow, settleMs: SETTLE_COLOR_MS })).toBe('CONFIRMED');
+    // Punitive decision: still waiting, because gating the wrong video is far worse.
+    expect(channelFreshness(midWindow)).toBe('SETTLING');
   });
 });

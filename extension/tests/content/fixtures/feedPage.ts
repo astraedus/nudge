@@ -94,3 +94,46 @@ export const FEED_ALL_IDENTIFIABLE_HTML = `
     </ytd-rich-grid-renderer>
   </div>
 `;
+
+/**
+ * A realistic home feed: ordinary videos, an in-feed AD, a SHORTS shelf, and exactly ONE
+ * organic video whose channel genuinely cannot be read.
+ *
+ * The degraded-detection canary must count only that last one. Counting the ad and the
+ * Shorts lockups is what made it fire on every normal feed (live QA, 2026-07-26), those
+ * card types have no channel by nature, so their absence proves nothing about DOM rot.
+ */
+export const FEED_WITH_ADS_AND_SHORTS_HTML = `
+  <div id="page-manager">
+    <ytd-rich-grid-renderer>
+      <div id="contents">
+        <ytd-rich-item-renderer data-testid="card-alpha">
+          <ytd-channel-name id="channel-name">
+            <a class="yt-formatted-string" href="/channel/UCALPHACHANNEL000000001">Alpha Channel</a>
+          </ytd-channel-name>
+        </ytd-rich-item-renderer>
+
+        <ytd-rich-item-renderer data-testid="card-ad">
+          <ytd-ad-slot-renderer>
+            <ytd-in-feed-ad-layout-renderer>Sponsored, buy a mattress</ytd-in-feed-ad-layout-renderer>
+          </ytd-ad-slot-renderer>
+        </ytd-rich-item-renderer>
+
+        <ytd-rich-section-renderer data-testid="shorts-shelf">
+          <ytd-rich-shelf-renderer is-shorts>
+            <ytd-reel-item-renderer data-testid="shorts-card-1">
+              <a href="/shorts/aaa">A short</a>
+            </ytd-reel-item-renderer>
+            <ytd-reel-item-renderer data-testid="shorts-card-2">
+              <a href="/shorts/bbb">Another short</a>
+            </ytd-reel-item-renderer>
+          </ytd-rich-shelf-renderer>
+        </ytd-rich-section-renderer>
+
+        <ytd-video-renderer data-testid="card-organic-unreadable">
+          <a id="video-title-link" href="/watch?v=mystery001">An organic video with no readable byline</a>
+        </ytd-video-renderer>
+      </div>
+    </ytd-rich-grid-renderer>
+  </div>
+`;

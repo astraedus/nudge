@@ -361,6 +361,56 @@ export const VIDEO_RENDERERS: string[] = [
 export const VIDEO_RENDERER_SELECTOR = VIDEO_RENDERERS.join(', ');
 
 /**
+ * Feed cards that HAVE no channel by nature, so failing to identify one proves nothing.
+ *
+ * The degraded-detection canary counted these as evidence of DOM rot and therefore fired on
+ * every ordinary home feed (~15 cards, live QA, 2026-07-26). A warning that appears when
+ * nothing is wrong is a warning nobody reads, which would have cost us the real signal.
+ *
+ *  - Ads have an advertiser, not a channel.
+ *  - Shorts lockups in a feed carry no byline at all; Shorts are handled by their own
+ *    hiding/gating path anyway.
+ */
+export const CHANNELLESS_CARD_SELECTORS: string[] = [
+  'ytd-ad-slot-renderer',
+  'ytd-in-feed-ad-layout-renderer',
+  'ytd-promoted-video-renderer',
+  'ytd-promoted-sparkles-web-renderer',
+  'ytd-display-ad-renderer',
+  'ad-slot-renderer',
+  'ytd-reel-item-renderer',
+  'ytm-shorts-lockup-view-model',
+];
+
+export const CHANNELLESS_CARD_SELECTOR = CHANNELLESS_CARD_SELECTORS.join(', ');
+
+/** Shelves whose descendants are all Shorts, and therefore all channel-less. */
+export const SHORTS_CONTAINER_SELECTOR =
+  'ytd-rich-shelf-renderer[is-shorts], ytd-reel-shelf-renderer, grid-shelf-view-model';
+
+/**
+ * True when this card could never have yielded a channel, so its absence is not evidence
+ * that YouTube's DOM moved.
+ */
+export function isChannellessCard(card: Element): boolean {
+  try {
+    return (
+      // The card IS one (e.g. a Shorts lockup).
+      card.matches(CHANNELLESS_CARD_SELECTOR) ||
+      // The card CONTAINS one: YouTube wraps in-feed ads in an ordinary
+      // `ytd-rich-item-renderer`, so the ad marker is a descendant, not an ancestor.
+      card.querySelector(CHANNELLESS_CARD_SELECTOR) !== null ||
+      // The card is INSIDE one (a lockup within an ad or Shorts shelf).
+      card.closest(CHANNELLESS_CARD_SELECTOR) !== null ||
+      card.closest(SHORTS_CONTAINER_SELECTOR) !== null
+    );
+  } catch {
+    // An unparsable selector must never break feed filtering.
+    return false;
+  }
+}
+
+/**
  * Decorations YouTube wraps around an accessible channel name, stripped before display.
  * `aria-label` is preferred over `textContent` (ext-03 §3: more reliable) but it is phrased
  * for screen readers, so it arrives as "Go to channel Foo" rather than "Foo".

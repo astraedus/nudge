@@ -533,7 +533,21 @@ export function initYoutubeContentScript(
     refresh();
   }
 
-  const onNavigate = (): void => scheduleRefresh();
+  /**
+   * Navigation is handled IMMEDIATELY, not through the debounce.
+   *
+   * `scheduleRefresh()` was the cold-hop bug (live QA, 2026-07-26): the very first refresh
+   * after a full page load is what NOTICES the url changed and starts the settle machinery,
+   * and routing it through the 250ms debounce meant YouTube's post-nav mutation storm kept
+   * resetting it, so for ~2s nothing ran at all and the page held the PREVIOUS video's
+   * verdict, colour and all. A navigation is a discrete, known-important event; it should
+   * never queue behind page churn. The debounced pass still follows for the DOM settling
+   * after it.
+   */
+  const onNavigate = (): void => {
+    refresh();
+    scheduleRefresh();
+  };
   doc.addEventListener('yt-navigate-finish', onNavigate);
   view?.addEventListener('popstate', onNavigate);
 

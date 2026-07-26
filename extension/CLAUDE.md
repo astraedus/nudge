@@ -112,6 +112,20 @@ unit-testable, exactly as the Android domain layer is.
   detection is CONFIRMED the moment it differs (or the inline data is authoritative, or a
   6s backstop elapses) and SETTLING until then. While settling we withhold the interstitial
   and stay gray, both fail-safe directions.
+- **A NAVIGATION MUST NOT BE DEBOUNCED.** The first refresh after a full page load is what
+  NOTICES the url changed and starts the settle machinery, so routing `yt-navigate-finish`
+  through the 250ms debounce meant the mutation storm delayed even that, for ~2s the cold
+  first hop simply held the PREVIOUS video's verdict, colour and all (live QA). Navigation is
+  a discrete, known-important event: handle it immediately and let the debounced pass follow
+  for the DOM settling after it.
+- **Colour and the verdict get DIFFERENT patience** (`SETTLE_COLOR_MS` 2.5s vs `SETTLE_MS`
+  6s). The tradeoff, weighed deliberately: on a hop between two videos by the SAME channel
+  the byline never changes, so nothing can confirm freshness and only the backstop ends the
+  wait. **Yes, this means an allowed -> allowed same-channel hop sits in grayscale for a
+  beat**, accepted, because the alternative is holding colour on a video that might be from
+  a channel the user is avoiding, and that is the exact hit the feature exists to remove.
+  Grayscale is cosmetic and self-correcting; a colour leak is the product failing. The
+  interstitial keeps the full 6s either way, so the reverse-direction protection is untouched.
 - **A debounce can be STARVED.** The corrective re-check was losing to YouTube's
   post-navigation mutation storm, which kept resetting the 250ms debounce, that starvation
   is what stretched the window to 5s. Anything that MUST happen after an event needs its own
@@ -135,9 +149,14 @@ unit-testable, exactly as the Android domain layer is.
   for ONE element (first match wins), but a few surfaces are genuinely several elements
   shown together, the end-screen grid and the creator end-cards coexist, so those carry
   `matchAll: true`. Getting this wrong hides one and leaves the other on screen.
-- **The fail-open is observable.** When some cards resolve and others do not, the content
-  script logs a one-shot warning naming the count, so YouTube DOM churn shows up in
-  devtools rather than silently degrading channel filtering into a no-op.
+- **The fail-open is observable, but only counts cards that SHOULD have had a channel.**
+  When some cards resolve and others do not, the content script logs a one-shot warning so
+  DOM churn shows up in devtools instead of silently degrading filtering into a no-op.
+  Ads and Shorts lockups have no channel BY NATURE, so counting them made it fire on every
+  normal home feed (~15 cards), and a warning that appears when nothing is wrong is a
+  warning nobody reads, which costs you the real signal. `isChannellessCard` excludes them
+  (a card that IS one, CONTAINS one, YouTube wraps in-feed ads in an ordinary
+  `ytd-rich-item-renderer`, or sits INSIDE a Shorts shelf).
 
 #### Gray-screen: the mechanism and its flash behaviour
 
