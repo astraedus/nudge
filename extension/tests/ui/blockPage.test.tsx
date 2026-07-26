@@ -41,19 +41,19 @@ function makeContext(overrides: Partial<BlockContext> = {}): BlockContext {
 let sendMessageMock: ReturnType<typeof vi.fn>;
 let replaceMock: ReturnType<typeof vi.fn>;
 
-// jsdom's real `window.location` has a non-configurable, non-writable `replace` method
-// (can't be spied on), so the block page's own navigation calls are verified against a
-// full stand-in object instead. Vitest's jsdom environment defines `location` as a plain
-// accessor on `window`, so whole-object reassignment (not `Object.defineProperty`) is what
-// actually works here.
 /** The extension page the DNR rule redirects to. */
 const BLOCKED_PAGE_URL = 'chrome-extension://nudgeid/blocked.html';
 
 /**
- * Mirrors production byte-for-byte: the DNR rule appends the ORIGINAL url VERBATIM as the
- * last thing in the address (`regexSubstitution` cannot percent-encode), so the target
- * routinely carries its own `?`, `&` and `#`. Encoding it here would have tested a contract
- * the extension never actually produces.
+ * Point the page at `target`, mirroring production byte-for-byte: the DNR rule appends the
+ * ORIGINAL url VERBATIM as the last thing in the address (`regexSubstitution` cannot
+ * percent-encode), so the target routinely carries its own `?`, `&` and `#`. Encoding it
+ * here would test a contract the extension never actually produces.
+ *
+ * jsdom's real `window.location` has a non-configurable, non-writable `replace` method that
+ * cannot be spied on, so navigation is verified against a full stand-in object. Vitest's
+ * jsdom environment defines `location` as a plain accessor on `window`, so whole-object
+ * reassignment (not `Object.defineProperty`) is what actually works.
  */
 function setTarget(target: string | null) {
   const suffix = target === null ? '' : `?target=${target}`;
@@ -68,7 +68,7 @@ function setTarget(target: string | null) {
  * wrapped in `act` at each hop so any resulting React state updates get committed. */
 async function flush(times = 6) {
   for (let i = 0; i < times; i++) {
-    // eslint-disable-next-line no-await-in-loop
+     
     await act(async () => {
       await Promise.resolve();
     });

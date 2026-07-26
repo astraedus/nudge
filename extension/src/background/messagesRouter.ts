@@ -134,7 +134,7 @@ async function completePause(target: string, now: Date): Promise<GrantResult> {
 }
 
 /** The Escape Hatch: one 2-minute window per rolling 24h, globally. */
-async function useEmergencyPass(target: string, now: Date): Promise<GrantResult> {
+async function redeemEmergencyPass(target: string, now: Date): Promise<GrantResult> {
   const settings = await loadSettings();
   if (!settings.emergencyPass.enabled) {
     return { ok: false, until: 0, reason: 'disabled' };
@@ -318,7 +318,7 @@ export async function handleRequest(request: Request, now: Date = new Date()): P
       return { ok: true };
     }
     case 'USE_EMERGENCY_PASS':
-      return useEmergencyPass(request.target, now);
+      return redeemEmergencyPass(request.target, now);
     case 'GET_POPUP_STATE':
       return buildPopupState(now);
     case 'GET_DASHBOARD_STATE':

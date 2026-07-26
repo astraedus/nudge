@@ -1,0 +1,96 @@
+name: Extension CI
+
+# The Chrome extension (extension/) is a separate product from the Android app and has its
+# own pipeline. The Android workflow (release.yml) carries the mirror-image
+# `paths-ignore: ['extension/**']` so the two never trigger each other.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'extension/**'
+      - '.github/workflows/extension-ci.yml'
+  pull_request:
+    paths:
+      - 'extension/**'
+      - '.github/workflows/extension-ci.yml'
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: extension
+
+jobs:
+  check:
+    name: Lint, typecheck, unit tests, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      # The loadable artifact, so a failing e2e run can be reproduced against the exact
+      # build that failed.
+      - name: Upload built extension
+        uses: actions/upload-artifact@v4
+        with:
+          name: nudge-extension-chrome-mv3
+          path: extension/.output/chrome-mv3
+          if-no-files-found: error
+          retention-days: 7
+
+  e2e:
+    name: Playwright e2e
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Build extension
+        run: npm run build
+
+      # Chrome loads extensions only in a HEADFUL persistent context, so the suite runs
+      # under a virtual display rather than headless.
+      - name: Run e2e under xvfb
+        run: xvfb-run -a npm run e2e
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: extension/playwright-report
+          if-no-files-found: ignore
+          retention-days: 7

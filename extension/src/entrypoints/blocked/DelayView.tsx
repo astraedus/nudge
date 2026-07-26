@@ -18,11 +18,15 @@ const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
 
 export function DelayView({ context, target }: { context: BlockContext; target: string }) {
   const decision = context.decision;
-  if (decision.type !== 'BLOCK') return null;
-
-  const totalMs = Math.max(0, decision.delaySeconds * 1000);
+  // Hooks run unconditionally so their order is stable across renders; the view bails out
+  // AFTER them. `isBlocked` disarms the completion hook so a non-block render — which has a
+  // zero-length countdown — cannot instantly "complete" a pause and grant access.
+  const isBlocked = decision.type === 'BLOCK';
+  const totalMs = isBlocked ? Math.max(0, decision.delaySeconds * 1000) : 0;
   const remainingMs = useCountdownMs(totalMs);
-  const { status, retry } = useCompleteOnZero(remainingMs, target);
+  const { status, retry } = useCompleteOnZero(remainingMs, target, isBlocked);
+
+  if (!isBlocked) return null;
 
   const fraction = totalMs > 0 ? remainingMs / totalMs : 0;
   const dashOffset = RING_CIRCUMFERENCE * (1 - fraction);

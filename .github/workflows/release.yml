@@ -10,6 +10,16 @@ on:
       - main
     tags:
       - 'v*'
+    # The Chrome extension lives in extension/ and has its own pipeline
+    # (.github/workflows/extension-ci.yml), so a commit that only touches it must not
+    # spend a runner rebuilding the Android app.
+    #
+    # SAFE FOR THE v* RELEASE FLOW: GitHub does not evaluate path filters for TAG
+    # pushes, so `v*` tags still trigger this workflow regardless of what changed.
+    # (And even if that behaviour ever changed, a release tag is always cut on an
+    # Android version bump, which is never an extension-only diff.)
+    paths-ignore:
+      - 'extension/**'
   workflow_dispatch:
 
 jobs:

@@ -68,8 +68,12 @@ export function useCountdownMs(totalMs: number): number {
  * Fires COMPLETE_PAUSE exactly once when the countdown reaches zero, then navigates to
  * `target` on success. Exposes `status`/`retry` so the view can show a retry affordance
  * instead of hanging if the service worker is asleep/restarting.
+ *
+ * `enabled` exists so callers can invoke this UNCONDITIONALLY (React requires stable hook
+ * order) without arming it. That matters: a disarmed view has a zero-length countdown, and
+ * "remaining === 0" would otherwise complete the pause instantly and grant real access.
  */
-export function useCompleteOnZero(remainingMs: number, target: string) {
+export function useCompleteOnZero(remainingMs: number, target: string, enabled = true) {
   const [status, setStatus] = useState<'idle' | 'pending' | 'error'>('idle');
   const firedRef = useRef(false);
 
@@ -87,11 +91,11 @@ export function useCompleteOnZero(remainingMs: number, target: string) {
   }, [target]);
 
   useEffect(() => {
-    if (remainingMs === 0 && !firedRef.current) {
+    if (enabled && remainingMs === 0 && !firedRef.current) {
       firedRef.current = true;
       attempt();
     }
-  }, [remainingMs, attempt]);
+  }, [enabled, remainingMs, attempt]);
 
   return { status, retry: attempt };
 }

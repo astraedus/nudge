@@ -1,19 +1,6 @@
 import { useEffect, useState } from 'react';
+import { forDisplay, rawLength } from '../../core/strictMode';
 import { Button } from '../../ui/components';
-
-/** Strip whitespace/dashes so display formatting never affects the length/match check. */
-function normalizeChallengeInput(value: string): string {
-  return value.replace(/[\s-]/g, '');
-}
-
-/** Dash-group in chunks of 5 for display, matching the Android Strict Mode challenge UI. */
-function formatChallengeDisplay(code: string): string {
-  const chunks: string[] = [];
-  for (let i = 0; i < code.length; i += 5) {
-    chunks.push(code.slice(i, i + 5));
-  }
-  return chunks.join('-');
-}
 
 /**
  * "Commitment Lock" unlock UI. A save the background rejects for weakening protection while
@@ -42,9 +29,11 @@ export function ChallengeDialog({
     setTyped('');
   }, [challenge]);
 
-  const normalized = normalizeChallengeInput(typed);
-  const targetLength = normalizeChallengeInput(challenge).length;
-  const canSubmit = normalized.length === targetLength && !submitting;
+  // `rawLength` is the SAME normalization `strictMode.verify` compares against (dashes and
+  // surrounding whitespace stripped), so the counter can never disagree with the actual match.
+  const typedLength = rawLength(typed);
+  const targetLength = rawLength(challenge);
+  const canSubmit = typedLength === targetLength && !submitting;
 
   return (
     <div
@@ -88,7 +77,7 @@ export function ChallengeDialog({
             wordBreak: 'break-all',
           }}
         >
-          {formatChallengeDisplay(challenge)}
+          {forDisplay(challenge)}
         </p>
 
         <input
@@ -118,7 +107,7 @@ export function ChallengeDialog({
           data-testid="challenge-progress"
           style={{ margin: '0 0 12px', fontSize: 12, color: 'var(--nudge-on-surface-variant)' }}
         >
-          {normalized.length}/{targetLength}
+          {typedLength}/{targetLength}
         </p>
 
         {error && (

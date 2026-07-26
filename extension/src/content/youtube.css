@@ -1,0 +1,172 @@
+/*
+ * Static CSS for the YouTube content script.
+ *
+ * WHY STATIC, AND WHY THE MANIFEST: the entrypoint imports this file with
+ * `cssInjectionMode: 'manifest'`, so WXT emits it into the content script's `css` array.
+ * Chrome guarantees manifest CSS is injected "before any DOM is constructed", regardless
+ * of `run_at` — that is the ONLY FOUC-safe mechanism available (ext-03 §4/§6). Injecting
+ * the same rules from JS at document_idle would let a Shorts shelf paint first and then
+ * vanish, which is exactly the flash LeechBlockNG gets criticised for.
+ *
+ * REMOTE CSS IS IMPOSSIBLE HERE, BY POLICY AND BY PLATFORM: manifest `content_scripts.css`
+ * cannot point at a remote URL, and Chrome Web Store policy bans remote code outright.
+ * Nudge additionally makes ZERO network requests of any kind — this file ships in the
+ * bundle, forever, and nothing about it is fetched at runtime.
+ *
+ * Palette: Nudge teal. Light primary #1B6B5A, dark primary #8BD6C1 (ext-07 Brand).
+ * Iconography: none. No emoji-as-icon anywhere.
+ */
+
+/* The one hiding mechanism. A class toggle, never node removal — hiding is reversible
+ * the instant the user flips the setting off, and YouTube's virtual DOM keeps ownership
+ * of its own elements. `!important` because YouTube sets inline display on feed items. */
+.nudge-hidden {
+  display: none !important;
+}
+
+/* ------------------------------------------------------------------ overlay */
+
+#nudge-shorts-gate.nudge-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647; /* above YouTube's own full-screen layers */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(9, 20, 18, 0.92);
+  backdrop-filter: blur(6px);
+  font-family:
+    'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  color: #fbfdf9;
+  -webkit-font-smoothing: antialiased;
+}
+
+.nudge-overlay__card {
+  box-sizing: border-box;
+  width: min(420px, 100%);
+  padding: 32px 28px;
+  border-radius: 28px;
+  background: #12201d;
+  border: 1px solid rgba(139, 214, 193, 0.24);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.45);
+  text-align: center;
+}
+
+.nudge-overlay__title {
+  margin: 0 0 8px;
+  font-size: 26px;
+  line-height: 1.2;
+  font-weight: 700;
+  color: #8bd6c1;
+}
+
+.nudge-overlay__subtitle {
+  margin: 0 0 24px;
+  font-size: 15px;
+  line-height: 1.5;
+  color: rgba(251, 253, 249, 0.76);
+}
+
+/* Delay: the countdown. Big, calm, and the only thing moving. */
+.nudge-overlay__count {
+  margin: 0 auto 24px;
+  width: 132px;
+  height: 132px;
+  border-radius: 50%;
+  border: 4px solid rgba(139, 214, 193, 0.28);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 46px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: #8bd6c1;
+  background: rgba(27, 107, 90, 0.22);
+}
+
+/* Breathing: a 4s-in / 4s-out cycle. The class is toggled from JS so the phase label and
+ * the circle can never drift apart the way two independent animations would. */
+.nudge-overlay__breath {
+  margin: 0 auto 16px;
+  width: 132px;
+  height: 132px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(139, 214, 193, 0.34), rgba(27, 107, 90, 0.2));
+  border: 2px solid rgba(139, 214, 193, 0.4);
+  transform: scale(0.68);
+  transition: transform 4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.nudge-overlay__breath--in {
+  transform: scale(1);
+}
+
+.nudge-overlay__phase {
+  margin-bottom: 16px;
+  font-size: 15px;
+  letter-spacing: 0.04em;
+  color: rgba(251, 253, 249, 0.8);
+}
+
+.nudge-overlay__progress {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(139, 214, 193, 0.18);
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+
+.nudge-overlay__bar {
+  height: 100%;
+  width: 0;
+  border-radius: 999px;
+  background: #8bd6c1;
+  transition: width 200ms linear;
+}
+
+.nudge-overlay__remaining {
+  margin-bottom: 24px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: rgba(251, 253, 249, 0.6);
+}
+
+/* "I changed my mind" — Android parity wording, and the primary action here on purpose. */
+.nudge-overlay__bail {
+  display: block;
+  width: 100%;
+  padding: 14px 24px;
+  border: none;
+  border-radius: 999px;
+  background: #1b6b5a;
+  color: #ffffff;
+  font-size: 15px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: opacity 120ms ease;
+}
+
+.nudge-overlay__bail:hover {
+  opacity: 0.88;
+}
+
+.nudge-overlay__bail:focus-visible {
+  outline: 2px solid #8bd6c1;
+  outline-offset: 3px;
+}
+
+/* Rule transparency footer — Android parity: always say which rule is acting. */
+.nudge-overlay__footer {
+  margin: 16px 0 0;
+  font-size: 12px;
+  color: rgba(251, 253, 249, 0.45);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nudge-overlay__breath,
+  .nudge-overlay__bar {
+    transition: none;
+  }
+}
