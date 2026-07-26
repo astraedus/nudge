@@ -58,7 +58,7 @@ export default tseslint.config(
   },
   {
     // Node-side tooling: configs and the Playwright suite.
-    files: ['*.config.ts', 'e2e/**/*.ts'],
+    files: ['*.config.ts', 'e2e/**/*.ts', 'scripts/**/*.mjs'],
     languageOptions: { globals: { ...globals.node, ...globals.webextensions } },
     rules: {
       // Playwright's fixture API hands each fixture a `use()` callback, which the hooks

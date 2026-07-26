@@ -15,8 +15,11 @@ export default defineConfig({
   }),
   manifest: {
     name: 'Nudge — Website Blocker, Screen Time & Shorts Blocker',
+    // CWS caps manifest.description at 132 characters; the previous value was 160 and would
+    // have been rejected or silently truncated at submit. Verbatim from the verified listing
+    // copy: ops/routes/nudge/research/ext-09-listing-package/listing-copy.md (130 chars).
     description:
-      'Block distracting sites with friction instead of walls: delay-to-open, breathing pauses, daily time limits and local-only screen time. No account, no telemetry.',
+      'Friction, not walls: delay and breathing pauses block distracting sites. Daily limits, local screen time. No account, no tracking.',
     permissions: [
       'declarativeNetRequest',
       'tabs',
@@ -40,6 +43,14 @@ export default defineConfig({
     ],
     action: {
       default_title: 'Nudge',
+      // Chrome would fall back to `icons`, but naming the small sizes explicitly keeps the
+      // toolbar button crisp instead of letting it downscale the 128 itself.
+      default_icon: {
+        16: 'icon/16.png',
+        32: 'icon/32.png',
+        48: 'icon/48.png',
+        128: 'icon/128.png',
+      },
     },
     // The full-tab dashboard IS the options page (PRD item 9), so right-clicking the
     // toolbar icon -> Options lands on it instead of going nowhere.

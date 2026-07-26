@@ -14,7 +14,8 @@
     "test:watch": "vitest",
     "e2e": "playwright test",
     "postinstall": "wxt prepare",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "verify:manifest": "node scripts/verify-manifest.mjs"
   },
   "dependencies": {
     "react": "^19.2.8",

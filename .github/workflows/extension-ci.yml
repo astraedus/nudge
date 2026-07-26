@@ -49,6 +49,12 @@ jobs:
       - name: Build
         run: npm run build
 
+      # Store validity is invisible to lint/tsc/vitest/build, the extension shipped with no
+      # icons key and an over-length description while all of those were green. Checks the
+      # BUILT manifest, because WXT auto-discovers icons and they appear in no source file.
+      - name: Verify the built manifest is Chrome Web Store valid
+        run: npm run verify:manifest
+
       # The loadable artifact, so a failing e2e run can be reproduced against the exact
       # build that failed.
       - name: Upload built extension
