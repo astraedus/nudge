@@ -6,6 +6,13 @@ import { defineConfig } from 'wxt';
 export default defineConfig({
   srcDir: 'src',
   modules: ['@wxt-dev/module-react'],
+  // Extension pages load from disk, so modulepreload buys nothing — and Chrome logs a
+  // "cross-world extension resource mismatch" warning for every preloaded chunk, ~6 per page.
+  // A clean console is part of a zero-telemetry product's trust story; better to drop the
+  // useless hints than to teach users that warnings here are normal.
+  vite: () => ({
+    build: { modulePreload: false },
+  }),
   manifest: {
     name: 'Nudge — Website Blocker, Screen Time & Shorts Blocker',
     description:

@@ -217,6 +217,17 @@ export function RuleEditor({
         <Card title="Delay">{delayPicker(draft.delaySeconds, (delaySeconds) => setDraft((d) => ({ ...d, delaySeconds })), 'default')}</Card>
 
         <Card title="Daily Time Limit">
+          {draft.mode === 'HARD_BLOCK' ? (
+            // A budget only means something for a mode that lets you through. Hard Block bars
+            // the site outright, so there is no browsing time to limit — offering the control
+            // here would invite a combination that reads as "blocked, but only after 30
+            // minutes", which is not what it does.
+            <p style={{ margin: 0, fontSize: 13, color: 'var(--nudge-on-surface-variant)' }}>
+              Not used with Hard Block — the site is always blocked, so there is no time to
+              budget. Switch to Delay or Breathing to set a daily limit.
+            </p>
+          ) : (
+          <>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
             <button
               type="button"
@@ -295,6 +306,8 @@ export function RuleEditor({
                 label="Show time remaining"
               />
             </div>
+          )}
+          </>
           )}
         </Card>
 

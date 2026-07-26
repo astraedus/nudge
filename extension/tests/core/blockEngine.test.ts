@@ -115,29 +115,32 @@ describe('evaluate — budget-exceeded escalation', () => {
 
 describe('evaluate — daily budget boundary is >=, not >', () => {
   const limitMinutes = 30;
+  // A DELAY rule, deliberately: the boundary being tested is when a budget ESCALATES a rule
+  // to HARD_BLOCK. A Hard Block rule blocks either way, so it cannot show the transition.
   function rules(): ActiveRule[] {
-    return [activeRule({ mode: 'HARD_BLOCK', dailyLimitMinutes: limitMinutes, ruleName: 'Site' })];
+    return [activeRule({ mode: 'DELAY', dailyLimitMinutes: limitMinutes, ruleName: 'Site' })];
   }
 
-  it('1ms under the limit allows (rule is conditional, not unconditional)', () => {
+  it('1ms under the limit still gets the rule’s own mode, not an escalation', () => {
     const usageMs = limitMinutes * 60_000 - 1;
-    expect(evaluate(rules(), usageMs).type).toBe('ALLOW');
+    const decision = evaluate(rules(), usageMs);
+    expect(decision).toMatchObject({ type: 'BLOCK', mode: 'DELAY', limitReached: false });
   });
 
-  it('exactly at the limit blocks', () => {
+  it('exactly at the limit escalates to HARD_BLOCK', () => {
     const usageMs = limitMinutes * 60_000;
     const decision = evaluate(rules(), usageMs);
-    expect(decision.type).toBe('BLOCK');
-    if (decision.type === 'BLOCK') {
-      expect(decision.mode).toBe('HARD_BLOCK');
-      expect(decision.limitReached).toBe(true);
-    }
+    expect(decision).toMatchObject({
+      type: 'BLOCK',
+      mode: 'HARD_BLOCK',
+      limitReached: true,
+    });
   });
 
-  it('over the limit blocks', () => {
+  it('over the limit escalates to HARD_BLOCK', () => {
     const usageMs = limitMinutes * 60_000 + 5_000;
     const decision = evaluate(rules(), usageMs);
-    expect(decision.type).toBe('BLOCK');
+    expect(decision).toMatchObject({ type: 'BLOCK', mode: 'HARD_BLOCK', limitReached: true });
   });
 });
 
@@ -188,11 +191,121 @@ describe('evaluate — dailyTimeRemainingMs', () => {
   });
 });
 
-describe('evaluate — a HARD_BLOCK rule with a daily limit is NOT unconditional', () => {
-  it('under budget it does not hard-block via the unconditional branch', () => {
+describe('evaluate — a HARD_BLOCK rule with a daily limit still hard-blocks', () => {
+  /**
+   * REGRESSION (live-Chrome QA, 2026-07-26): this case previously matched NO branch and fell
+   * through to ALLOW. Because DNR has already redirected the navigation by the time the
+   * engine runs, that ALLOW sent the user back to the site, which redirected again — an
+   * infinite block-page loop that also hammered the service worker. Reproduced on 3 domains.
+   *
+   * A daily limit is meaningless on a Hard Block: the site is barred outright, so there is no
+   * browsing time to budget.
+   */
+  it('under budget it hard-blocks rather than falling through to ALLOW', () => {
     const rules = [activeRule({ mode: 'HARD_BLOCK', dailyLimitMinutes: 60 })];
     const usageMs = 30 * 60_000; // 30 of 60 minutes used
-    expect(evaluate(rules, usageMs).type).toBe('ALLOW');
+    const decision = evaluate(rules, usageMs);
+
+    expect(decision.type).toBe('BLOCK');
+    expect(decision).toMatchObject({ mode: 'HARD_BLOCK' });
+  });
+
+  it('under budget it is NOT reported as limit-reached', () => {
+    const rules = [activeRule({ mode: 'HARD_BLOCK', dailyLimitMinutes: 60 })];
+    const decision = evaluate(rules, 30 * 60_000);
+
+    // The block is unconditional in effect, but it is not the budget that caused it, so the
+    // "(limit reached)" naming must not appear.
+    expect(decision).toMatchObject({ limitReached: false, ruleName: 'Test Rule' });
+  });
+
+  it('with zero usage it still hard-blocks', () => {
+    const rules = [activeRule({ mode: 'HARD_BLOCK', dailyLimitMinutes: 60 })];
+    expect(evaluate(rules, 0)).toMatchObject({ type: 'BLOCK', mode: 'HARD_BLOCK' });
+  });
+
+  it('over budget it reports limit-reached, as any exhausted rule does', () => {
+    const rules = [activeRule({ mode: 'HARD_BLOCK', dailyLimitMinutes: 60 })];
+    const decision = evaluate(rules, 60 * 60_000);
+
+    expect(decision).toMatchObject({
+      type: 'BLOCK',
+      mode: 'HARD_BLOCK',
+      limitReached: true,
+      ruleName: `Test Rule${LIMIT_REACHED_SUFFIX}`,
+    });
+  });
+});
+
+/**
+ * The whole class, not just the reported instance.
+ *
+ * The engine is a chain of `find` branches ending in ALLOW, so ANY (mode x limit x usage)
+ * combination that matches no branch silently becomes ALLOW. In the browser that is not a
+ * harmless no-op: DNR has already redirected, so ALLOW-while-a-rule-applies is an infinite
+ * redirect loop. This drives every combination and asserts the invariant directly.
+ */
+describe('evaluate — combination matrix: an applicable rule can NEVER produce ALLOW', () => {
+  const MODES = ['HARD_BLOCK', 'DELAY', 'BREATHING'] as const;
+  const LIMITS = [null, 60] as const;
+  /** under budget / exactly at the limit / over it — relative to a 60-minute limit. */
+  const USAGES = [
+    { label: 'no usage', ms: 0 },
+    { label: 'under budget', ms: 30 * 60_000 },
+    { label: 'one ms under the limit', ms: 60 * 60_000 - 1 },
+    { label: 'exactly at the limit', ms: 60 * 60_000 },
+    { label: 'over the limit', ms: 90 * 60_000 },
+  ];
+
+  for (const mode of MODES) {
+    for (const limit of LIMITS) {
+      for (const usage of USAGES) {
+        const label = `${mode} + ${limit === null ? 'no limit' : `${limit}m limit`} + ${usage.label}`;
+
+        it(`blocks: ${label}`, () => {
+          const decision = evaluate([activeRule({ mode, dailyLimitMinutes: limit })], usage.ms);
+
+          expect(decision.type, `${label} must not fall through to ALLOW`).toBe('BLOCK');
+        });
+      }
+    }
+  }
+
+  it('every combination yields a mode that is one of the three real block modes', () => {
+    for (const mode of MODES) {
+      for (const limit of LIMITS) {
+        for (const usage of USAGES) {
+          const decision = evaluate([activeRule({ mode, dailyLimitMinutes: limit })], usage.ms);
+          if (decision.type !== 'BLOCK') throw new Error('unreachable — asserted above');
+          expect(MODES).toContain(decision.mode);
+        }
+      }
+    }
+  });
+
+  it('an exhausted budget always escalates to HARD_BLOCK regardless of the rule mode', () => {
+    for (const mode of MODES) {
+      const decision = evaluate(
+        [activeRule({ mode, dailyLimitMinutes: 60 })],
+        60 * 60_000,
+      );
+      expect(decision, `${mode} over budget`).toMatchObject({
+        mode: 'HARD_BLOCK',
+        limitReached: true,
+      });
+    }
+  });
+
+  it('ALLOW remains reachable ONLY when no rule applies', () => {
+    expect(evaluate([], 0).type).toBe('ALLOW');
+    expect(evaluate([activeRule({ enabled: false })], 0).type).toBe('ALLOW');
+    // Applicable-but-out-of-schedule is also "no rule applies".
+    const outsideWindow = at(2026, 1, 7, 20, 0);
+    const scheduled = activeRule({
+      scheduleStartMinute: 9 * 60,
+      scheduleEndMinute: 17 * 60,
+    });
+    expect(evaluate([scheduled], 0, outsideWindow).type).toBe('ALLOW');
   });
 });
 

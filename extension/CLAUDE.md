@@ -133,6 +133,22 @@ xvfb), scoped with `paths: ['extension/**']`. The Android workflow carries the m
 - **Return `true` from the `onMessage` listener** to keep the channel open for an async
   response, and always send *something* — otherwise callers hang forever.
 - **Gate settings changes in the WORKER, not the UI.** A gate a page can skip is not a gate.
+- **ENGINE INVARIANT: if any rule applies, the verdict is a BLOCK.** ALLOW means "no rule
+  applies here" and nothing else. DNR has already redirected by the time the engine runs, so
+  an ALLOW while a rule still applies is not a harmless no-op — it bounces the user back to
+  the site, straight into the redirect again: an infinite loop that also hammers the worker.
+  Any new mode or qualifier MUST get its own branch in `blockEngine.ts`.
+- **A test that asserts the bug is worse than no test.** The Hard-Block-plus-Daily-Limit
+  redirect loop survived 400 unit tests and 24 e2e specs because TWO unit tests had encoded
+  the buggy `ALLOW` as the expected result — they were written from a spec sentence
+  ("a Hard Block rule with a limit is NOT unconditional") that described the implementation
+  rather than the desired behaviour. When writing a test from a spec, state the USER-VISIBLE
+  outcome ("the site is blocked"), never the internal branch it should take. The engine now
+  has an exhaustive mode x limit x usage matrix asserting the invariant directly, so the
+  whole class is covered rather than the one reported instance.
+- **A meaningless field combination is a UI bug, not just an engine one.** A daily limit on a
+  Hard Block can never mean anything; `RuleEditor` now explains that instead of offering the
+  control, so the invalid state cannot be authored in the first place.
 - **React hooks before early returns.** `DelayView`/`BreathingView` returned `null` before
   calling their hooks; `react-hooks/rules-of-hooks` caught it. The fix needed an `enabled`
   flag on `useCompleteOnZero`, because a disarmed view has a zero-length countdown and

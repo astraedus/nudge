@@ -4,6 +4,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Nudge — Blocked</title>
+    <!-- Declare an empty favicon so Chrome does not request /favicon.ico and log a stray
+         net::ERR_FAILED on every block. We ship no icon file, and the request is pure noise. -->
+    <link rel="icon" href="data:," />
   </head>
   <body>
     <div id="root"></div>

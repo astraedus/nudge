@@ -69,13 +69,23 @@ test.describe('extension surfaces', () => {
     await expect(page.getByText('Break the scroll. Take back your time.')).toBeVisible();
   });
 
-  test('no extension page logs a console error on load', async ({ context, extensionId }) => {
+  test('no extension page logs a console error or preload warning on load', async ({
+    context,
+    extensionId,
+  }) => {
     const errors: string[] = [];
+    const preloadWarnings: string[] = [];
     context.on('console', (message) => {
-      if (message.type() === 'error') errors.push(message.text());
+      const text = message.text();
+      if (message.type() === 'error') errors.push(text);
+      // Regression: Vite's modulepreload hints are useless for pages loaded off disk, and
+      // Chrome logged ~6 "cross-world extension resource mismatch" / "preloaded but not
+      // used" warnings per page. `build.modulePreload: false` in wxt.config.ts turns them
+      // off — a clean console is part of a zero-telemetry product's trust story.
+      if (message.type() === 'warning' && /preload/i.test(text)) preloadWarnings.push(text);
     });
 
-    for (const surface of ['popup.html', 'dashboard.html', 'onboarding.html']) {
+    for (const surface of ['popup.html', 'dashboard.html', 'onboarding.html', 'blocked.html']) {
       const page = await context.newPage();
       await page.goto(`chrome-extension://${extensionId}/${surface}`);
       await page.waitForTimeout(500);
@@ -83,5 +93,6 @@ test.describe('extension surfaces', () => {
     }
 
     expect(errors).toEqual([]);
+    expect(preloadWarnings).toEqual([]);
   });
 });

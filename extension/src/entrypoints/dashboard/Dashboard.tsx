@@ -49,6 +49,26 @@ export function Dashboard() {
   }, [load]);
 
   /**
+   * Re-fetch when the dashboard comes back to the foreground.
+   *
+   * This is a normal tab people leave open, and usage accrues in the service worker while
+   * they browse elsewhere — without this it keeps showing whatever was true when it was
+   * opened, which reads as "the stats are broken". Refreshing on focus/visibility rather than
+   * polling costs nothing while the tab sits in the background.
+   */
+  useEffect(() => {
+    const refresh = () => {
+      if (document.visibilityState === 'visible') load();
+    };
+    document.addEventListener('visibilitychange', refresh);
+    window.addEventListener('focus', refresh);
+    return () => {
+      document.removeEventListener('visibilitychange', refresh);
+      window.removeEventListener('focus', refresh);
+    };
+  }, [load]);
+
+  /**
    * Persist settings through the background, which owns the Commitment Lock gate.
    *
    * A rejected save comes back as `{ ok: false, challenge }` — we render the challenge and retry

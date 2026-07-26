@@ -8,6 +8,7 @@ import { forDisplay } from '../../src/core/strictMode';
 import { Dashboard } from '../../src/entrypoints/dashboard/Dashboard';
 import { ChallengeDialog } from '../../src/entrypoints/dashboard/ChallengeDialog';
 import { StatsPanel } from '../../src/entrypoints/dashboard/StatsPanel';
+import { RuleEditor } from '../../src/entrypoints/dashboard/RuleEditor';
 
 let sendMessageMock: ReturnType<typeof vi.fn>;
 
@@ -339,5 +340,46 @@ describe('Dashboard', () => {
     await flush();
 
     expect(screen.getByText('Break the scroll. Take back your time.')).toBeDefined();
+  });
+});
+
+describe('RuleEditor, Daily Time Limit is not offered for Hard Block', () => {
+  /**
+   * Companion to the engine fix: a daily limit is meaningless on a Hard Block (the site is
+   * barred outright, so there is no browsing time to budget). Offering the control invited
+   * the exact combination that used to produce an infinite redirect loop, and still reads to
+   * a user as "blocked, but only after 30 minutes".
+   */
+  const noop = () => {};
+
+  function renderEditor(mode: SiteRule['mode']) {
+    return render(<RuleEditor rule={makeRule({ mode })} onSave={noop} onCancel={noop} />);
+  }
+
+  it('explains why, instead of showing the limit controls, when mode is Hard Block', () => {
+    renderEditor('HARD_BLOCK');
+
+    expect(screen.getByText(/not used with hard block/i)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'No limit' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '30m' })).toBeNull();
+  });
+
+  it('offers the limit controls for Delay', () => {
+    renderEditor('DELAY');
+
+    expect(screen.getByRole('button', { name: 'No limit' })).toBeTruthy();
+    expect(screen.queryByText(/not used with hard block/i)).toBeNull();
+  });
+
+  it('offers the limit controls for Breathing', () => {
+    renderEditor('BREATHING');
+
+    expect(screen.getByRole('button', { name: 'No limit' })).toBeTruthy();
+    expect(screen.queryByText(/not used with hard block/i)).toBeNull();
+  });
+
+  it('keeps the Daily Time Limit section itself present in every mode', () => {
+    renderEditor('HARD_BLOCK');
+    expect(screen.getByText('Daily Time Limit')).toBeTruthy();
   });
 });
