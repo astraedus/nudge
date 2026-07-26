@@ -25,6 +25,8 @@ import type { YoutubeConfig } from '../core/protocol';
 import { MODE_LABELS } from '../core/types';
 import { send } from '../ui/rpc';
 import { applyChannelFilter, applyGrayColor, watchChannelVerdict } from './channelFilter';
+import { channelKey, SETTLE_RECHECK_MS } from '../core/channelFreshness';
+import { detectWatchChannel } from './channelDetection';
 import { applyAutoplayOff, applyHideToggles } from './unhook';
 import {
   HIDDEN_CLASS,
@@ -386,6 +388,12 @@ export function initYoutubeContentScript(
   let gateSatisfied = false;
   /** The watch URL whose channel gate the user has already completed, if any. */
   let channelGateSatisfiedFor: string | null = null;
+  /** Identity of the channel confirmed for the video BEFORE the latest navigation. */
+  let previousChannelKey: string | null = null;
+  /** When the latest navigation happened, for the settle window. */
+  let navAt = 0;
+  /** Storm-proof re-checks scheduled after a navigation. */
+  const settleTimers: number[] = [];
   let lastUrl = doc.location?.href ?? '';
   let debounceTimer: number | undefined;
   let stopped = false;
@@ -404,10 +412,17 @@ export function initYoutubeContentScript(
 
     const url = currentHref();
     if (url !== lastUrl) {
+      // Remember what we were confident about BEFORE the hop: while the new page's byline
+      // still reports that same channel we cannot tell "stale" from "same channel again",
+      // so the verdict is withheld (core/channelFreshness.ts).
+      previousChannelKey = channelKey(detectWatchChannel(doc, { url: lastUrl }));
       lastUrl = url;
+      navAt = Date.now();
+      scheduleSettleChecks();
       // Leaving Shorts resets the grant - coming back should cost you the pause again.
       if (pageTypeFor(url) !== 'shorts') gateSatisfied = false;
     }
+    const msSinceNav = navAt === 0 ? Number.POSITIVE_INFINITY : Date.now() - navAt;
 
     // The passive layers run on EVERY pass, before and independently of any gate: hiding,
     // feed filtering and the colour flip must be correct even while an interstitial is up,
@@ -415,7 +430,7 @@ export function initYoutubeContentScript(
     applyShortsHiding(doc, config, { url });
     applyHideToggles(doc, config, { url });
     applyChannelFilter(doc, config);
-    applyGrayColor(doc, config, { url });
+    applyGrayColor(doc, config, { url, previousKey: previousChannelKey, msSinceNav });
     if (config.disableAutoplay) applyAutoplayOff(doc, config);
 
     const shortsGated = shouldGateShorts(url, config) && !gateSatisfied;
@@ -424,7 +439,13 @@ export function initYoutubeContentScript(
     // on one video does not buy access to the next. (Shorts keeps its own coarser grant:
     // swiping within Shorts is one continuous session, not a fresh decision each time.)
     const channelVerdict =
-      channelGateSatisfiedFor === url ? null : watchChannelVerdict(doc, config, { url });
+      channelGateSatisfiedFor === url
+        ? null
+        : watchChannelVerdict(doc, config, {
+            url,
+            previousKey: previousChannelKey,
+            msSinceNav,
+          });
     const channelGate = channelVerdict?.action === 'BLOCK' ? channelVerdict : null;
 
     if (!shortsGated && channelGate === null) {
@@ -476,6 +497,22 @@ export function initYoutubeContentScript(
     if (overlay !== null) overlayHost(doc).append(overlay.element);
   }
 
+  /**
+   * Re-check on our OWN timers after a navigation.
+   *
+   * The debounced observer alone is not enough: YouTube's post-navigation mutation storm
+   * keeps resetting the 250ms debounce, so the corrective pass can be starved for seconds, 
+   * that starvation is what stretched the settle window out to ~5s in live QA. These fire
+   * regardless of page mutation, so the verdict is always re-evaluated on schedule.
+   */
+  function scheduleSettleChecks(): void {
+    if (!view) return;
+    for (const id of settleTimers.splice(0)) view.clearTimeout(id);
+    for (const delay of SETTLE_RECHECK_MS) {
+      settleTimers.push(view.setTimeout(() => refresh(), delay));
+    }
+  }
+
   function scheduleRefresh(): void {
     if (stopped || !view) return;
     if (debounceTimer !== undefined) view.clearTimeout(debounceTimer);
@@ -525,6 +562,7 @@ export function initYoutubeContentScript(
       observer?.disconnect();
       if (safetyNet !== undefined) view?.clearInterval(safetyNet);
       if (debounceTimer !== undefined) view?.clearTimeout(debounceTimer);
+      for (const id of settleTimers.splice(0)) view?.clearTimeout(id);
       chromeApi?.storage?.onChanged?.removeListener(onStorageChanged);
       teardownOverlay();
     },

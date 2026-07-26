@@ -101,6 +101,21 @@ unit-testable, exactly as the Android domain layer is.
   current video (their declared videoId === the URL's `v`); a tier that declares a different
   id, or none at all, is skipped in favour of the DOM byline, which YouTube really does
   re-render. Live QA caught this bypassing the whitelist, blacklist AND gray-screen at once.
+- **THE BYLINE ITSELF LAGS TOO, hence the settle window.** Fixing the permanent bypass left
+  a transient one: `yt-navigate-finish` fires BEFORE YouTube re-renders the owner byline, so
+  for ~1.5-5s even the DOM tier reports the previous video's channel. The forward direction
+  (allowed -> blocked) is a couple of ungated seconds; the REVERSE (blocked -> allowed) was
+  far worse, a channel the user explicitly allowed was accused of being "off your list" for
+  3-5s. Punishing someone for watching what they said they wanted is the most damaging thing
+  this extension can do. `core/channelFreshness.ts` resolves it with a cheap discriminator:
+  staleness only MATTERS while the byline still names the channel from before the hop, so
+  detection is CONFIRMED the moment it differs (or the inline data is authoritative, or a
+  6s backstop elapses) and SETTLING until then. While settling we withhold the interstitial
+  and stay gray, both fail-safe directions.
+- **A debounce can be STARVED.** The corrective re-check was losing to YouTube's
+  post-navigation mutation storm, which kept resetting the 250ms debounce, that starvation
+  is what stretched the window to 5s. Anything that MUST happen after an event needs its own
+  timer that page activity cannot reset (`SETTLE_RECHECK_MS`), not just a debounced observer.
 - **The decision is pure and separate from the DOM.** `core/channels.ts` answers "what does
   this channel mean" with no DOM at all; `content/channelFilter.ts` only applies the answer.
   That split is what let the full mode x listed x unknown matrix be tested exhaustively.

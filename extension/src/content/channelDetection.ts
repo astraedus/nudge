@@ -430,7 +430,7 @@ export function videoIdFromUrl(url: string): string | null {
 }
 
 /** The video id the inline `ytInitialPlayerResponse` describes, if it says. */
-function playerResponseVideoId(doc: Document): string | null {
+export function playerResponseVideoId(doc: Document): string | null {
   return safeCall(() => {
     const data = findAssignedObject(doc, 'ytInitialPlayerResponse');
     if (!data || !isRecord(data.videoDetails)) return null;
@@ -440,7 +440,7 @@ function playerResponseVideoId(doc: Document): string | null {
 }
 
 /** The video id the inline `ytInitialData` describes, if it says. */
-function initialDataVideoId(doc: Document): string | null {
+export function initialDataVideoId(doc: Document): string | null {
   return safeCall(() => {
     const data = findAssignedObject(doc, 'ytInitialData');
     if (!data) return null;
@@ -514,4 +514,14 @@ export function feedCards(root: ParentNode): Element[] {
   } catch {
     return [];
   }
+}
+
+/**
+ * The video id the page's inline data claims to describe, from whichever tier says.
+ *
+ * Exposed so the settle-window check can ask "is the inline data authoritative for the video
+ * in the address bar?" without re-parsing the page itself.
+ */
+export function inlineVideoId(doc: Document): string | null {
+  return playerResponseVideoId(doc) ?? initialDataVideoId(doc);
 }

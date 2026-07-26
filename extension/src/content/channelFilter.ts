@@ -12,8 +12,15 @@
  */
 
 import { decideChannel, shouldShowInColor, type ChannelProbe } from '../core/channels';
+import { channelFreshness, channelKey } from '../core/channelFreshness';
 import type { YoutubeConfig } from '../core/protocol';
-import { detectCardChannel, detectWatchChannel, feedCards } from './channelDetection';
+import {
+  detectCardChannel,
+  detectWatchChannel,
+  feedCards,
+  inlineVideoId,
+  videoIdFromUrl,
+} from './channelDetection';
 import { CHANNEL_HIDDEN_CLASS, COLOR_CLASS, NUDGE_OVERLAY_ID, pageTypeFor } from './selectors';
 
 /** The slice of config this module needs. */
@@ -142,16 +149,31 @@ function warnIfDetectionDegraded(
 export function watchChannelVerdict(
   doc: Document,
   config: ChannelConfig,
-  options: { url?: string } = {},
+  options: { url?: string; previousKey?: string | null; msSinceNav?: number } = {},
 ): ReturnType<typeof decideChannel> | null {
   if (!config.enabled || config.channelMode === 'OFF') return null;
   const url = options.url ?? doc.location?.href ?? '';
   if (pageTypeFor(url) !== 'watch') return null;
 
+  const detected = detectWatchChannel(doc, { url });
+
+  // Hold fire while the byline may still describe the PREVIOUS video. Returning null means
+  // "no interstitial yet", NOT "allowed" - the caller simply does not gate, which is the same
+  // fail-open we already take for an unidentifiable channel, and it is what stops an allowed
+  // channel being accused for several seconds after a navigation.
+  const freshness = channelFreshness({
+    videoId: videoIdFromUrl(url),
+    inlineVideoId: inlineVideoId(doc),
+    detectedKey: channelKey(detected),
+    previousKey: options.previousKey ?? null,
+    msSinceNav: options.msSinceNav ?? Number.POSITIVE_INFINITY,
+  });
+  if (freshness === 'SETTLING') return null;
+
   return decideChannel({
     mode: config.channelMode,
     channels: config.channels,
-    probe: probeOf(detectWatchChannel(doc, { url })),
+    probe: probeOf(detected),
     blockMode: config.channelBlockMode,
   });
 }
@@ -170,7 +192,7 @@ export function watchChannelVerdict(
 export function applyGrayColor(
   doc: Document,
   config: ChannelConfig,
-  options: { url?: string } = {},
+  options: { url?: string; previousKey?: string | null; msSinceNav?: number } = {},
 ): boolean {
   const root = doc.documentElement;
   if (root === null) return false;
@@ -187,11 +209,25 @@ export function applyGrayColor(
   const detected =
     pageType === 'watch' || pageType === 'channel' ? detectWatchChannel(doc, { url }) : null;
 
-  const inColor = shouldShowInColor({
-    mode: config.channelMode,
-    channels: config.channels,
-    probe: probeOf(detected),
-  });
+  // Staying gray through the settle window is the safe half of the tradeoff: an extra second
+  // of grayscale on an allowed video is unnoticeable, whereas flashing COLOUR onto a channel
+  // the user is avoiding hands them exactly the hit the feature exists to remove.
+  const settling =
+    channelFreshness({
+      videoId: videoIdFromUrl(url),
+      inlineVideoId: inlineVideoId(doc),
+      detectedKey: channelKey(detected),
+      previousKey: options.previousKey ?? null,
+      msSinceNav: options.msSinceNav ?? Number.POSITIVE_INFINITY,
+    }) === 'SETTLING';
+
+  const inColor =
+    !settling &&
+    shouldShowInColor({
+      mode: config.channelMode,
+      channels: config.channels,
+      probe: probeOf(detected),
+    });
 
   root.classList.toggle(COLOR_CLASS, inColor);
   return inColor;
