@@ -143,6 +143,13 @@ xvfb), scoped with `paths: ['extension/**']`. The Android workflow carries the m
 - **"Browser has been closed" in an e2e fixture usually means OOM**, not a code bug — this
   machine runs `earlyoom` with `--prefer ^chrome$`. The lean Chrome flags in `e2e/fixtures.ts`
   exist for that reason.
+- **A `<button>` inside `role="tablist"` is exposed as role `tab`, not `button`.** The
+  dashboard's Stats/Settings tabs are invisible to `getByRole('button')` and only match
+  `getByRole('tab')`. Correct behaviour, surprising in tests — when a locator finds nothing
+  that plainly exists in the DOM, dump the a11y roles before assuming the page is broken.
+- **The dashboard paints a loading state first** and fills in when `GET_DASHBOARD_STATE`
+  resolves, which is slower when the worker was asleep. e2e must wait for loaded content,
+  not assume an instant render.
 - The React Compiler advisory lint rules (`set-state-in-effect`,
   `preserve-manual-memoization`, `use-memo`) are deliberately **off**; `rules-of-hooks` is
   deliberately **on** and has already earned its keep.

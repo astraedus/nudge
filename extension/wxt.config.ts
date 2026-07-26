@@ -31,5 +31,8 @@ export default defineConfig({
     action: {
       default_title: 'Nudge',
     },
+    // The full-tab dashboard IS the options page (PRD item 9), so right-clicking the
+    // toolbar icon -> Options lands on it instead of going nowhere.
+    options_page: 'dashboard.html',
   },
 });
