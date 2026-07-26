@@ -136,6 +136,16 @@ function coerceMode(value: unknown, fallback: BlockMode): BlockMode {
   return VALID_MODES.includes(value as BlockMode) ? (value as BlockMode) : fallback;
 }
 
+/**
+ * The YouTube feature rule carries one extra state beyond the three block modes:
+ * 'INHERIT', meaning "defer to the site rule for youtube.com". It needs its own
+ * coercion because 'INHERIT' is not a `BlockMode` and so cannot be a `coerceMode` fallback.
+ */
+function coerceShortsMode(value: unknown): 'INHERIT' | BlockMode {
+  if (value === 'INHERIT') return 'INHERIT';
+  return VALID_MODES.includes(value as BlockMode) ? (value as BlockMode) : 'INHERIT';
+}
+
 function coerceStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value.filter((v): v is string => typeof v === 'string');
@@ -228,8 +238,7 @@ export function migrateSettings(raw: unknown): NudgeSettings {
     },
     emergencyPass: { enabled: pass.enabled !== false },
     youtube: {
-      shortsMode:
-        yt.shortsMode === 'INHERIT' ? 'INHERIT' : coerceMode(yt.shortsMode, 'INHERIT'),
+      shortsMode: coerceShortsMode(yt.shortsMode),
       hideShortsShelf: yt.hideShortsShelf === true,
       shortsDelaySeconds: clamp(
         typeof yt.shortsDelaySeconds === 'number'
