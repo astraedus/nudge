@@ -6,11 +6,15 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import com.astraedus.nudge.domain.lightsoff.LightsOffProfile
+import com.astraedus.nudge.domain.lightsoff.LightsOffSettings
 import androidx.datastore.preferences.preferencesDataStore
 import com.astraedus.nudge.service.GlobalEnabledProvider
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
@@ -37,6 +41,9 @@ class NudgePreferences @Inject constructor(
         val STRICT_MODE_CHALLENGE_LENGTH = intPreferencesKey("strict_mode_challenge_length")
         val EMERGENCY_PASS_ENABLED = booleanPreferencesKey("emergency_pass_enabled")
         val EMERGENCY_PASS_USAGE = stringPreferencesKey("emergency_pass_usage")
+        val LIGHTS_OFF_ENABLED = booleanPreferencesKey("lights_off_enabled")
+        val LIGHTS_OFF_PROFILES = stringPreferencesKey("lights_off_profiles")
+        val LIGHTS_OFF_MANUAL_UNTIL = longPreferencesKey("lights_off_manual_until")
     }
 
     override val isGlobalEnabled: Flow<Boolean> = context.dataStore.data
@@ -201,4 +208,75 @@ class NudgePreferences @Inject constructor(
             )
         )
     }
+
+    // ─────────────────────────── Lights Off (global scheduled lockdown) ───────────────────────────
+
+    /**
+     * "Lights Off" master switch. Opt-in: defaults to false, so an update can never surprise an
+     * existing user with a global lockdown.
+     */
+    val lightsOffEnabled: Flow<Boolean> = context.dataStore.data
+        .map { prefs -> prefs[Keys.LIGHTS_OFF_ENABLED] ?: false }
+
+    suspend fun setLightsOffEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.LIGHTS_OFF_ENABLED] = enabled
+        }
+    }
+
+    /**
+     * Lights Off profiles. Stored as ONE flat string (see [LightsOffProfile.serialize]) — no Room
+     * migration. v1 reads and writes `[0]` only; the list shape is here so multiple named profiles is
+     * a later addition rather than a schema change.
+     */
+    val lightsOffProfiles: Flow<List<LightsOffProfile>> = context.dataStore.data
+        .map { prefs -> LightsOffProfile.parse(prefs[Keys.LIGHTS_OFF_PROFILES] ?: "") }
+
+    suspend fun setLightsOffProfiles(profiles: List<LightsOffProfile>) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.LIGHTS_OFF_PROFILES] = LightsOffProfile.serialize(profiles)
+        }
+    }
+
+    /**
+     * Replace the single v1 profile, preserving any additional profiles a future version may have
+     * stored so an older screen can never silently drop them.
+     */
+    suspend fun setPrimaryLightsOffProfile(profile: LightsOffProfile) {
+        context.dataStore.edit { prefs ->
+            val existing = LightsOffProfile.parse(prefs[Keys.LIGHTS_OFF_PROFILES] ?: "")
+            val updated = if (existing.isEmpty()) {
+                listOf(profile)
+            } else {
+                listOf(profile) + existing.drop(1)
+            }
+            prefs[Keys.LIGHTS_OFF_PROFILES] = LightsOffProfile.serialize(updated)
+        }
+    }
+
+    /**
+     * End of a manual "Start Lights Off now until …" window as epoch millis, or null when no manual
+     * window is set. While this is in the future the lights are off regardless of the schedule.
+     */
+    val lightsOffManualUntil: Flow<Long?> = context.dataStore.data
+        .map { prefs -> prefs[Keys.LIGHTS_OFF_MANUAL_UNTIL]?.takeIf { it > 0L } }
+
+    suspend fun setLightsOffManualUntil(untilMs: Long?) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.LIGHTS_OFF_MANUAL_UNTIL] = untilMs ?: 0L
+        }
+    }
+
+    /**
+     * Master switch + the v1 profile as one value, for the settings screen and the Strict Mode
+     * weakening comparison ([com.astraedus.nudge.domain.lightsoff.LightsOffWeakening]). An unset
+     * profile list surfaces as [LightsOffProfile]'s defaults so the UI always has something to edit.
+     */
+    val lightsOffSettings: Flow<LightsOffSettings> =
+        combine(lightsOffEnabled, lightsOffProfiles) { enabled, profiles ->
+            LightsOffSettings(
+                enabled = enabled,
+                profile = profiles.firstOrNull() ?: LightsOffProfile()
+            )
+        }
 }

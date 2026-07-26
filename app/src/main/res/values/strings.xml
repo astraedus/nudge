@@ -4,4 +4,6 @@
     <string name="accessibility_service_description">Nudge monitors which app is in the foreground to apply your blocking rules. No data leaves your device.</string>
     <string name="notification_channel_name">Nudge Monitor</string>
     <string name="notification_channel_description">Shows when Nudge is actively monitoring apps</string>
+    <string name="lights_off_channel_name">Lights Off status</string>
+    <string name="lights_off_channel_description">Shows while a Lights Off window is active, so you can always see the lockdown is still on</string>
 </resources>

@@ -9,6 +9,9 @@ import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.data.repository.BlockRuleRepository
 import com.astraedus.nudge.data.repository.UsageRepository
 import com.astraedus.nudge.domain.WebDomainMatcher
+import com.astraedus.nudge.domain.lightsoff.LightsOffProfile
+import com.astraedus.nudge.domain.lightsoff.LightsOffWindow
+import com.astraedus.nudge.domain.lightsoff.LightsOffWindowResolver
 import com.astraedus.nudge.domain.lock.StrictModeEscapeGuard
 import com.astraedus.nudge.domain.model.BlockDecision
 import com.astraedus.nudge.domain.model.BlockMode
@@ -24,9 +27,13 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.Calendar
 
 class NudgeAccessibilityService : AccessibilityService() {
 
@@ -47,6 +54,9 @@ class NudgeAccessibilityService : AccessibilityService() {
         fun webDomainDetector(): WebDomainDetector
         fun strictModeEscapeManager(): StrictModeEscapeManager
         fun emergencyPassManager(): EmergencyPassManager
+        fun systemCriticalPackageResolver(): SystemCriticalPackageResolver
+        fun lightsOffWindowResolver(): LightsOffWindowResolver
+        fun lightsOffStatusNotifier(): LightsOffStatusNotifier
     }
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -82,6 +92,18 @@ class NudgeAccessibilityService : AccessibilityService() {
         /** Upper bound on nodes scanned when harvesting Settings window text (bounded traversal). */
         private const val MAX_NODES_SCANNED = 800
 
+        /**
+         * How often the Lights Off window is re-derived while the user is idle, so window START and END
+         * boundaries are noticed without waiting for the next app switch.
+         */
+        private const val LIGHTS_OFF_TICK_MS = 30_000L
+
+        /**
+         * Hardcoded OEM GUESSES at system packages. Kept as the fail-safe half of the safety floor —
+         * the authoritative half is [SystemCriticalPackageResolver], which asks the platform for the
+         * device's actual launcher / dialer / keyboards / settings. Both are consulted via
+         * [isAlwaysAllowedPackage]; this list alone is NOT sufficient for a global lockdown.
+         */
         val SYSTEM_PACKAGES = setOf(
             "com.android.systemui",
             "com.android.launcher",
@@ -132,6 +154,25 @@ class NudgeAccessibilityService : AccessibilityService() {
                 false
             }
         }
+
+        /**
+         * THE SAFETY FLOOR CHECK. True when [packageName] must never be blocked by anything Nudge
+         * does — the hardcoded [SYSTEM_PACKAGES] guesses UNIONED with the dynamically resolved
+         * current defaults from [SystemCriticalPackageResolver] (real launcher, real dialer, real
+         * keyboards, real settings, emergency, Nudge itself).
+         *
+         * This is checked in [onAccessibilityEvent] BEFORE any evaluation, so a floor package can
+         * never even reach `BlockEngine`. That ordering is what makes "Lights Off can't lock you out
+         * of your phone" a structural property rather than a promise: the floor is not derived from
+         * the user's Lights Off whitelist, so no amount of mis-configuration can remove a package
+         * from it, and a resolution failure only ever leaves the static guesses in place.
+         *
+         * Kept as a pure companion function so the invariant is unit-testable without a device.
+         */
+        internal fun isAlwaysAllowedPackage(
+            packageName: String,
+            criticalPackages: Set<String>
+        ): Boolean = packageName in SYSTEM_PACKAGES || packageName in criticalPackages
 
         internal fun shouldClearForOwnPackageEvent(
             eventType: Int,
@@ -197,6 +238,25 @@ class NudgeAccessibilityService : AccessibilityService() {
      */
     @Volatile private var globalEnabledCached: Boolean = true
 
+    /**
+     * Cached Lights Off state, refreshed reactively (settings changes) and on a [LIGHTS_OFF_TICK_MS]
+     * tick (window boundaries). Read synchronously on the hot path so the lockdown can override state
+     * that is decided BEFORE the async evaluation runs — the auto-kick cooldown overlay and the
+     * post-delay passthrough, both of which would otherwise keep a non-whitelisted app usable after a
+     * window opened. The authoritative block decision still comes from a fresh read inside
+     * [EvaluateBlockUseCase]; this cache only ever makes us evaluate MORE often, never less.
+     */
+    @Volatile private var lightsOffWindowCached: LightsOffWindow = LightsOffWindow.INACTIVE
+
+    /**
+     * True when Lights Off currently locks [packageName] down (window open and not user-allow-listed).
+     * The system-critical safety floor is handled earlier and never gets here.
+     */
+    private fun isLightsOffLockedFor(packageName: String): Boolean {
+        val window = lightsOffWindowCached
+        return window.active && !window.allows(packageName)
+    }
+
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
@@ -255,6 +315,93 @@ class NudgeAccessibilityService : AccessibilityService() {
             counterCache.forceRefresh { loadCounterCacheEntries() }
             entryPoint.nudgeLogger().d("counter cache eagerly populated packages=${counterCache.snapshot().size}")
         }
+
+        // SAFETY FLOOR: resolve the device's REAL launcher / dialer / keyboards / settings up front, so
+        // the very first Lights Off block already respects them instead of relying on the hardcoded
+        // OEM guesses in SYSTEM_PACKAGES. Re-resolved periodically from the hot path (defaults change).
+        serviceScope.launch {
+            entryPoint.systemCriticalPackageResolver().refresh()
+            entryPoint.nudgeLogger().i(
+                "system-critical floor resolved packages=" +
+                    "${entryPoint.systemCriticalPackageResolver().packages().size}"
+            )
+        }
+
+        observeLightsOffWindow()
+    }
+
+    /**
+     * Keep [lightsOffWindowCached] and the persistent status notification in step with reality.
+     *
+     * Combines the Lights Off preferences (so a settings change lands immediately) with a slow ticker
+     * (so window START and END boundaries are noticed while the user is idle). The ticker is why the
+     * "silent reset" failure that plagues this whole product category cannot happen quietly here: if the
+     * window is over, the notification goes away; if it is on, the user can see it is still on.
+     */
+    private fun observeLightsOffWindow() {
+        val preferences = entryPoint.nudgePreferences()
+        // Terminates with the collector: a cancelled scope cancels `delay`, which ends the flow.
+        val ticker = flow {
+            while (true) {
+                emit(Unit)
+                delay(LIGHTS_OFF_TICK_MS)
+            }
+        }
+        serviceScope.launch {
+            combine(
+                preferences.lightsOffEnabled,
+                preferences.lightsOffProfiles,
+                preferences.lightsOffManualUntil,
+                preferences.isGlobalEnabled,
+                ticker
+            ) { lightsOffEnabled, profiles, manualUntil, globalEnabled, _ ->
+                LightsOffPrefsSnapshot(
+                    // The master toggle wins: while Nudge is off, the hot path enforces nothing, so
+                    // claiming "Lights Off · active" would be a lie.
+                    enabled = lightsOffEnabled && globalEnabled,
+                    profile = profiles.firstOrNull(),
+                    manualUntilMs = manualUntil
+                )
+            }.collect { snapshot ->
+                applyLightsOffWindow(snapshot.enabled, snapshot.profile, snapshot.manualUntilMs)
+            }
+        }
+    }
+
+    private data class LightsOffPrefsSnapshot(
+        val enabled: Boolean,
+        val profile: LightsOffProfile?,
+        val manualUntilMs: Long?
+    )
+
+    private fun applyLightsOffWindow(
+        enabled: Boolean,
+        profile: LightsOffProfile?,
+        manualUntilMs: Long?
+    ) {
+        val window = entryPoint.lightsOffWindowResolver().resolve(
+            enabled = enabled,
+            profile = profile,
+            manualUntilMs = manualUntilMs,
+            now = Calendar.getInstance()
+        )
+        val wasActive = lightsOffWindowCached.active
+        lightsOffWindowCached = window
+
+        if (window.active) {
+            entryPoint.lightsOffStatusNotifier().show(
+                untilLabel = window.untilLabel,
+                allowedCount = window.whitelist.size
+            )
+            if (!wasActive) {
+                entryPoint.nudgeLogger().i(
+                    "lights off window OPENED until=${window.untilLabel} allowed=${window.whitelist.size}"
+                )
+            }
+        } else {
+            entryPoint.lightsOffStatusNotifier().hide()
+            if (wasActive) entryPoint.nudgeLogger().i("lights off window CLOSED")
+        }
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -302,7 +449,18 @@ class NudgeAccessibilityService : AccessibilityService() {
             // fall through to the SYSTEM_PACKAGES handling below (clears any stale counter overlays)
         }
 
-        if (packageName in SYSTEM_PACKAGES) {
+        // SAFETY FLOOR — the single most consequential line in the Lights Off feature. Anything the
+        // user must always be able to reach (their real launcher, their real dialer, the emergency
+        // dialer, Settings, a keyboard, Nudge itself) returns HERE, before any evaluation, so it can
+        // never be blocked by a rule, a daily limit, or a global Lights Off lockdown. The dynamic half
+        // of the set is resolved from the platform (see SystemCriticalPackageResolver) rather than
+        // guessed, because on a global lockdown a missed launcher/dialer package means a user who
+        // cannot get home or make a call.
+        if (isAlwaysAllowedPackage(
+                packageName,
+                entryPoint.systemCriticalPackageResolver().packages()
+            )
+        ) {
             clearOverlays(packageName, "system_package")
             return
         }
@@ -457,8 +615,12 @@ class NudgeAccessibilityService : AccessibilityService() {
             return
         }
 
+        val lightsOffLocked = isLightsOffLockedFor(packageName)
+
         val tracker = entryPoint.interactionTracker()
-        if (tracker.isInCooldown(packageName)) {
+        // A cooldown shows a DELAY overlay, which is WEAKER than the Lights Off hard block. During a
+        // lockdown, skip it and fall through to evaluation so the stronger decision wins.
+        if (!lightsOffLocked && tracker.isInCooldown(packageName)) {
             val remainingMs = tracker.getCooldownRemainingMs(packageName)
             val remainingSeconds = ((remainingMs + 999) / 1000).toInt().coerceAtLeast(1)
             entryPoint.nudgeLogger().i(
@@ -482,7 +644,10 @@ class NudgeAccessibilityService : AccessibilityService() {
         // Show time remaining overlay before passthrough check (awareness overlays always show)
         timeRemainingHandler.showIfNeeded(packageName)
 
-        if (passthrough.shouldSkipForegroundEvaluation(packageName)) {
+        // A passthrough granted BEFORE the window opened (the user finished a delay at 21:59) must not
+        // keep a non-whitelisted app usable once the lights go off. Only bypassed for apps the lockdown
+        // covers, so a whitelisted app's own DELAY rule still can't re-fire in a loop.
+        if (!lightsOffLocked && passthrough.shouldSkipForegroundEvaluation(packageName)) {
             entryPoint.nudgeLogger().d("skip evaluation package=$packageName reason=passthrough")
             // Ensure counter is visible post-delay (onAppChanged may not re-fire)
             if (counterCache.isEnabled(packageName) && !interactionHandler.isCounterVisible()) {
@@ -519,6 +684,19 @@ class NudgeAccessibilityService : AccessibilityService() {
     }
 
     private suspend fun evaluateWebDomain(browserPackage: String) {
+        // Lights Off is a GLOBAL lockdown, so it has to cover the browser APP itself. Browser packages
+        // deliberately never reach the whole-app path (hard-blocking a browser would nuke all browsing),
+        // and per-URL evaluation can only act once it has successfully read a URL — so without this
+        // check the entire web would stay open all night, and a browser sitting on a page whose URL bar
+        // we cannot parse would be a permanent hole. Checked before the URL read for exactly that
+        // reason: an un-allow-listed browser is blocked outright during the window.
+        val lightsOffDecision = entryPoint.evaluateBlockUseCase().evaluateLightsOff(browserPackage)
+        if (lightsOffDecision is BlockDecision.Block) {
+            entryPoint.nudgeLogger().i("lights off blocks browser package=$browserPackage")
+            handleDecision(lightsOffDecision, browserPackage)
+            return
+        }
+
         val rootNode = withContext(Dispatchers.Main) {
             try { rootInActiveWindow } catch (_: Exception) { null }
         }
@@ -717,6 +895,10 @@ class NudgeAccessibilityService : AccessibilityService() {
             if (refreshed) {
                 entryPoint.nudgeLogger().d("counter cache refreshed packages=${counterCache.snapshot().size}")
             }
+            // Piggyback the safety-floor refresh on the same off-main tick (its own TTL gate makes this
+            // a timestamp compare in the common case). Catches a launcher/dialer/keyboard the user
+            // changed or installed while the service has been running.
+            entryPoint.systemCriticalPackageResolver().refreshIfNeeded(now)
         }
     }
 
@@ -743,6 +925,12 @@ class NudgeAccessibilityService : AccessibilityService() {
     override fun onDestroy() {
         super.onDestroy()
         if (instance === this) instance = null
+        // The status notification claims the lockdown is being enforced. Once this service is gone it
+        // isn't, so the claim must go with it — a lingering "Lights Off · active" badge over a phone
+        // that no longer blocks anything is precisely the trust failure the notification exists to
+        // prevent. It comes back when the service reconnects.
+        lightsOffWindowCached = LightsOffWindow.INACTIVE
+        entryPoint.lightsOffStatusNotifier().hide()
         entryPoint.counterOverlayManager().clearServiceContext()
         entryPoint.timeRemainingOverlayManager().clearServiceContext()
         passthroughManagerInstance = null

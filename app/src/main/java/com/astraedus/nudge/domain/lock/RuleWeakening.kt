@@ -13,17 +13,6 @@ import com.astraedus.nudge.data.db.entity.BlockRule
 object RuleWeakening {
 
     /**
-     * Block-mode strength ordering (higher = stronger protection). Anything not recognized
-     * (e.g. a future mode, or "no rule") sorts below the known modes.
-     */
-    private fun modeStrength(mode: String?): Int = when (mode) {
-        "HARD_BLOCK" -> 3
-        "DELAY" -> 2
-        "BREATHING" -> 1
-        else -> 0
-    }
-
-    /**
      * Returns true if [new] is weaker protection than [old] in ANY dimension, treating each
      * dimension independently — softening one axis is weakening even if another is strengthened
      * (the user must justify the part that reduces protection).
@@ -41,7 +30,7 @@ object RuleWeakening {
         if (old.enabled && !new.enabled) return true
 
         // Softening the block mode.
-        if (modeStrength(new.mode) < modeStrength(old.mode)) return true
+        if (BlockModeStrength.isSoftened(old.mode, new.mode)) return true
 
         // Shortening the delay = less friction before the app opens.
         if (new.delaySeconds < old.delaySeconds) return true

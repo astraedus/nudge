@@ -1,5 +1,6 @@
 package com.astraedus.nudge.domain.engine
 
+import com.astraedus.nudge.domain.lightsoff.LightsOffClock
 import com.astraedus.nudge.domain.model.ActiveRule
 import com.astraedus.nudge.domain.model.BlockDecision
 import com.astraedus.nudge.domain.model.BlockMode
@@ -17,21 +18,48 @@ class BlockEngine @Inject constructor(
      * @param detectedFeature If non-null, feature-scoped rules whose [ActiveRule.inAppFeatures]
      *   list contains this feature will be considered. Whole-app rules are also considered unless
      *   [includeWholeAppRulesForFeature] is false.
+     * @param isLightsOffActive Whether a global "Lights Off" lockdown window is open right now.
+     *   Computed by the caller (see `EvaluateBlockUseCase`) and passed in as a plain boolean so this
+     *   engine stays pure — it never reads a clock or preferences itself.
+     * @param isLightsOffWhitelisted Whether [packageName] is on the active Lights Off profile's
+     *   allow-list. Note the system-critical safety floor (dialer / launcher / settings / emergency /
+     *   keyboard / Nudge) is enforced EARLIER, in the accessibility service, and never reaches here.
+     * @param lightsOffRuleName Label shown on the block overlay for a Lights Off block, e.g.
+     *   `"Lights Off · until 7:00"`.
      *
-     * Priority: HARD_BLOCK > time budget exceeded > DELAY > BREATHING > Allow
+     * Priority: Lights Off > HARD_BLOCK > time budget exceeded > DELAY > BREATHING > Allow
      */
     fun evaluate(
         packageName: String,
         activeRules: List<ActiveRule>,
         dailyUsageMs: Long,
         detectedFeature: String? = null,
-        includeWholeAppRulesForFeature: Boolean = true
+        includeWholeAppRulesForFeature: Boolean = true,
+        isLightsOffActive: Boolean = false,
+        isLightsOffWhitelisted: Boolean = false,
+        lightsOffRuleName: String = LightsOffClock.RULE_NAME
     ): BlockDecision {
         logger.d(
             "evaluate package=$packageName rules=${activeRules.size} " +
                 "dailyUsageMs=$dailyUsageMs detectedFeature=$detectedFeature " +
-                "includeWholeAppRulesForFeature=$includeWholeAppRulesForFeature"
+                "includeWholeAppRulesForFeature=$includeWholeAppRulesForFeature " +
+                "lightsOffActive=$isLightsOffActive lightsOffWhitelisted=$isLightsOffWhitelisted"
         )
+
+        // STEP 0 — Lights Off inverts the whole model: during the window EVERY app is off unless the
+        // user allow-listed it. It sits above the unconditional-hard-block step (and above the
+        // schedule/feature filtering) so it OVERRIDES per-app rules rather than competing with them:
+        // an app whose own rule would only DELAY or BREATHE is still hard-blocked, and an app with no
+        // rule at all — the "new shiny app that leaks through per-app blocking" this feature exists
+        // for — is blocked too. Always HARD_BLOCK: a softer Lights Off mode would let an app that a
+        // per-app rule already hard-blocks through, i.e. weaken protection.
+        if (isLightsOffActive && !isLightsOffWhitelisted) {
+            logger.i("block package=$packageName reason=lights_off rule=$lightsOffRuleName")
+            return BlockDecision.Block(
+                BlockMode.HARD_BLOCK,
+                ruleName = lightsOffRuleName
+            )
+        }
 
         val applicableRules = activeRules
             .filter { it.enabled }

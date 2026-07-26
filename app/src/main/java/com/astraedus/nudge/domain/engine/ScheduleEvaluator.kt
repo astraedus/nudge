@@ -24,11 +24,35 @@ class ScheduleEvaluator @Inject constructor() {
     /**
      * Testable overload that accepts an explicit [Calendar] for the current moment.
      */
-    fun isActiveAt(rule: ActiveRule, now: Calendar): Boolean {
-        val days = rule.scheduleDays
-        val startMinute = rule.scheduleStartMinute
-        val endMinute = rule.scheduleEndMinute
+    fun isActiveAt(rule: ActiveRule, now: Calendar): Boolean = isActiveAt(
+        days = rule.scheduleDays,
+        startMinute = rule.scheduleStartMinute,
+        endMinute = rule.scheduleEndMinute,
+        now = now
+    )
 
+    /**
+     * Raw-fields entry point, for schedules that are not attached to an [ActiveRule] — e.g. the
+     * global Lights Off window (`domain/lightsoff`). Same semantics as the rule overload, which
+     * delegates here so both can never drift apart.
+     */
+    fun isActiveNow(days: List<Int>?, startMinute: Int?, endMinute: Int?): Boolean =
+        isActiveAt(days, startMinute, endMinute, Calendar.getInstance())
+
+    /**
+     * Raw-fields, explicit-clock core of schedule evaluation.
+     *
+     * @param days ISO day-of-week numbers (1 = Monday .. 7 = Sunday); null or empty = every day.
+     * @param startMinute inclusive window start, minutes from midnight.
+     * @param endMinute exclusive window end, minutes from midnight. An end BEFORE the start is an
+     *   overnight window (23:00 → 06:00), active on the late AND early hours of a selected day.
+     */
+    fun isActiveAt(
+        days: List<Int>?,
+        startMinute: Int?,
+        endMinute: Int?,
+        now: Calendar
+    ): Boolean {
         // No schedule configured -- always active
         if (days == null && startMinute == null && endMinute == null) return true
 

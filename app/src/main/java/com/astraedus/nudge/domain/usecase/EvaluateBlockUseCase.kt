@@ -7,12 +7,15 @@ import com.astraedus.nudge.data.repository.UsageRepository
 import com.astraedus.nudge.domain.WebDomainMatcher
 import com.astraedus.nudge.domain.engine.BlockEngine
 import com.astraedus.nudge.domain.engine.RuleEvaluator
+import com.astraedus.nudge.domain.lightsoff.LightsOffWindow
+import com.astraedus.nudge.domain.lightsoff.LightsOffWindowResolver
 import com.astraedus.nudge.domain.model.ActiveRule
 import com.astraedus.nudge.domain.model.BlockDecision
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.domain.model.BlockRuleData
 import com.astraedus.nudge.domain.model.GroupMembership
 import kotlinx.coroutines.flow.first
+import java.util.Calendar
 import javax.inject.Inject
 
 class EvaluateBlockUseCase @Inject constructor(
@@ -21,7 +24,8 @@ class EvaluateBlockUseCase @Inject constructor(
     private val blockEngine: BlockEngine,
     private val ruleEvaluator: RuleEvaluator,
     private val preferences: NudgePreferences,
-    private val contentFilter: ContentFilter
+    private val contentFilter: ContentFilter,
+    private val lightsOffWindowResolver: LightsOffWindowResolver
 ) {
 
     /**
@@ -72,15 +76,60 @@ class EvaluateBlockUseCase @Inject constructor(
 
         val activeRules = ruleEvaluator.resolveRulesForPackage(packageName, ruleDataList, memberships)
         val dailyUsageMs = usageRepository.getDailyUsage(packageName).first()
+        val lightsOff = resolveLightsOff()
 
         return blockEngine.evaluate(
             packageName = packageName,
             activeRules = activeRules,
             dailyUsageMs = dailyUsageMs,
             detectedFeature = detectedFeature,
-            includeWholeAppRulesForFeature = includeWholeAppRulesForFeature
+            includeWholeAppRulesForFeature = includeWholeAppRulesForFeature,
+            isLightsOffActive = lightsOff.active,
+            isLightsOffWhitelisted = lightsOff.allows(packageName),
+            lightsOffRuleName = lightsOff.ruleName
         )
     }
+
+    /**
+     * Lights Off ONLY, with no per-app rules considered.
+     *
+     * Needed because browser packages never reach [invoke] — the accessibility service routes them
+     * straight to per-URL evaluation ([evaluateWebDomain]), which is correct for per-app rules
+     * (whole-app blocking a browser would nuke all browsing) but would leave the entire web wide open
+     * during a GLOBAL lockdown. The service asks this first for browsers, so an un-whitelisted browser
+     * is blocked during Lights Off even before a URL has been read.
+     *
+     * Returns [BlockDecision.Allow] whenever Lights Off is off, outside its window, or the package is
+     * allow-listed. The decision itself is still produced by [BlockEngine] (empty rule list) so step 0
+     * stays the single source of truth for what a Lights Off block looks like.
+     */
+    suspend fun evaluateLightsOff(packageName: String): BlockDecision {
+        val lightsOff = resolveLightsOff()
+        if (!lightsOff.active) return BlockDecision.Allow
+        return blockEngine.evaluate(
+            packageName = packageName,
+            activeRules = emptyList(),
+            dailyUsageMs = 0L,
+            isLightsOffActive = true,
+            isLightsOffWhitelisted = lightsOff.allows(packageName),
+            lightsOffRuleName = lightsOff.ruleName
+        )
+    }
+
+    /**
+     * Read the stored Lights Off state and resolve it against the current clock.
+     *
+     * The window logic itself lives in [LightsOffWindowResolver], shared with the accessibility
+     * service's status notification, so what we ENFORCE and what we TELL the user can never diverge.
+     * One [Calendar] is captured for the whole resolution so a single evaluation cannot straddle a
+     * minute boundary and disagree with itself.
+     */
+    private suspend fun resolveLightsOff(): LightsOffWindow = lightsOffWindowResolver.resolve(
+        enabled = preferences.lightsOffEnabled.first(),
+        profile = preferences.lightsOffProfiles.first().firstOrNull(),
+        manualUntilMs = preferences.lightsOffManualUntil.first(),
+        now = Calendar.getInstance()
+    )
 
     /**
      * Evaluate whether a detected web domain should be blocked.
