@@ -129,15 +129,25 @@ const NAV_SURFACE: ShortsSurface = {
   id: 'shorts-nav',
   description: 'Shorts entry in the left navigation rail',
   chain: [
+    // Refreshed 2026-07-26: on live DOM the two `href='/shorts/'` rungs below stopped
+    // matching (YouTube now renders the entry with a trailing-slash-free href and an
+    // aria-label), and only the generic catch-all fired, our own degraded-mode canary
+    // caught it, which is exactly what it is for. The `:has()`-free attribute rungs are
+    // first now because they are the ones that actually match today.
     {
-      selector: "ytd-mini-guide-entry-renderer>a[href='/shorts/']",
-      note: 'Collapsed mini-guide Shorts tab (Vulpelo).',
+      selector: 'ytd-mini-guide-entry-renderer a[href^="/shorts"]',
+      note: 'Collapsed mini-guide Shorts tab (current DOM).',
     },
     {
-      selector: 'ytd-guide-entry-renderer:has(>a[href="/shorts/"])',
-      note: 'Expanded guide Shorts tab.',
+      selector: 'ytd-guide-entry-renderer:has(a[href^="/shorts"])',
+      note: 'Expanded guide Shorts tab (current DOM).',
     },
     { selector: 'a[title="Shorts"]', note: 'Title-anchored nav link (FocusTube).' },
+    { selector: 'a[aria-label="Shorts"]', note: 'Aria-anchored nav link.' },
+    {
+      selector: "ytd-mini-guide-entry-renderer>a[href='/shorts/']",
+      note: 'Legacy exact-href mini-guide tab (Vulpelo); kept for older DOM.',
+    },
   ],
 };
 
@@ -376,9 +386,19 @@ export interface HideSurface {
   id: string;
   /** The settings flag that turns this surface off. */
   toggle: HideToggle;
-  /** Page types the surface exists on, elsewhere we don't even look for it. */
+  /** Page types the surface exists on; elsewhere we don't even look for it. */
   pages: YoutubePageType[];
   chain: SelectorRule[];
+  /**
+   * Hide EVERY rung that matches, instead of stopping at the first.
+   *
+   * Default (false) means the chain is a fallback ladder: rungs are alternative ways to find
+   * the SAME thing, so the most specific match wins. Some surfaces are not like that, their
+   * rungs are genuinely different elements that appear TOGETHER, and stopping at the first
+   * leaves the others on screen (live QA, 2026-07-26: the end-screen grid and the creator
+   * end-cards coexist, so hiding only the grid left the cards showing).
+   */
+  matchAll?: boolean;
 }
 
 /**
@@ -412,10 +432,13 @@ export const HIDE_SURFACES: HideSurface[] = [
     id: 'end-screen',
     toggle: 'hideEndScreen',
     pages: ['watch', 'shorts'],
+    // These are DIFFERENT elements shown at the same time, not alternatives: the grid of
+    // suggested videos AND the creator's own end-cards. First-match-wins left the cards
+    // on screen (live QA, 2026-07-26).
+    matchAll: true,
     chain: [
       { selector: '.ytp-endscreen-content', note: 'End-of-video suggestion grid (DF Tube).' },
-      { selector: '.ytp-ce-video', note: 'In-player card suggestions.' },
-      { selector: '.ytp-ce-element' },
+      { selector: '.ytp-ce-element', note: 'Creator end-cards; coexists with the grid.' },
     ],
   },
   {
@@ -423,9 +446,14 @@ export const HIDE_SURFACES: HideSurface[] = [
     toggle: 'hideComments',
     pages: ['watch', 'shorts'],
     chain: [
-      { selector: '#comments #contents', note: 'Comment list (sanersocialmedia).' },
-      { selector: '#comments' },
+      {
+        selector: '#comments',
+        note:
+          'The WHOLE section. Targeting only `#comments #contents` left the "N Comments / ' +
+          'Sort by" header behind as ~109px of dead chrome (live QA, 2026-07-26).',
+      },
       { selector: '#watch-discussion', note: 'DF Tube hide_comments.css target.' },
+      { selector: '#comments #contents', note: 'Last resort: the list without its header.' },
     ],
   },
 ];

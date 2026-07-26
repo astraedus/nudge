@@ -52,6 +52,7 @@ function probeOf(detected: { channelId: string | null; handle: string | null } |
 export function applyChannelFilter(
   root: Document | Element,
   config: ChannelConfig,
+  options: { warn?: (message: string) => void } = {},
 ): ChannelFilterResult {
   const result: ChannelFilterResult = { hidden: 0, revealed: 0, unidentified: 0 };
   const active = config.enabled && config.channelMode !== 'OFF';
@@ -87,7 +88,51 @@ export function applyChannelFilter(
     result.revealed += 1;
   }
 
+  if (active) warnIfDetectionDegraded(result, options.warn ?? defaultDetectionWarn);
+
   return result;
+}
+
+/** One warning per page load; the observer re-runs this constantly. */
+let warnedAboutDetection = false;
+
+/** Test/reset seam for the dedupe flag. */
+export function resetDetectionWarning(): void {
+  warnedAboutDetection = false;
+}
+
+const defaultDetectionWarn: (message: string) => void = (message) => {
+  if (warnedAboutDetection) return;
+  warnedAboutDetection = true;
+  console.warn(message);
+};
+
+/**
+ * Make the fail-open OBSERVABLE.
+ *
+ * An unidentifiable channel is deliberately allowed through (see `decideChannel`), which is
+ * the right call, but with no signal at all, YouTube changing its DOM would degrade the
+ * channel filter into a no-op that looks exactly like "the user has nothing on their list".
+ * A cheap console canary means selector rot shows up the first time anyone opens devtools,
+ * rather than only when a user notices their whitelist quietly stopped working.
+ *
+ * Only fires when SOME cards resolved and others did not: a page where nothing resolved is
+ * usually just a page with no feed cards on it, and a canary that cries wolf gets ignored.
+ */
+function warnIfDetectionDegraded(
+  result: ChannelFilterResult,
+  warn: (message: string) => void,
+): void {
+  const identified = result.hidden + result.revealed;
+  if (result.unidentified === 0) return;
+  if (identified === 0) return;
+
+  warn(
+    `[nudge] Channel filtering is degraded: ${result.unidentified} video card(s) on this ` +
+      `page had no identifiable channel, so they were left visible rather than filtered. ` +
+      `This usually means YouTube changed its DOM. Please report it at ` +
+      `https://github.com/astraedus/nudge/issues so the selectors can be updated.`,
+  );
 }
 
 /**
@@ -106,7 +151,7 @@ export function watchChannelVerdict(
   return decideChannel({
     mode: config.channelMode,
     channels: config.channels,
-    probe: probeOf(detectWatchChannel(doc)),
+    probe: probeOf(detectWatchChannel(doc, { url })),
     blockMode: config.channelBlockMode,
   });
 }
@@ -140,7 +185,7 @@ export function applyGrayColor(
   // Only a watch or channel page has a single channel whose identity could earn colour.
   // A feed is a mix of many, so it stays gray.
   const detected =
-    pageType === 'watch' || pageType === 'channel' ? detectWatchChannel(doc) : null;
+    pageType === 'watch' || pageType === 'channel' ? detectWatchChannel(doc, { url }) : null;
 
   const inColor = shouldShowInColor({
     mode: config.channelMode,

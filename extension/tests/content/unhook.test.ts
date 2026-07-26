@@ -72,7 +72,7 @@ describe('applyHideToggles — each toggle independently hides only its own surf
     applyHideToggles(root, { ...ALL_OFF, hideSidebarRecs: true }, { pageType: 'watch', warn: () => {} });
 
     expect(isHidden(root, 'watch-related')).toBe(true);
-    expect(isHidden(root, 'watch-comments-contents')).toBe(false);
+    expect(isHidden(root, 'watch-comments')).toBe(false);
     expect(isHidden(root, 'watch-end-screen')).toBe(false);
   });
 
@@ -83,15 +83,18 @@ describe('applyHideToggles — each toggle independently hides only its own surf
 
     expect(isHidden(root, 'watch-end-screen')).toBe(true);
     expect(isHidden(root, 'watch-related')).toBe(false);
-    expect(isHidden(root, 'watch-comments-contents')).toBe(false);
+    expect(isHidden(root, 'watch-comments')).toBe(false);
   });
 
+  // Hiding the whole `#comments` section (not just its inner list) is deliberate: leaving
+  // the wrapper visible left the "N Comments / Sort by" header on screen as dead chrome
+  // (live QA, 2026-07-26).
   it('hides the comments section on a watch page, leaving the end screen and recommendations visible', () => {
     const root = mount(WATCH_PAGE_ALL_SURFACES_HTML);
 
     applyHideToggles(root, { ...ALL_OFF, hideComments: true }, { pageType: 'watch', warn: () => {} });
 
-    expect(isHidden(root, 'watch-comments-contents')).toBe(true);
+    expect(isHidden(root, 'watch-comments')).toBe(true);
     expect(isHidden(root, 'watch-end-screen')).toBe(false);
     expect(isHidden(root, 'watch-related')).toBe(false);
   });
@@ -115,7 +118,7 @@ describe('applyHideToggles — off toggles leave their surface visible', () => {
 
     expect(result.hidden).toBe(0);
     expect(isHidden(root, 'watch-related')).toBe(false);
-    expect(isHidden(root, 'watch-comments-contents')).toBe(false);
+    expect(isHidden(root, 'watch-comments')).toBe(false);
     expect(isHidden(root, 'watch-end-screen')).toBe(false);
   });
 });
@@ -126,12 +129,12 @@ describe('applyHideToggles — flipping a toggle off reveals what it hid', () =>
     const nodeCountBefore = root.querySelectorAll('*').length;
 
     applyHideToggles(root, { ...ALL_OFF, hideComments: true }, { pageType: 'watch', warn: () => {} });
-    expect(isHidden(root, 'watch-comments-contents')).toBe(true);
+    expect(isHidden(root, 'watch-comments')).toBe(true);
 
     const off = applyHideToggles(root, ALL_OFF, { pageType: 'watch', warn: () => {} });
 
     expect(off.revealed).toBeGreaterThan(0);
-    expect(isHidden(root, 'watch-comments-contents')).toBe(false);
+    expect(isHidden(root, 'watch-comments')).toBe(false);
     // Reversible by construction: no node was ever removed, only the class toggled.
     expect(root.querySelectorAll('*').length).toBe(nodeCountBefore);
     expect(root.querySelector('[data-testid="watch-comments"]')).not.toBeNull();
@@ -149,7 +152,7 @@ describe('applyHideToggles — enabled: false reveals everything', () => {
     );
     expect(isHidden(root, 'watch-related')).toBe(true);
     expect(isHidden(root, 'watch-end-screen')).toBe(true);
-    expect(isHidden(root, 'watch-comments-contents')).toBe(true);
+    expect(isHidden(root, 'watch-comments')).toBe(true);
 
     const result = applyHideToggles(
       root,
@@ -161,7 +164,7 @@ describe('applyHideToggles — enabled: false reveals everything', () => {
     expect(result.revealed).toBeGreaterThan(0);
     expect(isHidden(root, 'watch-related')).toBe(false);
     expect(isHidden(root, 'watch-end-screen')).toBe(false);
-    expect(isHidden(root, 'watch-comments-contents')).toBe(false);
+    expect(isHidden(root, 'watch-comments')).toBe(false);
     expect(root.querySelectorAll(`.${UNHOOK_HIDDEN_CLASS}`)).toHaveLength(0);
   });
 });
@@ -291,5 +294,32 @@ describe('applyAutoplayOff', () => {
       applyAutoplayOff(root, { enabled: true, disableAutoplay: true }, { warn: () => {} }),
     ).not.toThrow();
     expect(applyAutoplayOff(root, { enabled: true, disableAutoplay: true })).toBe(false);
+  });
+});
+
+describe('applyHideToggles, the end screen has two parts that show together', () => {
+  /**
+   * Live QA, 2026-07-26: `.ytp-endscreen-content` (the suggestion grid) and
+   * `.ytp-ce-element` (the creator's own end-cards) are DIFFERENT elements shown at the same
+   * time, not alternative selectors for one element. First-match-wins hid the grid and left
+   * the cards sitting on top of the video.
+   */
+  it('hides both the suggestion grid and the creator end-cards', () => {
+    const root = mount(WATCH_PAGE_ALL_SURFACES_HTML);
+
+    applyHideToggles(root, { ...ALL_OFF, hideEndScreen: true }, { pageType: 'watch', warn: () => {} });
+
+    expect(isHidden(root, 'watch-end-screen')).toBe(true);
+    expect(isHidden(root, 'watch-end-cards')).toBe(true);
+  });
+
+  it('brings both back when the toggle is switched off', () => {
+    const root = mount(WATCH_PAGE_ALL_SURFACES_HTML);
+    applyHideToggles(root, { ...ALL_OFF, hideEndScreen: true }, { pageType: 'watch', warn: () => {} });
+
+    applyHideToggles(root, { ...ALL_OFF, hideEndScreen: false }, { pageType: 'watch', warn: () => {} });
+
+    expect(isHidden(root, 'watch-end-screen')).toBe(false);
+    expect(isHidden(root, 'watch-end-cards')).toBe(false);
   });
 });

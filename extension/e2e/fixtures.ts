@@ -49,18 +49,33 @@ const SETTINGS_KEY = 'nudge:settings';
 function youtubePage(url: URL): string {
   const channelId = url.searchParams.get('channel') ?? '';
   const name = url.searchParams.get('name') ?? 'Test Channel';
+  const videoId = url.searchParams.get('v') ?? '';
+  // `staleVideo` reproduces the SPA case: inline JSON pinned to a DIFFERENT video than the
+  // URL names, which is what YouTube actually serves after a client-side navigation.
+  const inlineVideoId = url.searchParams.get('staleVideo') ?? videoId;
+
   const playerResponse =
     channelId === ''
       ? ''
       : `<script>var ytInitialPlayerResponse = ${JSON.stringify({
-          videoDetails: { channelId, author: name, title: 'A video' },
+          videoDetails: { videoId: inlineVideoId, channelId, author: name, title: 'A video' },
         })};</script>`;
+
+  // A real watch page also carries a channel byline in the DOM, which YouTube re-renders on
+  // every navigation, that is the tier the staleness guard falls through to.
+  const domChannelId = url.searchParams.get('domChannel') ?? channelId;
+  const byline =
+    domChannelId === ''
+      ? ''
+      : `<ytd-channel-name id="channel-name"><a class="yt-formatted-string" ` +
+        `href="/channel/${domChannelId}" aria-label="Go to channel ${name}">${name}</a>` +
+        `</ytd-channel-name>`;
 
   return (
     `<!doctype html><html><head><title>${name} - YouTube</title></head><body>` +
     `<h1 id="host">www.youtube.com</h1><p id="path">${url.pathname}${url.search}</p>` +
     playerResponse +
-    `<ytd-watch-flexy><div id="primary"><video id="player"></video></div>` +
+    `<ytd-watch-flexy><div id="primary"><video id="player"></video>${byline}</div>` +
     `<div id="secondary"><div id="related">recommendations</div></div></ytd-watch-flexy>` +
     `<div id="comments"><div id="contents">comments</div></div>` +
     `</body></html>`
@@ -73,7 +88,7 @@ function youtubePage(url: URL): string {
  * Needed because youtube.com is in Chrome's HSTS PRELOAD list: `http://www.youtube.com/` is
  * force-upgraded to HTTPS before it ever reaches our resolver rule, so a plain-HTTP fixture
  * server answers with ERR_SSL_PROTOCOL_ERROR. Generated per-run into a temp dir rather than
- * committed, a private key in a public repo is a bad habit even when it is worthless, and
+ * committed - a private key in a public repo is a bad habit even when it is worthless - and
  * Chrome is launched with --ignore-certificate-errors so the cert never has to be trusted.
  */
 function generateSelfSignedCert(): { key: Buffer; cert: Buffer } {
@@ -86,7 +101,8 @@ function generateSelfSignedCert(): { key: Buffer; cert: Buffer } {
       '-out', `${dir}/cert.pem`,
       '-days', '1',
       '-subj', '/CN=localhost',
-      '-addext', 'subjectAltName=DNS:localhost,DNS:*.youtube.com,DNS:youtube.com,DNS:*.test,IP:127.0.0.1',
+      '-addext',
+      'subjectAltName=DNS:localhost,DNS:*.youtube.com,DNS:youtube.com,DNS:*.test,IP:127.0.0.1',
     ],
     { stdio: 'ignore' },
   );

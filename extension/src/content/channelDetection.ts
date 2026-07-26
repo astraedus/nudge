@@ -53,7 +53,6 @@ import {
   CHANNEL_ELEMENTS,
   CHANNEL_NAME_NOISE,
   VIDEO_RENDERER_SELECTOR,
-  queryWithFallback,
 } from './selectors';
 
 /** What this module knows about a channel. Any field may be unavailable on a given page. */
@@ -221,7 +220,7 @@ function findRenderer(root: unknown, key: string): unknown {
 /* ------------------------------------------------------------------------- tier 1 & 2 */
 
 /** Never throws: wraps a tier lookup so a shape surprise resolves to null, not a crash. */
-function safeCall(fn: () => DetectedChannel | null): DetectedChannel | null {
+function safeCall<T>(fn: () => T | null): T | null {
   try {
     return fn();
   } catch {
@@ -367,24 +366,46 @@ function displayNameFrom(el: Element): string | null {
  */
 export function channelFromDom(root: ParentNode): DetectedChannel | null {
   return safeCall(() => {
-    const { elements } = queryWithFallback(root, CHANNEL_ELEMENTS, {
-      surfaceId: 'channel-dom',
-      // CHANNEL_ELEMENTS carries no `fallback: true` rung (its generic href^= members are
-      // normal, stable ways to link a channel — see selectors.ts) — this never fires, but
-      // an explicit no-op keeps channel identification from ever depending on the Shorts
-      // degraded-mode warning sink.
-      warn: () => {},
-    });
+    // Try EVERY rung, and every element each rung matches, until one actually yields an
+    // identifier.
+    //
+    // Taking only `elements[0]` of the first matching rung leaked the whitelist (live QA,
+    // 2026-07-26): YouTube search results carry a hidden placeholder `ytd-channel-name`
+    // anchor with an EMPTY href, which wins the first rung, classifies to nothing, and makes
+    // the card look unidentifiable - even though a perfectly good `/@handle` anchor exists
+    // further down the same card. An element that yields no identifier is not an answer, it
+    // is a miss, so keep looking.
+    let fallbackName: string | null = null;
 
-    const anchor = elements[0];
-    if (!anchor) return null;
+    for (const rule of CHANNEL_ELEMENTS) {
+      let matches: Element[];
+      try {
+        matches = Array.from(root.querySelectorAll(rule.selector));
+      } catch {
+        continue;
+      }
 
-    const href = anchor.getAttribute('href') ?? '';
-    const { channelId, handle } = classifyHref(href);
-    const displayName = displayNameFrom(anchor);
+      for (const anchor of matches) {
+        const href = anchor.getAttribute('href') ?? '';
+        // A hrefless anchor is a placeholder, never a channel link.
+        if (href.trim() === '') {
+          fallbackName ??= displayNameFrom(anchor);
+          continue;
+        }
+        const { channelId, handle } = classifyHref(href);
+        if (channelId === null && handle === null) {
+          fallbackName ??= displayNameFrom(anchor);
+          continue;
+        }
+        return { channelId, handle, displayName: displayNameFrom(anchor) ?? fallbackName };
+      }
+    }
 
-    if (channelId === null && handle === null && displayName === null) return null;
-    return { channelId, handle, displayName };
+    // Nothing identifying anywhere. A bare name is not an identifier (see `hasIdentifier`),
+    // but returning it keeps the display useful for a caller that only wants a label.
+    return fallbackName === null
+      ? null
+      : { channelId: null, handle: null, displayName: fallbackName };
   });
 }
 
@@ -395,17 +416,81 @@ function hasIdentifier(result: DetectedChannel | null): result is DetectedChanne
   return result !== null && (result.channelId !== null || result.handle !== null);
 }
 
+/** The video id a watch/shorts URL refers to, or null when the URL names no video. */
+export function videoIdFromUrl(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    const fromQuery = parsed.searchParams.get('v');
+    if (fromQuery !== null && fromQuery !== '') return fromQuery;
+    const shorts = /^\/shorts\/([^/?#]+)/.exec(parsed.pathname);
+    return shorts?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** The video id the inline `ytInitialPlayerResponse` describes, if it says. */
+function playerResponseVideoId(doc: Document): string | null {
+  return safeCall(() => {
+    const data = findAssignedObject(doc, 'ytInitialPlayerResponse');
+    if (!data || !isRecord(data.videoDetails)) return null;
+    const id = data.videoDetails.videoId;
+    return typeof id === 'string' && id !== '' ? id : null;
+  });
+}
+
+/** The video id the inline `ytInitialData` describes, if it says. */
+function initialDataVideoId(doc: Document): string | null {
+  return safeCall(() => {
+    const data = findAssignedObject(doc, 'ytInitialData');
+    if (!data) return null;
+    const endpoint = findRenderer(data, 'watchEndpoint');
+    const id = isRecord(endpoint) ? endpoint.videoId : null;
+    return typeof id === 'string' && id !== '' ? id : null;
+  });
+}
+
 /**
- * The ordered composite for a watch page: player response -> initial data -> DOM. Returns
- * the first tier that yields at least one identifier (a channel id or a handle).
+ * The ordered composite for a watch page: player response -> initial data -> DOM.
+ *
+ * STALENESS IS THE WHOLE PROBLEM HERE (live QA, 2026-07-26). YouTube is a SPA, and on a
+ * watch -> watch client-side navigation the inline `ytInitialPlayerResponse` and
+ * `ytInitialData` scripts are NOT rewritten, they stay pinned to whatever video was loaded
+ * by the last FULL page load. Tier 1 therefore returns a perfectly well-formed channel that
+ * simply belongs to the wrong video, short-circuits the chain, and the fresh DOM byline is
+ * never consulted. Observed live: a whitelisted channel full-loaded, then an SPA hop to a
+ * non-whitelisted video played in full colour with no gate at all, defeating the whitelist,
+ * the blacklist and gray-screen during exactly the browsing pattern people actually use.
+ *
+ * So the inline tiers must PROVE they are describing the current video: when the URL names a
+ * video, a script tier is used only if it declares the SAME video id. A tier that declares a
+ * different id is stale, and a tier that declares none cannot be verified, both are skipped
+ * in favour of the DOM, which YouTube genuinely re-renders on navigation.
  */
-export function detectWatchChannel(doc: Document): DetectedChannel | null {
-  const fromPlayerResponse = channelFromPlayerResponse(doc);
-  if (hasIdentifier(fromPlayerResponse)) return fromPlayerResponse;
+export function detectWatchChannel(
+  doc: Document,
+  options: { url?: string } = {},
+): DetectedChannel | null {
+  const expectedVideoId = videoIdFromUrl(options.url ?? doc.location?.href ?? '');
 
-  const fromInitialData = channelFromInitialData(doc);
-  if (hasIdentifier(fromInitialData)) return fromInitialData;
+  /** Can this inline tier be trusted to describe the video the URL names? */
+  function inlineTierIsCurrent(tierVideoId: string | null): boolean {
+    // No video in the URL (a channel page, say), there is nothing to contradict.
+    if (expectedVideoId === null) return true;
+    return tierVideoId === expectedVideoId;
+  }
 
+  if (inlineTierIsCurrent(playerResponseVideoId(doc))) {
+    const fromPlayerResponse = channelFromPlayerResponse(doc);
+    if (hasIdentifier(fromPlayerResponse)) return fromPlayerResponse;
+  }
+
+  if (inlineTierIsCurrent(initialDataVideoId(doc))) {
+    const fromInitialData = channelFromInitialData(doc);
+    if (hasIdentifier(fromInitialData)) return fromInitialData;
+  }
+
+  // Always fresh: YouTube re-renders the byline on every navigation.
   const fromDom = channelFromDom(doc);
   if (hasIdentifier(fromDom)) return fromDom;
 

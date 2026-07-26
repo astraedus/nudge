@@ -85,10 +85,24 @@ export function applyHideToggles(
       if (!surface.pages.includes(pageType)) continue;
       if (!config[surface.toggle]) continue;
 
-      const { elements, usedFallback } = queryWithFallback(root, surface.chain, {
-        surfaceId: surface.id,
-        warn,
-      });
+      // `matchAll` surfaces are made of DIFFERENT elements that appear together (the
+      // end-screen grid AND the creator's end-cards), so every rung has to be collected.
+      // The default first-match-wins is for chains whose rungs are alternative ways to find
+      // the same element.
+      let elements: Element[];
+      let usedFallback = false;
+      if (surface.matchAll === true) {
+        elements = [];
+        for (const rule of surface.chain) {
+          const rung = queryWithFallback(root, [rule], { surfaceId: surface.id, warn });
+          elements.push(...rung.elements);
+          usedFallback ||= rung.usedFallback;
+        }
+      } else {
+        const found = queryWithFallback(root, surface.chain, { surfaceId: surface.id, warn });
+        elements = found.elements;
+        usedFallback = found.usedFallback;
+      }
       if (usedFallback) result.degradedSurfaces.push(surface.id);
 
       for (const element of elements) {

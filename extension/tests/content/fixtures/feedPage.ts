@@ -54,3 +54,43 @@ export const EMPTY_FEED_HTML = `
     <ytd-rich-grid-renderer><div id="contents"></div></ytd-rich-grid-renderer>
   </div>
 `;
+
+/**
+ * The shape live QA hit on a YouTube SEARCH results page (the "Big Think" card, 2026-07-26).
+ *
+ * The card contains TWO channel anchors: a hidden placeholder `ytd-channel-name > a` with an
+ * EMPTY href that wins the first selector rung, and the real `/@handle` link further down.
+ * Taking only the first match of the first matching rung made the card look unidentifiable,
+ * so it leaked straight through a whitelist.
+ */
+export const SEARCH_HREFLESS_PLACEHOLDER_HTML = `
+  <div id="page-manager">
+    <ytd-video-renderer data-testid="card-bigthink">
+      <ytd-channel-name id="channel-name">
+        <a class="yt-formatted-string" href="" aria-label=""></a>
+      </ytd-channel-name>
+      <div id="byline">
+        <a href="/@bigthink" aria-label="Go to channel Big Think">Big Think</a>
+      </div>
+      <a id="video-title-link" href="/watch?v=bigthink001">A Big Think upload</a>
+    </ytd-video-renderer>
+  </div>
+`;
+
+/** A feed in which every card exposes a channel, the canary must stay silent on this one. */
+export const FEED_ALL_IDENTIFIABLE_HTML = `
+  <div id="page-manager">
+    <ytd-rich-grid-renderer>
+      <div id="contents">
+        <ytd-rich-item-renderer data-testid="card-alpha">
+          <ytd-channel-name id="channel-name">
+            <a class="yt-formatted-string" href="/channel/UCALPHACHANNEL000000001">Alpha Channel</a>
+          </ytd-channel-name>
+        </ytd-rich-item-renderer>
+        <ytd-grid-video-renderer data-testid="card-bravo">
+          <a class="ytd-channel-name" href="/@bravochannel">Bravo Channel</a>
+        </ytd-grid-video-renderer>
+      </div>
+    </ytd-rich-grid-renderer>
+  </div>
+`;

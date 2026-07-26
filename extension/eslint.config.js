@@ -12,6 +12,9 @@ export default tseslint.config(
       'coverage/**',
       'playwright-report/**',
       'test-results/**',
+      // Scratch tooling the QA agent drops into this directory during live runs.
+      // Untracked and never shipped, but it would otherwise fail the local lint gate.
+      '.qa-*',
     ],
   },
   js.configs.recommended,

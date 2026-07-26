@@ -86,6 +86,9 @@ export const WATCH_PAGE_ALL_SURFACES_HTML = `
               Autoplay
             </button>
           </div>
+          <div class="ytp-ce-element" data-testid="watch-end-cards">
+            Creator end-cards, which COEXIST with the suggestion grid below
+          </div>
           <div class="ytp-endscreen-content" data-testid="watch-end-screen">
             Real in-player end-screen suggestions
           </div>

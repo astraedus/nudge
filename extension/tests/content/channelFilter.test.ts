@@ -9,8 +9,12 @@ import {
 } from '../../src/content/channelFilter';
 import { CHANNEL_HIDDEN_CLASS, COLOR_CLASS } from '../../src/content/selectors';
 import type { ChannelEntry } from '../../src/core/settingsSchema';
-import { FEED_MULTI_CHANNEL_HTML } from './fixtures/feedPage';
-import { WATCH_NOTHING_HTML, WATCH_PLAYER_RESPONSE_HTML } from './fixtures/watchPage';
+import { FEED_ALL_IDENTIFIABLE_HTML, FEED_MULTI_CHANNEL_HTML } from './fixtures/feedPage';
+import {
+  WATCH_FIXTURE_VIDEO_ID,
+  WATCH_NOTHING_HTML,
+  WATCH_PLAYER_RESPONSE_HTML,
+} from './fixtures/watchPage';
 
 /**
  * These cover the SEAM: the decision matrix itself is exhaustively tested in
@@ -63,7 +67,10 @@ function isHidden(testId: string): boolean {
  * classify every fixture as 'other'. The real controller already passes the URL it just
  * observed, so these do the same.
  */
-const WATCH_URL = 'https://www.youtube.com/watch?v=abc';
+// The `v` MUST match the fixture's inline videoId: detection deliberately rejects inline
+// data that describes a different video (the SPA-staleness guard), so a mismatched URL
+// here would silently be testing the DOM tier instead of the one we mean to exercise.
+const WATCH_URL = `https://www.youtube.com/watch?v=${WATCH_FIXTURE_VIDEO_ID}`;
 const HOME_URL = 'https://www.youtube.com/';
 
 beforeEach(() => {
@@ -286,5 +293,51 @@ describe('gray-screen mode', () => {
     // The grayscale stylesheet is unregistered by the worker; this only has to make sure no
     // stale colour class is left behind to fight the next enable.
     expect(document.documentElement.classList.contains(COLOR_CLASS)).toBe(false);
+  });
+});
+
+describe('when YouTube changes its DOM and channels stop being identifiable', () => {
+  /**
+   * The fail-open is deliberate, but it must not be SILENT: with no signal, selector rot
+   * degrades the channel filter into a no-op that looks exactly like "nothing on the list".
+   */
+  it('warns that filtering is degraded, naming how many cards it could not identify', () => {
+    loadFeed();
+    const warnings: string[] = [];
+
+    applyChannelFilter(
+      document,
+      config({ channelMode: 'WHITELIST', channels: [channel({ channelId: ALPHA })] }),
+      { warn: (message) => warnings.push(message) },
+    );
+
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/degraded/i);
+    expect(warnings[0]).toMatch(/left visible/i);
+  });
+
+  it('stays quiet when every card on the page was identified', () => {
+    // No false alarms: a canary that cries wolf is a canary nobody listens to.
+    document.body.innerHTML = FEED_ALL_IDENTIFIABLE_HTML;
+    const warnings: string[] = [];
+
+    applyChannelFilter(
+      document,
+      config({ channelMode: 'WHITELIST', channels: [channel({ channelId: ALPHA })] }),
+      { warn: (message) => warnings.push(message) },
+    );
+
+    expect(warnings).toEqual([]);
+  });
+
+  it('stays quiet while channel lists are switched off', () => {
+    loadFeed();
+    const warnings: string[] = [];
+
+    applyChannelFilter(document, config({ channelMode: 'OFF' }), {
+      warn: (message) => warnings.push(message),
+    });
+
+    expect(warnings).toEqual([]);
   });
 });

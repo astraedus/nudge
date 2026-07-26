@@ -94,6 +94,13 @@ unit-testable, exactly as the Android domain layer is.
 - **Channel identification is three-tier** (ext-03 §3): `ytInitialPlayerResponse.videoDetails`
   first, then an `ytInitialData` brace-counting scan, then a DOM selector chain. YouTube
   ships different shapes on different surfaces, so one path is not enough.
+- **THE INLINE TIERS GO STALE ON SPA NAVIGATION.** YouTube does not rewrite
+  `ytInitialPlayerResponse` / `ytInitialData` on a watch -> watch client-side hop, so they
+  keep describing whatever video was last FULL-loaded. The fast tier is therefore the
+  *stalest* one during normal browsing. Both inline tiers must prove they describe the
+  current video (their declared videoId === the URL's `v`); a tier that declares a different
+  id, or none at all, is skipped in favour of the DOM byline, which YouTube really does
+  re-render. Live QA caught this bypassing the whitelist, blacklist AND gray-screen at once.
 - **The decision is pure and separate from the DOM.** `core/channels.ts` answers "what does
   this channel mean" with no DOM at all; `content/channelFilter.ts` only applies the answer.
   That split is what let the full mode x listed x unknown matrix be tested exhaustively.
@@ -105,6 +112,17 @@ unit-testable, exactly as the Android domain layer is.
   unidentified channel never earns colour, because staying gray is harmless.
 - **Feed cards are matched per-card.** The channel chain is run SCOPED to each card; an
   unscoped query returns the first channel on the page for every card.
+- **A selector match that yields nothing is a MISS, not an answer.** `channelFromDom`
+  iterates every rung and every match until one produces an identifier, skipping hrefless
+  placeholder anchors, taking `elements[0]` of the first matching rung let a hidden empty
+  anchor on search results mask the real `/@handle` link and leak the whitelist.
+- **Some selector chains are ladders, some are lists.** A chain is normally alternatives
+  for ONE element (first match wins), but a few surfaces are genuinely several elements
+  shown together, the end-screen grid and the creator end-cards coexist, so those carry
+  `matchAll: true`. Getting this wrong hides one and leaves the other on screen.
+- **The fail-open is observable.** When some cards resolve and others do not, the content
+  script logs a one-shot warning naming the count, so YouTube DOM churn shows up in
+  devtools rather than silently degrading channel filtering into a no-op.
 
 #### Gray-screen: the mechanism and its flash behaviour
 

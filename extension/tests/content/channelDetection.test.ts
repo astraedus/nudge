@@ -22,19 +22,29 @@ import {
   detectCardChannel,
   detectWatchChannel,
   feedCards,
+  videoIdFromUrl,
 } from '../../src/content/channelDetection';
 import {
   ARIA_LABEL_VS_TEXT_HTML,
+  FRESH_DOM_CHANNEL_ID,
+  STALE_INLINE_CHANNEL_ID,
+  STALE_URL,
   TRICKY_CHANNEL_NAME,
   WATCH_DOM_ONLY_HTML,
   WATCH_INITIAL_DATA_ONLY_HTML,
+  WATCH_INLINE_MATCHES_URL_HTML,
   WATCH_MALFORMED_JSON_HTML,
   WATCH_NOTHING_HTML,
   WATCH_PLAYER_RESPONSE_HTML,
   WATCH_RENAMED_WRAPPERS_HTML,
+  WATCH_SPA_STALE_INLINE_HTML,
   WATCH_TRICKY_JSON_HTML,
 } from './fixtures/watchPage';
-import { EMPTY_FEED_HTML, FEED_MULTI_CHANNEL_HTML } from './fixtures/feedPage';
+import {
+  EMPTY_FEED_HTML,
+  FEED_MULTI_CHANNEL_HTML,
+  SEARCH_HREFLESS_PLACEHOLDER_HTML,
+} from './fixtures/feedPage';
 
 /** Mount a fixture into document.body so document-scoped lookups (script tags) can see it. */
 function mount(html: string): HTMLElement {
@@ -231,5 +241,66 @@ describe("resolving each feed card's own channel", () => {
 
     expect(() => feedCards(root)).not.toThrow();
     expect(feedCards(root)).toEqual([]);
+  });
+});
+
+describe('after a client-side navigation between videos', () => {
+  /**
+   * REGRESSION (live QA, 2026-07-26): YouTube does not rewrite its inline scripts on a
+   * watch -> watch SPA hop, so they keep describing the PREVIOUS video. Trusting them meant
+   * a non-whitelisted video played with no gate and in full colour, the whitelist, the
+   * blacklist and gray-screen were all silently bypassed during normal browsing.
+   */
+  it('identifies the channel of the video actually on screen, not the previous one', () => {
+    document.documentElement.innerHTML = WATCH_SPA_STALE_INLINE_HTML;
+
+    const detected = detectWatchChannel(document, { url: STALE_URL });
+
+    expect(detected?.channelId).toBe(FRESH_DOM_CHANNEL_ID);
+    expect(detected?.channelId).not.toBe(STALE_INLINE_CHANNEL_ID);
+  });
+
+  it('still uses the fast inline data when it describes the video actually on screen', () => {
+    // The guard must not throw away the good case: on a full page load the inline data
+    // agrees with the URL and remains the preferred, cheapest source.
+    document.documentElement.innerHTML = WATCH_INLINE_MATCHES_URL_HTML;
+
+    const detected = detectWatchChannel(document, { url: STALE_URL });
+
+    expect(detected?.channelId).toBe(STALE_INLINE_CHANNEL_ID);
+  });
+
+  it('reads the video id from a watch URL and from a Shorts URL', () => {
+    expect(videoIdFromUrl('https://www.youtube.com/watch?v=abc123&t=30')).toBe('abc123');
+    expect(videoIdFromUrl('https://www.youtube.com/shorts/xyz789')).toBe('xyz789');
+    expect(videoIdFromUrl('https://www.youtube.com/')).toBeNull();
+    expect(videoIdFromUrl('not a url')).toBeNull();
+  });
+
+  it('still identifies the channel on a page whose URL names no video at all', () => {
+    // A channel page has nothing to cross-check against, so the inline tiers stay usable.
+    document.documentElement.innerHTML = WATCH_PLAYER_RESPONSE_HTML;
+
+    const detected = detectWatchChannel(document, { url: 'https://www.youtube.com/@someone' });
+
+    expect(detected?.channelId).toBe('UCplayerresponse00000001');
+  });
+});
+
+describe('a card whose first channel anchor is an empty placeholder', () => {
+  /**
+   * REGRESSION (live QA, 2026-07-26, the "Big Think" search result): a hidden
+   * `ytd-channel-name` anchor with an empty href won the first selector rung, yielded no
+   * identifier, and the card was treated as unidentifiable, so it leaked through a
+   * whitelist even though its real `/@handle` link was right there in the same card.
+   */
+  it('still identifies the channel from the real link further down the card', () => {
+    document.body.innerHTML = SEARCH_HREFLESS_PLACEHOLDER_HTML;
+    const card = document.querySelector('[data-testid="card-bigthink"]');
+    if (card === null) throw new Error('fixture is missing the card');
+
+    const detected = detectCardChannel(card);
+
+    expect(detected?.handle).toBe('@bigthink');
   });
 });

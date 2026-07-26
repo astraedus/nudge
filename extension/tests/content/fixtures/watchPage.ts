@@ -38,10 +38,12 @@ function standardChannelDom(opts: { href: string; name: string; ariaLabel?: stri
 }
 
 /** `ytInitialPlayerResponse` inline script — tier 1's shape. */
+export const WATCH_FIXTURE_VIDEO_ID = 'watchvideo0001';
+
 function playerResponseScript(channelId: string, author: string): string {
   const payload = {
     videoDetails: {
-      videoId: 'watchvideo0001',
+      videoId: WATCH_FIXTURE_VIDEO_ID,
       title: 'A perfectly normal video',
       channelId,
       author,
@@ -260,5 +262,72 @@ export const WATCH_TRICKY_JSON_HTML = `
 export const ARIA_LABEL_VS_TEXT_HTML = `
   <div id="page-manager">
     <a href="/channel/UCariaVsText0000000008" aria-label="Go to channel Aria Label Wins">Different Text Content</a>
+  </div>
+`;
+
+/**
+ * THE SPA-STALENESS CASE (live QA, 2026-07-26).
+ *
+ * YouTube does not rewrite the inline scripts on a watch -> watch client-side navigation, so
+ * after hopping from one video to another the page carries: inline JSON describing the
+ * PREVIOUS video (and its channel), and a freshly re-rendered DOM byline describing the
+ * CURRENT one. Detection must notice the video ids disagree and trust the DOM.
+ *
+ * Pair with `STALE_URL` / `STALE_INLINE_VIDEO_ID` below.
+ */
+export const STALE_INLINE_VIDEO_ID = 'previousvideo01';
+export const CURRENT_VIDEO_ID = 'currentvideo002';
+export const STALE_URL = `https://www.youtube.com/watch?v=${CURRENT_VIDEO_ID}`;
+export const STALE_INLINE_CHANNEL_ID = 'UCstalepinnedchannel001';
+export const FRESH_DOM_CHANNEL_ID = 'UCfreshdomchannel000002';
+
+export const WATCH_SPA_STALE_INLINE_HTML = `
+  <div id="page-manager">
+    ${MINI_NAV}
+    <script>var ytInitialPlayerResponse = ${JSON.stringify({
+      videoDetails: {
+        videoId: STALE_INLINE_VIDEO_ID,
+        title: 'The video we navigated AWAY from',
+        channelId: STALE_INLINE_CHANNEL_ID,
+        author: 'Stale Pinned Channel',
+      },
+      playabilityStatus: { status: 'OK' },
+    })};</script>
+    <ytd-watch-flexy>
+      <div id="primary">${PLAYER}</div>
+      <div id="secondary">
+        ${standardChannelDom({
+          href: `/channel/${FRESH_DOM_CHANNEL_ID}`,
+          name: 'Fresh Dom Channel',
+          ariaLabel: 'Go to channel Fresh Dom Channel',
+        })}
+      </div>
+    </ytd-watch-flexy>
+  </div>
+`;
+
+/** The same page after a FULL load: the inline data agrees with the URL, so it is usable. */
+export const WATCH_INLINE_MATCHES_URL_HTML = `
+  <div id="page-manager">
+    ${MINI_NAV}
+    <script>var ytInitialPlayerResponse = ${JSON.stringify({
+      videoDetails: {
+        videoId: CURRENT_VIDEO_ID,
+        title: 'The video actually on screen',
+        channelId: STALE_INLINE_CHANNEL_ID,
+        author: 'Stale Pinned Channel',
+      },
+      playabilityStatus: { status: 'OK' },
+    })};</script>
+    <ytd-watch-flexy>
+      <div id="primary">${PLAYER}</div>
+      <div id="secondary">
+        ${standardChannelDom({
+          href: `/channel/${FRESH_DOM_CHANNEL_ID}`,
+          name: 'Fresh Dom Channel',
+          ariaLabel: 'Go to channel Fresh Dom Channel',
+        })}
+      </div>
+    </ytd-watch-flexy>
   </div>
 `;

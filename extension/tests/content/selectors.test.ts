@@ -176,8 +176,11 @@ describe('selector chains match the intended elements per page type', () => {
       warn: () => {},
     });
 
+    // Assert the OUTCOME (the Shorts entry was found, without falling back to the generic
+    // catch-all), not WHICH rung won: the chain is deliberately reordered as YouTube's DOM
+    // changes, and pinning the winning selector string turns every legitimate refresh into
+    // a false failure.
     expect(result.usedFallback).toBe(false);
-    expect(result.matchedSelector).toBe("ytd-mini-guide-entry-renderer>a[href='/shorts/']");
     expect(result.elements).toHaveLength(1);
     expect(result.elements[0]?.getAttribute('title')).toBe('Shorts');
   });
