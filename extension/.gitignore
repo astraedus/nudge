@@ -1,0 +1,8 @@
+node_modules
+.output
+.wxt
+stats.html
+coverage
+test-results
+playwright-report
+*.zip

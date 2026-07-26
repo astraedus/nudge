@@ -1,0 +1,71 @@
+/*
+ * Nudge design tokens — ported from the Android in-app theme (ui/theme/Theme.kt).
+ * Source of truth: ops/routes/nudge/research/ext-05-android-feature-inventory.md §3.
+ * Teal family; the maroon palette is MARKETING ONLY and never appears in the UI.
+ */
+
+:root {
+  /* Light (Android light color scheme) */
+  --nudge-primary: #1b6b5a;
+  --nudge-on-primary: #ffffff;
+  --nudge-primary-container: #a7f2dc;
+  --nudge-on-primary-container: #00201a;
+  --nudge-secondary: #4b635b;
+  --nudge-background: #fbfdf9;
+  --nudge-surface: #fbfdf9;
+  --nudge-surface-variant: #dbe5df;
+  --nudge-on-surface: #191c1b;
+  --nudge-on-surface-variant: #3f4945;
+  --nudge-outline: #6f7975;
+  --nudge-error: #ba1a1a;
+  --nudge-on-error: #ffffff;
+
+  /* Budget-remaining thresholds (Android: green >50%, orange 25–50%, red <25%) */
+  --nudge-ok: #1b6b5a;
+  --nudge-warn: #b26a00;
+  --nudge-danger: #ba1a1a;
+
+  --nudge-radius: 16px;
+  --nudge-radius-sm: 10px;
+  --nudge-font: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* Dark (Android dark color scheme) */
+    --nudge-primary: #8bd6c1;
+    --nudge-on-primary: #00382d;
+    --nudge-primary-container: #005143;
+    --nudge-on-primary-container: #a7f2dc;
+    --nudge-secondary: #b1ccc2;
+    --nudge-background: #191c1b;
+    --nudge-surface: #191c1b;
+    --nudge-surface-variant: #3f4945;
+    --nudge-on-surface: #e1e3e0;
+    --nudge-on-surface-variant: #bfc9c4;
+    --nudge-outline: #899390;
+    --nudge-error: #ffb4ab;
+    --nudge-on-error: #690005;
+
+    --nudge-ok: #8bd6c1;
+    --nudge-warn: #ffb95c;
+    --nudge-danger: #ffb4ab;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: var(--nudge-font);
+  background: var(--nudge-background);
+  color: var(--nudge-on-surface);
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+}
