@@ -8,18 +8,20 @@
  * Usage/stats data NEVER lives here — it is storage.local only and never leaves the device.
  */
 
+import { normalizeAllowedDomain } from './domainMatcher';
 import type { BlockMode } from './types';
 
 /**
  * 1 -> 2 (Phase 4): YouTube channel lists, gray-screen mode, and the Unhook-parity hide
  * toggles.
+ * 2 -> 3 (Phase 5): Lights Off — the scheduled global lockdown.
  *
  * Purely ADDITIVE, and every new default is "off", so a v1 user's protection is neither
  * weakened nor silently strengthened by the upgrade. `migrateSettings` is the ONLY migration
  * path and is already total — it rebuilds every field from whatever it is handed — so there
  * is no per-version branch to keep in sync as the schema grows.
  */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 /** Delay presets, seconds (Android parity). Custom range 1–300. */
 export const DELAY_PRESETS = [5, 15, 30, 60] as const;
@@ -151,6 +153,65 @@ export interface YoutubeSettings {
   disableAutoplay: boolean;
 }
 
+// ── Lights Off — the scheduled GLOBAL lockdown (v3) ──
+
+/** Minutes in a day; a minute-of-day is 0..MINUTES_PER_DAY-1. */
+export const MINUTES_PER_DAY = 1440;
+export const MINUTE_OF_DAY_MAX = MINUTES_PER_DAY - 1;
+
+/** The bedtime window the feature exists for: 22:00 -> 07:00. */
+export const LIGHTS_OFF_DEFAULT_START_MINUTE = 22 * 60;
+export const LIGHTS_OFF_DEFAULT_END_MINUTE = 7 * 60;
+export const LIGHTS_OFF_DEFAULT_PROFILE_NAME = 'Lights Off';
+
+/**
+ * How deep the lockdown cuts.
+ *
+ * BASIC (default) matches the per-site rules' scope: `main_frame` only, so a whitelisted page
+ * that embeds a non-whitelisted iframe is not cut. STRICT additionally blocks `sub_frame`
+ * requests, closing the embed side-door at the cost of breaking legitimately-embedded content
+ * on pages that were already open when the window began.
+ */
+export type LightsOffStrictness = 'BASIC' | 'STRICT';
+
+/**
+ * One Lights Off window.
+ *
+ * v1 ships ONE global lockdown, but the settings model is a LIST from day one so "add a
+ * second profile" is a feature, not a migration (design §3d). Everything reads `profiles[0]`.
+ */
+export interface LightsOffProfile {
+  id: string;
+  /** Shown once multiple profiles exist; v1 renders a single unnamed panel. */
+  name: string;
+  enabled: boolean;
+  /** ISO day numbers 1=Mon..7=Sun. null/empty = every day. */
+  days: number[] | null;
+  /**
+   * Minutes from local midnight, 0..1439. Overnight spans (end < start) are supported;
+   * start === end is an EMPTY window (never active) — the same semantics as
+   * `ScheduleOverride`, deliberately, so one evaluator serves both.
+   */
+  startMinute: number;
+  endMinute: number;
+  /**
+   * Base domains that stay reachable while the lockdown is on. Subdomains of an entry are
+   * covered too, matching how a site rule's domain behaves.
+   */
+  allowedDomains: string[];
+  strictness: LightsOffStrictness;
+}
+
+export interface LightsOffSettings {
+  /** Always at least one entry (coercion guarantees it); v1 uses `profiles[0]`. */
+  profiles: LightsOffProfile[];
+  /**
+   * "Start Lights Off now until [time]" — epoch ms. While this is in the future the lockdown
+   * is on regardless of any schedule, which is the ad-hoc wind-down people actually reach for.
+   */
+  manualUntil: number | null;
+}
+
 export interface NudgeSettings {
   schemaVersion: number;
   /** Master toggle. Off = Nudge behaves as if uninstalled (Android v1.9.2 semantics). */
@@ -161,7 +222,27 @@ export interface NudgeSettings {
   strictMode: StrictModeSettings;
   emergencyPass: EmergencyPassSettings;
   youtube: YoutubeSettings;
+  lightsOff: LightsOffSettings;
   tempAllowMinutes: number;
+}
+
+/**
+ * A fresh, DISABLED Lights Off profile.
+ *
+ * Deterministic (no clock, no randomness) so `migrateSettings(garbage)` is exactly
+ * `DEFAULT_SETTINGS` — a settings read has to be reproducible.
+ */
+export function defaultLightsOffProfile(): LightsOffProfile {
+  return {
+    id: 'lights-off-1',
+    name: LIGHTS_OFF_DEFAULT_PROFILE_NAME,
+    enabled: false,
+    days: null,
+    startMinute: LIGHTS_OFF_DEFAULT_START_MINUTE,
+    endMinute: LIGHTS_OFF_DEFAULT_END_MINUTE,
+    allowedDomains: [],
+    strictness: 'BASIC',
+  };
 }
 
 export const DEFAULT_SETTINGS: NudgeSettings = {
@@ -187,6 +268,7 @@ export const DEFAULT_SETTINGS: NudgeSettings = {
     hideComments: false,
     disableAutoplay: false,
   },
+  lightsOff: { profiles: [defaultLightsOffProfile()], manualUntil: null },
   tempAllowMinutes: DEFAULT_TEMP_ALLOW_MINUTES,
 };
 
@@ -307,6 +389,79 @@ function coerceSchedule(value: unknown): ScheduleOverride | null {
   };
 }
 
+/** ISO day numbers only; anything else is dropped. Empty means "every day", stored as null. */
+function coerceIsoDays(value: unknown): number[] | null {
+  if (!Array.isArray(value)) return null;
+  const days = [
+    ...new Set(value.filter((d): d is number => Number.isInteger(d) && d >= 1 && d <= 7)),
+  ].sort((a, b) => a - b);
+  return days.length > 0 ? days : null;
+}
+
+/**
+ * Normalize a Lights Off allow-list. Entries are deduplicated and sorted so the compiled DNR
+ * rule ids are stable across saves, and anything unreadable as a host is dropped rather than
+ * kept as a row that silently grants nothing.
+ */
+function coerceAllowedDomains(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const domains = new Set<string>();
+  for (const entry of value) {
+    if (typeof entry !== 'string') continue;
+    const normalized = normalizeAllowedDomain(entry);
+    if (normalized !== null) domains.add(normalized);
+  }
+  return [...domains].sort();
+}
+
+function coerceLightsOffProfile(value: unknown, index: number): LightsOffProfile {
+  const raw = (value && typeof value === 'object' ? value : {}) as Partial<LightsOffProfile>;
+  const fallback = defaultLightsOffProfile();
+  return {
+    id: typeof raw.id === 'string' && raw.id.trim() !== '' ? raw.id : `lights-off-${index + 1}`,
+    name:
+      typeof raw.name === 'string' && raw.name.trim() !== ''
+        ? raw.name.trim()
+        : fallback.name,
+    // Fails toward OFF, unlike `SiteRule.enabled` (which fails toward ON). A per-site rule
+    // failing on is fail-SAFE; a GLOBAL lockdown failing on would lock a user out of the
+    // whole internet because one stored field was garbage. Off is the safe direction here.
+    enabled: raw.enabled === true,
+    days: coerceIsoDays(raw.days),
+    startMinute:
+      typeof raw.startMinute === 'number'
+        ? clamp(raw.startMinute, 0, MINUTE_OF_DAY_MAX)
+        : fallback.startMinute,
+    endMinute:
+      typeof raw.endMinute === 'number'
+        ? clamp(raw.endMinute, 0, MINUTE_OF_DAY_MAX)
+        : fallback.endMinute,
+    allowedDomains: coerceAllowedDomains(raw.allowedDomains),
+    strictness: raw.strictness === 'STRICT' ? 'STRICT' : 'BASIC',
+  };
+}
+
+/**
+ * Normalize the Lights Off block. TOTAL — parallel to `coerceChannel`.
+ *
+ * Always yields at least one profile, so every reader can use `profiles[0]` without an
+ * empty-state branch (and so v1's single-panel UI always has something to render).
+ */
+export function coerceLightsOff(value: unknown): LightsOffSettings {
+  const raw = (value && typeof value === 'object' ? value : {}) as Partial<LightsOffSettings>;
+  const profiles =
+    Array.isArray(raw.profiles) && raw.profiles.length > 0
+      ? raw.profiles.map((profile, index) => coerceLightsOffProfile(profile, index))
+      : [defaultLightsOffProfile()];
+  return {
+    profiles,
+    manualUntil:
+      typeof raw.manualUntil === 'number' && Number.isFinite(raw.manualUntil) && raw.manualUntil > 0
+        ? Math.round(raw.manualUntil)
+        : null,
+  };
+}
+
 function coerceRule(value: unknown): SiteRule | null {
   if (!value || typeof value !== 'object') return null;
   const raw = value as Partial<SiteRule>;
@@ -405,6 +560,9 @@ export function migrateSettings(raw: unknown): NudgeSettings {
       hideComments: yt.hideComments === true,
       disableAutoplay: yt.disableAutoplay === true,
     },
+    // v3 field. A v1/v2 settings object has no `lightsOff` at all, so it becomes one
+    // DISABLED default profile — the upgrade cannot start a lockdown nobody asked for.
+    lightsOff: coerceLightsOff(input.lightsOff),
     tempAllowMinutes: clamp(
       typeof input.tempAllowMinutes === 'number'
         ? input.tempAllowMinutes

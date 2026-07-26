@@ -29,8 +29,17 @@ import {
   type BrowserContext,
   type Worker,
 } from '@playwright/test';
-import { DEFAULT_SETTINGS, SCHEMA_VERSION } from '../src/core/settingsSchema';
-import type { NudgeSettings, SiteRule } from '../src/core/settingsSchema';
+import { LIGHTS_OFF_RULE_ID_BASE } from '../src/background/dnr';
+import {
+  DEFAULT_SETTINGS,
+  defaultLightsOffProfile,
+  SCHEMA_VERSION,
+} from '../src/core/settingsSchema';
+import type {
+  LightsOffProfile,
+  NudgeSettings,
+  SiteRule,
+} from '../src/core/settingsSchema';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const EXTENSION_PATH = path.resolve(here, '../.output/chrome-mv3');
@@ -252,16 +261,57 @@ export const test = base.extend<ExtensionFixtures>({
   },
 });
 
-/** Poll the worker until the dynamic rule set has the expected size. */
+/**
+ * Poll the worker until the PER-SITE dynamic rule set has the expected size.
+ *
+ * Lights Off compiles into the same dynamic rule set but occupies its own id range, and its
+ * rule count varies with the allow-list and the wall clock — so it is filtered out here rather
+ * than folded into `expected`. Use `waitForLightsOffRules` for that half.
+ */
 export async function waitForRuleCount(worker: Worker, expected: number): Promise<void> {
   const deadline = Date.now() + 10_000;
   for (;;) {
-    const count = await worker.evaluate(() =>
-      chrome.declarativeNetRequest.getDynamicRules().then((rules) => rules.length),
+    const count = await worker.evaluate(
+      (idBase) =>
+        chrome.declarativeNetRequest
+          .getDynamicRules()
+          .then((rules) => rules.filter((rule) => rule.id < idBase).length),
+      LIGHTS_OFF_RULE_ID_BASE,
     );
     if (count === expected) return;
     if (Date.now() > deadline) {
-      throw new Error(`DNR rule count settled at ${count}, expected ${expected}`);
+      throw new Error(`per-site DNR rule count settled at ${count}, expected ${expected}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
+
+/** Every dynamic rule Lights Off installed, as the real DNR engine holds it. */
+export async function lightsOffRules(
+  worker: Worker,
+): Promise<chrome.declarativeNetRequest.Rule[]> {
+  return worker.evaluate(
+    (idBase) =>
+      chrome.declarativeNetRequest
+        .getDynamicRules()
+        .then((rules) => rules.filter((rule) => rule.id >= idBase)),
+    LIGHTS_OFF_RULE_ID_BASE,
+  );
+}
+
+/** Poll until Lights Off has installed (or withdrawn) its rules. */
+export async function waitForLightsOffRules(
+  worker: Worker,
+  expected: number,
+): Promise<chrome.declarativeNetRequest.Rule[]> {
+  const deadline = Date.now() + 10_000;
+  for (;;) {
+    const rules = await lightsOffRules(worker);
+    if (rules.length === expected) return rules;
+    if (Date.now() > deadline) {
+      throw new Error(
+        `Lights Off rule count settled at ${rules.length}, expected ${expected}`,
+      );
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
@@ -349,9 +399,25 @@ export function baseSettings(overrides: Partial<NudgeSettings> = {}): Partial<Nu
     emergencyPass: { enabled: true },
     // Spread the REAL defaults so adding a settings field never breaks the whole suite.
     youtube: { ...DEFAULT_SETTINGS.youtube },
+    lightsOff: structuredClone(DEFAULT_SETTINGS.lightsOff),
     tempAllowMinutes: 10,
     ...overrides,
   };
+}
+
+/**
+ * A Lights Off profile, DISABLED by default so a spec has to ask for the lockdown explicitly.
+ * `minuteOfDay` below is what tests use to place a window around "now".
+ */
+export function lightsOffProfile(
+  overrides: Partial<LightsOffProfile> = {},
+): LightsOffProfile {
+  return { ...defaultLightsOffProfile(), ...overrides };
+}
+
+/** Minutes from local midnight, offset by `deltaMinutes`, wrapped into 0..1439. */
+export function minuteOfDay(deltaMinutes = 0, now: Date = new Date()): number {
+  return (((now.getHours() * 60 + now.getMinutes() + deltaMinutes) % 1440) + 1440) % 1440;
 }
 
 /** A site rule with sensible defaults. */

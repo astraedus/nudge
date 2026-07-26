@@ -127,13 +127,56 @@ export async function saveTrackerState(state: TrackerState): Promise<void> {
   await chrome.storage.session.set({ [TRACKER_STATE_KEY]: state });
 }
 
-/** domain -> epoch ms the temporary grant expires. */
-export type TempAllowMap = Record<string, number>;
+/**
+ * Which valve opened a temporary grant.
+ *
+ * PAUSE is access earned by completing a Delay/Breathing pause; it sits BELOW a Lights Off
+ * lockdown, so a grant taken out at 21:58 stops meaning anything at 22:00. EMERGENCY is the
+ * daily 2-minute Escape Hatch — the one grant that outranks a lockdown (Anti's locked
+ * decision). The tier picks the DNR priority; see the ladder at the top of background/dnr.ts.
+ */
+export type GrantTier = 'PAUSE' | 'EMERGENCY';
 
+export interface TempAllowEntry {
+  /** Epoch ms the grant expires. */
+  until: number;
+  tier: GrantTier;
+}
+
+/** domain -> live grant. */
+export type TempAllowMap = Record<string, TempAllowEntry>;
+
+/**
+ * Read the grant map, normalizing whatever is there.
+ *
+ * Tolerates the pre-tier shape (a bare epoch-ms number per domain) by reading it as a PAUSE
+ * grant. That shape can only survive an extension reload inside a single browser session —
+ * session storage dies with the browser — but a grant map that threw or silently emptied on
+ * read would either break enforcement or hand out free access, so it is coerced the way
+ * settings are.
+ */
 export async function loadTempAllow(): Promise<TempAllowMap> {
   const stored = await chrome.storage.session.get(TEMP_ALLOW_KEY);
-  const map = stored[TEMP_ALLOW_KEY];
-  return map && typeof map === 'object' ? (map as TempAllowMap) : {};
+  const raw = stored[TEMP_ALLOW_KEY];
+  if (!raw || typeof raw !== 'object') return {};
+
+  const map: TempAllowMap = {};
+  for (const [domain, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof value === 'number') {
+      if (Number.isFinite(value)) map[domain] = { until: value, tier: 'PAUSE' };
+      continue;
+    }
+    if (value === null || typeof value !== 'object') continue;
+    const entry = value as Partial<TempAllowEntry>;
+    if (typeof entry.until !== 'number' || !Number.isFinite(entry.until)) continue;
+    map[domain] = {
+      until: entry.until,
+      // An unknown or absent tier falls back to PAUSE, the WEAKER grant. Guessing EMERGENCY
+      // would hand a corrupt entry the one privilege that punches through a lockdown.
+      tier: entry.tier === 'EMERGENCY' ? 'EMERGENCY' : 'PAUSE',
+    };
+  }
+  return map;
 }
 
 export async function saveTempAllow(map: TempAllowMap): Promise<void> {

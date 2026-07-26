@@ -15,6 +15,11 @@ import { remainingMs, tightestLimit } from '../core/budgets';
 import { extractDomain, normalizeUserInput } from '../core/domainMatcher';
 import * as pass from '../core/emergencyPass';
 import {
+  isAllowedDomain,
+  LIGHTS_OFF_RULE_NAME,
+  resolveLightsOff,
+} from '../core/lightsOff';
+import {
   DEFAULT_DELAY_SUBTITLES,
   DEFAULT_DELAY_TITLES,
   DEFAULT_HARD_BLOCK_MESSAGES,
@@ -25,6 +30,7 @@ import type {
   BlockContext,
   DashboardState,
   GrantResult,
+  LightsOffBlockInfo,
   PopupState,
   Request,
   SaveResult,
@@ -40,7 +46,9 @@ import {
 } from '../core/settingsSchema';
 import { allTimeTotals, lastNDayKeys, totalActiveSeconds } from '../core/stats';
 import * as strict from '../core/strictMode';
-import type { BlockMode } from '../core/types';
+import { block, type BlockDecision, type BlockMode } from '../core/types';
+import { formatMinuteOfDay } from '../ui/format';
+import { scheduleLightsOffBoundaries } from './alarmsHub';
 import { applyRules } from './dnr';
 import {
   loadAllUsage,
@@ -70,14 +78,60 @@ async function setPendingChallenge(challenge: string | null): Promise<void> {
   }
 }
 
+/**
+ * Lights Off, evaluated BEFORE the engine — the redirect-loop guard.
+ *
+ * THE ENGINE INVARIANT (extension/CLAUDE.md): ALLOW means "no rule applies here", and DNR has
+ * already redirected by the time anything in this file runs. Lights Off blocks almost the
+ * whole internet, and almost the whole internet is RULELESS — so handing a lockdown-blocked
+ * navigation to `evaluate()` would return ALLOW, the block page would obediently send the user
+ * back to the site, DNR would redirect again, forever, hammering the service worker. This repo
+ * has already shipped that bug once (Hard Block + Daily Limit; `e2e/redirectLoop.spec.ts`).
+ *
+ * So the answer is computed here, from the same `resolveLightsOff` the DNR compiler uses, and
+ * it SHORT-CIRCUITS: a lockdown-blocked navigation never reaches the engine at all. A
+ * whitelisted host, or an inactive window, falls through to the unchanged per-site path.
+ *
+ * It resolves to a HARD_BLOCK-shaped decision rather than a new `BlockDecision.type` so every
+ * existing consumer keeps working — `completePause` already refuses to grant access to a
+ * HARD_BLOCK, which is what makes a lockdown uncompletable for free.
+ */
+function resolveLightsOffBlock(
+  settings: NudgeSettings,
+  domain: string,
+  now: Date,
+): { decision: BlockDecision; info: LightsOffBlockInfo } | null {
+  const state = resolveLightsOff(settings, now);
+  if (!state.active) return null;
+  // An unreadable host (no dot, so `extractDomain` gave up — e.g. `http://localhost:3000`)
+  // cannot be matched against the allow-list, and DNR's catch-all has already redirected it.
+  // Treat it as blocked: returning ALLOW here is precisely the infinite loop above. Users who
+  // need such a host can add it to the allow-list, which `normalizeAllowedDomain` accepts.
+  if (isAllowedDomain(domain, state.allowedDomains)) return null;
+
+  return {
+    decision: block({ mode: 'HARD_BLOCK', ruleName: LIGHTS_OFF_RULE_NAME }),
+    info: {
+      untilLabel: formatMinuteOfDay(state.untilMinute ?? 0),
+      allowedDomains: state.allowedDomains,
+    },
+  };
+}
+
 async function buildBlockContext(target: string, now: Date): Promise<BlockContext> {
   const settings = await loadSettings();
   const domain = extractDomain(target) ?? '';
   const usedMs = domain === '' ? 0 : await todayUsageMs(domain, now);
 
-  const decision = settings.globalEnabled
-    ? evaluate(resolveActiveRules(settings.rules, domain, now), usedMs, now)
-    : { type: 'ALLOW' as const };
+  // Lights Off first, and never both: a lockdown OVERRIDES per-site rules, so its verdict is
+  // not merged with the engine's, it replaces it.
+  const lights = settings.globalEnabled ? resolveLightsOffBlock(settings, domain, now) : null;
+  const decision =
+    lights !== null
+      ? lights.decision
+      : settings.globalEnabled
+        ? evaluate(resolveActiveRules(settings.rules, domain, now), usedMs, now)
+        : { type: 'ALLOW' as const };
 
   const ledger = pass.parse(await loadPassLedger());
   const passAvailable = pass.canUseGlobal(ledger, now.getTime(), pass.LOCKOUT_MS);
@@ -86,6 +140,7 @@ async function buildBlockContext(target: string, now: Date): Promise<BlockContex
     target,
     domain,
     decision,
+    lightsOff: lights?.info ?? null,
     delayTitle: pickRandom(
       resolvePool(settings.messages.delayTitles, DEFAULT_DELAY_TITLES),
     ),
@@ -133,7 +188,14 @@ async function completePause(target: string, now: Date): Promise<GrantResult> {
   return { ok: true, until };
 }
 
-/** The Escape Hatch: one 2-minute window per rolling 24h, globally. */
+/**
+ * The Escape Hatch: one 2-minute window per rolling 24h, globally.
+ *
+ * Usable DURING a Lights Off lockdown (Anti's locked decision — a rationed valve beats a
+ * catastrophic lock, and the Commitment Lock is how you give it up). That is why the grant is
+ * minted at the EMERGENCY tier: a PAUSE-tier session rule sits below the lockdown's catch-all
+ * and would have made this button render, click, and silently do nothing.
+ */
 async function redeemEmergencyPass(target: string, now: Date): Promise<GrantResult> {
   const settings = await loadSettings();
   if (!settings.emergencyPass.enabled) {
@@ -157,6 +219,7 @@ async function redeemEmergencyPass(target: string, now: Date): Promise<GrantResu
     domain,
     pass.PASS_DURATION_MS / 60_000,
     now.getTime(),
+    'EMERGENCY',
   );
   return { ok: true, until };
 }
@@ -228,7 +291,12 @@ async function handleSave(
 
   await setPendingChallenge(null);
   await saveSettings(normalized);
-  await applyRules(normalized);
+  await applyRules(normalized, now);
+  // A Lights Off schedule edit moves its boundary alarms. The storage listener in
+  // background.ts re-arms them too, but this save path already writes DNR directly, so it
+  // re-arms directly as well rather than depending on an event to land — `create` replaces an
+  // existing alarm by name, so doing it twice is free.
+  await scheduleLightsOffBoundaries(normalized, now);
   await onActivityEvent(now.getTime());
   return { ok: true };
 }
@@ -262,7 +330,7 @@ async function addSite(
   // Adding a rule STRENGTHENS protection, so it is never gated by Strict Mode.
   const updated = migrateSettings({ ...settings, rules: [...settings.rules, rule] });
   await saveSettings(updated);
-  await applyRules(updated);
+  await applyRules(updated, now);
   return { ok: true };
 }
 

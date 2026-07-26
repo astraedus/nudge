@@ -15,7 +15,14 @@
  * No chrome.* imports — fully unit-testable under plain Node/vitest.
  */
 
-import type { NudgeSettings, SiteRule } from './settingsSchema';
+import { MINUTES_PER_DAY } from './settingsSchema';
+import type {
+  LightsOffProfile,
+  LightsOffSettings,
+  LightsOffStrictness,
+  NudgeSettings,
+  SiteRule,
+} from './settingsSchema';
 import type { BlockMode } from './types';
 
 /**
@@ -198,6 +205,99 @@ function isRuleWeakened(oldRule: SiteRule, newRule: SiteRule): boolean {
   return false;
 }
 
+// ── Lights Off axes ──
+
+/**
+ * Minutes a window covers, overnight spans included. `start === end` is an EMPTY window
+ * (never active) and correctly measures 0 — the maximal narrowing.
+ */
+export function lightsOffWindowMinutes(startMinute: number, endMinute: number): number {
+  return (((endMinute - startMinute) % MINUTES_PER_DAY) + MINUTES_PER_DAY) % MINUTES_PER_DAY;
+}
+
+/** null/empty days means "every day", so it expands to the full week for comparison. */
+function daySet(days: number[] | null): Set<number> {
+  return days === null || days.length === 0
+    ? new Set([1, 2, 3, 4, 5, 6, 7])
+    : new Set(days);
+}
+
+function strictnessStrength(strictness: LightsOffStrictness): number {
+  return strictness === 'STRICT' ? 2 : 1;
+}
+
+/**
+ * Per-profile weakening. Compared regardless of `enabled` on both sides, matching
+ * `isRuleWeakened` — editing a currently-off window still commits you to that window later,
+ * so loosening it is the same promise broken either way.
+ */
+function isLightsOffProfileWeakened(
+  oldProfile: LightsOffProfile,
+  newProfile: LightsOffProfile,
+): boolean {
+  // Turning the lockdown off entirely.
+  if (oldProfile.enabled && !newProfile.enabled) return true;
+
+  // A shorter window is less time protected.
+  if (
+    lightsOffWindowMinutes(newProfile.startMinute, newProfile.endMinute) <
+    lightsOffWindowMinutes(oldProfile.startMinute, oldProfile.endMinute)
+  ) {
+    return true;
+  }
+
+  // Dropping a covered day. Adding days is strengthening.
+  const newDays = daySet(newProfile.days);
+  for (const day of daySet(oldProfile.days)) {
+    if (!newDays.has(day)) return true;
+  }
+
+  // ADDING a domain to the allow-list makes more of the internet reachable during the
+  // lockdown — the mirror image of the per-site rules, where adding a rule is strengthening.
+  // Removing one is strengthening and stays free.
+  for (const domain of newProfile.allowedDomains) {
+    if (!oldProfile.allowedDomains.includes(domain)) return true;
+  }
+
+  if (strictnessStrength(newProfile.strictness) < strictnessStrength(oldProfile.strictness)) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Lights Off weakening across the whole block: a profile removed, any profile loosened, or a
+ * running manual lockdown cut short.
+ *
+ * Without this the Commitment Lock would be theater — a user mid-lockdown could simply add
+ * the site they wanted to the allow-list and walk straight through (design §3c).
+ */
+function isLightsOffWeakened(
+  oldLights: LightsOffSettings,
+  newLights: LightsOffSettings,
+): boolean {
+  const newById = new Map(newLights.profiles.map((profile) => [profile.id, profile] as const));
+  for (const oldProfile of oldLights.profiles) {
+    const newProfile = newById.get(oldProfile.id);
+    if (!newProfile) return true; // profile removed
+    if (isLightsOffProfileWeakened(oldProfile, newProfile)) return true;
+  }
+
+  // Ending a manual lockdown early (or cancelling it) is weakening; extending it is not.
+  // Compared without a clock, so a LAPSED manualUntil being cleared also reads as weakening —
+  // the UI therefore only offers "Cancel" while the lockdown is genuinely still running, which
+  // keeps that false positive off the user's path.
+  if (
+    oldLights.manualUntil !== null &&
+    (newLights.manualUntil === null || newLights.manualUntil < oldLights.manualUntil)
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
 /**
  * Returns true if `newSettings` is weaker protection than `oldSettings` in ANY dimension, each
  * dimension evaluated independently — softening one axis is weakening even if another is
@@ -212,6 +312,8 @@ function isRuleWeakened(oldRule: SiteRule, newRule: SiteRule): boolean {
  *  - emergencyPass.enabled false -> true (adding an escape hatch IS weakening)
  *  - tempAllowMinutes increased
  *  - youtube.shortsMode softened (HARD_BLOCK > DELAY > BREATHING > INHERIT)
+ *  - Lights Off: a profile removed, disabled, its window shortened, a covered day dropped, a
+ *    domain ADDED to the allow-list, strictness lowered, or a running manual lockdown cut short
  *
  * Adding a brand-new rule (present in `new`, absent in `old`) is strengthening, never weakening.
  */
@@ -248,6 +350,10 @@ export function isWeakening(oldSettings: NudgeSettings, newSettings: NudgeSettin
   ) {
     return true;
   }
+
+  // Axis: Lights Off — the global lockdown. Its allow-list inverts the usual polarity, so it
+  // gets its own comparison rather than being folded into the per-site rules loop.
+  if (isLightsOffWeakened(oldSettings.lightsOff, newSettings.lightsOff)) return true;
 
   return false;
 }

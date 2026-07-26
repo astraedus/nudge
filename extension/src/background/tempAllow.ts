@@ -9,11 +9,22 @@
  * State lives in storage.session and the DNR allow-rules are SESSION rules, so both halves
  * die together on browser restart — there is no way to end up with a grant recorded but not
  * enforced, or enforced but not recorded.
+ *
+ * Grants carry a TIER (`PAUSE` / `EMERGENCY`) because Lights Off made the two behave
+ * differently: a lockdown supersedes a pause grant but not the daily Escape Hatch. Both still
+ * live in ONE map with ONE alarm set, so everything downstream — expiry, revocation on a
+ * crossed budget, re-arming after a worker restart — keeps working on both without a second
+ * parallel bookkeeping path to drift out of sync.
  */
 
 import { normalizeToBaseDomain } from '../core/domainMatcher';
-import { applyTempAllows } from './dnr';
-import { loadTempAllow, saveTempAllow, type TempAllowMap } from './storage';
+import { applyTempAllows, type TempAllowGrant } from './dnr';
+import {
+  loadTempAllow,
+  saveTempAllow,
+  type GrantTier,
+  type TempAllowMap,
+} from './storage';
 
 export const TEMP_ALLOW_ALARM_PREFIX = 'nudge:tempallow:';
 
@@ -30,10 +41,15 @@ export function domainFromAlarm(alarmName: string): string | null {
 /** Drop expired entries. Pure so it can be unit tested without chrome. */
 export function pruneExpired(map: TempAllowMap, now: number): TempAllowMap {
   const next: TempAllowMap = {};
-  for (const [domain, until] of Object.entries(map)) {
-    if (until > now) next[domain] = until;
+  for (const [domain, entry] of Object.entries(map)) {
+    if (entry.until > now) next[domain] = entry;
   }
   return next;
+}
+
+/** The live grants as the network layer wants them. Pure. */
+export function grantsFromMap(map: TempAllowMap): TempAllowGrant[] {
+  return Object.entries(map).map(([domain, entry]) => ({ domain, tier: entry.tier }));
 }
 
 /**
@@ -44,20 +60,26 @@ export function pruneExpired(map: TempAllowMap, now: number): TempAllowMap {
 async function syncFromMap(map: TempAllowMap, now: number): Promise<TempAllowMap> {
   const live = pruneExpired(map, now);
   await saveTempAllow(live);
-  await applyTempAllows(Object.keys(live));
+  await applyTempAllows(grantsFromMap(live));
   return live;
 }
 
-/** Grant `domain` access for `minutes`, and schedule its expiry. */
+/**
+ * Grant `domain` access for `minutes`, and schedule its expiry.
+ *
+ * `tier` defaults to PAUSE — the weaker grant — so a future caller that forgets to think about
+ * it cannot accidentally mint something that punches through a Lights Off lockdown.
+ */
 export async function grantTempAllow(
   domain: string,
   minutes: number,
   now: number = Date.now(),
+  tier: GrantTier = 'PAUSE',
 ): Promise<number> {
   const base = normalizeToBaseDomain(domain);
   const until = now + Math.max(1, minutes) * 60_000;
   const map = await loadTempAllow();
-  map[base] = until;
+  map[base] = { until, tier };
   await syncFromMap(map, now);
   // Absolute `when` rather than delayInMinutes: alarms below 1 minute are unreliable in
   // production builds, and an absolute time survives a worker restart intact.
@@ -96,8 +118,8 @@ export async function isTempAllowed(
   now: number = Date.now(),
 ): Promise<boolean> {
   const map = await loadTempAllow();
-  const until = map[normalizeToBaseDomain(domain)];
-  return until !== undefined && until > now;
+  const entry = map[normalizeToBaseDomain(domain)];
+  return entry !== undefined && entry.until > now;
 }
 
 /**
@@ -109,8 +131,8 @@ export async function isTempAllowed(
 export async function rearmTempAllows(now: number = Date.now()): Promise<void> {
   const live = await syncFromMap(await loadTempAllow(), now);
   await Promise.all(
-    Object.entries(live).map(([domain, until]) =>
-      chrome.alarms.create(tempAllowAlarmName(domain), { when: until }),
+    Object.entries(live).map(([domain, entry]) =>
+      chrome.alarms.create(tempAllowAlarmName(domain), { when: entry.until }),
     ),
   );
 }

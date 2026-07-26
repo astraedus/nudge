@@ -118,3 +118,27 @@ export function normalizeUserInput(input: string): string | null {
   // nothing more to recover, treat as invalid.
   return null;
 }
+
+/**
+ * Normalize one Lights Off allow-list entry.
+ *
+ * Uses the ordinary site normalizer first, then falls back to accepting a DOTLESS bare host
+ * ("localhost", an intranet name). That fallback exists only because Lights Off is a GLOBAL
+ * catch-all: `http://localhost:3000` gets redirected like everything else, and
+ * `normalizeUserInput` deliberately rejects dotless hosts as "not a site". Without the
+ * fallback a dev server or intranet host would be both unreachable AND un-whitelistable —
+ * a trap rather than a choice, which is the one thing a lockdown must never be.
+ *
+ * An entry that matches nothing is harmless (it only ever grants access), so leniency here
+ * is the safe direction.
+ */
+export function normalizeAllowedDomain(input: string): string | null {
+  const direct = normalizeUserInput(input);
+  if (direct !== null) return direct;
+
+  const withoutScheme = input.trim().toLowerCase().replace(/^[a-z][a-z0-9+.-]*:\/\//, '');
+  const bare = withoutScheme.split('/')[0]!.split('?')[0]!.split('#')[0]!.split(':')[0]!;
+  // Dotless only: anything WITH a dot already had its shot at `extractDomain` above, and
+  // failing that it is malformed rather than a bare hostname.
+  return /^[a-z0-9-]+$/.test(bare) ? bare : null;
+}

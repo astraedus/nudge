@@ -1,4 +1,8 @@
-import { ensureAlarms, handleAlarm } from '../background/alarmsHub';
+import {
+  ensureAlarms,
+  handleAlarm,
+  scheduleLightsOffBoundaries,
+} from '../background/alarmsHub';
 import { applyRules } from '../background/dnr';
 import { applyGrayscale } from '../background/grayscale';
 import { registerMessageRouter } from '../background/messagesRouter';
@@ -15,6 +19,12 @@ import { IDLE_DETECTION_SECONDS, onActivityEvent } from '../background/tracker';
  * `bootstrap()` therefore runs on every worker wake (not just on install) and re-derives
  * all durable state — DNR rules, standing alarms, live temp-allow grants — because none of
  * it can be assumed to have survived.
+ *
+ * `now` is threaded explicitly through both re-derivation paths (bootstrap and the settings
+ * listener) because Lights Off makes the DNR rule set a function of the CLOCK as well as of
+ * settings: a worker waking at 23:00 must compile a lockdown that a worker waking at noon
+ * must not. Letting each layer read its own clock would work today and rot the moment one of
+ * them is tested or called with a fixed time.
  */
 export default defineBackground(() => {
   registerMessageRouter();
@@ -22,13 +32,14 @@ export default defineBackground(() => {
   async function bootstrap(): Promise<void> {
     try {
       await chrome.idle.setDetectionInterval(IDLE_DETECTION_SECONDS);
+      const now = new Date();
       const settings = await loadSettings();
-      await applyRules(settings);
+      await applyRules(settings, now);
       // Gray-screen's content-script registration persists across sessions, so it is
       // re-derived from settings here rather than only on change, otherwise a stale
       // registration could outlive the setting that asked for it.
       await applyGrayscale(settings.globalEnabled && settings.youtube.grayScreen);
-      await ensureAlarms();
+      await ensureAlarms(settings, now);
       await onActivityEvent();
     } catch (error) {
       console.error('[nudge] bootstrap failed', error);
@@ -62,8 +73,12 @@ export default defineBackground(() => {
     if (area === 'session') return;
     if (Object.keys(changes).some((key) => key === 'nudge:settings')) {
       void loadSettings().then(async (settings) => {
-        await applyRules(settings);
+        const now = new Date();
+        await applyRules(settings, now);
         await applyGrayscale(settings.globalEnabled && settings.youtube.grayScreen);
+        // A Lights Off schedule edit moves the boundaries, so the alarms have to move with
+        // it — otherwise the window would only start on the next heartbeat that noticed.
+        await scheduleLightsOffBoundaries(settings, now);
       });
     }
   });

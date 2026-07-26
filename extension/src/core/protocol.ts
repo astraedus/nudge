@@ -15,11 +15,29 @@ import type {
   SiteRule,
 } from './settingsSchema';
 
+/**
+ * Why the block page is showing Lights Off copy instead of a per-site interstitial.
+ *
+ * A SIDE-CHANNEL on purpose. Lights Off could have been a fourth `BlockDecision.type`, but
+ * every consumer of that union — the engine's exhaustive matrix, the mode branches, Android
+ * parity — would then have had to grow a case, and a decision type that no rule can produce
+ * is a trap for the next person extending the engine. Lights Off is a HARD_BLOCK that happens
+ * to have a different reason, so it travels as extra context alongside a normal decision.
+ */
+export interface LightsOffBlockInfo {
+  /** Local "HH:MM" the lockdown lifts. */
+  untilLabel: string;
+  /** The sites still reachable while it is on, for the "only these are awake" list. */
+  allowedDomains: string[];
+}
+
 /** Everything the block page needs to render, fetched in one round trip. */
 export interface BlockContext {
   target: string;
   domain: string;
   decision: BlockDecision;
+  /** Non-null when a Lights Off window — not a per-site rule — is what blocked this. */
+  lightsOff: LightsOffBlockInfo | null;
   /** Message pools already resolved (custom overrides applied, defaults otherwise). */
   delayTitle: string;
   delaySubtitle: string;
