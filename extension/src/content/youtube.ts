@@ -24,6 +24,8 @@
 import type { YoutubeConfig } from '../core/protocol';
 import { MODE_LABELS } from '../core/types';
 import { send } from '../ui/rpc';
+import { applyChannelFilter, applyGrayColor, watchChannelVerdict } from './channelFilter';
+import { applyAutoplayOff, applyHideToggles } from './unhook';
 import {
   HIDDEN_CLASS,
   NUDGE_OVERLAY_ID,
@@ -190,9 +192,19 @@ export function createShortsOverlay(
   doc: Document,
   config: Pick<YoutubeConfig, 'shortsMode' | 'shortsDelaySeconds'>,
   handlers: { onComplete: () => void; onBail: () => void },
+  /**
+   * Overrides for a gate that is not about Shorts. The channel gate is the same
+   * interstitial with different words, so it reuses this rather than growing a second
+   * near-identical overlay implementation that could drift.
+   */
+  override: { title?: string; subtitle?: string; ruleLabel?: string } = {},
 ): OverlayHandle {
   const mode = config.shortsMode === 'ALLOW' ? 'HARD_BLOCK' : config.shortsMode;
-  const copy = gateCopy(mode);
+  const base = gateCopy(mode);
+  const copy = {
+    title: override.title ?? base.title,
+    subtitle: override.subtitle ?? base.subtitle,
+  };
   const timers: number[] = [];
 
   const overlay = doc.createElement('div');
@@ -282,7 +294,7 @@ export function createShortsOverlay(
 
   const footer = doc.createElement('p');
   footer.className = 'nudge-overlay__footer';
-  footer.textContent = `Rule: YouTube Shorts · ${MODE_LABELS[mode]}`;
+  footer.textContent = `Rule: ${override.ruleLabel ?? 'YouTube Shorts'} · ${MODE_LABELS[mode]}`;
   card.append(footer);
 
   overlay.append(card);
@@ -372,6 +384,8 @@ export function initYoutubeContentScript(
   let overlay: OverlayHandle | null = null;
   /** Set once a pause is completed; cleared as soon as we leave the Shorts surface. */
   let gateSatisfied = false;
+  /** The watch URL whose channel gate the user has already completed, if any. */
+  let channelGateSatisfiedFor: string | null = null;
   let lastUrl = doc.location?.href ?? '';
   let debounceTimer: number | undefined;
   let stopped = false;
@@ -391,13 +405,29 @@ export function initYoutubeContentScript(
     const url = currentHref();
     if (url !== lastUrl) {
       lastUrl = url;
-      // Leaving Shorts resets the grant — coming back should cost you the pause again.
+      // Leaving Shorts resets the grant - coming back should cost you the pause again.
       if (pageTypeFor(url) !== 'shorts') gateSatisfied = false;
     }
 
+    // The passive layers run on EVERY pass, before and independently of any gate: hiding,
+    // feed filtering and the colour flip must be correct even while an interstitial is up,
+    // and must keep reconciling as YouTube lazy-loads more cards in.
     applyShortsHiding(doc, config, { url });
+    applyHideToggles(doc, config, { url });
+    applyChannelFilter(doc, config);
+    applyGrayColor(doc, config, { url });
+    if (config.disableAutoplay) applyAutoplayOff(doc, config);
 
-    if (!shouldGateShorts(url, config) || gateSatisfied) {
+    const shortsGated = shouldGateShorts(url, config) && !gateSatisfied;
+
+    // The channel gate is scoped to the exact URL that satisfied it, so completing a pause
+    // on one video does not buy access to the next. (Shorts keeps its own coarser grant:
+    // swiping within Shorts is one continuous session, not a fresh decision each time.)
+    const channelVerdict =
+      channelGateSatisfiedFor === url ? null : watchChannelVerdict(doc, config, { url });
+    const channelGate = channelVerdict?.action === 'BLOCK' ? channelVerdict : null;
+
+    if (!shortsGated && channelGate === null) {
       teardownOverlay();
       return;
     }
@@ -405,17 +435,45 @@ export function initYoutubeContentScript(
 
     teardownOverlay();
     pauseMedia(doc);
-    overlay = createShortsOverlay(doc, config, {
-      onComplete: () => {
-        gateSatisfied = true;
-        teardownOverlay();
-      },
-      onBail: () => {
-        teardownOverlay();
-        doc.location.assign(BAIL_URL);
-      },
-    });
-    overlayHost(doc).append(overlay.element);
+
+    if (shortsGated) {
+      overlay = createShortsOverlay(doc, config, {
+        onComplete: () => {
+          gateSatisfied = true;
+          teardownOverlay();
+        },
+        onBail: () => {
+          teardownOverlay();
+          doc.location.assign(BAIL_URL);
+        },
+      });
+    } else if (channelGate !== null) {
+      const gatedUrl = url;
+      overlay = createShortsOverlay(
+        doc,
+        { shortsMode: channelGate.mode, shortsDelaySeconds: config.channelDelaySeconds },
+        {
+          onComplete: () => {
+            channelGateSatisfiedFor = gatedUrl;
+            teardownOverlay();
+          },
+          onBail: () => {
+            teardownOverlay();
+            doc.location.assign(BAIL_URL);
+          },
+        },
+        {
+          title: 'This channel is off your list',
+          subtitle:
+            config.channelMode === 'WHITELIST'
+              ? 'You chose to watch only channels you picked. Still want this one?'
+              : 'You asked Nudge to keep you away from this channel.',
+          ruleLabel: 'YouTube channels',
+        },
+      );
+    }
+
+    if (overlay !== null) overlayHost(doc).append(overlay.element);
   }
 
   function scheduleRefresh(): void {

@@ -1,5 +1,6 @@
 import { ensureAlarms, handleAlarm } from '../background/alarmsHub';
 import { applyRules } from '../background/dnr';
+import { applyGrayscale } from '../background/grayscale';
 import { registerMessageRouter } from '../background/messagesRouter';
 import { loadSettings } from '../background/storage';
 import { IDLE_DETECTION_SECONDS, onActivityEvent } from '../background/tracker';
@@ -21,7 +22,12 @@ export default defineBackground(() => {
   async function bootstrap(): Promise<void> {
     try {
       await chrome.idle.setDetectionInterval(IDLE_DETECTION_SECONDS);
-      await applyRules(await loadSettings());
+      const settings = await loadSettings();
+      await applyRules(settings);
+      // Gray-screen's content-script registration persists across sessions, so it is
+      // re-derived from settings here rather than only on change, otherwise a stale
+      // registration could outlive the setting that asked for it.
+      await applyGrayscale(settings.globalEnabled && settings.youtube.grayScreen);
       await ensureAlarms();
       await onActivityEvent();
     } catch (error) {
@@ -55,7 +61,10 @@ export default defineBackground(() => {
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === 'session') return;
     if (Object.keys(changes).some((key) => key === 'nudge:settings')) {
-      void loadSettings().then(applyRules);
+      void loadSettings().then(async (settings) => {
+        await applyRules(settings);
+        await applyGrayscale(settings.globalEnabled && settings.youtube.grayScreen);
+      });
     }
   });
 

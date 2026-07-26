@@ -218,3 +218,120 @@ describe('migrateSettings — idempotence', () => {
     expect(twice).toEqual(valid);
   });
 });
+
+describe('upgrading an existing user from schema v1 to v2', () => {
+  /**
+   * The realistic shape stored by the shipped v1 release: no channel list, no gray-screen,
+   * no hide toggles, those fields simply did not exist yet.
+   */
+  const V1_SETTINGS = {
+    schemaVersion: 1,
+    globalEnabled: true,
+    onboardingComplete: true,
+    rules: [
+      {
+        id: 'rule-youtube.com',
+        domain: 'youtube.com',
+        mode: 'DELAY',
+        delaySeconds: 30,
+        dailyLimitMinutes: 45,
+        enabled: true,
+        createdAt: 1_700_000_000_000,
+        showTimeRemaining: true,
+        schedule: null,
+      },
+    ],
+    messages: {
+      delayTitles: ['My own title'],
+      delaySubtitles: [],
+      hardBlockMessages: [],
+    },
+    strictMode: { enabled: true, challengeLength: 48 },
+    emergencyPass: { enabled: false },
+    youtube: { shortsMode: 'HARD_BLOCK', hideShortsShelf: true, shortsDelaySeconds: 20 },
+    tempAllowMinutes: 25,
+  };
+
+  it('keeps every setting the user had already chosen', () => {
+    const migrated = migrateSettings(V1_SETTINGS);
+
+    expect(migrated.rules).toHaveLength(1);
+    expect(migrated.rules[0]).toMatchObject({
+      domain: 'youtube.com',
+      mode: 'DELAY',
+      delaySeconds: 30,
+      dailyLimitMinutes: 45,
+      showTimeRemaining: true,
+    });
+    expect(migrated.messages.delayTitles).toEqual(['My own title']);
+    expect(migrated.strictMode).toEqual({ enabled: true, challengeLength: 48 });
+    expect(migrated.emergencyPass.enabled).toBe(false);
+    expect(migrated.tempAllowMinutes).toBe(25);
+    expect(migrated.youtube).toMatchObject({
+      shortsMode: 'HARD_BLOCK',
+      hideShortsShelf: true,
+      shortsDelaySeconds: 20,
+    });
+  });
+
+  it('leaves every new feature switched off, so upgrading changes nothing the user sees', () => {
+    const migrated = migrateSettings(V1_SETTINGS);
+
+    expect(migrated.youtube.channelMode).toBe('OFF');
+    expect(migrated.youtube.channels).toEqual([]);
+    expect(migrated.youtube.grayScreen).toBe(false);
+    expect(migrated.youtube.hideHomeFeed).toBe(false);
+    expect(migrated.youtube.hideSidebarRecs).toBe(false);
+    expect(migrated.youtube.hideEndScreen).toBe(false);
+    expect(migrated.youtube.hideComments).toBe(false);
+    expect(migrated.youtube.disableAutoplay).toBe(false);
+  });
+
+  it('is stamped as the current schema version', () => {
+    expect(migrateSettings(V1_SETTINGS).schemaVersion).toBe(SCHEMA_VERSION);
+  });
+
+  it('does not change again on a second upgrade', () => {
+    const once = migrateSettings(V1_SETTINGS);
+    expect(migrateSettings(once)).toEqual(once);
+  });
+
+  it('drops a channel entry that carries no identifier at all, since it could never match', () => {
+    const withJunk = {
+      ...V1_SETTINGS,
+      youtube: {
+        ...V1_SETTINGS.youtube,
+        channels: [
+          { channelId: 'UCrealchannel00000000001', handle: null, displayName: 'Real', addedAt: 1 },
+          { channelId: null, handle: null, displayName: 'Ghost', addedAt: 2 },
+        ],
+      },
+    };
+
+    const channels = migrateSettings(withJunk).youtube.channels;
+    expect(channels).toHaveLength(1);
+    expect(channels[0]?.displayName).toBe('Real');
+  });
+
+  it('merges two entries that describe the same channel by different identifiers', () => {
+    const duplicated = {
+      ...V1_SETTINGS,
+      youtube: {
+        ...V1_SETTINGS.youtube,
+        channels: [
+          { channelId: 'UCsamechannel00000000001', handle: null, displayName: '@veritasium', addedAt: 1 },
+          { channelId: 'UCsamechannel00000000001', handle: 'veritasium', displayName: 'Veritasium', addedAt: 2 },
+        ],
+      },
+    };
+
+    const channels = migrateSettings(duplicated).youtube.channels;
+    expect(channels).toHaveLength(1);
+    // The merge fills in the identifier the first copy was missing, and prefers a real name.
+    expect(channels[0]).toMatchObject({
+      channelId: 'UCsamechannel00000000001',
+      handle: 'veritasium',
+      displayName: 'Veritasium',
+    });
+  });
+});

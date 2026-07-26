@@ -21,7 +21,7 @@ test.describe('site blocking', () => {
     await page.goto(siteUrl('blocked.test'));
 
     // The DNR redirect must carry the original URL through to the block page.
-    await expect(page).toHaveURL(/blocked\.html\?target=http:\/\/blocked\.test\//);
+    await expect(page).toHaveURL(/blocked\.html\?target=https:\/\/blocked\.test\//);
     await expect(page.getByRole('button', { name: /go back/i })).toBeVisible();
   });
 

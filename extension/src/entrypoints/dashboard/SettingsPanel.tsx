@@ -20,14 +20,12 @@ import {
   TEMP_ALLOW_MIN_MINUTES,
 } from '../../core/settingsSchema';
 import type { NudgeSettings, SiteRule } from '../../core/settingsSchema';
-import type { BlockMode } from '../../core/types';
 import { MODE_LABELS } from '../../core/types';
 import { buildExport, dedupeImportedRules, parseImport } from '../../ui/exportImport';
 import { formatMinuteOfDay } from '../../ui/format';
 import { Button, Card, Toggle } from '../../ui/components';
 import { RuleEditor } from './RuleEditor';
-
-const MODES: BlockMode[] = ['HARD_BLOCK', 'DELAY', 'BREATHING'];
+import { YoutubePanel } from './YoutubePanel';
 
 const DIFFICULTIES: { label: string; length: number }[] = [
   { label: 'Easy', length: CHALLENGE_LENGTH_EASY },
@@ -455,75 +453,7 @@ export function SettingsPanel({
         </p>
       </Card>
 
-      <Card title="YouTube Shorts">
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
-          <Chip
-            label="Inherit"
-            active={settings.youtube.shortsMode === 'INHERIT'}
-            onClick={() => patch({ youtube: { ...settings.youtube, shortsMode: 'INHERIT' } })}
-          />
-          {MODES.map((m) => (
-            <Chip
-              key={m}
-              label={MODE_LABELS[m]}
-              active={settings.youtube.shortsMode === m}
-              onClick={() => patch({ youtube: { ...settings.youtube, shortsMode: m } })}
-            />
-          ))}
-        </div>
-        <p style={{ margin: '0 0 14px', fontSize: 12, color: 'var(--nudge-on-surface-variant)' }}>
-          "Inherit" follows whatever rule you set for youtube.com.
-        </p>
-
-        {settings.youtube.shortsMode !== 'INHERIT' && settings.youtube.shortsMode !== 'HARD_BLOCK' && (
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 14 }}>
-            {DELAY_PRESETS.map((preset) => (
-              <Chip
-                key={preset}
-                label={`${preset}s`}
-                active={settings.youtube.shortsDelaySeconds === preset}
-                onClick={() => patch({ youtube: { ...settings.youtube, shortsDelaySeconds: preset } })}
-              />
-            ))}
-            <label style={{ fontSize: 12, color: 'var(--nudge-on-surface-variant)' }}>
-              Custom
-              <input
-                type="number"
-                aria-label="Shorts custom delay seconds"
-                min={DELAY_MIN_SECONDS}
-                max={DELAY_MAX_SECONDS}
-                value={settings.youtube.shortsDelaySeconds}
-                onChange={(e) => {
-                  const parsed = Number(e.target.value);
-                  if (e.target.value !== '' && Number.isFinite(parsed)) {
-                    patch({
-                      youtube: {
-                        ...settings.youtube,
-                        shortsDelaySeconds: clamp(parsed, DELAY_MIN_SECONDS, DELAY_MAX_SECONDS),
-                      },
-                    });
-                  }
-                }}
-                style={{
-                  width: 64,
-                  marginLeft: 6,
-                  padding: '6px 8px',
-                  borderRadius: 8,
-                  border: '1px solid var(--nudge-outline)',
-                  background: 'var(--nudge-background)',
-                  color: 'var(--nudge-on-surface)',
-                }}
-              />
-            </label>
-          </div>
-        )}
-
-        <Toggle
-          checked={settings.youtube.hideShortsShelf}
-          onChange={(hideShortsShelf) => patch({ youtube: { ...settings.youtube, hideShortsShelf } })}
-          label="Hide Shorts shelf"
-        />
-      </Card>
+      <YoutubePanel settings={settings.youtube} onChange={(youtube) => patch({ youtube })} />
 
       <Card title="Escape Hatch">
         <Toggle

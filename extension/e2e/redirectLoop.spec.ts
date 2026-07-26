@@ -43,7 +43,7 @@ test.describe('Hard Block + Daily Time Limit (redirect-loop regression)', () => 
     // Settled: the block page stayed put rather than bouncing back to the site.
     expect(navigations).toBe(afterLoad);
     await expect(page).toHaveURL(/blocked\.html\?target=/);
-    expect(page.url()).not.toMatch(/^http:\/\/blocked\.test/);
+    expect(page.url()).not.toMatch(/^https?:\/\/blocked\.test/);
   });
 
   test('under budget it is a plain Hard Block, not a "limit reached" block', async ({

@@ -55,10 +55,13 @@ src/
     strictMode.ts       <- domain/lock/StrictModeChallenge.kt + RuleWeakening.kt
     emergencyPass.ts    <- domain/emergency/EmergencyPass.kt
     stats.ts            <- ui/screens/stats/StatsCalculator.kt
+    channels.ts         (channel-list decision matrix; pure, no DOM)
     budgets.ts, messages.ts, ruleResolver.ts
   background/   The service worker: dnr, tracker, tempAllow, alarmsHub, badge,
                 messagesRouter, storage.
-  content/      YouTube: selectors.ts (ALL selectors), youtube.ts, youtube.css
+  content/      YouTube: selectors.ts (ALL selectors), youtube.ts, youtube.css,
+                channelDetection.ts (3-tier channel identification), channelFilter.ts
+                (feed filtering + watch gate + colour flip), unhook.ts (hide toggles)
   entrypoints/  WXT entrypoints: background, blocked/, popup/, dashboard/, onboarding/,
                 youtube.content.ts
   ui/           Shared React primitives + design tokens + typed rpc wrapper
@@ -85,6 +88,47 @@ unit-testable, exactly as the Android domain layer is.
 5. YouTube SPA navigation is invisible to DNR, so `content/youtube.ts` handles in-page
    Shorts with 3-layer nav detection (`yt-navigate-finish` + `popstate` + debounced
    observer).
+
+### Channel lists, gray-screen and the hide toggles (v1.1)
+
+- **Channel identification is three-tier** (ext-03 §3): `ytInitialPlayerResponse.videoDetails`
+  first, then an `ytInitialData` brace-counting scan, then a DOM selector chain. YouTube
+  ships different shapes on different surfaces, so one path is not enough.
+- **The decision is pure and separate from the DOM.** `core/channels.ts` answers "what does
+  this channel mean" with no DOM at all; `content/channelFilter.ts` only applies the answer.
+  That split is what let the full mode x listed x unknown matrix be tested exhaustively.
+- **The unknown-channel case FAILS OPEN, deliberately and observably.** If detection fails
+  (YouTube moved its DOM, the page hasn't hydrated), a hard whitelist that failed *shut*
+  would block ALL of YouTube the moment a selector rots. So an unidentified channel is
+  allowed, but with a distinct `reason: 'unknown-channel'`, so "we checked and it's fine" is
+  always distinguishable from "we couldn't tell". Gray-screen takes the OPPOSITE bias: an
+  unidentified channel never earns colour, because staying gray is harmless.
+- **Feed cards are matched per-card.** The channel chain is run SCOPED to each card; an
+  unscoped query returns the first channel on the page for every card.
+
+#### Gray-screen: the mechanism and its flash behaviour
+
+The requirement is contradictory on its face, the CSS must be *gateable* (off when the
+feature is off) AND applied *before first paint* (or the page flashes in full colour, which
+is exactly the hit the feature exists to remove). Neither obvious option delivers both:
+
+| Approach | Gateable? | Flash-free? |
+|---|---|---|
+| Static `content_scripts.css` in the manifest | No, always on | Yes |
+| CSS injected from JS after a storage read | Yes | No, paints in colour first |
+| **Dynamic `chrome.scripting.registerContentScripts` with `css`** | **Yes** | **Yes** |
+
+We use the third. The service worker registers `public/grayscale.css` while the feature is on
+and unregisters it when off; Chrome injects registered CSS "before any DOM is constructed or
+displayed" (verified in the `chrome.scripting` reference). Registration is re-derived from
+settings on every worker wake, because `persistAcrossSessions` defaults to true and a stale
+registration would otherwise outlive the setting that asked for it.
+
+**The one flash that remains, and why it is the right one:** going gray -> COLOUR flickers
+once, after the channel check resolves, on an *allowed* channel. That direction is
+unavoidable (we cannot know the channel before the page exists) and is the correct trade: a
+brief gray frame on a video you're allowed to watch is a far better failure than a colour
+frame on every video you are trying not to be pulled into.
 
 ## Non-negotiables
 
@@ -133,6 +177,20 @@ xvfb), scoped with `paths: ['extension/**']`. The Android workflow carries the m
 - **Return `true` from the `onMessage` listener** to keep the channel open for an async
   response, and always send *something* — otherwise callers hang forever.
 - **Gate settings changes in the WORKER, not the UI.** A gate a page can skip is not a gate.
+- **`chrome.scripting.registerContentScripts` accepts `css` and injects it before first
+  paint.** That is the only way to have CSS that is BOTH runtime-gateable and flash-free;
+  static manifest CSS cannot be turned off and JS-injected CSS is always too late.
+- **A hard whitelist must fail OPEN.** Whatever identifies the thing being filtered can
+  break; if 'unidentified' means 'blocked', one rotted selector blocks the entire site.
+  Fail open, but carry a distinct reason so the fail-open is observable rather than silent.
+- **e2e can drive the YouTube content script with no network**: map `*.youtube.com` onto
+  the local fixture server too. It MUST be served over HTTPS, youtube.com is in Chrome's
+  HSTS preload list, so `http://` is force-upgraded before the resolver rule applies and a
+  plain-HTTP server answers ERR_SSL_PROTOCOL_ERROR. The fixture generates a throwaway
+  self-signed cert per run (never committed) and Chrome runs with --ignore-certificate-errors.
+- **Each hiding feature owns its own CSS class.** Shorts hiding, the Unhook toggles and the
+  channel filter use three different classes: with one shared class, turning any of them
+  off would un-hide the others' elements.
 - **ENGINE INVARIANT: if any rule applies, the verdict is a BLOCK.** ALLOW means "no rule
   applies here" and nothing else. DNR has already redirected by the time the engine runs, so
   an ALLOW while a rule still applies is not a harmless no-op — it bounces the user back to
@@ -180,5 +238,11 @@ xvfb), scoped with `paths: ['extension/**']`. The Android workflow carries the m
   rather than pretending; honesty is the differentiator (ext-02).
 - YouTube fixtures in `tests/content/fixtures/` are hand-authored from the ext-03 taxonomy,
   not live DOM captures. Refresh them from real YouTube DOM when possible.
-- v1.1 scope (channel whitelist/blacklist, gray-screen mode, Instagram/TikTok/X surfaces) is
-  specified in the PRD but not built.
+- Instagram / TikTok / X reel surfaces are specified in the PRD's v1.1 section but NOT built
+, this phase covered the YouTube half only.
+- **Disabling autoplay is best-effort.** There is no API for it, so we click the player's
+  own switch when it reads `aria-checked="true"`. YouTube re-renders the player and can
+  restore its own state, so it is re-applied on every SPA navigation and is not a guarantee.
+  The dashboard says so plainly rather than implying certainty.
+- Channel detection depends on YouTube's `ytInitialPlayerResponse` / `ytInitialData` shapes.
+  Fixture tests cover the documented shapes, but they are hand-authored, not live captures.

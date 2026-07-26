@@ -170,3 +170,25 @@
     transition: none;
   }
 }
+
+/*
+ * Unhook-parity hiding (src/content/unhook.ts).
+ *
+ * A DISTINCT class from `.nudge-hidden`: Shorts hiding and the Unhook toggles are
+ * independent features, and sharing one class would mean turning Shorts hiding off also
+ * un-hid your comments.
+ */
+.nudge-unhook-hidden {
+  display: none !important;
+}
+
+/*
+ * Feed cards removed by the channel filter (src/content/channelFilter.ts).
+ *
+ * Its own class again, for the same reason: a card can be hidden because it is a Short OR
+ * because its channel is not allowed, and turning either feature off must only reveal the
+ * cards that feature was responsible for.
+ */
+.nudge-channel-hidden {
+  display: none !important;
+}

@@ -1,0 +1,153 @@
+/**
+ * Channel lists applied to the page: feed composition, the watch-page verdict, and the
+ * gray-screen colour flip.
+ *
+ * Split from youtube.ts so all three are testable in jsdom without the SPA controller:
+ * every function takes its root and config as arguments and touches nothing global.
+ *
+ * The DECISION lives in core/channels.ts (pure, exhaustively tested); this module only
+ * finds the channel (content/channelDetection.ts) and applies the answer to the DOM. Keeping
+ * "what does this mean" and "what does the page look like" apart is what let the decision
+ * matrix — including the fail-open unknown-channel case — be tested without any DOM at all.
+ */
+
+import { decideChannel, shouldShowInColor, type ChannelProbe } from '../core/channels';
+import type { YoutubeConfig } from '../core/protocol';
+import { detectCardChannel, detectWatchChannel, feedCards } from './channelDetection';
+import { CHANNEL_HIDDEN_CLASS, COLOR_CLASS, NUDGE_OVERLAY_ID, pageTypeFor } from './selectors';
+
+/** The slice of config this module needs. */
+export type ChannelConfig = Pick<
+  YoutubeConfig,
+  'enabled' | 'channelMode' | 'channels' | 'channelBlockMode' | 'grayScreen'
+>;
+
+export interface ChannelFilterResult {
+  /** Cards newly hidden this pass. */
+  hidden: number;
+  /** Cards newly revealed this pass. */
+  revealed: number;
+  /** Cards whose channel could not be identified at all. */
+  unidentified: number;
+}
+
+function probeOf(detected: { channelId: string | null; handle: string | null } | null): ChannelProbe {
+  return { channelId: detected?.channelId ?? null, handle: detected?.handle ?? null };
+}
+
+/**
+ * Hide feed cards whose channel the list disallows.
+ *
+ * Reconcile-and-diff, like the other appliers: compute the set that SHOULD be hidden right
+ * now, then reveal anything currently hidden that is not in it. That is what makes flipping
+ * the feature off restore the feed without a reload.
+ *
+ * Not page-type scoped: feed cards appear on the home feed, subscriptions, search results
+ * and the watch sidebar alike, and a card is a card wherever it shows up.
+ *
+ * A card whose channel cannot be identified is LEFT VISIBLE, matching `decideChannel`'s
+ * documented fail-open: a detection failure must degrade to "YouTube looks normal", never to
+ * "the feed is empty and the extension looks broken".
+ */
+export function applyChannelFilter(
+  root: Document | Element,
+  config: ChannelConfig,
+): ChannelFilterResult {
+  const result: ChannelFilterResult = { hidden: 0, revealed: 0, unidentified: 0 };
+  const active = config.enabled && config.channelMode !== 'OFF';
+
+  const shouldHide = new Set<Element>();
+  if (active) {
+    for (const card of feedCards(root)) {
+      if (card.id === NUDGE_OVERLAY_ID || card.closest(`#${NUDGE_OVERLAY_ID}`)) continue;
+      const detected = detectCardChannel(card);
+      if (detected === null) {
+        result.unidentified += 1;
+        continue;
+      }
+      const verdict = decideChannel({
+        mode: config.channelMode,
+        channels: config.channels,
+        probe: probeOf(detected),
+        blockMode: config.channelBlockMode,
+      });
+      if (verdict.action === 'BLOCK') shouldHide.add(card);
+    }
+  }
+
+  for (const card of shouldHide) {
+    if (card.classList.contains(CHANNEL_HIDDEN_CLASS)) continue;
+    card.classList.add(CHANNEL_HIDDEN_CLASS);
+    result.hidden += 1;
+  }
+
+  for (const hiddenCard of Array.from(root.querySelectorAll(`.${CHANNEL_HIDDEN_CLASS}`))) {
+    if (shouldHide.has(hiddenCard)) continue;
+    hiddenCard.classList.remove(CHANNEL_HIDDEN_CLASS);
+    result.revealed += 1;
+  }
+
+  return result;
+}
+
+/**
+ * The channel verdict for the CURRENT watch page, or null when channel lists are off or
+ * this is not a watch page.
+ */
+export function watchChannelVerdict(
+  doc: Document,
+  config: ChannelConfig,
+  options: { url?: string } = {},
+): ReturnType<typeof decideChannel> | null {
+  if (!config.enabled || config.channelMode === 'OFF') return null;
+  const url = options.url ?? doc.location?.href ?? '';
+  if (pageTypeFor(url) !== 'watch') return null;
+
+  return decideChannel({
+    mode: config.channelMode,
+    channels: config.channels,
+    probe: probeOf(detectWatchChannel(doc)),
+    blockMode: config.channelBlockMode,
+  });
+}
+
+/**
+ * Flip <html> between grayscale and colour.
+ *
+ * The grayscale itself comes from grayscale.css, registered by the service worker only while
+ * the feature is on (see background/grayscale.ts) — so when gray-screen is off this function
+ * only has to make sure it isn't leaving a stale colour class behind.
+ *
+ * Colour is a REWARD for a positively-identified allowed channel. An unidentified channel
+ * stays gray, which is the opposite bias to blocking: failing toward gray is harmless, while
+ * failing toward blocked would break YouTube.
+ */
+export function applyGrayColor(
+  doc: Document,
+  config: ChannelConfig,
+  options: { url?: string } = {},
+): boolean {
+  const root = doc.documentElement;
+  if (root === null) return false;
+
+  if (!config.enabled || !config.grayScreen) {
+    root.classList.remove(COLOR_CLASS);
+    return false;
+  }
+
+  const url = options.url ?? doc.location?.href ?? '';
+  const pageType = pageTypeFor(url);
+  // Only a watch or channel page has a single channel whose identity could earn colour.
+  // A feed is a mix of many, so it stays gray.
+  const detected =
+    pageType === 'watch' || pageType === 'channel' ? detectWatchChannel(doc) : null;
+
+  const inColor = shouldShowInColor({
+    mode: config.channelMode,
+    channels: config.channels,
+    probe: probeOf(detected),
+  });
+
+  root.classList.toggle(COLOR_CLASS, inColor);
+  return inColor;
+}
