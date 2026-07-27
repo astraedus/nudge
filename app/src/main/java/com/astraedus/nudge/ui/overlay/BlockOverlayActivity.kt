@@ -4,6 +4,7 @@ import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.lifecycle.Lifecycle
 import com.astraedus.nudge.data.db.entity.UsageEvent
 import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.data.repository.UsageRepository
@@ -187,10 +188,32 @@ class BlockOverlayActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * Leaving the overlay ABANDONS the block attempt (issue #8). This activity is singleInstance in
+     * its own task with an empty taskAffinity, so tabbing out (Home, a recents switch, screen off)
+     * only STOPPED it — it stayed alive in the background with its countdown still running, hit zero
+     * invisibly, granted passthrough, and the blocked app then opened with no delay at all. Dismissing
+     * on stop means the next entry into the blocked app is evaluated fresh and gets a fresh, full
+     * delay, and no orphaned overlay task can linger.
+     *
+     * [isFinishing] guard: [onTimerComplete] / [navigateHome] / the emergency pass already finished us.
+     * [isChangingConfigurations] guard: a rotation must NOT dismiss a live block.
+     */
+    override fun onStop() {
+        super.onStop()
+        if (!isFinishing && !isChangingConfigurations) {
+            NudgeAccessibilityService.isOverlayActive = false
+            finish()
+        }
+    }
+
     /** Timer finished -- user waited patiently, let them through to the blocked app. */
     private fun onTimerComplete() {
+        // Only grant passthrough if the overlay is genuinely on screen. A countdown that somehow
+        // reached zero while backgrounded must never open the app: that silent grant was the
+        // issue #8 bypass. Belt-and-braces behind the lifecycle-gated ticker and onStop above.
         val pkg = intent.getStringExtra(EXTRA_PACKAGE_NAME) ?: ""
-        if (pkg.isNotEmpty()) {
+        if (pkg.isNotEmpty() && lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
             passthroughManager.grant(
                 packageName = pkg,
                 featureKey = intent.getStringExtra(EXTRA_FEATURE_KEY)

@@ -26,6 +26,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.delay
 
 @Composable
@@ -54,12 +57,20 @@ fun DelayContent(
         label = "countdown_progress"
     )
 
-    LaunchedEffect(Unit) {
-        while (remainingSeconds > 0) {
-            delay(1000L)
-            remainingSeconds--
+    // The countdown ticks ONLY while the overlay is actually on screen (issue #8). A plain
+    // LaunchedEffect(Unit) is not frame-gated: `delay()` kept counting after the user tabbed out,
+    // so the timer reached zero invisibly and granted passthrough while they were on the launcher —
+    // returning to the app then opened it with no delay at all. `remainingSeconds` is remembered
+    // OUTSIDE this block, so a pause resumes where it left off instead of restarting.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(lifecycleOwner) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            while (remainingSeconds > 0) {
+                delay(1000L)
+                remainingSeconds--
+            }
+            onComplete()
         }
-        onComplete()
     }
 
     Surface(

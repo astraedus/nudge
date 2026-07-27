@@ -22,6 +22,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -31,7 +32,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.delay
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 
 @Composable
 fun BreathingContent(
@@ -55,43 +58,54 @@ fun BreathingContent(
 
     val inhaleMs = 4000
     val exhaleMs = 4000
-    val cycleMs = inhaleMs + exhaleMs
+    val totalMs = delaySeconds * 1000L
 
-    // Breathing cycle animation
-    LaunchedEffect(Unit) {
-        val totalMs = delaySeconds * 1000L
-        val startTime = System.currentTimeMillis()
+    // Time the user has actually spent looking at the exercise. Held outside the lifecycle block so
+    // it survives a pause, and accumulated per visible segment rather than measured from a single
+    // start timestamp — otherwise time spent away from the overlay would still count down (#8).
+    var elapsedMs by remember { mutableLongStateOf(0L) }
 
-        while (true) {
-            val elapsed = System.currentTimeMillis() - startTime
-            if (elapsed >= totalMs) {
-                onComplete()
-                break
+    // Breathing cycle animation — runs ONLY while the overlay is on screen (issue #8).
+    val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(lifecycleOwner, totalMs) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            var segmentStart = System.currentTimeMillis()
+
+            // Fold the segment that just ended into the accumulated total, refresh the progress
+            // bar, and report whether the exercise is finished.
+            fun tick(): Boolean {
+                val now = System.currentTimeMillis()
+                elapsedMs = advanceBreathingElapsed(elapsedMs, segmentStart, now)
+                segmentStart = now
+                overallProgress = breathingProgress(elapsedMs, totalMs)
+                return isBreathingComplete(elapsedMs, totalMs)
             }
 
-            overallProgress = (elapsed.toFloat() / totalMs).coerceIn(0f, 1f)
+            while (true) {
+                if (tick()) {
+                    onComplete()
+                    break
+                }
 
-            // Inhale: scale from 0.6 to 1.0 over 4 seconds
-            isInhaling = true
-            circleScale.animateTo(
-                targetValue = 1.0f,
-                animationSpec = tween(durationMillis = inhaleMs, easing = LinearEasing)
-            )
+                // Inhale: scale from 0.6 to 1.0 over 4 seconds
+                isInhaling = true
+                circleScale.animateTo(
+                    targetValue = 1.0f,
+                    animationSpec = tween(durationMillis = inhaleMs, easing = LinearEasing)
+                )
 
-            val elapsedAfterInhale = System.currentTimeMillis() - startTime
-            if (elapsedAfterInhale >= totalMs) {
-                onComplete()
-                break
+                if (tick()) {
+                    onComplete()
+                    break
+                }
+
+                // Exhale: scale from 1.0 to 0.6 over 4 seconds
+                isInhaling = false
+                circleScale.animateTo(
+                    targetValue = 0.6f,
+                    animationSpec = tween(durationMillis = exhaleMs, easing = LinearEasing)
+                )
             }
-
-            overallProgress = (elapsedAfterInhale.toFloat() / totalMs).coerceIn(0f, 1f)
-
-            // Exhale: scale from 1.0 to 0.6 over 4 seconds
-            isInhaling = false
-            circleScale.animateTo(
-                targetValue = 0.6f,
-                animationSpec = tween(durationMillis = exhaleMs, easing = LinearEasing)
-            )
         }
     }
 
@@ -211,3 +225,18 @@ fun BreathingContent(
         }
     }
 }
+
+/**
+ * Fold the wall-clock duration of the segment that just ended into the accumulated visible time.
+ * Clamped at zero so a backwards clock jump (NTP correction, timezone change) can never rewind
+ * progress and strand the user on the exercise.
+ */
+internal fun advanceBreathingElapsed(elapsedMs: Long, segmentStartMs: Long, nowMs: Long): Long =
+    elapsedMs + (nowMs - segmentStartMs).coerceAtLeast(0L)
+
+/** Fraction of the exercise completed, clamped to 0f..1f. A zero-length exercise reads as done. */
+internal fun breathingProgress(elapsedMs: Long, totalMs: Long): Float =
+    if (totalMs <= 0L) 1f else (elapsedMs.toFloat() / totalMs).coerceIn(0f, 1f)
+
+/** True once the accumulated visible time has covered the configured exercise length. */
+internal fun isBreathingComplete(elapsedMs: Long, totalMs: Long): Boolean = elapsedMs >= totalMs
