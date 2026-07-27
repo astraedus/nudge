@@ -68,6 +68,9 @@ class NudgeAccessibilityService : AccessibilityService() {
     private val lastContentChangedTime = mutableMapOf<String, Long>()
     private val contentChangedDebounceMs = 2000L
 
+    /** Per-package throttle for the issue #7 content-change app-switch check. */
+    private val lastSwitchCheckTime = mutableMapOf<String, Long>()
+
     // Web domain blocking state
     @Volatile
     private var lastBlockedDomain: String? = null
@@ -85,6 +88,14 @@ class NudgeAccessibilityService : AccessibilityService() {
 
         /** Upper bound on nodes scanned when harvesting Settings window text (bounded traversal). */
         private const val MAX_NODES_SCANNED = 800
+
+        /**
+         * Minimum gap between active-window reads for the issue #7 content-change switch check.
+         * Short enough that a real re-entry is still caught on its first event (the previous check
+         * for that package is always older than this), long enough that a sustained stream of
+         * content changes cannot hammer the node tree.
+         */
+        private const val SWITCH_CHECK_DEBOUNCE_MS = 500L
 
         val SYSTEM_PACKAGES = setOf(
             "com.android.systemui",
@@ -132,6 +143,42 @@ class NudgeAccessibilityService : AccessibilityService() {
             return packageName == FRAMEWORK_PACKAGE ||
                 packageName in IME_PACKAGES ||
                 (currentImePackage != null && packageName == currentImePackage)
+        }
+
+        /**
+         * Issue #7: re-entering an app via the recents overview or a notification tap sometimes
+         * delivers ONLY [AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED] — no
+         * TYPE_WINDOW_STATE_CHANGED — so [evaluateForegroundPackage] never ran for that return.
+         * The user got no delay re-block, no counter session and no time-remaining overlay: "the
+         * app timer does not start on re-entrance".
+         *
+         * Edge-triggering on *every* content change would fix that and immediately reintroduce
+         * issue #5: content-change events also arrive from windows that are NOT in front, so a
+         * ghost app-switch would clear the post-delay passthrough and re-block the user. The
+         * decision is therefore STATE-VERIFIED — the event's package must also own the real active
+         * window ([AccessibilityService.getRootInActiveWindow]) before it counts as a switch.
+         *
+         * Cheap rejections run before [activeWindowPackage] is invoked, so the node-tree read never
+         * happens for the app the user is already in (the overwhelmingly common case on this very
+         * hot path).
+         *
+         * @param activeWindowPackage package owning the active window, or null when it could not be
+         *   read — an unverifiable event is never treated as a switch (fail soft toward doing
+         *   nothing, since a false positive costs the user their passthrough).
+         */
+        internal fun shouldTreatContentChangeAsAppSwitch(
+            packageName: String,
+            lastPackage: String?,
+            ownPackageName: String,
+            currentImePackage: String?,
+            activeWindowPackage: () -> String?
+        ): Boolean {
+            if (packageName.isBlank()) return false
+            if (packageName == lastPackage) return false
+            if (packageName == ownPackageName) return false
+            if (packageName in SYSTEM_PACKAGES) return false
+            if (isTransientNonAppPackage(packageName, currentImePackage)) return false
+            return activeWindowPackage() == packageName
         }
 
         val WINDOW_CHANGE_EVENT_TYPES = setOf(
@@ -717,6 +764,15 @@ class NudgeAccessibilityService : AccessibilityService() {
         }
 
         if (packageName !in InAppDetector.SUPPORTED_PACKAGES) {
+            // Issue #7: a re-entry the OS delivers WITHOUT a TYPE_WINDOW_STATE_CHANGED (recents
+            // overview, notification tap) would otherwise never be evaluated for this package —
+            // only SUPPORTED_PACKAGES fell through to evaluation below. Verify against the real
+            // active window before treating it as a switch (see the pure decision function), and
+            // throttle the attempt: evaluation early-returns (emergency pass, passthrough) leave
+            // lastPackage untouched, so without this the node-tree read would repeat on every
+            // content change for the whole of that window.
+            maybeEvaluateContentChangeAsAppSwitch(packageName)
+
             // For non-SUPPORTED packages (e.g., React Native apps like Discord that don't
             // fire TYPE_VIEW_CLICKED), use content changes as a proxy for user interaction.
             interactionHandler.handleContentChanged(packageName)
@@ -751,6 +807,47 @@ class NudgeAccessibilityService : AccessibilityService() {
                 handleDecision(decision, packageName, feature.key)
             }
         }
+    }
+
+    /**
+     * Issue #7 fallback: treat a content-change event as a genuine foreground app switch when the
+     * event's package really does own the active window, and route it into normal evaluation so the
+     * re-entry gets its delay re-block / counter session / time-remaining overlay.
+     *
+     * Throttled per package: [evaluateForegroundPackage] early-returns (an active emergency pass,
+     * post-delay passthrough) without advancing `lastPackage`, so the cheap same-package rejection
+     * inside the decision function would not fire and the active-window read would run on every
+     * content-change event for the duration of that window.
+     */
+    private fun maybeEvaluateContentChangeAsAppSwitch(packageName: String) {
+        val now = System.currentTimeMillis()
+        val lastAttempt = lastSwitchCheckTime[packageName] ?: 0L
+        if ((now - lastAttempt) < SWITCH_CHECK_DEBOUNCE_MS) return
+        lastSwitchCheckTime[packageName] = now
+
+        val isSwitch = shouldTreatContentChangeAsAppSwitch(
+            packageName = packageName,
+            lastPackage = lastPackage,
+            ownPackageName = applicationContext.packageName,
+            currentImePackage = currentImePackage,
+            activeWindowPackage = { activeWindowPackageOrNull() }
+        )
+        if (!isSwitch) return
+
+        entryPoint.nudgeLogger().i(
+            "foreground switch detected from content change package=$packageName"
+        )
+        evaluateForegroundPackage(packageName)
+    }
+
+    /**
+     * Package that owns the current active window, or null if it cannot be read. Null means "not
+     * verified", which callers must treat as "do not act" — never as a match.
+     */
+    private fun activeWindowPackageOrNull(): String? = try {
+        rootInActiveWindow?.packageName?.toString()
+    } catch (_: Exception) {
+        null
     }
 
     private suspend fun handleDecision(
