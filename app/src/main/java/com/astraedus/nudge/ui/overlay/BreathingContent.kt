@@ -35,6 +35,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
+import java.util.concurrent.atomic.AtomicBoolean
 
 @Composable
 fun BreathingContent(
@@ -65,6 +66,12 @@ fun BreathingContent(
     // start timestamp — otherwise time spent away from the overlay would still count down (#8).
     var elapsedMs by remember { mutableLongStateOf(0L) }
 
+    // repeatOnLifecycle cancels the block below RESUMED and starts a NEW one from the top on
+    // re-entry. Once elapsedMs has covered totalMs, the first tick() of that new block would
+    // complete again — so completion is guarded exactly-once. onComplete grants passthrough, and
+    // this path must never be able to grant it twice.
+    val completed = remember { AtomicBoolean(false) }
+
     // Breathing cycle animation — runs ONLY while the overlay is on screen (issue #8).
     val lifecycleOwner = LocalLifecycleOwner.current
     LaunchedEffect(lifecycleOwner, totalMs) {
@@ -81,9 +88,13 @@ fun BreathingContent(
                 return isBreathingComplete(elapsedMs, totalMs)
             }
 
+            fun completeOnce() {
+                if (completed.compareAndSet(false, true)) onComplete()
+            }
+
             while (true) {
                 if (tick()) {
-                    onComplete()
+                    completeOnce()
                     break
                 }
 
@@ -95,7 +106,7 @@ fun BreathingContent(
                 )
 
                 if (tick()) {
-                    onComplete()
+                    completeOnce()
                     break
                 }
 

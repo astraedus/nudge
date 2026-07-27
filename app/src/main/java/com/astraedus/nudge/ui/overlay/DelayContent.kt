@@ -30,6 +30,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.delay
+import java.util.concurrent.atomic.AtomicBoolean
 
 @Composable
 fun DelayContent(
@@ -62,6 +63,12 @@ fun DelayContent(
     // so the timer reached zero invisibly and granted passthrough while they were on the launcher —
     // returning to the app then opened it with no delay at all. `remainingSeconds` is remembered
     // OUTSIDE this block, so a pause resumes where it left off instead of restarting.
+    //
+    // repeatOnLifecycle cancels the block below RESUMED and starts a NEW one from the top on
+    // re-entry, so once the count has reached zero a pause/resume cycle would fall straight through
+    // the loop and fire onComplete a second time. The guard makes completion exactly-once —
+    // onComplete grants passthrough, and this path must never be able to grant it twice.
+    val completed = remember { AtomicBoolean(false) }
     val lifecycleOwner = LocalLifecycleOwner.current
     LaunchedEffect(lifecycleOwner) {
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
@@ -69,7 +76,7 @@ fun DelayContent(
                 delay(1000L)
                 remainingSeconds--
             }
-            onComplete()
+            if (completed.compareAndSet(false, true)) onComplete()
         }
     }
 
