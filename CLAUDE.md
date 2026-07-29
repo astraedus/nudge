@@ -56,13 +56,29 @@ CI runs on every tag push (`.github/workflows/release.yml`). Builds `assembleRel
 GitHub releases are automatic; **Google Play is a separate, deliberate step** that runs **from the laptop, not CI**:
 
 ```bash
-# Safe verify: upload as a production DRAFT (no users affected).
+# Default: live to 100% of production users. This is the standing default.
 scripts/publish-to-play.sh 1.7.0
-# Go live to a 20% staged rollout (halt-able from Play Console).
+# Opt in to a staged, halt-able rollout — only for genuinely risky releases,
+# and you then OWE the promote step (see below).
 STATUS=inProgress ROLLOUT=0.2 scripts/publish-to-play.sh 1.7.0
-# Full rollout once confident.
-STATUS=completed ROLLOUT=1.0 scripts/publish-to-play.sh 1.7.0
+# Upload as a production DRAFT (no users affected) to eyeball it first.
+STATUS=draft scripts/publish-to-play.sh 1.7.0
 ```
+
+**Full rollout is the default (Anti, 2026-07-30: "for google play it's just easier that way").** A staged rollout is a second owed step days later, and the promotion can't be done by this script — so twice running (v1.9.4, v1.10.0) the tail step was forgotten or cost time, for ~no signal at our install base. Stage only when a release is genuinely risky, and file the promote as a dated task when you do.
+
+**Promoting a staged/draft release later** — `publish-to-play.sh` CANNOT do it (`gplay release` re-uploads the AAB; Play rejects an existing versionCode), and **`gplay rollout complete` is also broken** — it sets `status=completed` but leaves `userFraction`, which Play rejects with `COMPLETED release must not have fraction`. Use the edit cycle:
+
+```bash
+EDIT=$(gplay edits create --package dev.astraedus.nudge | jq -r '.id')
+gplay tracks get --package dev.astraedus.nudge --edit "$EDIT" --track production \
+  | jq '[ .releases[] | select(.name=="X.Y.Z") | (.status="completed" | del(.userFraction)) ]' > /tmp/rel.json
+gplay tracks update --package dev.astraedus.nudge --edit "$EDIT" --track production --releases @/tmp/rel.json
+gplay edits validate --package dev.astraedus.nudge --edit "$EDIT"
+gplay edits commit   --package dev.astraedus.nudge --edit "$EDIT"
+gplay status --package dev.astraedus.nudge --pretty   # verify
+```
+Submit ONLY the release being promoted — the superseded one drops off the track automatically.
 
 The script pulls the CI-built AAB from the GitHub Release (or `SOURCE=run` for a `workflow_dispatch` artifact), runs `gplay preflight` (offline secret/compliance scan), then `gplay release` to the chosen track with release notes auto-extracted from `CHANGELOG.md`.
 
@@ -355,7 +371,7 @@ After any feature addition or significant change:
 8. Update this CLAUDE.md (architecture docs, feature descriptions) if applicable
 9. Commit all changes, tag, push: `git push origin main --tags`
 10. Create GitHub release (fast path): `gh release create vX.Y.Z nudge-vX.Y.Z.apk --title "vX.Y.Z" --generate-notes`
-11. **Publish to Google Play** — the standing default so Play never drifts behind GitHub again. After CI attaches the AAB, run `scripts/publish-to-play.sh X.Y.Z` (stages a production DRAFT to verify), then `STATUS=completed ROLLOUT=1.0 scripts/publish-to-play.sh X.Y.Z` for full rollout (or `STATUS=inProgress ROLLOUT=0.2 …` for a staged, halt-able rollout). Play credentials stay on the laptop — never in CI. See the **Releasing → Google Play** section for the security rationale.
+11. **Publish to Google Play** — the standing default so Play never drifts behind GitHub again. After CI attaches the AAB, run `scripts/publish-to-play.sh X.Y.Z` — that ships to **100% of production** in one step, no follow-up owed. Stage (`STATUS=inProgress ROLLOUT=0.2 …`) only for a genuinely risky release, and file the promote step as a dated task if you do. Play credentials stay on the laptop — never in CI. See the **Releasing → Google Play** section for the security rationale.
 12. Update store listing copy if user-facing
 
 **This is the standard ship flow. Every change that touches user-facing behavior gets a device QA gate before push.**

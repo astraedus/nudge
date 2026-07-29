@@ -15,7 +15,7 @@
 #   1. Resolve the signed AAB for a version (from the GitHub Release, a CI
 #      workflow-run artifact, or an explicit path).
 #   2. gplay preflight  — offline secret/compliance/hygiene scan of the bundle.
-#   3. gplay release     — upload to a track with a staged rollout.
+#   3. gplay release     — upload to a track and release it (100% by default).
 #   4. gplay status      — print the resulting release-health snapshot.
 #
 # USAGE:
@@ -23,31 +23,49 @@
 #
 #   Env overrides (all optional):
 #     TRACK=production|beta|alpha|internal   (default: production)
-#     ROLLOUT=0.0-1.0                        (default: 0.2  → 20% staged rollout)
+#     ROLLOUT=0.0-1.0                        (default: 1.0  → everyone)
 #     STATUS=draft|inProgress|halted|completed
-#                                            (default: draft → uploaded but NOT
-#                                             released to users until promoted)
+#                                            (default: completed → live to 100%)
+#
+#   WHY the default is a FULL rollout, not a staged one (Anti, 2026-07-30):
+#   a staged rollout is a SECOND owed step — someone must come back days later
+#   and promote it, and `gplay rollout complete` is broken (see below), so the
+#   promotion is a hand-run edit cycle. Twice now (v1.9.4, v1.10.0) that tail
+#   step was forgotten or cost time, leaving users on an old build for no gain.
+#   Our install base is small enough that a staged rollout buys ~nothing in
+#   signal but reliably costs a follow-up. Ship to 100%; if a release is
+#   genuinely risky (schema migration you can't test), opt IN explicitly with
+#   STATUS=inProgress ROLLOUT=0.2 and file the promote step as a dated task.
 #     SOURCE=release|run                     (default: release; "run" = pull the
 #                                             AAB from the latest workflow_dispatch
 #                                             run artifact instead of a GH Release)
 #
 # EXAMPLES:
-#   # Safe: upload 1.7.0 as a production DRAFT (no users affected) to verify.
+#   # Default: go live to 100% of production users.
 #   scripts/publish-to-play.sh 1.7.0
 #
-#   # Go live to 20% of production users, halt-able from Play Console.
+#   # Opt in to a staged, halt-able rollout (then you OWE the promote step).
 #   STATUS=inProgress ROLLOUT=0.2 scripts/publish-to-play.sh 1.7.0
 #
-#   # Full rollout once you're confident.
-#   STATUS=completed ROLLOUT=1.0 scripts/publish-to-play.sh 1.7.0
+#   # Upload as a production DRAFT (no users affected) to eyeball it first.
+#   STATUS=draft scripts/publish-to-play.sh 1.7.0
+#
+# PROMOTING a staged/draft release later: this script CANNOT do it — `gplay
+# release` re-uploads the AAB and Play rejects a versionCode that already
+# exists. And `gplay rollout complete` is ALSO broken: it sets status=completed
+# while leaving userFraction set, which Play rejects with
+# "COMPLETED release must not have fraction". The working recipe is the edit
+# cycle (edits create → tracks get → jq the release to status=completed with
+# userFraction DELETED → tracks update --releases @file → validate → commit).
+# Full recipe: ~/ops/references/play-console-cli.md.
 #
 set -euo pipefail
 
 REPO="astraedus/nudge"
 PKG="dev.astraedus.nudge"
 TRACK="${TRACK:-production}"
-ROLLOUT="${ROLLOUT:-0.2}"
-STATUS="${STATUS:-draft}"
+ROLLOUT="${ROLLOUT:-1.0}"
+STATUS="${STATUS:-completed}"
 SOURCE="${SOURCE:-release}"
 
 VERSION="${1:-}"
