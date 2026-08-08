@@ -839,32 +839,41 @@ class NudgeAccessibilityService : AccessibilityService() {
         }
 
         evaluateForegroundPackage(packageName)
+        detectAndEvaluateFeature(packageName)
+    }
 
+    /**
+     * Inspect the foreground tree for an in-app feature (Reels / Shorts / TikTok feed) and block if
+     * a feature rule matches. Debounced per package via [lastContentChangedTime] — the tree read is
+     * the expensive part and these events arrive in bursts.
+     *
+     * Driven by `TYPE_WINDOW_CONTENT_CHANGED`, which is plentiful inside these apps — a device
+     * capture measured ~26k content-change events against ~1.8k scrolls during a few minutes of
+     * Instagram use, of which ~800 detection attempts survived the debounce. Detection opportunity
+     * has never been the bottleneck; recognising the surface is.
+     */
+    private fun detectAndEvaluateFeature(packageName: String) {
         val now = System.currentTimeMillis()
         val lastTime = lastContentChangedTime[packageName] ?: 0L
         if ((now - lastTime) < contentChangedDebounceMs) return
         lastContentChangedTime[packageName] = now
 
         val rootNode = try { rootInActiveWindow } catch (_: Exception) { null } ?: return
-        val feature = entryPoint.inAppDetector().detectFeature(packageName, rootNode)
+        val feature = entryPoint.inAppDetector().detectFeature(packageName, rootNode) ?: return
         val passthrough = entryPoint.passthroughManager()
 
-        if (feature != null) {
-            if (passthrough.shouldSkipFeatureEvaluation(packageName, feature.key)) {
-                return
-            }
+        if (passthrough.shouldSkipFeatureEvaluation(packageName, feature.key)) return
 
-            serviceScope.launch {
-                val globalEnabled = entryPoint.nudgePreferences().isGlobalEnabled.first()
-                if (!globalEnabled) return@launch
+        serviceScope.launch {
+            val globalEnabled = entryPoint.nudgePreferences().isGlobalEnabled.first()
+            if (!globalEnabled) return@launch
 
-                val decision = entryPoint.evaluateBlockUseCase().invoke(
-                    packageName = packageName,
-                    detectedFeature = feature.key,
-                    includeWholeAppRulesForFeature = !passthrough.shouldSkipForegroundEvaluation(packageName)
-                )
-                handleDecision(decision, packageName, feature.key)
-            }
+            val decision = entryPoint.evaluateBlockUseCase().invoke(
+                packageName = packageName,
+                detectedFeature = feature.key,
+                includeWholeAppRulesForFeature = !passthrough.shouldSkipForegroundEvaluation(packageName)
+            )
+            handleDecision(decision, packageName, feature.key)
         }
     }
 

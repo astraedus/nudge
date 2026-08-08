@@ -1,6 +1,7 @@
 package com.astraedus.nudge.service
 
 import android.view.accessibility.AccessibilityNodeInfo
+import com.astraedus.nudge.BuildConfig
 import com.astraedus.nudge.util.NudgeLogger
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -17,6 +18,13 @@ class InAppDetector @Inject constructor(
     private val logger: NudgeLogger
 ) : InAppDetectorApi {
 
+    /**
+     * Signatures of surfaces already reported by [dumpViewIdsForDiagnosis], so each unrecognised
+     * screen is logged once per process rather than once per accessibility event. Debug builds
+     * only; bounded in practice by the handful of distinct screens these apps have.
+     */
+    private val loggedUnknownSurfaces = mutableSetOf<String>()
+
     enum class Feature(val displayName: String, val key: String) {
         REELS("Instagram Reels", "REELS"),
         SHORTS("YouTube Shorts", "SHORTS"),
@@ -32,6 +40,40 @@ class InAppDetector @Inject constructor(
             "com.zhiliaoapp.musically",
             "com.ss.android.ugc.trill"
         )
+
+        /** Cap for the debug-only view-id harvest; keeps the walk off the hot path's budget. */
+        private const val DIAGNOSTIC_NODE_LIMIT = 800
+
+        /**
+         * Containers unique to Instagram's full-screen reel player, harvested from a real device
+         * (Galaxy S24 / Android 16) while watching a reel opened from a DM.
+         *
+         * Checked instead of the bottom-nav tabs because the player is hosted in a modal activity
+         * with no nav bar. Verified absent from the home feed (which shows inline video under
+         * `media_group` / `carousel_video_media_group`) and from a DM thread, so these do not
+         * over-match ordinary browsing.
+         *
+         * More than one is listed because the player's tree varies between entry points — the
+         * DM-opened variant additionally carries a reply bar. Any single match is sufficient.
+         */
+        private val INSTAGRAM_CLIPS_VIEWER_IDS = listOf(
+            "com.instagram.android:id/clips_viewer_view_pager",
+            "com.instagram.android:id/clips_video_container",
+            "com.instagram.android:id/clips_media_component"
+        )
+    }
+
+    /** True if any of [viewIds] resolves in [root]. Nodes are recycled before returning. */
+    private fun findsAnyViewId(root: AccessibilityNodeInfo, viewIds: List<String>): Boolean {
+        for (id in viewIds) {
+            val nodes = root.findAccessibilityNodeInfosByViewId(id)
+            if (nodes.isNotEmpty()) {
+                recycleNodes(nodes)
+                return true
+            }
+            recycleNodes(nodes)
+        }
+        return false
     }
 
     /**
@@ -52,6 +94,7 @@ class InAppDetector @Inject constructor(
                 "com.zhiliaoapp.musically", "com.ss.android.ugc.trill" -> Feature.TIKTOK_FEED
                 else -> null
             }
+            if (feature == null) dumpViewIdsForDiagnosis(packageName, rootNode)
             logger.d("feature detection result package=$packageName feature=$feature")
             feature
         } catch (e: Exception) {
@@ -60,7 +103,53 @@ class InAppDetector @Inject constructor(
         }
     }
 
+    /**
+     * DIAGNOSTIC (debug builds only): log the distinct view IDs present when detection found
+     * nothing, so an undetected surface can be identified from logcat.
+     *
+     * Exists because the usual external tools cannot see these surfaces: `uiautomator dump` waits
+     * for an idle window and a continuously playing reel/short never idles, so it hangs and gets
+     * Killed; `dumpsys activity top` times out on the same screens. The accessibility tree this
+     * service already walks has no such constraint.
+     *
+     * Reads ONLY `viewIdResourceName` — never text or contentDescription, which on these screens
+     * would be the user's private messages and captions. Bounded to [DIAGNOSTIC_NODE_LIMIT] nodes,
+     * matching the bounded-harvest convention used by the Strict Mode escape guard.
+     */
+    private fun dumpViewIdsForDiagnosis(packageName: String, root: AccessibilityNodeInfo) {
+        if (!BuildConfig.DEBUG) return
+        val ids = LinkedHashSet<String>()
+        var visited = 0
+        val queue = ArrayDeque<AccessibilityNodeInfo>()
+        queue += root
+        while (queue.isNotEmpty() && visited < DIAGNOSTIC_NODE_LIMIT) {
+            val node = queue.removeFirst()
+            visited++
+            node.viewIdResourceName?.let { ids += it }
+            for (i in 0 until node.childCount) {
+                queue += node.getChild(i) ?: continue
+            }
+        }
+        // Log each DISTINCT surface once. Detection runs on a firehose of content-change events —
+        // a measured ~800 failed detections in three minutes of Instagram use — so logging every
+        // miss buries the signal. What matters is "which surfaces do we not recognise", and that
+        // set is tiny.
+        val signature = ids.joinToString(",")
+        if (!loggedUnknownSurfaces.add(signature)) return
+        logger.d("undetected surface package=$packageName nodes=$visited viewIds=$signature")
+    }
+
     private fun detectInstagram(root: AccessibilityNodeInfo): Feature? {
+        // The reel PLAYER first, before any tab reasoning. A reel opened from a DM (or a share
+        // link, or a profile) runs in com.instagram.modal.ModalActivity, which has NO bottom nav
+        // at all — so tab-based detection cannot see it even in principle, and the user scrolled
+        // reels indefinitely with a HARD_BLOCK rule active. Keying on the player's own container
+        // covers every entry route, including the Reels tab, where these IDs are also present.
+        if (findsAnyViewId(root, INSTAGRAM_CLIPS_VIEWER_IDS)) {
+            logger.d("instagram clips viewer detected")
+            return Feature.REELS
+        }
+
         // Use resource IDs for reliable tab detection. Instagram's bottom nav tabs:
         //   feed_tab (Home), clips_tab (Reels), search_tab (Search/Explore), profile_tab (Profile)
         // The tab FrameLayout itself has selected=false, but its child tab_icon ImageView
