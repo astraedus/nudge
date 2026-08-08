@@ -25,6 +25,10 @@ class InAppDetector @Inject constructor(
      */
     private val loggedUnknownSurfaces = mutableSetOf<String>()
 
+    /** Last time the debug harvest actually walked the tree; see [dumpViewIdsForDiagnosis]. */
+    @Volatile
+    private var lastDiagnosticMs = 0L
+
     enum class Feature(val displayName: String, val key: String) {
         REELS("Instagram Reels", "REELS"),
         SHORTS("YouTube Shorts", "SHORTS"),
@@ -43,6 +47,9 @@ class InAppDetector @Inject constructor(
 
         /** Cap for the debug-only view-id harvest; keeps the walk off the hot path's budget. */
         private const val DIAGNOSTIC_NODE_LIMIT = 800
+
+        /** Minimum gap between debug harvest walks. Bounds the cost to ~1 tree walk per interval. */
+        private const val DIAGNOSTIC_THROTTLE_MS = 5_000L
 
         /**
          * Containers unique to Instagram's full-screen reel player, harvested from a real device
@@ -118,6 +125,14 @@ class InAppDetector @Inject constructor(
      */
     private fun dumpViewIdsForDiagnosis(packageName: String, root: AccessibilityNodeInfo) {
         if (!BuildConfig.DEBUG) return
+        // Throttle the WALK, not just the logging. Detection fails on a firehose of content-change
+        // events — ~800 times in three minutes of measured Instagram use — and each call would
+        // otherwise BFS up to DIAGNOSTIC_NODE_LIMIT nodes on the accessibility hot path. A new
+        // surface stays on screen for far longer than this interval, so nothing is missed.
+        val now = System.currentTimeMillis()
+        if (now - lastDiagnosticMs < DIAGNOSTIC_THROTTLE_MS) return
+        lastDiagnosticMs = now
+
         val ids = LinkedHashSet<String>()
         var visited = 0
         val queue = ArrayDeque<AccessibilityNodeInfo>()
