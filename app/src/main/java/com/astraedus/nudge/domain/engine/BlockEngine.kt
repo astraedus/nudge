@@ -19,6 +19,13 @@ class BlockEngine @Inject constructor(
      *   [includeWholeAppRulesForFeature] is false.
      *
      * Priority: HARD_BLOCK > time budget exceeded > DELAY > BREATHING > Allow
+     *
+     * [BlockMode.NONE] deliberately matches none of the block branches below, so a rule carrying
+     * it yields Allow. It still participates in the time-budget check, which keys off
+     * `dailyLimitMinutes` rather than the mode — an app-level NONE rule with a daily limit means
+     * "don't gate this app, but stop me after N minutes", and its counter/overlay settings still
+     * apply. This is what lets a feature-scoped rule (Shorts, Reels) block while its host app
+     * stays open.
      */
     fun evaluate(
         packageName: String,

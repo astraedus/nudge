@@ -15,11 +15,16 @@ object RuleWeakening {
     /**
      * Block-mode strength ordering (higher = stronger protection). Anything not recognized
      * (e.g. a future mode, or "no rule") sorts below the known modes.
+     *
+     * NONE is listed explicitly rather than left to the fallback: it is a real, user-selectable
+     * mode meaning "this rule gates nothing", so switching a blocking rule to it is the single
+     * biggest weakening available in this editor and must be caught by Strict Mode.
      */
     private fun modeStrength(mode: String?): Int = when (mode) {
         "HARD_BLOCK" -> 3
         "DELAY" -> 2
         "BREATHING" -> 1
+        "NONE" -> 0
         else -> 0
     }
 

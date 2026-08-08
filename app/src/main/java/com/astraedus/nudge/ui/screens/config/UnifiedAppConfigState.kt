@@ -39,6 +39,12 @@ data class UnifiedAppConfigState(
 
     // Default behavior
     val defaultMode: BlockMode = BlockMode.DELAY,
+    /**
+     * Mode to restore when the user turns whole-app blocking back on after switching it off.
+     * Without this, toggling off and on again would silently discard a configured Hard Block or
+     * Breathing choice and substitute the DELAY default.
+     */
+    val lastBlockingMode: BlockMode = BlockMode.DELAY,
     val defaultDelaySeconds: Int = 15,
     val defaultAutoKickEnabled: Boolean = false,
     val defaultAutoKickByInteractions: Boolean = true,
@@ -70,6 +76,12 @@ data class UnifiedAppConfigState(
     val showDeleteConfirmation: Boolean = false
 ) {
     val supportsFeatures: Boolean get() = availableFeatures.isNotEmpty()
+
+    /**
+     * Whether the app itself is gated. False means the app-level rule is [BlockMode.NONE]: the app
+     * opens freely and only the feature overrides (Shorts, Reels, …) and the daily limit apply.
+     */
+    val blocksWholeApp: Boolean get() = defaultMode != BlockMode.NONE
 
     companion object {
         val FEATURES_BY_PACKAGE: Map<String, List<FeatureInfo>> = mapOf(

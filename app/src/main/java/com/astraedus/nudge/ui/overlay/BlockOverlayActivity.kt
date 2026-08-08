@@ -67,6 +67,16 @@ class BlockOverlayActivity : ComponentActivity() {
         } catch (_: IllegalArgumentException) {
             BlockMode.HARD_BLOCK
         }
+        // BlockMode.NONE blocks nothing, so BlockEngine never produces a Block carrying it and this
+        // activity should never be launched for one. If it somehow is, dismiss rather than render:
+        // there is no "no-op overlay", and showing any of the three below would gate an app the
+        // user explicitly chose not to gate.
+        if (mode == BlockMode.NONE) {
+            NudgeAccessibilityService.isOverlayActive = false
+            finish()
+            return
+        }
+
         val delaySeconds = intent.getIntExtra(EXTRA_DELAY_SECONDS, 15)
         val packageName = intent.getStringExtra(EXTRA_PACKAGE_NAME) ?: ""
         val ruleName = intent.getStringExtra(EXTRA_RULE_NAME)
@@ -124,6 +134,10 @@ class BlockOverlayActivity : ComponentActivity() {
         setContent {
             NudgeTheme {
                 when (mode) {
+                    // Unreachable: the early return above already finished us. Present so the
+                    // `when` stays exhaustive and a future mode cannot silently fall through.
+                    BlockMode.NONE -> Unit
+
                     BlockMode.HARD_BLOCK -> {
                         HardBlockContent(
                             packageName = packageName,

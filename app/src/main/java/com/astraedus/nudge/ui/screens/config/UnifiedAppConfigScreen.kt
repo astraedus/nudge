@@ -364,42 +364,62 @@ fun UnifiedAppConfigScreen(
                 InfoButton("These settings apply whenever no scheduled override is active.")
             }
 
-            // Block mode segmented button
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                    BlockMode.entries.forEachIndexed { index, mode ->
-                        SegmentedButton(
-                            selected = state.defaultMode == mode,
-                            onClick = { viewModel.setDefaultMode(mode) },
-                            shape = SegmentedButtonDefaults.itemShape(
-                                index = index,
-                                count = BlockMode.entries.size
-                            )
-                        ) {
-                            Text(
-                                when (mode) {
-                                    BlockMode.HARD_BLOCK -> "Hard Block"
-                                    BlockMode.DELAY -> "Delay"
-                                    BlockMode.BREATHING -> "Breathing"
-                                }
-                            )
-                        }
-                    }
+            // Whether the app itself is gated at all. Off => the app-level rule is BlockMode.NONE,
+            // so the app opens freely and only the feature overrides below apply. This is the
+            // switch that makes "block only Shorts, leave YouTube alone" expressible.
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Block the whole app", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        if (state.blocksWholeApp) {
+                            "Opening ${state.appName} triggers the block below."
+                        } else if (state.supportsFeatures) {
+                            "${state.appName} opens normally. Only the features you turn on below are blocked."
+                        } else {
+                            "${state.appName} opens normally. Any daily limit below still applies."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
-
-                Text(
-                    when (state.defaultMode) {
-                        BlockMode.HARD_BLOCK -> "Completely blocks the app. You can only go back to the home screen."
-                        BlockMode.DELAY -> "Shows a countdown timer before letting you in."
-                        BlockMode.BREATHING -> "Guides you through a breathing exercise before opening."
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                Switch(
+                    checked = state.blocksWholeApp,
+                    onCheckedChange = { viewModel.setBlocksWholeApp(it) }
                 )
             }
 
+            // Block mode segmented button — only meaningful when the app itself is blocked.
+            if (state.blocksWholeApp) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                        BLOCKING_MODES.forEachIndexed { index, mode ->
+                            SegmentedButton(
+                                selected = state.defaultMode == mode,
+                                onClick = { viewModel.setDefaultMode(mode) },
+                                shape = SegmentedButtonDefaults.itemShape(
+                                    index = index,
+                                    count = BLOCKING_MODES.size
+                                )
+                            ) {
+                                Text(blockModeLabel(mode))
+                            }
+                        }
+                    }
+
+                    Text(
+                        blockModeDescription(state.defaultMode),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
             // Delay duration (if applicable)
-            if (state.defaultMode != BlockMode.HARD_BLOCK) {
+            if (state.blocksWholeApp && state.defaultMode != BlockMode.HARD_BLOCK) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
                         "Delay Duration",
@@ -652,22 +672,16 @@ fun UnifiedAppConfigScreen(
 
                     // Scheduled mode
                     SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                        BlockMode.entries.forEachIndexed { index, mode ->
+                        BLOCKING_MODES.forEachIndexed { index, mode ->
                             SegmentedButton(
                                 selected = state.scheduledMode == mode,
                                 onClick = { viewModel.setScheduledMode(mode) },
                                 shape = SegmentedButtonDefaults.itemShape(
                                     index = index,
-                                    count = BlockMode.entries.size
+                                    count = BLOCKING_MODES.size
                                 )
                             ) {
-                                Text(
-                                    when (mode) {
-                                        BlockMode.HARD_BLOCK -> "Hard Block"
-                                        BlockMode.DELAY -> "Delay"
-                                        BlockMode.BREATHING -> "Breathing"
-                                    }
-                                )
+                                Text(blockModeLabel(mode))
                             }
                         }
                     }
@@ -917,4 +931,28 @@ private fun TimeSelector(
             label = { Text(String.format("%02d", minute)) }
         )
     }
+}
+
+/**
+ * The modes that actually gate an app, in ascending severity.
+ *
+ * Deliberately NOT `BlockMode.entries`: [BlockMode.NONE] must never appear in a mode picker.
+ * At app level it is expressed by the "Block the whole app" switch, and for a SCHEDULED override
+ * it would be an outright lie — a scheduled rule is additive, so a NONE scheduled rule adds
+ * nothing rather than carving out an unblocked window during those hours.
+ */
+private val BLOCKING_MODES = listOf(BlockMode.HARD_BLOCK, BlockMode.DELAY, BlockMode.BREATHING)
+
+private fun blockModeLabel(mode: BlockMode): String = when (mode) {
+    BlockMode.NONE -> "Off"
+    BlockMode.HARD_BLOCK -> "Hard Block"
+    BlockMode.DELAY -> "Delay"
+    BlockMode.BREATHING -> "Breathing"
+}
+
+private fun blockModeDescription(mode: BlockMode): String = when (mode) {
+    BlockMode.NONE -> "Not blocked."
+    BlockMode.HARD_BLOCK -> "Completely blocks the app. You can only go back to the home screen."
+    BlockMode.DELAY -> "Shows a countdown timer before letting you in."
+    BlockMode.BREATHING -> "Guides you through a breathing exercise before opening."
 }

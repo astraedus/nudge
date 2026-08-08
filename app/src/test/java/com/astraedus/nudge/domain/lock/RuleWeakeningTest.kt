@@ -65,6 +65,30 @@ class RuleWeakeningTest {
         assertFalse(RuleWeakening.isWeakening(rule(mode = "BREATHING"), rule(mode = "DELAY")))
     }
 
+    // ── mode NONE (whole-app blocking switched off) ──
+    // Turning off the "Block the whole app" switch writes NONE, which drops ALL gating of the app.
+    // It is the largest weakening the config screen can produce and must never save unchallenged.
+
+    @Test
+    fun `mode BREATHING to NONE is weakening`() {
+        assertTrue(RuleWeakening.isWeakening(rule(mode = "BREATHING"), rule(mode = "NONE")))
+    }
+
+    @Test
+    fun `mode HARD_BLOCK to NONE is weakening`() {
+        assertTrue(RuleWeakening.isWeakening(rule(mode = "HARD_BLOCK"), rule(mode = "NONE")))
+    }
+
+    @Test
+    fun `mode NONE to DELAY is not weakening`() {
+        assertFalse(RuleWeakening.isWeakening(rule(mode = "NONE"), rule(mode = "DELAY")))
+    }
+
+    @Test
+    fun `mode NONE to NONE is not weakening`() {
+        assertFalse(RuleWeakening.isWeakening(rule(mode = "NONE"), rule(mode = "NONE")))
+    }
+
     // ── daily limit ──
 
     @Test

@@ -46,7 +46,8 @@ class RuleEvaluator @Inject constructor() {
 
     /**
      * Build a human-readable label describing what a rule does.
-     * Examples: "Reels - Delay", "Hard Block (30 min/day)", "Shorts - Breathing (scheduled)"
+     * Examples: "Reels - Delay", "Hard Block (30 min/day)", "Shorts - Breathing (scheduled)",
+     * "Daily limit (30 min/day)" for a NONE rule that only caps usage.
      */
     private fun buildRuleName(rule: BlockRuleData): String {
         val parts = mutableListOf<String>()
@@ -59,8 +60,10 @@ class RuleEvaluator @Inject constructor() {
             }
         }
 
-        // Mode name
+        // Mode name. A NONE rule blocks nothing itself, so the only way its label ever reaches an
+        // overlay is the daily-limit path — call it what the user will actually be seeing.
         val modeName = when (rule.mode) {
+            BlockMode.NONE -> if (rule.dailyLimitMinutes != null) "Daily limit" else "No block"
             BlockMode.HARD_BLOCK -> "Hard Block"
             BlockMode.DELAY -> "Delay"
             BlockMode.BREATHING -> "Breathing"

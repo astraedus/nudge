@@ -196,18 +196,21 @@ fun RuleEditorScreen(
                     )
                 }
 
+                // BlockMode.NONE is excluded here: this editor has no "block the whole app" switch,
+                // so a NONE option would produce a rule that silently does nothing.
                 SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                    BlockMode.entries.forEachIndexed { index, mode ->
+                    EDITOR_BLOCKING_MODES.forEachIndexed { index, mode ->
                         SegmentedButton(
                             selected = state.blockMode == mode,
                             onClick = { viewModel.setBlockMode(mode) },
                             shape = SegmentedButtonDefaults.itemShape(
                                 index = index,
-                                count = BlockMode.entries.size
+                                count = EDITOR_BLOCKING_MODES.size
                             )
                         ) {
                             Text(
                                 when (mode) {
+                                    BlockMode.NONE -> "Off"
                                     BlockMode.HARD_BLOCK -> "Hard Block"
                                     BlockMode.DELAY -> "Delay"
                                     BlockMode.BREATHING -> "Breathing"
@@ -219,6 +222,7 @@ fun RuleEditorScreen(
 
                 Text(
                     when (state.blockMode) {
+                        BlockMode.NONE -> "Not blocked."
                         BlockMode.HARD_BLOCK -> "Completely blocks the app. You can only go back to the home screen."
                         BlockMode.DELAY -> "Shows a countdown timer before letting you in. Gives you time to reconsider."
                         BlockMode.BREATHING -> "Guides you through a breathing exercise before opening. Calms the impulse."
@@ -869,3 +873,10 @@ private fun TimeSelector(
         )
     }
 }
+
+/**
+ * Modes offered by this editor. Excludes [BlockMode.NONE], which is only meaningful alongside the
+ * "Block the whole app" switch in `UnifiedAppConfigScreen`.
+ */
+private val EDITOR_BLOCKING_MODES =
+    listOf(BlockMode.HARD_BLOCK, BlockMode.DELAY, BlockMode.BREATHING)

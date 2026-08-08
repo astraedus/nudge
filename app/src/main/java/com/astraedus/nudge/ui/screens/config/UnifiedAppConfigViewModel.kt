@@ -136,6 +136,10 @@ class UnifiedAppConfigViewModel @Inject constructor(
                 webDomains = webDomainsValue,
                 // Default behavior
                 defaultMode = parseBlockMode(defaultAppRule?.mode),
+                // If the saved rule is NONE there is no prior blocking choice to restore, so
+                // offer DELAY when the user switches whole-app blocking back on.
+                lastBlockingMode = parseBlockMode(defaultAppRule?.mode)
+                    .takeIf { it != BlockMode.NONE } ?: BlockMode.DELAY,
                 defaultDelaySeconds = defaultAppRule?.delaySeconds ?: 15,
                 defaultAutoKickEnabled = defaultAppRule?.autoKickAfter != null || defaultAppRule?.autoKickAfterMinutes != null,
                 defaultAutoKickByInteractions = defaultAppRule == null || defaultAppRule.autoKickAfter != null,
@@ -167,9 +171,12 @@ class UnifiedAppConfigViewModel @Inject constructor(
     }
 
     private fun parseBlockMode(mode: String?): BlockMode = when (mode) {
+        "NONE" -> BlockMode.NONE
         "HARD_BLOCK" -> BlockMode.HARD_BLOCK
         "DELAY" -> BlockMode.DELAY
         "BREATHING" -> BlockMode.BREATHING
+        // Includes null (no existing rule): a brand-new rule defaults to DELAY, not NONE, so
+        // opening the editor for an unconfigured app still proposes actual protection.
         else -> BlockMode.DELAY
     }
 
@@ -399,7 +406,24 @@ class UnifiedAppConfigViewModel @Inject constructor(
     // ═══ Default behavior ═══
 
     fun setDefaultMode(mode: BlockMode) {
-        _uiState.value = _uiState.value.copy(defaultMode = mode)
+        _uiState.value = _uiState.value.copy(
+            defaultMode = mode,
+            // Remember the last real blocking choice so toggling whole-app blocking off and back
+            // on restores it instead of snapping to DELAY.
+            lastBlockingMode = if (mode == BlockMode.NONE) _uiState.value.lastBlockingMode else mode
+        )
+    }
+
+    /**
+     * Turn whole-app blocking on/off. Off writes [BlockMode.NONE] on the app-level rule, which
+     * keeps the daily limit, counter, overlays, grayscale and web domains intact while letting the
+     * app itself open — the combination needed to block only Shorts/Reels.
+     */
+    fun setBlocksWholeApp(blocks: Boolean) {
+        val current = _uiState.value
+        _uiState.value = current.copy(
+            defaultMode = if (blocks) current.lastBlockingMode else BlockMode.NONE
+        )
     }
 
     fun setDefaultDelaySeconds(seconds: Int) {
