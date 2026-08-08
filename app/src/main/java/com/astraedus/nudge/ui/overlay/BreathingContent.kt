@@ -52,6 +52,8 @@ fun BreathingContent(
     nextPassMs: Long = 0L,
     onUseEmergencyPass: () -> Unit = {}
 ) {
+    // Unkeyed by design: BlockOverlayActivity composes this subtree under a per-delivery key, so a
+    // re-delivered block already gets fresh state (issue #15).
     val subtitle = remember { subtitlePool.random() }
     val circleScale = remember { Animatable(0.6f) }
     var isInhaling by remember { mutableStateOf(true) }
@@ -65,6 +67,9 @@ fun BreathingContent(
     // it survives a pause, and accumulated per visible segment rather than measured from a single
     // start timestamp — otherwise time spent away from the overlay would still count down (#8).
     var elapsedMs by remember { mutableLongStateOf(0L) }
+    // Mirror dailyTimeRemainingMs as mutable state so the "X left today" line ticks down alongside
+    // the breathing progress instead of showing a frozen snapshot.
+    var shownDailyRemainingMs by remember { mutableStateOf(dailyTimeRemainingMs) }
 
     // repeatOnLifecycle cancels the block below RESUMED and starts a NEW one from the top on
     // re-entry. Once elapsedMs has covered totalMs, the first tick() of that new block would
@@ -82,9 +87,14 @@ fun BreathingContent(
             // bar, and report whether the exercise is finished.
             fun tick(): Boolean {
                 val now = System.currentTimeMillis()
+                val delta = (now - segmentStart).coerceAtLeast(0L)
                 elapsedMs = advanceBreathingElapsed(elapsedMs, segmentStart, now)
                 segmentStart = now
                 overallProgress = breathingProgress(elapsedMs, totalMs)
+                // Tick the daily-remaining display down by the same wall-clock delta.
+                shownDailyRemainingMs = shownDailyRemainingMs?.let {
+                    (it - delta).coerceAtLeast(0L)
+                }
                 return isBreathingComplete(elapsedMs, totalMs)
             }
 
@@ -137,11 +147,11 @@ fun BreathingContent(
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                if (dailyTimeRemainingMs != null && dailyLimitMinutes != null && dailyLimitMinutes > 0) {
+                if (shownDailyRemainingMs != null && dailyLimitMinutes != null && dailyLimitMinutes > 0) {
                     Text(
-                        text = "${formatDuration(dailyTimeRemainingMs)} left today",
+                        text = "${formatDuration(shownDailyRemainingMs!!)} left today",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = timeRemainingColor(dailyTimeRemainingMs, dailyLimitMinutes)
+                        color = timeRemainingColor(shownDailyRemainingMs!!, dailyLimitMinutes)
                     )
                 }
                 Spacer(modifier = Modifier.height(16.dp))

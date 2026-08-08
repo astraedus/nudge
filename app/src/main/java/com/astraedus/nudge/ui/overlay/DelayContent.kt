@@ -19,6 +19,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -50,7 +51,13 @@ fun DelayContent(
 ) {
     val title = remember { titlePool.random() }
     val subtitle = remember { subtitlePool.random() }
+    // Unkeyed by design: BlockOverlayActivity composes this subtree under a per-delivery key, so a
+    // new block already gets fresh state (issue #15). Keying here on delaySeconds would look like a
+    // fix but miss the common case — two apps both on the default 15s delay would still share it.
     var remainingSeconds by remember { mutableIntStateOf(delaySeconds) }
+    // Mirror dailyTimeRemainingMs as mutable state so the "X left today" line ticks down each
+    // second alongside the delay countdown instead of showing a frozen snapshot.
+    var shownDailyRemainingMs by remember { mutableStateOf(dailyTimeRemainingMs) }
 
     val progress by animateFloatAsState(
         targetValue = if (delaySeconds > 0) remainingSeconds.toFloat() / delaySeconds.toFloat() else 0f,
@@ -75,6 +82,11 @@ fun DelayContent(
             while (remainingSeconds > 0) {
                 delay(1000L)
                 remainingSeconds--
+                // Tick the daily-remaining display down in sync with the countdown so the user
+                // sees live time instead of the frozen snapshot passed at launch.
+                shownDailyRemainingMs = shownDailyRemainingMs?.let {
+                    (it - 1000L).coerceAtLeast(0L)
+                }
             }
             if (completed.compareAndSet(false, true)) onComplete()
         }
@@ -98,12 +110,12 @@ fun DelayContent(
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                if (dailyTimeRemainingMs != null && dailyLimitMinutes != null && dailyLimitMinutes > 0) {
-                    Text(
-                        text = "${formatDuration(dailyTimeRemainingMs)} left today",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = timeRemainingColor(dailyTimeRemainingMs, dailyLimitMinutes)
-                    )
+                if (shownDailyRemainingMs != null && dailyLimitMinutes != null && dailyLimitMinutes > 0) {
+                        Text(
+                            text = "${formatDuration(shownDailyRemainingMs!!)} left today",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = timeRemainingColor(shownDailyRemainingMs!!, dailyLimitMinutes)
+                        )
                 }
                 Spacer(modifier = Modifier.height(24.dp))
             }
