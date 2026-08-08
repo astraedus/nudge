@@ -43,7 +43,7 @@ class EvaluateBlockContentFilterTest {
 
         // No explicit per-rule web domain rules -> always falls through to filter.
         every { blockRuleRepository.getEnabledRules() } returns flowOf(emptyList())
-        every { usageRepository.getDailyUsage(any()) } returns flowOf(0L)
+        every { usageRepository.getDailyForegroundTimeMs(any()) } returns 0L
         // Default strict-keywords pref to false (opt-in). Individual tests override.
         every { preferences.contentFilterStrictKeywords } returns flowOf(false)
 

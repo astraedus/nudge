@@ -12,7 +12,9 @@ import com.astraedus.nudge.domain.model.BlockDecision
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.domain.model.BlockRuleData
 import com.astraedus.nudge.domain.model.GroupMembership
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 class EvaluateBlockUseCase @Inject constructor(
@@ -71,7 +73,7 @@ class EvaluateBlockUseCase @Inject constructor(
         }
 
         val activeRules = ruleEvaluator.resolveRulesForPackage(packageName, ruleDataList, memberships)
-        val dailyUsageMs = usageRepository.getDailyUsage(packageName).first()
+        val dailyUsageMs = dailyUsageMs(packageName)
 
         return blockEngine.evaluate(
             packageName = packageName,
@@ -122,7 +124,7 @@ class EvaluateBlockUseCase @Inject constructor(
 
         // Use the first matching rule's package for usage stats lookup
         val trackingPackage = matchingRules.first().packageName ?: "web"
-        val dailyUsageMs = usageRepository.getDailyUsage(trackingPackage).first()
+        val dailyUsageMs = dailyUsageMs(trackingPackage)
 
         val decision = blockEngine.evaluate(
             packageName = trackingPackage,
@@ -157,7 +159,7 @@ class EvaluateBlockUseCase @Inject constructor(
         // Track usage under a synthetic "web" package, consistent with how
         // web-domain rules without an associated app are tracked.
         val trackingPackage = "web"
-        val dailyUsageMs = usageRepository.getDailyUsage(trackingPackage).first()
+        val dailyUsageMs = dailyUsageMs(trackingPackage)
 
         val activeRule = ActiveRule(
             mode = mode,
@@ -177,6 +179,24 @@ class EvaluateBlockUseCase @Inject constructor(
 
         return WebDomainBlockResult(decision, trackingPackage)
     }
+
+    /**
+     * Today's foreground time for [packageName], the number the daily budget is spent against.
+     *
+     * This MUST come from `UsageStatsManager` (issue #14). The obvious-looking alternative — the
+     * Room `usage_events` table — cannot work: that table logs block/allow *decisions*, and its
+     * `durationMs` column is never written, so summing it returns 0 for every package forever.
+     * Feeding that 0 to [BlockEngine] made `dailyUsageMs >= limit` permanently false, so the
+     * daily-limit HARD_BLOCK never fired and the "X left today" line on the overlay was pinned at
+     * the full limit. `TimeRemainingHandler` already reads the correct source, which is why the
+     * limit appeared to work — but only for rules that had opted into the time-remaining overlay.
+     *
+     * The read is a synchronous binder call, hence [Dispatchers.IO]; it returns 0 without throwing
+     * when Usage Access has not been granted, which fails toward *allowing* the app. That is the
+     * right direction: a permission the user has not granted must not manufacture a block.
+     */
+    private suspend fun dailyUsageMs(packageName: String): Long =
+        withContext(Dispatchers.IO) { usageRepository.getDailyForegroundTimeMs(packageName) }
 
     private fun buildWebDomainRuleName(packageName: String?, mode: String): String {
         val modeName = when (mode) {

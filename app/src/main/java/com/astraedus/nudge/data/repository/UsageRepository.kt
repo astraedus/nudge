@@ -9,7 +9,6 @@ import com.astraedus.nudge.domain.engine.TimeTracker
 import com.astraedus.nudge.service.UsageProvider
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -21,13 +20,6 @@ class UsageRepository @Inject constructor(
 ) : UsageProvider {
 
     suspend fun logEvent(event: UsageEvent) = usageEventDao.insert(event)
-
-    /** Total usage in milliseconds for a package today. */
-    fun getDailyUsage(packageName: String): Flow<Long> {
-        val todayStart = timeTracker.startOfToday()
-        return usageEventDao.getTotalDurationForPackage(packageName, todayStart)
-            .map { it ?: 0L }
-    }
 
     /**
      * Get today's foreground usage time from queryEvents (ACTIVITY_RESUMED/PAUSED pairs).
