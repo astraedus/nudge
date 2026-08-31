@@ -162,3 +162,47 @@ bug, the #7 content-change fallback, this one). The generalisation worth keeping
   Building the daily half in memory would have produced a budget that silently resets on a service
   restart, a blocker that stops blocking without saying so. Shipping the reachable half and writing
   the other half down (`docs/BACKLOG.md`) beats half-wiring both.
+
+## A watchdog that cannot be observed cannot be debugged, and a silent `false` is the same as no code (2026-09-01)
+
+Device QA on the time-based auto-kick: threshold 2 minutes, sat on it for 2m20s, no kick, on the web
+path AND the native app path. Logcat showed `session baseline set … threshold=2min` once, then
+nothing. QA black-boxed it to a standstill and could go no further, and they were right to stop, 
+**the subsystem emitted no evidence at all.**
+
+Four paths returned `false` with no log, and the important one was `TimeKickEvaluator.WAIT`: the
+branch a *healthy* clock spends its entire session in. So "ticking, hasn't reached the threshold" and
+"dead for ten minutes" produced byte-identical logcat, and no amount of device time could separate
+them. This is the v1.12.0 picture-in-picture failure repeating in a different subsystem, where the
+same sentence was already written down: *"detection fired but stayed silent" and "detection never
+fired" being indistinguishable is what cost a release cycle.*
+
+- **Log the boring branch.** The rule that generalises: in any polling/watchdog loop, the
+  *steady-state* outcome must be observable, not just the exciting one. A log line only on KICK
+  tells you nothing when the complaint is "it didn't kick". Include the numbers the decision was made
+  from (`elapsed`, `threshold`, the raw reading) so one run separates "the clock is dead" from "the
+  reading is wrong", two very different bugs that present identically.
+- **`?: return false` is a decision, and undocumented decisions become invisible failures.**
+  `counterCache.getEntry(pkg)?.autoKickAfterMinutes ?: return false` silently disables the whole
+  feature whenever a cache refresh misses that key. Every silent early return in a loop is a place
+  the feature can switch itself off and nobody finds out.
+- **`while (isActive) { tick(); delay(n) }` on a SupervisorJob scope is a single point of silent
+  failure.** One throw from the tick body ends the loop for good; the child dies alone, the scope
+  survives, nothing restarts it. Guard the ITERATION, not the loop, and log the exit reason. Both of
+  Nudge's clocks had this shape and neither logged a thing.
+- **The grouped-constant trap, third sighting.** `SYSTEM_PACKAGES` had already been caught answering
+  two questions at once for the passthrough grant; the foreground-time clock was still stopping for
+  every member of it, so a heads-up notification ended a running session's clock, and for a browser
+  nothing ever restarted it, because content changes return early on the browser branch. When a fix
+  teaches you that a constant set conflates two questions, **grep every other consumer of that set
+  the same day**; the other consumers are wrong too, and they will be found by a user.
+- **Answer "is this a regression?" from the source before touching anything.** `git diff` over the
+  shared machinery proved the app path was untouched by the recent web work (the only hits were doc
+  comments), which reframed the whole investigation from "what did I break" to "this never worked
+  reliably". Two independent implementations failing identically is itself the clue: **suspect what
+  they SHARE, not either one.**
+- **A sweep that collapses N copies of a loop must be verified by search, not by intent.** v1.15.1
+  merged three copies of the RESUMED/PAUSED pairing into `ForegroundSpanTracker` and added a contract
+  test asserting "exactly one event loop", scoped to `ScreenTimeProvider`. The FOURTH copy sat in
+  `UsageRepository`, uncapped open tail and all, and was the clock behind the auto-kick and every
+  daily budget. Scope the invariant to the CODEBASE, not to the file you were editing.

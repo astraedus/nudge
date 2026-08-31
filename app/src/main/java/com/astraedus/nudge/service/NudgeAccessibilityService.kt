@@ -97,10 +97,7 @@ class NudgeAccessibilityService : AccessibilityService() {
      * restarted (re-reading usage) on each one. Keeping them separate also means nothing on the
      * app-level hot path changes shape.
      */
-    private var webTimeJob: Job? = null
-
-    @Volatile
-    private var tickingWebKey: String? = null
+    private lateinit var webClock: ForegroundClock
 
     /** Resolves a `web:` key to the browser's clock. See [WebSessionUsageProvider]. */
     private lateinit var webSessionUsageProvider: WebSessionUsageProvider
@@ -119,13 +116,11 @@ class NudgeAccessibilityService : AccessibilityService() {
     private lateinit var autoKickTimeHandler: AutoKickTimeHandler
 
     /**
-     * The periodic foreground-time clock (see [updateForegroundTimeTicker]). At most one runs at a
-     * time, for the package named by [tickingPackage].
+     * The periodic foreground-time clock (see [updateForegroundTimeTicker]). At most one package is
+     * clocked at a time. [ForegroundClock] owns the loop so that one throwing tick cannot end it in
+     * silence, and so every start/stop is logged with its reason.
      */
-    private var foregroundTimeJob: Job? = null
-
-    @Volatile
-    private var tickingPackage: String? = null
+    private lateinit var foregroundClock: ForegroundClock
 
     companion object {
         private const val DEBOUNCE_MS = 1000L
@@ -689,7 +684,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         // cleared inside evaluateForegroundPackage, which the system-package return skips, so a
         // completed web delay survived Home exactly as the app-level one did.
         passthrough.clearWebGrant()
-        endWebSession()
+        endWebSession("went_home")
     }
 
     private fun refreshCurrentImePackage() {
@@ -749,6 +744,21 @@ class NudgeAccessibilityService : AccessibilityService() {
             interactionTracker = entryPoint.interactionTracker(),
             usageProvider = entryPoint.usageRepository(),
             logger = entryPoint.nudgeLogger()
+        )
+
+        // Both clocks are ForegroundClock instances so a throwing tick cannot silently end either
+        // one, and so logcat says when each started, stopped, or died and why.
+        foregroundClock = ForegroundClock(
+            scope = serviceScope,
+            tickIntervalMs = FOREGROUND_TICK_MS,
+            logger = entryPoint.nudgeLogger(),
+            label = "app"
+        )
+        webClock = ForegroundClock(
+            scope = serviceScope,
+            tickIntervalMs = FOREGROUND_TICK_MS,
+            logger = entryPoint.nudgeLogger(),
+            label = "web"
         )
 
         // The same time-based auto-kick, for websites. Only the clock differs: a `web:` key has no
@@ -913,8 +923,15 @@ class NudgeAccessibilityService : AccessibilityService() {
             // Going HOME is the user genuinely leaving the app — and it is the exit path this
             // early-return used to swallow, so a completed delay never re-armed for it. Every other
             // system surface (shade, permission dialog, installer) is transient and must NOT clear.
-            if (wentHome(event.eventType, packageName)) clearPassthroughForHome(packageName)
-            clearOverlays(packageName, "system_package")
+            val home = wentHome(event.eventType, packageName)
+            if (home) clearPassthroughForHome(packageName)
+            // ...and the SAME distinction governs the foreground-time clock. Stopping it for every
+            // system surface meant a heads-up notification, a shade pull or a permission dialog
+            // silently ended the clock mid-session, and nothing restarted it until the next
+            // foreground RE-EVALUATION — which for a browser never arrives from content changes at
+            // all. That is how a configured time-based auto-kick could sit minutes past its
+            // threshold and never fire, with an empty logcat.
+            clearOverlays(packageName, "system_package", stopClocks = home)
             return
         }
 
@@ -1047,7 +1064,7 @@ class NudgeAccessibilityService : AccessibilityService() {
             !entryPoint.webDomainDetector().isBrowser(packageName)
         ) {
             passthrough.clearWebGrant()
-            endWebSession()
+            endWebSession("left_the_browser")
         }
 
         if (!counterCache.hasEntry(packageName)) {
@@ -1229,12 +1246,12 @@ class NudgeAccessibilityService : AccessibilityService() {
             ?.takeIf { counterCache.getEntry(it) != null }
 
         if (key == null) {
-            endWebSession()
+            endWebSession("not_a_tracked_domain")
             return
         }
         // Cheap guard first: this runs on every debounced content change for the whole visit, and
         // everything below it only has to happen when the domain actually changes.
-        if (key == activeWebSessionKey && webTimeJob?.isActive == true) return
+        if (key == activeWebSessionKey && webClock.isRunning) return
 
         activeWebSessionKey = key
         webSessionUsageProvider.browserPackage = browserPackage
@@ -1292,29 +1309,15 @@ class NudgeAccessibilityService : AccessibilityService() {
      * keep resetting the `delay` so the clock would never tick.
      */
     private fun startWebTimeTicker(key: String) {
-        if (key == tickingWebKey && webTimeJob?.isActive == true) return
-        stopWebTimeTicker()
-        tickingWebKey = key
-        webTimeJob = serviceScope.launch {
-            while (isActive) {
-                tickWebTime(key)
-                delay(FOREGROUND_TICK_MS)
-            }
-        }
-    }
-
-    private fun stopWebTimeTicker() {
-        webTimeJob?.cancel()
-        webTimeJob = null
-        tickingWebKey = null
+        webClock.start(key) { tickWebTime(it) }
     }
 
     /** End the current web session: no domain is in front, so nothing should be on its clock. */
-    private fun endWebSession() {
-        if (activeWebSessionKey == null && webTimeJob == null) return
+    private fun endWebSession(reason: String) {
+        if (activeWebSessionKey == null && !webClock.isRunning) return
         activeWebSessionKey = null
         webSessionUsageProvider.browserPackage = null
-        stopWebTimeTicker()
+        webClock.stop(reason)
     }
 
     /**
@@ -1336,29 +1339,45 @@ class NudgeAccessibilityService : AccessibilityService() {
         // The kick is only real if the site re-blocks on return: leaving the completed-delay pass
         // in place would put the user straight back on the page they were just removed from.
         entryPoint.passthroughManager().clearWebGrant()
-        endWebSession()
+        endWebSession("auto_kicked")
     }
 
     /** Identifies a block that happened on a website rather than in an app. */
     private data class WebBlockContext(val browserPackage: String, val domain: String?)
 
+    /**
+     * @param stopClocks whether the user has genuinely stopped looking at the app being clocked.
+     *   **Not the same question as "should the awareness overlays go away"**, and conflating the two
+     *   is what made the time-based auto-kick unreliable in the field: this function is reached from
+     *   the `SYSTEM_PACKAGES` branch, which fires for the notification shade, a permission dialog,
+     *   the installer and the launcher alike — and it killed the foreground-time clock for every one
+     *   of them. A shade pull or a heads-up notification does NOT mean the user left the app, but it
+     *   left the clock stopped until the next foreground *re-evaluation*, which for a browser never
+     *   arrives from content changes at all. The minutes then simply stopped accruing, silently.
+     *
+     *   This is the same grouped-constant trap `SYSTEM_PACKAGES` already sprang on the passthrough
+     *   grant (see `docs/architecture/foreground-detection.md`): one membership test answering two
+     *   different questions. The launcher branch already knows how to tell "went home" from
+     *   "transient", so the clock now uses that answer instead of stopping for all of them.
+     */
     private fun clearOverlays(
         packageName: String,
         reason: String,
-        markForeground: Boolean = true
+        markForeground: Boolean = true,
+        stopClocks: Boolean = true
     ) {
         interactionHandler.activeReelLabel = null
         if (markForeground) {
             lastPackage = packageName
         }
         interactionHandler.onAppChanged(packageName)
-        // Whatever is in front now is not a clock-driven package (or is our own window / a system
-        // one), so stop reading the foreground-time clock.
-        stopForegroundTimeTicker()
-        // The web clock is a separate job precisely so a browser's own events don't tear it down —
-        // a browser IS in front while a blocked site is open. Everything else (a system package,
-        // our own overlay, another app) means the user is no longer looking at that site.
-        if (!entryPoint.webDomainDetector().isBrowser(packageName)) endWebSession()
+        if (stopClocks) {
+            stopForegroundTimeTicker(reason)
+            // The web clock is separate precisely so a browser's own events don't tear it down —
+            // a browser IS in front while a blocked site is open. Everything else (our own overlay,
+            // another app) means the user is no longer looking at that site.
+            if (!entryPoint.webDomainDetector().isBrowser(packageName)) endWebSession(reason)
+        }
 
         try {
             interactionHandler.hideCounter()
@@ -1373,8 +1392,8 @@ class NudgeAccessibilityService : AccessibilityService() {
      * hot path (already the main thread) when Nudge is globally disabled, so no stale overlay lingers.
      */
     private fun hideAllOverlays() {
-        stopForegroundTimeTicker()
-        endWebSession()
+        stopForegroundTimeTicker("globally_disabled")
+        endWebSession("globally_disabled")
         try {
             if (::interactionHandler.isInitialized) interactionHandler.hideCounter()
             if (::timeRemainingHandler.isInitialized) timeRemainingHandler.hide()
@@ -1584,35 +1603,21 @@ class NudgeAccessibilityService : AccessibilityService() {
      * and a daily limit that is only noticed the next time something happens to be tapped. One
      * timer per foreground app closes that hole for both.
      *
-     * Idempotent: repeated calls for the same package leave the running job (and therefore the tick
-     * phase) alone, which matters because `evaluateForegroundPackage` is re-entered on debounced
-     * events and on the issue #7 content-change fallback — restarting the job each time would keep
-     * resetting the `delay` and the clock would never actually tick.
+     * Idempotence, the immediate first tick, the per-tick exception guard and the start/stop logging
+     * all live in [ForegroundClock] — see that class for why the inline loop this replaced was a
+     * silent single-point-of-failure.
      */
     private fun updateForegroundTimeTicker(packageName: String) {
         val entry = counterCache.getEntry(packageName)
         if (entry == null || !entry.needsForegroundTimeTick) {
-            stopForegroundTimeTicker()
+            stopForegroundTimeTicker("no_clock_config")
             return
         }
-        if (packageName == tickingPackage && foregroundTimeJob?.isActive == true) return
-
-        stopForegroundTimeTicker()
-        tickingPackage = packageName
-        foregroundTimeJob = serviceScope.launch {
-            // Tick immediately so the session baseline is taken at (near) session start rather than
-            // one interval in, then settle into the periodic cadence.
-            while (isActive) {
-                tickForegroundTime(packageName)
-                delay(FOREGROUND_TICK_MS)
-            }
-        }
+        foregroundClock.start(packageName) { tickForegroundTime(it) }
     }
 
-    private fun stopForegroundTimeTicker() {
-        foregroundTimeJob?.cancel()
-        foregroundTimeJob = null
-        tickingPackage = null
+    private fun stopForegroundTimeTicker(reason: String) {
+        foregroundClock.stop(reason)
     }
 
     /**
@@ -1636,7 +1641,7 @@ class NudgeAccessibilityService : AccessibilityService() {
                 autoKickExecutor.kick(packageName, reason = "session time")
             }
             // The user is on their way home; the next foreground event restarts the clock.
-            stopForegroundTimeTicker()
+            stopForegroundTimeTicker("auto_kicked")
             return
         }
 
@@ -1692,8 +1697,8 @@ class NudgeAccessibilityService : AccessibilityService() {
     override fun onDestroy() {
         super.onDestroy()
         if (instance === this) instance = null
-        stopForegroundTimeTicker()
-        endWebSession()
+        stopForegroundTimeTicker("service_destroyed")
+        endWebSession("service_destroyed")
         try {
             contentResolver.unregisterContentObserver(imeSettingObserver)
         } catch (_: Exception) {

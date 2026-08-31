@@ -11,6 +11,8 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
 - **You'll no longer be blocked again in the middle of a page you already waited for.** If Nudge couldn't read a real address out of the browser's address bar for a moment — a page title, a search box, a half-typed URL — it decided you had navigated away and re-armed the block under you. It now leaves things alone when it can't tell where you are, and waits for the next reliable reading.
 - **The escape hatch works on websites.** Using the 2-minute daily pass on a blocked site opened the pass on the wrong app, so the site blocked you again seconds later.
 
+- **Auto-kick's timer now actually goes off.** "Send me home after N minutes" could sit well past its threshold and do nothing, in an app or on a website. Three things were wrong: a notification arriving (or any system pop-up) silently stopped the timer for the rest of the session, a single hiccup inside the timer ended it permanently, and the reading it measured against could jump by hours after a dropped Android event, which is also why a cooldown occasionally appeared out of nowhere. The timer now survives notifications and hiccups, and every screen-time number in Nudge is finally read the same way.
+
 ### Changed
 - The rule editor is now explicit about what a Daily Time Limit covers when "Block on web too" is on: the budget counts time in the app, and once it runs out the websites are hard-blocked as well, but time on the sites doesn't count towards it yet — Auto-kick's time trigger is what limits the sites. Auto-kick says the same thing from its side: the time trigger covers the websites, the scrolls/taps trigger is app-only.
 

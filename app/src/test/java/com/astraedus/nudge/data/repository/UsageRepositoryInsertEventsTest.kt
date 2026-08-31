@@ -26,7 +26,8 @@ class UsageRepositoryInsertEventsTest {
     private val repository = UsageRepository(
         context = mockk<Context>(relaxed = true),
         usageEventDao = dao,
-        timeTracker = mockk<TimeTracker>(relaxed = true)
+        timeTracker = mockk<TimeTracker>(relaxed = true),
+        screenTimeProvider = mockk<ScreenTimeProvider>(relaxed = true)
     )
 
     private fun event(i: Int) = UsageEvent(

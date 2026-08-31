@@ -163,10 +163,50 @@ class WebDomainEnforcementContractTest {
      */
     @Test
     fun `the web clock is not the app-level ticker`() {
-        assertTrue(service.contains("private var webTimeJob: Job?"))
+        assertTrue(
+            "the web clock must be its own ForegroundClock, separate from the app one",
+            service.contains("private lateinit var webClock: ForegroundClock") &&
+                service.contains("private lateinit var foregroundClock: ForegroundClock")
+        )
         assertTrue(
             "clearOverlays must not end a web session while a browser is still in front",
-            service.contains("if (!entryPoint.webDomainDetector().isBrowser(packageName)) endWebSession()")
+            service.contains(
+                "if (!entryPoint.webDomainDetector().isBrowser(packageName)) endWebSession(reason)"
+            )
+        )
+    }
+
+    /**
+     * Both clocks must go through [ForegroundClock], which is where the per-tick exception guard and
+     * the start/stop/exit logging live. A hand-rolled `while (isActive) { tick(); delay() }` back in
+     * the service is the shape that let one throwing tick end the clock permanently and silently.
+     */
+    @Test
+    fun `no hand-rolled tick loop may live in the service`() {
+        assertFalse(
+            "clock loops belong in ForegroundClock, not inlined here",
+            service.contains("while (isActive)")
+        )
+        assertTrue(service.contains("foregroundClock.start("))
+        assertTrue(service.contains("webClock.start("))
+    }
+
+    /**
+     * The defect that made the time-based auto-kick unreliable: the SYSTEM_PACKAGES branch stopped
+     * the foreground-time clock for EVERY system surface, so a heads-up notification or a shade pull
+     * silently ended a running session's clock. Only genuinely going home may stop it.
+     */
+    @Test
+    fun `a transient system window must not stop the foreground clock`() {
+        val branch = service.substringAfter("if (packageName in SYSTEM_PACKAGES) {")
+            .substringBefore("\n        }")
+        assertTrue(
+            "the clock must stop only when the user actually went home",
+            branch.contains("stopClocks = home")
+        )
+        assertFalse(
+            "the branch must not stop the clocks unconditionally",
+            branch.contains("stopForegroundTimeTicker(") || branch.contains("endWebSession(")
         )
     }
 
@@ -181,6 +221,6 @@ class WebDomainEnforcementContractTest {
 
         assertTrue(tick.contains("autoKickExecutor.kick("))
         assertTrue(tick.contains("clearWebGrant()"))
-        assertTrue(tick.contains("endWebSession()"))
+        assertTrue(tick.contains("endWebSession("))
     }
 }

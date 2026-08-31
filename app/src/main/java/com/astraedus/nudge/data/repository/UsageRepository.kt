@@ -18,7 +18,8 @@ import javax.inject.Singleton
 class UsageRepository @Inject constructor(
     @ApplicationContext private val context: Context,
     private val usageEventDao: UsageEventDao,
-    private val timeTracker: TimeTracker
+    private val timeTracker: TimeTracker,
+    private val screenTimeProvider: ScreenTimeProvider
 ) : UsageProvider {
 
     suspend fun logEvent(event: UsageEvent) = usageEventDao.insert(event)
@@ -43,41 +44,37 @@ class UsageRepository @Inject constructor(
     }
 
     /**
-     * Get today's foreground usage time from queryEvents (ACTIVITY_RESUMED/PAUSED pairs).
-     * queryUsageStats(INTERVAL_DAILY) returns stale pre-aggregated buckets on Android 12+;
-     * event-based calculation gives accurate real-time data.
+     * Today's foreground time for [packageName], the number the daily budget is spent against and
+     * the clock the time-based auto-kick measures its session with.
+     *
+     * **Delegates to [ScreenTimeProvider], deliberately.** This used to be its own `queryEvents`
+     * walk, and it was the FOURTH copy of the RESUMED/PAUSED pairing loop in the app, the three in
+     * `ScreenTimeProvider` were collapsed into [com.astraedus.nudge.domain.usage.ForegroundSpanTracker]
+     * in v1.15.1 after a phone reported ~17 hours of screen time before lunchtime, but this one
+     * lives in a different file and the sweep missed it. It still carried both defects that fix
+     * exists to remove:
+     *
+     *  - **`if (event.packageName != packageName) continue`** filtered the stream BEFORE pairing, so
+     *    it could not see the event that ended this app's span, another app coming to the
+     *    foreground. Filter the spans, never the stream.
+     *  - **`totalMs += now - lastResumed`** extended a still-open span to the present with no cap.
+     *    A single dropped `ACTIVITY_PAUSED` (a killed process, a screen-off with no pause) was
+     *    therefore worth every minute since, so this reading could jump by hours at once. On this
+     *    code path that means a time-based auto-kick firing out of nowhere, long after the user
+     *    stopped doing anything, which is precisely the unexplained kick device QA saw late in a
+     *    session full of earlier tests.
+     *
+     * Going through the one tracker buys the guarantees back: only one app is foreground at a time,
+     * screen-off / keyguard / shutdown end a span, and an INFERRED open tail is capped while a
+     * measured span never is.
      */
     override fun getDailyForegroundTimeMs(packageName: String): Long {
-        return try {
-            val usm = context.getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
-                ?: return 0L
-            val todayStart = timeTracker.startOfToday()
-            val now = System.currentTimeMillis()
-            val events = usm.queryEvents(todayStart, now) ?: return 0L
-            val event = UsageEvents.Event()
-
-            var totalMs = 0L
-            var lastResumed = 0L
-
-            while (events.hasNextEvent()) {
-                events.getNextEvent(event)
-                if (event.packageName != packageName) continue
-                when (event.eventType) {
-                    UsageEvents.Event.ACTIVITY_RESUMED -> lastResumed = event.timeStamp
-                    UsageEvents.Event.ACTIVITY_PAUSED -> {
-                        if (lastResumed > 0L) {
-                            totalMs += event.timeStamp - lastResumed
-                            lastResumed = 0L
-                        }
-                    }
-                }
-            }
-
-            if (lastResumed > 0L) totalMs += now - lastResumed
-            totalMs
-        } catch (_: SecurityException) {
-            0L
-        }
+        val todayStart = timeTracker.startOfToday()
+        val now = System.currentTimeMillis()
+        return screenTimeProvider
+            .getPerAppSessionStats(todayStart, now)[packageName]
+            ?.totalMs
+            ?: 0L
     }
 
     fun getEventsSince(since: Long): Flow<List<UsageEvent>> =

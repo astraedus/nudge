@@ -31,7 +31,7 @@ class HomeScreenPassthroughContractTest {
     private val systemPackageBranch: String by lazy {
         val start = source.indexOf("if (packageName in SYSTEM_PACKAGES) {")
         assertTrue("the SYSTEM_PACKAGES branch must still exist", start >= 0)
-        val end = source.indexOf("clearOverlays(packageName, \"system_package\")", start)
+        val end = source.indexOf("clearOverlays(packageName, \"system_package\"", start)
         assertTrue("the SYSTEM_PACKAGES branch must still clear overlays", end > start)
         source.substring(start, end)
     }
@@ -85,7 +85,7 @@ class HomeScreenPassthroughContractTest {
         )
         assertTrue(
             "leaving the browser must also stop the web foreground-time clock",
-            clearForHomeBody.contains("endWebSession()")
+            clearForHomeBody.contains("endWebSession(")
         )
     }
 

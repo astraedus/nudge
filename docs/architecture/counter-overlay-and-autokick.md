@@ -82,3 +82,71 @@ work on it **unchanged**. Full rationale, and the three passthrough bugs found a
   `CATEGORY_HOME` as "launcher".
 - Tests: `CounterCacheWebEntriesTest` (9), `WebSessionUsageProviderTest` (5),
   `WebDomainEnforcementContractTest` (8, source-level).
+
+## Why the time-based auto-kick was unreliable, v1.15.2
+
+Device QA: a rule with a 2-minute time trigger, sat on for 2m20s, no kick. Logcat showed
+`session baseline set … threshold=2min` **once** and then nothing, on the web path AND on the native
+app path. It was reported as "the time auto-kick is dead", but it was never one bug, it was three,
+and the third is why the first two survived so long.
+
+**The app path was NOT a regression from the web-domain work** (verified at source level: those
+commits touch none of `AutoKickTimeHandler`, `InteractionTracker`, `TimeKickEvaluator`,
+`UsageRepository`, and their only hits in the service are doc comments). It has been fragile since
+the trigger shipped in v1.10.0, and v1.10.0's device QA passed because it happened not to hit the
+window where it breaks.
+
+### 1. Transient system windows stopped the clock
+
+`onAccessibilityEvent`'s `SYSTEM_PACKAGES` branch called `clearOverlays`, which called
+`stopForegroundTimeTicker()`. `SYSTEM_PACKAGES` is the notification shade, permission dialogs, the
+installer and the launcher, and the clock stopped for **all** of them. A heads-up notification
+ended a running session's clock, and nothing restarted it until the next foreground
+*re-evaluation*, which for a **browser never arrives from content changes at all**
+(`handleWindowContentChanged` returns early on the browser branch). Minutes simply stopped accruing.
+
+This is the *same grouped-constant trap* `SYSTEM_PACKAGES` already sprang on the passthrough grant
+(`foreground-detection.md`): one membership test answering two different questions, "should the
+awareness overlays go away" and "has the user stopped looking at this app". The launcher branch
+already knows how to tell "went home" from "transient", so `clearOverlays` gained an explicit
+`stopClocks` parameter and the system branch passes the answer it already computed.
+
+### 2. One throwing tick ended the clock permanently, in silence
+
+Both clocks were inline `while (isActive) { tick(); delay(30_000) }` loops on a `SupervisorJob`
+scope. The body reaches a binder read and the WindowManager; `AutoKickTimeHandler` guards only its
+own usage read, so anything else throwing left the loop **for good**, the throwing child died
+alone, the scope survived, and nothing logged it or restarted it.
+
+`service/ForegroundClock.kt` now owns the loop for both clocks: idempotent per key, immediate first
+tick, **per-tick exception guard**, and start/stop/exit logged unconditionally with a reason.
+`ForegroundClockTest` pins it, including a witness test that reproduces the old inline shape and
+asserts it dies after one tick while the guarded one survives the identical failure.
+
+### 3. Nothing was observable, which is why this took a device cycle to even localise
+
+Four separate paths returned `false` with **no log**: `shouldKick`'s missing-cache-entry
+`?: return false`, both gates in `tickForegroundTime`, and, the important one, 
+`TimeKickEvaluator.WAIT`. WAIT is the branch a *healthy* clock spends its whole session in. So
+"the clock is ticking and hasn't reached the threshold" and "the clock has been dead for ten
+minutes" produced **identical logcat: nothing**, and QA correctly could not tell them apart.
+
+This is the v1.12.0 picture-in-picture failure again, one subsystem over ("detection fired but
+stayed silent" vs "detection never fired" being indistinguishable cost a whole release cycle). The
+WAIT branch now logs `elapsed`, `threshold` and the raw `usage` reading, and the missing-entry case
+says so. That makes the next device run conclusive in one pass: **no WAIT lines at all ⇒ the clock
+is dead; WAIT lines whose `elapsed` never grows ⇒ the reading is the problem.**
+
+### 4. …and the reading itself was the fourth copy of a loop that was supposed to be gone
+
+`UsageRepository.getDailyForegroundTimeMs`, the clock behind *both* the auto-kick and daily budgets
+, was still its own `queryEvents` walk. v1.15.1 collapsed three copies of that pairing loop into
+`ForegroundSpanTracker` after the 17-hour-day incident, but this one lives outside
+`ScreenTimeProvider`, so both the sweep and `ScreenTimeSourceContractTest` missed it. It carried both
+defects that fix exists to remove: it filtered the stream **before** pairing (`if (event.packageName
+!= packageName) continue`, so it could not see the event that ends this app's span, another app
+coming forward) and it extended a still-open span to now **uncapped**. One dropped `ACTIVITY_PAUSED`
+was therefore worth every minute since. On this code path that reads as a kick firing out of
+nowhere, which matches the unexplained cooldown QA saw late in a long session. It now delegates to
+`ScreenTimeProvider.getPerAppSessionStats`, so there is one interpretation of the event stream in the
+app, with the capped-inference and one-app-at-a-time guarantees.
