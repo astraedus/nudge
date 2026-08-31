@@ -7,6 +7,8 @@ import android.content.Context
 import android.os.Process
 import com.astraedus.nudge.domain.engine.TimeTracker
 import com.astraedus.nudge.domain.usage.DailyUsageAccumulator
+import com.astraedus.nudge.domain.usage.ForegroundSpanTracker
+import com.astraedus.nudge.domain.usage.HourlyUsageAccumulator
 import com.astraedus.nudge.domain.usage.WeeklyUsage
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
@@ -19,6 +21,13 @@ import javax.inject.Singleton
  * Room DB (usage_events table) only logs block/allow decisions and does NOT
  * track foreground duration at all — it carried an always-zero `durationMs`
  * column until issue #22 removed it.
+ *
+ * **One app is in the foreground at a time.** Every read here goes through
+ * [ForegroundSpanTracker], which turns the event stream into non-overlapping spans, so no two
+ * apps can be billed for the same minute and no day can add up to more than the day. Each read
+ * path used to pair events with its own `package -> startTime` map, which allowed exactly that:
+ * a real phone reported ~17 hours of screen time before lunchtime, because several apps held
+ * open spans at once and each was credited from its RESUMED through to now (v1.15.1).
  *
  * Requires PACKAGE_USAGE_STATS permission (granted via Settings > Special Access > Usage Access).
  * Returns 0 gracefully when permission is missing.
@@ -71,40 +80,17 @@ class ScreenTimeProvider @Inject constructor(
             if (rangeStartMs >= effectiveEnd) return emptyMap()
 
             val events = usm.queryEvents(rangeStartMs, effectiveEnd) ?: return emptyMap()
-            val event = UsageEvents.Event()
-
-            val foregroundStarts = mutableMapOf<String, Long>()
             val perApp = mutableMapOf<String, SessionStats>()
 
-            fun record(pkg: String, durationMs: Long) {
+            val tracker = ForegroundSpanTracker { pkg, startMs, endMs ->
                 val existing = perApp[pkg] ?: SessionStats(0L, 0)
                 perApp[pkg] = SessionStats(
-                    totalMs = existing.totalMs + durationMs,
+                    totalMs = existing.totalMs + (endMs - startMs),
                     sessionCount = existing.sessionCount + 1
                 )
             }
-
-            while (events.hasNextEvent()) {
-                events.getNextEvent(event)
-                when (event.eventType) {
-                    UsageEvents.Event.ACTIVITY_RESUMED -> {
-                        foregroundStarts[event.packageName] = event.timeStamp
-                    }
-                    UsageEvents.Event.ACTIVITY_PAUSED -> {
-                        val startTime = foregroundStarts.remove(event.packageName)
-                        if (startTime != null) {
-                            record(event.packageName, event.timeStamp - startTime)
-                        }
-                    }
-                }
-            }
-
-            // Only add still-open sessions if the range includes "now"
-            if (rangeEndMs >= now) {
-                for ((pkg, startTime) in foregroundStarts) {
-                    record(pkg, now - startTime)
-                }
-            }
+            feed(events, tracker)
+            tracker.finish(nowMs = now, extendOpenSpanToNow = rangeEndMs >= now)
 
             perApp
         } catch (_: SecurityException) {
@@ -156,18 +142,8 @@ class ScreenTimeProvider @Inject constructor(
 
             val events = usm.queryEvents(windowStartMs, effectiveEnd)
                 ?: return WeeklyUsage.empty(dayStarts)
-            val event = UsageEvents.Event()
             val accumulator = DailyUsageAccumulator(dayStarts + windowEndMs)
-
-            while (events.hasNextEvent()) {
-                events.getNextEvent(event)
-                when (event.eventType) {
-                    UsageEvents.Event.ACTIVITY_RESUMED ->
-                        accumulator.onResumed(event.packageName, event.timeStamp)
-                    UsageEvents.Event.ACTIVITY_PAUSED ->
-                        accumulator.onPaused(event.packageName, event.timeStamp)
-                }
-            }
+            feed(events, accumulator.eventSink)
 
             WeeklyUsage(dayStarts, accumulator.finish(windowEndMs = windowEndMs, nowMs = now))
         } catch (_: SecurityException) {
@@ -182,54 +158,8 @@ class ScreenTimeProvider @Inject constructor(
      * @param dayStartMs start of the day (midnight), epoch millis
      * @param dayEndMs end of the day (next midnight or now for today), epoch millis
      */
-    fun getHourlyScreenTime(dayStartMs: Long, dayEndMs: Long): List<Long> {
-        return try {
-            val usm = usageStatsManager ?: return List(24) { 0L }
-            val now = System.currentTimeMillis()
-            val effectiveEnd = dayEndMs.coerceAtMost(now)
-            if (dayStartMs >= effectiveEnd) return List(24) { 0L }
-
-            val hourMs = 60L * 60L * 1000L
-            val hourly = MutableList(24) { 0L }
-
-            val events = usm.queryEvents(dayStartMs, effectiveEnd) ?: return hourly
-            val event = UsageEvents.Event()
-
-            val foregroundStarts = mutableMapOf<String, Long>()
-
-            while (events.hasNextEvent()) {
-                events.getNextEvent(event)
-                when (event.eventType) {
-                    UsageEvents.Event.ACTIVITY_RESUMED -> {
-                        foregroundStarts[event.packageName] = event.timeStamp
-                    }
-                    UsageEvents.Event.ACTIVITY_PAUSED -> {
-                        val startTime = foregroundStarts.remove(event.packageName)
-                        if (startTime != null) {
-                            distributeToHours(hourly, startTime, event.timeStamp, dayStartMs, hourMs)
-                        }
-                    }
-                }
-            }
-
-            if (dayEndMs >= now) {
-                for ((_, startTime) in foregroundStarts) {
-                    distributeToHours(hourly, startTime, now, dayStartMs, hourMs)
-                }
-            }
-
-            hourly
-        } catch (_: SecurityException) {
-            List(24) { 0L }
-        }
-    }
-
-    /** Convenience: get per-hour screen time breakdown for today. */
-    fun getHourlyScreenTimeToday(): List<Long> {
-        val todayStart = timeTracker.startOfToday()
-        val now = System.currentTimeMillis()
-        return getHourlyScreenTime(todayStart, now)
-    }
+    fun getHourlyScreenTime(dayStartMs: Long, dayEndMs: Long): List<Long> =
+        hourlyScreenTime(dayStartMs, dayEndMs, packageName = null)
 
     /**
      * Get per-hour screen time breakdown for a specific app on an arbitrary day.
@@ -238,78 +168,76 @@ class ScreenTimeProvider @Inject constructor(
      * @param dayStartMs start of the day (midnight), epoch millis
      * @param dayEndMs end of the day (next midnight or now for today), epoch millis
      */
-    fun getPerAppHourlyScreenTime(packageName: String, dayStartMs: Long, dayEndMs: Long): List<Long> {
+    fun getPerAppHourlyScreenTime(packageName: String, dayStartMs: Long, dayEndMs: Long): List<Long> =
+        hourlyScreenTime(dayStartMs, dayEndMs, packageName)
+
+    /**
+     * The one hourly read, for the whole device ([packageName] null) or for one app.
+     *
+     * **Every event is fed to the tracker, and the filter is applied to the resulting spans, not
+     * to the stream.** Filtering first is what the per-app version used to do, and it blinded the
+     * tracker: without the other apps' RESUMED events nothing could tell it this app had stopped
+     * being foreground, so one missing PAUSED billed the app through to now and painted hours the
+     * phone spent in a pocket.
+     */
+    private fun hourlyScreenTime(
+        dayStartMs: Long,
+        dayEndMs: Long,
+        packageName: String?
+    ): List<Long> {
         return try {
-            val usm = usageStatsManager ?: return List(24) { 0L }
+            val usm = usageStatsManager ?: return HourlyUsageAccumulator.empty()
             val now = System.currentTimeMillis()
             val effectiveEnd = dayEndMs.coerceAtMost(now)
-            if (dayStartMs >= effectiveEnd) return List(24) { 0L }
+            if (dayStartMs >= effectiveEnd) return HourlyUsageAccumulator.empty()
 
-            val hourMs = 60L * 60L * 1000L
-            val hourly = MutableList(24) { 0L }
+            val events = usm.queryEvents(dayStartMs, effectiveEnd)
+                ?: return HourlyUsageAccumulator.empty()
 
-            val events = usm.queryEvents(dayStartMs, effectiveEnd) ?: return hourly
-            val event = UsageEvents.Event()
-            val foregroundStarts = mutableMapOf<String, Long>()
-
-            while (events.hasNextEvent()) {
-                events.getNextEvent(event)
-                if (event.packageName != packageName) continue
-                when (event.eventType) {
-                    UsageEvents.Event.ACTIVITY_RESUMED -> foregroundStarts[event.packageName] = event.timeStamp
-                    UsageEvents.Event.ACTIVITY_PAUSED -> {
-                        val startTime = foregroundStarts.remove(event.packageName)
-                        if (startTime != null) {
-                            distributeToHours(hourly, startTime, event.timeStamp, dayStartMs, hourMs)
-                        }
-                    }
-                }
+            val accumulator = HourlyUsageAccumulator(dayStartMs, effectiveEnd)
+            val tracker = ForegroundSpanTracker { pkg, startMs, endMs ->
+                if (packageName == null || pkg == packageName) accumulator.add(startMs, endMs)
             }
+            feed(events, tracker)
+            tracker.finish(nowMs = now, extendOpenSpanToNow = dayEndMs >= now)
 
-            if (dayEndMs >= now) {
-                for ((_, startTime) in foregroundStarts) {
-                    distributeToHours(hourly, startTime, now, dayStartMs, hourMs)
-                }
-            }
-
-            hourly
+            accumulator.totals()
         } catch (_: SecurityException) {
-            List(24) { 0L }
+            HourlyUsageAccumulator.empty()
         }
     }
 
-    /** Convenience: get per-hour screen time for a specific app today. */
-    fun getPerAppHourlyScreenTimeToday(packageName: String): List<Long> {
-        val todayStart = timeTracker.startOfToday()
-        val now = System.currentTimeMillis()
-        return getPerAppHourlyScreenTime(packageName, todayStart, now)
-    }
-
     /**
-     * Distribute a foreground session's duration across hourly buckets.
+     * Walks a `queryEvents` cursor into a [ForegroundSpanTracker] — the **one** place platform
+     * event types are interpreted, shared by the weekly bars, the hourly heatmap and the session
+     * stats. Three hand-rolled copies of this loop is how the three of them came to disagree.
+     *
+     * `ACTIVITY_STOPPED`, `SCREEN_NON_INTERACTIVE`, `KEYGUARD_SHOWN` and `DEVICE_SHUTDOWN` all
+     * close the open span. The screen-off pair is the important one: a phone put down mid-session
+     * often never delivers the app's own `ACTIVITY_PAUSED`, and before these were handled that
+     * app kept accruing "screen time" for as long as the phone stayed dark. They are device-level
+     * events, reported by the platform under package `"android"`, and the constants are added
+     * after our minSdk of 26 — harmless, since they are compile-time ints and an older device
+     * simply never emits them (`ACTIVITY_RESUMED` itself is an API-29 constant).
      */
-    private fun distributeToHours(
-        hourly: MutableList<Long>,
-        sessionStart: Long,
-        sessionEnd: Long,
-        todayStart: Long,
-        hourMs: Long
-    ) {
-        val clampedStart = sessionStart.coerceAtLeast(todayStart)
-        val clampedEnd = sessionEnd.coerceAtMost(todayStart + 24 * hourMs)
+    private fun feed(events: UsageEvents, tracker: ForegroundSpanTracker) {
+        val event = UsageEvents.Event()
+        while (events.hasNextEvent()) {
+            events.getNextEvent(event)
+            when (event.eventType) {
+                // Device-level first, and deliberately not gated on a package name: these say the
+                // foreground ended regardless of whose it was.
+                UsageEvents.Event.SCREEN_NON_INTERACTIVE,
+                UsageEvents.Event.KEYGUARD_SHOWN,
+                UsageEvents.Event.DEVICE_SHUTDOWN ->
+                    tracker.onForegroundEnded(event.timeStamp)
 
-        if (clampedStart >= clampedEnd) return
-
-        val startHour = ((clampedStart - todayStart) / hourMs).toInt().coerceIn(0, 23)
-        val endHour = ((clampedEnd - todayStart) / hourMs).toInt().coerceIn(0, 23)
-
-        for (hour in startHour..endHour) {
-            val bucketStart = todayStart + hour * hourMs
-            val bucketEnd = bucketStart + hourMs
-            val overlapStart = clampedStart.coerceAtLeast(bucketStart)
-            val overlapEnd = clampedEnd.coerceAtMost(bucketEnd)
-            if (overlapStart < overlapEnd) {
-                hourly[hour] += overlapEnd - overlapStart
+                UsageEvents.Event.ACTIVITY_RESUMED ->
+                    event.packageName?.let { tracker.onResumed(it, event.className, event.timeStamp) }
+                UsageEvents.Event.ACTIVITY_PAUSED ->
+                    event.packageName?.let { tracker.onPaused(it, event.timeStamp) }
+                UsageEvents.Event.ACTIVITY_STOPPED ->
+                    event.packageName?.let { tracker.onStopped(it, event.className, event.timeStamp) }
             }
         }
     }

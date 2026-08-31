@@ -21,6 +21,12 @@ package com.astraedus.nudge.domain.usage
  * (calendar arithmetic), so a DST day is genuinely 23 or 25 hours wide here. Deriving them from
  * `index * 86_400_000` would slide every boundary in the window an hour off true local midnight.
  *
+ * **Pairing is not its job.** Deciding which app is foreground and until when belongs to
+ * [ForegroundSpanTracker], which this delegates to; it is what guarantees the spans arriving here
+ * do not overlap, and therefore that a day's total can never exceed the day. Accumulating the
+ * pairing here as well would be the two-implementations-of-one-question defect again, this time
+ * against the hourly heatmap and the Willpower session stats, which read the same events.
+ *
  * Pure Kotlin, no Android types: the whole pairing/splitting contract is JVM-tested in
  * `DailyUsageAccumulatorTest`.
  *
@@ -43,41 +49,52 @@ class DailyUsageAccumulator(private val dayBoundariesMs: List<Long>) {
     private val buckets: List<MutableMap<String, Long>> =
         List(dayBoundariesMs.size - 1) { mutableMapOf() }
 
-    /** package -> timestamp of the RESUMED that has not been PAUSED yet. */
-    private val openSpans = mutableMapOf<String, Long>()
-
     /**
-     * A second RESUMED without an intervening PAUSED replaces the first, which is how the
-     * single-day path has always read a malformed sequence: the later timestamp is the one the
-     * app is demonstrably in the foreground from, and crediting the earlier one would invent
-     * time the user did not spend.
+     * Where the raw platform stream goes. `ScreenTimeProvider` feeds this directly, with the same
+     * loop it uses for the hourly heatmap and the session stats, so all three read paths agree on
+     * which app was foreground when.
      */
-    fun onResumed(packageName: String, timestampMs: Long) {
-        openSpans[packageName] = timestampMs
+    val eventSink = ForegroundSpanTracker(onSpan = ::addSpan)
+
+    /** End of the last span bucketed, so an overlapping one cannot be counted twice. */
+    private var lastSpanEndMs = Long.MIN_VALUE
+
+    /** An activity moved to the foreground. See [ForegroundSpanTracker.onResumed]. */
+    fun onResumed(packageName: String, timestampMs: Long, className: String? = null) {
+        eventSink.onResumed(packageName, className, timestampMs)
     }
 
-    /** A PAUSED with no open RESUMED is ignored — there is no start to measure from. */
+    /** An activity moved to the background. See [ForegroundSpanTracker.onPaused]. */
     fun onPaused(packageName: String, timestampMs: Long) {
-        val startMs = openSpans.remove(packageName) ?: return
-        addSpan(packageName, startMs, timestampMs)
+        eventSink.onPaused(packageName, timestampMs)
+    }
+
+    /** An activity became invisible. See [ForegroundSpanTracker.onStopped]. */
+    fun onStopped(packageName: String, timestampMs: Long, className: String? = null) {
+        eventSink.onStopped(packageName, className, timestampMs)
+    }
+
+    /**
+     * The screen went off, the keyguard came up, or the device shut down — whatever was in the
+     * foreground no longer is. See [ForegroundSpanTracker.onForegroundEnded].
+     */
+    fun onForegroundEnded(timestampMs: Long) {
+        eventSink.onForegroundEnded(timestampMs)
     }
 
     /**
      * Closes the accumulation and returns one map per day.
      *
-     * A span still open at the end of the stream is counted **up to [nowMs]**, and only when the
-     * window actually reaches the present ([windowEndMs] >= [nowMs]) — exactly what the
-     * single-day path does for "today". For a window that has already ended, an open span means
-     * the closing PAUSED simply fell outside the query, and inventing an end for it would credit
-     * a past day with time we cannot see.
+     * A span still open at the end of the stream is counted towards [nowMs] only when the window
+     * actually reaches the present ([windowEndMs] >= [nowMs]), and only as far as the tracker's
+     * open-span cap allows. For a window that has already ended, an open span means the closing
+     * PAUSED simply fell outside the query, and inventing an end for it would credit a past day
+     * with time we cannot see.
      *
-     * Idempotent: open spans are consumed, so a second call adds nothing.
+     * Idempotent: the open span is consumed, so a second call adds nothing.
      */
     fun finish(windowEndMs: Long, nowMs: Long): List<Map<String, Long>> {
-        if (windowEndMs >= nowMs) {
-            for ((packageName, startMs) in openSpans) addSpan(packageName, startMs, nowMs)
-        }
-        openSpans.clear()
+        eventSink.finish(nowMs = nowMs, extendOpenSpanToNow = windowEndMs >= nowMs)
         return buckets.map { it.toMap() }
     }
 
@@ -87,11 +104,17 @@ class DailyUsageAccumulator(private val dayBoundariesMs: List<Long>) {
      * Clamped to the window first, so an event from outside it contributes nothing, and a
      * backwards pair (PAUSED before RESUMED — a corrupt sequence the platform has produced)
      * yields zero rather than the negative duration a bare subtraction would.
+     *
+     * Also clamped to start no earlier than the last span already counted. [ForegroundSpanTracker]
+     * cannot hand out overlapping spans, so this changes nothing today — it is here because an
+     * overlap is exactly how a day came to read 17 hours before lunchtime, and this is the last
+     * place that could still absorb one.
      */
     private fun addSpan(packageName: String, startMs: Long, endMs: Long) {
-        val spanStart = startMs.coerceAtLeast(dayBoundariesMs.first())
+        val spanStart = startMs.coerceAtLeast(dayBoundariesMs.first()).coerceAtLeast(lastSpanEndMs)
         val spanEnd = endMs.coerceAtMost(dayBoundariesMs.last())
         if (spanStart >= spanEnd) return
+        lastSpanEndMs = spanEnd
 
         for (day in buckets.indices) {
             val dayStart = dayBoundariesMs[day]

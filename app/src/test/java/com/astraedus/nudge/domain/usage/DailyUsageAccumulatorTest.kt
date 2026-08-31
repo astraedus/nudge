@@ -70,15 +70,124 @@ class DailyUsageAccumulatorTest {
     fun `packages are kept apart`() {
         val accumulator = DailyUsageAccumulator(boundaries(7))
         accumulator.onResumed(chrome, day(3) + hours(9))
-        accumulator.onResumed(youtube, day(3) + hours(9))
         accumulator.onPaused(chrome, day(3) + hours(10))
-        accumulator.onPaused(youtube, day(3) + hours(11))
+        accumulator.onResumed(youtube, day(3) + hours(10))
+        accumulator.onPaused(youtube, day(3) + hours(12))
 
         val buckets = accumulator.finish(windowEndMs = day(7), nowMs = day(7))
 
         assertEquals(hours(1), buckets[3][chrome])
         assertEquals(hours(2), buckets[3][youtube])
         assertEquals(hours(3), buckets.totalOn(3))
+    }
+
+    // --- one app at a time (the 17-hour bug) ---
+
+    /**
+     * This test used to assert the opposite: two apps RESUMED at 09:00, paused an hour apart, and
+     * three hours of "screen time" out of two wall-clock hours. That reading is what a
+     * `package -> startTime` map buys you, and on a real phone it produced **~17 hours of screen
+     * time before lunchtime** — several apps holding open spans at once, each billed through to
+     * now. Only one app is on screen at a time; the next app's RESUMED is where the last one ended.
+     */
+    @Test
+    fun `two apps are never credited with the same hour`() {
+        val accumulator = DailyUsageAccumulator(boundaries(7))
+        accumulator.onResumed(chrome, day(3) + hours(9))
+        accumulator.onResumed(youtube, day(3) + hours(10)) // chrome's PAUSED never arrived
+        accumulator.onPaused(youtube, day(3) + hours(11))
+
+        val buckets = accumulator.finish(windowEndMs = day(7), nowMs = day(7))
+
+        assertEquals(hours(1), buckets[3][chrome])
+        assertEquals(hours(1), buckets[3][youtube])
+        assertEquals(
+            "two hours of wall clock cannot become three hours of screen time",
+            hours(2),
+            buckets.totalOn(3)
+        )
+    }
+
+    @Test
+    fun `a day can never hold more time than the day is long`() {
+        val accumulator = DailyUsageAccumulator(boundaries(7))
+        // Every app resumes and none of them ever pauses — the worst case the platform can hand us.
+        listOf(chrome, youtube, "com.instagram.android", "com.whatsapp", "com.reddit.frontpage")
+            .forEachIndexed { index, pkg ->
+                accumulator.onResumed(pkg, day(2) + hours(index.toLong()))
+            }
+
+        val buckets = accumulator.finish(windowEndMs = day(7), nowMs = day(7))
+
+        buckets.forEachIndexed { dayIndex, _ ->
+            assertTrue(
+                "day $dayIndex holds ${buckets.totalOn(dayIndex)}ms, more than a 24-hour day",
+                buckets.totalOn(dayIndex) <= hours(24)
+            )
+        }
+    }
+
+    @Test
+    fun `today can never hold more time than has passed since midnight`() {
+        val now = day(6) + hours(11) // 11am, the hour the 17-hour reading was reported at
+        val accumulator = DailyUsageAccumulator(boundaries(7))
+        listOf(chrome, youtube, "com.instagram.android", "com.whatsapp")
+            .forEachIndexed { index, pkg ->
+                accumulator.onResumed(pkg, day(6) + hours(index.toLong()))
+            }
+
+        val buckets = accumulator.finish(windowEndMs = day(7), nowMs = now)
+
+        assertTrue(
+            "eleven hours into the day, today reads ${buckets.totalOn(6)}ms",
+            buckets.totalOn(6) <= now - day(6)
+        )
+    }
+
+    @Test
+    fun `a stale RESUMED cannot fill the bars of the days after it`() {
+        // One lost close event three days ago used to be worth three days of screen time, spread
+        // across every bar in between. An open span is inferred, so it is capped.
+        val now = day(6) + hours(12)
+        val accumulator = DailyUsageAccumulator(boundaries(7))
+        accumulator.onResumed(youtube, day(3) + hours(9))
+
+        val buckets = accumulator.finish(windowEndMs = day(7), nowMs = now)
+
+        assertEquals(
+            "an unterminated span is capped, not billed to the present",
+            ForegroundSpanTracker.DEFAULT_OPEN_TAIL_LIMIT_MS,
+            buckets.sumOf { it.values.sum() }
+        )
+        assertEquals(0L, buckets.totalOn(4))
+        assertEquals(0L, buckets.totalOn(5))
+        assertEquals(0L, buckets.totalOn(6))
+    }
+
+    // --- the screen going off ---
+
+    @Test
+    fun `the screen going off ends the session, even across a bar boundary`() {
+        val now = day(6) + hours(9)
+        val accumulator = DailyUsageAccumulator(boundaries(7))
+        accumulator.onResumed(youtube, day(5) + hours(22))
+        accumulator.onForegroundEnded(day(5) + hours(23)) // phone put down for the night
+
+        val buckets = accumulator.finish(windowEndMs = day(7), nowMs = now)
+
+        assertEquals(hours(1), buckets[5][youtube])
+        assertEquals("a sleeping phone is not screen time", 0L, buckets.totalOn(6))
+    }
+
+    @Test
+    fun `the STOPPED of the open activity ends its span`() {
+        val accumulator = DailyUsageAccumulator(boundaries(7))
+        accumulator.onResumed(chrome, day(2) + hours(9), className = "BrowserActivity")
+        accumulator.onStopped(chrome, day(2) + hours(10), className = "BrowserActivity")
+
+        val buckets = accumulator.finish(windowEndMs = day(7), nowMs = day(7))
+
+        assertEquals(hours(1), buckets[2][chrome])
     }
 
     // --- spans that cross a boundary ---

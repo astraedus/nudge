@@ -111,6 +111,39 @@ class ScreenTimeSourceContractTest {
     }
 
     /**
+     * The provider reads events; it does not decide who was in the foreground.
+     *
+     * It used to do both, three times over — the weekly bars, the hourly heatmap and the Willpower
+     * session stats each walked the cursor with their own `package -> startTime` map. Nothing in
+     * those maps said only ONE app can be foreground at a time, so a missing `ACTIVITY_PAUSED`
+     * left an app accruing time while the next app accrued its own, and each open span was billed
+     * through to "now" however stale it was. A real phone reported ~17 hours of screen time before
+     * lunchtime. `ForegroundSpanTracker` is now the single answer, and one loop feeds it.
+     */
+    @Test
+    fun `the provider does not pair foreground events itself`() {
+        val text = source(screenTimeProvider)
+
+        assertFalse(
+            "$screenTimeProvider must not keep its own package -> start-time map: several open " +
+                "spans at once is how a day came to hold more hours than the day. Feed " +
+                "ForegroundSpanTracker, which emits non-overlapping spans.",
+            text.contains("foregroundStarts")
+        )
+        assertTrue(
+            "$screenTimeProvider must route every read through ForegroundSpanTracker",
+            text.contains("ForegroundSpanTracker")
+        )
+        assertEquals(
+            "$screenTimeProvider must walk the event cursor in exactly one place — a second " +
+                "loop is a second interpretation of which app was on screen, and the three it " +
+                "used to have all drifted",
+            1,
+            Regex("""while \(events\.hasNextEvent\(\)\)""").findAll(text).count()
+        )
+    }
+
+    /**
      * A day is looked up by its start timestamp, not by an index into whatever happens to be
      * loaded. The selection moves the instant an arrow is tapped while the new window is still in
      * flight; an index would quietly resolve to a different date for that frame — one day's
