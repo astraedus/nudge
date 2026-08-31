@@ -86,3 +86,30 @@ title=Pixel Launcher,          type=TYPE_APPLICATION, layer=0, pictureInPicture=
 - **Prompt-once**, via `domain/pip/PipEscapeLedger.kt` (pure; `;`-separated set, `MAX_ENTRIES = 200`, oldest dropped first, idempotent `record`) persisted as `NudgePreferences.pipEscapePromptedPackages` and cached off-main in the service like the other hot-path flags. This is one-shot **education about a platform limitation**, not an enforcement surface — repeating it would be pure nagging. `parse` fails soft to "nothing prompted yet": failing hard would crash the hot path, and failing soft the other way would silently kill the feature. The service marks its in-memory cache **before** the DataStore write so an event burst cannot stack explainers.
 - **Tests**: `PipEscapeTest` (13, rewritten around the real captured Pixel 3 window list, SystemUI's PiP menu must not shadow the app, system-only PiP yields nothing, unresolved owners skipped, PiP-only vs active-window vs unreadable-active-window, the full live-device pipeline end to end, the throttle's read count + its first-question-at-clock-zero sentinel, and the session-block record outliving `markOverlayInactive`), `PipEscapeLedgerTest` (7), `PipSettingsTargetTest` (5, incl. the exact action-string literals).
 - **Diagnosing this on a device, start with `adb shell dumpsys accessibility`.** It prints the exact `AccessibilityWindowInfo` list the service sees, `pictureInPicture=` flag and all, with **no build and no instrumentation**. Both root causes above were found with it in minutes, after a whole release cycle of guessing. Two gotchas: behind a fullscreen block overlay the list holds only ~3 windows (the blocked app is not in it), so you need the bubble actually floating; and `adb install -r` DROPS the accessibility grant, re-enable with `settings put secure enabled_accessibility_services dev.astraedus.nudge/com.astraedus.nudge.service.NudgeAccessibilityService` + `accessibility_enabled 1`, or the next test silently exercises nothing.
+
+## The passthrough has TWO axes, v1.15.2
+
+`PassthroughManager` now holds the web-domain grant (`lastDomain`) alongside the app-level one. It
+used to be a `lastBlockedDomain` field on the accessibility service, which had two consequences worth
+remembering, both instances of patterns already documented above:
+
+- **It was set at BLOCK time, not at completion time**, so abandoning a website's delay still let the
+  site through. Every other grant is earned in `BlockOverlayActivity.onTimerComplete` (issue #8); this
+  one now is too, carried on the overlay intent as `EXTRA_WEB_DOMAIN`.
+- **A second piece of state means a second thing to remember to clear.** `clearPassthroughForHome`
+  had to null the field explicitly precisely because the system-package early return skips
+  `evaluateForegroundPackage`, exactly the ordering trap this whole document is about. With both
+  axes in one manager, `clear()` and `clearIfAppChanged()` drop both, and `clearWebGrant()` exists for
+  the one case that is genuinely web-only: the user navigated to a different domain without leaving
+  the browser.
+
+The overlay also carries `EXTRA_PASSTHROUGH_PACKAGE` now, because a web block has two packages and
+they answer different questions: `EXTRA_PACKAGE_NAME` is what the block is ATTRIBUTED to (the rule's
+app, its label on the overlay, its `UsageEvent`, its PiP session record) while the passthrough
+package is the app the user is IN (the browser). Collapsing them is what made completing an
+instagram.com delay in Chrome grant a free pass to the Instagram app. The emergency pass reads the
+same extra, for the same reason: `isPassActive` is checked against the foreground package.
+
+Going Home also ends the web foreground-time session (`endWebSession()`), which stops the clock but
+deliberately does NOT reset the session, `InteractionTracker`'s 5-minute expiry still owns that, so
+a quick trip home does not refill a website's time budget either. Same scope discipline as above.

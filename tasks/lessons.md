@@ -116,3 +116,49 @@ The class, and what to check for by name next time:
 - **Filtering the stream before interpreting it destroys the context the interpreter needs.** `getPerAppHourlyScreenTime` skipped other packages' events *before* pairing, so nothing was left that could tell it this app had been superseded. Filter the OUTPUT (the spans), never the input.
 - **Three copies of a parse loop is three answers.** The same defect existed three times with three slightly different bodies. `ScreenTimeSourceContractTest` now asserts the provider holds no `foregroundStarts` map and exactly one `while (events.hasNextEvent())`.
 - **A test can pin the bug.** `packages are kept apart` asserted two apps RESUMED at 09:00 were worth three hours across two wall-clock hours, and it was green through the whole incident. When a test's numbers encode an impossible world, fix the contract and say why in the test, do not delete the case.
+
+## A feature's early return is where the rest of the feature goes to die (2026-08-31)
+
+Anti, on his own phone: *"it'll delay me to go on insta web but once I'm on there's no other blocks
+or it doesn't track anything."* Web-domain blocking enforced its entry gate perfectly and enforced
+nothing else, ever. The cause was not that the other enforcement was wrong; it was that it was
+**unreachable**. `evaluateWebDomain` returned early for "you already passed this domain", and every
+line that could have measured the visit sat below that return, so the branch the user spends 100% of
+their visit in did nothing but return.
+
+This is the third time this repo has shipped this exact shape (the SYSTEM_PACKAGES/Home passthrough
+bug, the #7 content-change fallback, this one). The generalisation worth keeping:
+
+- **Ask "what does the user do MOST of the time, and which branch is that?"** Entry into a site is one
+  event; being on the site is thousands. The rare path had all the code. The app-level pipeline gets
+  this right and says so in a comment, `updateForegroundTimeTicker` is deliberately placed *above*
+  the emergency-pass/cooldown/passthrough returns because "a user who has just completed a delay is
+  exactly who a time-based auto-kick is for". The web path had the same requirement and the opposite
+  ordering, and nobody noticed because there was no equivalent comment to copy.
+- **A per-package cache silently defines who can be enforced.** `CounterCacheRefresher` was keyed by
+  `rule.packageName`, so a browser was never in it, so `hasEntry` was false, so the ticker stopped
+  instantly, so `autoKickAfterMinutes` was inert on the web, four steps, none of them a bug, adding
+  up to a feature that only worked in half the places its UI offered it. When a cache decides
+  eligibility, enumerate what is NOT in it and check whether the UI promises those things anyway.
+- **A grant handed out at attempt time is not a grant.** `lastBlockedDomain = domain` ran before the
+  overlay was even launched, so walking away granted entry. Compare `onTimerComplete`, which is
+  lifecycle-gated *and* guarded by `isFinishing`/`onStop` because issue #8 already taught this lesson
+  on the app side. **The rule: state that represents "the user earned X" may only be written on the
+  code path where they earned it.** If it is written where the block is *decided*, it is not a reward,
+  it is a bypass.
+- **Two packages in one decision means two questions, and one field cannot answer both.** A web block
+  is attributed to the rule's app (label, stats, PiP record) and happens in the browser (passthrough,
+  emergency pass). One `EXTRA_PACKAGE_NAME` served both, so completing a website delay opened the app.
+  Whenever a decision spans two subjects, name them separately at the boundary, the bug is otherwise
+  invisible, because each individual use of the field looks correct.
+- **`x != y` is not "x changed" when x can be null.** `extractedDomain != lastBlockedDomain` treated an
+  unreadable address bar as "the user navigated away" and revoked a live pass mid-visit. The service
+  already had the right precedent one function over: a null active window in the #7 fallback means
+  *do nothing*, never *act*. Unverifiable is a third state, and collapsing it into either of the other
+  two picks a failure direction by accident.
+- **When the gap needs data the platform does not have, split at the durability line, not at the
+  feature line.** Session-scoped web time needed no persistence (the app path's session clock is
+  in-memory too) and shipped; daily-scoped web time needs persisted per-domain records and did not.
+  Building the daily half in memory would have produced a budget that silently resets on a service
+  restart, a blocker that stops blocking without saying so. Shipping the reachable half and writing
+  the other half down (`docs/BACKLOG.md`) beats half-wiring both.

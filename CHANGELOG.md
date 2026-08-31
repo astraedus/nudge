@@ -2,6 +2,18 @@
 
 All notable changes to Nudge are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Fixed
+- **Blocked websites are no longer a one-shot delay.** Waiting out the delay on a blocked site used to buy you the site for as long as you stayed on it, with nothing watching and nothing counting. Now a blocked site has a session of its own: if the rule has Auto-kick's time trigger switched on, the minutes you spend on that site are measured and it sends you home the same way it does inside the app, with the same cooldown before you can go back. Each site gets its own timer and its own cooldown, so being kicked off one site never locks the rest of your browsing.
+- **Turning around at a website's delay now actually turns you around.** Nudge marked the site as "passed" the moment it showed you the countdown, so tapping "I changed my mind" — or simply tabbing away before the timer finished — let the site straight through anyway. The pass is earned by finishing the exercise now, exactly like it always has been for apps.
+- **Waiting out a website's delay no longer unlocks the app behind it.** Sitting through the countdown for instagram.com in your browser was granting a free pass to the Instagram app.
+- **You'll no longer be blocked again in the middle of a page you already waited for.** If Nudge couldn't read a real address out of the browser's address bar for a moment — a page title, a search box, a half-typed URL — it decided you had navigated away and re-armed the block under you. It now leaves things alone when it can't tell where you are, and waits for the next reliable reading.
+- **The escape hatch works on websites.** Using the 2-minute daily pass on a blocked site opened the pass on the wrong app, so the site blocked you again seconds later.
+
+### Changed
+- The rule editor is now explicit about what a Daily Time Limit covers when "Block on web too" is on: the budget counts time in the app, and once it runs out the websites are hard-blocked as well, but time on the sites doesn't count towards it yet — Auto-kick's time trigger is what limits the sites. Auto-kick says the same thing from its side: the time trigger covers the websites, the scrolls/taps trigger is app-only.
+
 ## [1.15.1] - 2026-08-31
 
 ### Fixed

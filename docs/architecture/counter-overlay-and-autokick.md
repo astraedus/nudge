@@ -51,3 +51,34 @@ The auto-kick cooldown and the new minutes threshold are free-form numeric field
 - **Rounding never reaches storage.** `resolveCooldownSeconds(text, originalSeconds)` / `resolveMinutes(text, originalMinutes)` return the ORIGINAL value verbatim when the field still reads what was rendered for it, so a save that did not touch the field re-persists the exact prior value. Both editors carry `original…` fields in state for this. It matters because `RuleWeakening` treats a lowered cooldown as a weakening: without it, opening an editor and saving an unrelated change could rewrite 150s→180s and raise a spurious Strict Mode challenge later.
 - Turning auto-kick off PRESERVES the stored cooldown (it used to snap back to 60s) for the same reason.
 - `RuleEditorViewModel.buildRule` is `internal` and pure so the whole save contract is JVM-testable (`RuleEditorRuleBuilderTest`) — including the regression that this editor used to drop `webDomains` on every save.
+
+## Websites get the time trigger too, v1.15.2
+
+The auto-kick machinery is keyed by an opaque `String`, never by a real package, and v1.15.2 uses
+that: a blocked website is tracked as a foreground "package" named `web:<domain>`
+(`domain/web/WebSessionKey.kt`), so `CounterCacheRefresher`, `InteractionTracker`'s
+session/baseline/cooldown maps, `TimeKickEvaluator`, `AutoKickTimeHandler` and `AutoKickExecutor` all
+work on it **unchanged**. Full rationale, and the three passthrough bugs found alongside it, are in
+`web-domain-blocking.md`; what matters here is what it does to this subsystem:
+
+- `CounterCacheRefresher.webEntriesFor` emits one entry per configured domain, and only when the
+  rule's resolved WEB mode actually blocks (#21) and it carries an `autoKickAfterMinutes`. So the
+  cache now holds two kinds of key, and `mergeEntries` treats them identically.
+- Those entries deliberately set `showCounter = false` and `showTimeRemaining = false`. The counter
+  is fed by `TYPE_VIEW_CLICKED`/`TYPE_VIEW_SCROLLED`, which arrive carrying the **browser's**
+  package, so an interaction cannot be attributed to a site; and the time-remaining overlay needs a
+  daily web total that does not exist (`docs/BACKLOG.md`). This is the `hasEntry` vs
+  `isCounterEnabled` split doing its job, a package can be tracked for a clock without ever drawing
+  a counter.
+- The clock behind a `web:` key is the BROWSER's `getDailyForegroundTimeMs`, redirected by
+  `WebSessionUsageProvider`. The session delta therefore still excludes time in other apps and time
+  with the screen off, exactly as the app path's does.
+- The web clock runs on its own `webTimeJob` in the service, NOT `foregroundTimeJob`. Browsers are
+  not in the counter cache under their own package, so every browser window event runs
+  `clearOverlays → stopForegroundTimeTicker()`; sharing the job would tear it down and restart it
+  (re-reading usage) on each one.
+- The cooldown after a web kick is armed on the domain's key. Arming it on `com.android.chrome`
+  would lock every website the user has, which is the same over-blocking mistake as treating
+  `CATEGORY_HOME` as "launcher".
+- Tests: `CounterCacheWebEntriesTest` (9), `WebSessionUsageProviderTest` (5),
+  `WebDomainEnforcementContractTest` (8, source-level).
