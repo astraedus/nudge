@@ -2,7 +2,7 @@
 
 All notable changes to Nudge are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [1.15.1] - 2026-08-31
 
 ### Fixed
 - **Screen time no longer counts hours you never spent.** Today's total could reach seventeen hours by lunchtime. Nudge works out how long each app was open from Android's usage events, and when an app's "left this app" event never arrived — a crashed or killed app, an event the system simply didn't send — that app carried on counting, right through to the present moment. Several apps could be counting at once, each billed for the same minutes, so a day's bars added up to more time than the day contained. Now only one app is ever on screen at a time: the moment you open the next app is the moment the last one stopped. The screen turning off, the phone locking, and the phone shutting down all end the session too, so a phone asleep in your pocket accrues nothing. A session Nudge can only see the *start* of is capped instead of being billed to the present, so one missing event can no longer be worth a whole day.

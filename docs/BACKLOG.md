@@ -38,3 +38,6 @@ Entries marked `[x]` shipped, the version is noted so the history stays readable
 - [ ] Widgets (home screen quick stats, toggle rules)
 - [ ] Contextual triggers (location-based, time-of-day auto-enable)
 - [x] Release signing key (v1.3.2 -- PKCS12 keystore, CI via GitHub secrets)
+
+## Noted 2026-08-31 (v1.15.1 QA): stay-awake devices legitimately show near-24h days
+Device QA of the screentime fix on the Pixel 3 (which has "stay awake while charging" on and lives on AC) showed ~17h "today" and several ~24h historical days. This is CORRECT: dumpsys usagestats confirmed the app genuinely was foreground with the screen on the whole time (no screen-off events ever fire on that device). Digital Wellbeing counts the same way. Do NOT "fix" this by distrusting long inherited sessions, that would under-count real long sessions (overnight video, navigation, charging docks). If it ever bothers users, the only defensible improvement is annotating, not clamping.
