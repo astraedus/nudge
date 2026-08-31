@@ -2,7 +2,7 @@
 
 All notable changes to Nudge are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [1.15.2] - 2026-09-01
 
 ### Fixed
 - **Blocked websites are no longer a one-shot delay.** Waiting out the delay on a blocked site used to buy you the site for as long as you stayed on it, with nothing watching and nothing counting. Now a blocked site has a session of its own: if the rule has Auto-kick's time trigger switched on, the minutes you spend on that site are measured and it sends you home the same way it does inside the app, with the same cooldown before you can go back. Each site gets its own timer and its own cooldown, so being kicked off one site never locks the rest of your browsing.
@@ -10,7 +10,6 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
 - **Waiting out a website's delay no longer unlocks the app behind it.** Sitting through the countdown for instagram.com in your browser was granting a free pass to the Instagram app.
 - **You'll no longer be blocked again in the middle of a page you already waited for.** If Nudge couldn't read a real address out of the browser's address bar for a moment — a page title, a search box, a half-typed URL — it decided you had navigated away and re-armed the block under you. It now leaves things alone when it can't tell where you are, and waits for the next reliable reading.
 - **The escape hatch works on websites.** Using the 2-minute daily pass on a blocked site opened the pass on the wrong app, so the site blocked you again seconds later.
-
 - **Auto-kick's timer now actually goes off.** "Send me home after N minutes" could sit well past its threshold and do nothing, in an app or on a website. Three things were wrong: a notification arriving (or any system pop-up) silently stopped the timer for the rest of the session, a single hiccup inside the timer ended it permanently, and the reading it measured against could jump by hours after a dropped Android event, which is also why a cooldown occasionally appeared out of nowhere. The timer now survives notifications and hiccups, and every screen-time number in Nudge is finally read the same way.
 
 ### Changed
