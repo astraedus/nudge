@@ -2,6 +2,13 @@
 
 All notable changes to Nudge are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Fixed
+- **Screen time no longer counts hours you never spent.** Today's total could reach seventeen hours by lunchtime. Nudge works out how long each app was open from Android's usage events, and when an app's "left this app" event never arrived — a crashed or killed app, an event the system simply didn't send — that app carried on counting, right through to the present moment. Several apps could be counting at once, each billed for the same minutes, so a day's bars added up to more time than the day contained. Now only one app is ever on screen at a time: the moment you open the next app is the moment the last one stopped. The screen turning off, the phone locking, and the phone shutting down all end the session too, so a phone asleep in your pocket accrues nothing. A session Nudge can only see the *start* of is capped instead of being billed to the present, so one missing event can no longer be worth a whole day.
+- **The same correction reaches every screen-time number**, not just the weekly bars: the hourly heatmap, each app's detail page, and the "time reclaimed" estimate on the Willpower page were all computed the same way and were all inflated in the same direction.
+- Your history is recalculated from Android's own records every time you open the stats, never stored, so the past week's charts correct themselves the moment you update — nothing to wipe, and no wrong numbers left behind.
+
 ## [1.15.0] - 2026-08-27
 
 ### Added
