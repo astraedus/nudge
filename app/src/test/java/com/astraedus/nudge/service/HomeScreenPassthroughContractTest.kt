@@ -76,9 +76,16 @@ class HomeScreenPassthroughContractTest {
             "must clear the app-level grant",
             clearForHomeBody.contains("clearIfAppChanged(")
         )
+        // The web grant moved out of a `lastBlockedDomain` field on the service and into
+        // `PassthroughManager` alongside the app-level one (v1.15.2), so that both axes have one
+        // lifetime and one clearing path. The requirement is unchanged: going Home must drop it.
         assertTrue(
             "must clear the web-domain grant",
-            clearForHomeBody.contains("lastBlockedDomain = null")
+            clearForHomeBody.contains("clearWebGrant()")
+        )
+        assertTrue(
+            "leaving the browser must also stop the web foreground-time clock",
+            clearForHomeBody.contains("endWebSession()")
         )
     }
 

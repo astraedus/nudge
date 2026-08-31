@@ -18,7 +18,10 @@ import com.astraedus.nudge.domain.WebDomainMatcher
 import com.astraedus.nudge.domain.lock.StrictModeEscapeGuard
 import com.astraedus.nudge.domain.model.BlockDecision
 import com.astraedus.nudge.domain.model.BlockMode
+import com.astraedus.nudge.domain.model.WebBlockMode
 import com.astraedus.nudge.domain.pip.PipEscapeLedger
+import com.astraedus.nudge.domain.web.WebDomainGate
+import com.astraedus.nudge.domain.web.WebSessionKey
 import com.astraedus.nudge.domain.usecase.EvaluateBlockUseCase
 import com.astraedus.nudge.ui.lock.StrictModeGuardActivity
 import com.astraedus.nudge.ui.overlay.BlockOverlayActivity
@@ -79,9 +82,31 @@ class NudgeAccessibilityService : AccessibilityService() {
     /** Per-package throttle for the issue #7 content-change app-switch check. */
     private val lastSwitchCheckTime = mutableMapOf<String, Long>()
 
-    // Web domain blocking state
+    /**
+     * The [WebSessionKey] of the blocked domain currently in the foreground, or null when the user
+     * is not on one. This is the web equivalent of "which app is in front" and is what the web
+     * foreground-time clock, the auto-kick and its cooldown are keyed by.
+     */
     @Volatile
-    private var lastBlockedDomain: String? = null
+    private var activeWebSessionKey: String? = null
+
+    /**
+     * The web foreground-time clock. Deliberately a SECOND job rather than a reuse of
+     * [foregroundTimeJob]: browsers are not in the counter cache, so every browser window event runs
+     * `clearOverlays` -> `stopForegroundTimeTicker()` and the shared job would be torn down and
+     * restarted (re-reading usage) on each one. Keeping them separate also means nothing on the
+     * app-level hot path changes shape.
+     */
+    private var webTimeJob: Job? = null
+
+    @Volatile
+    private var tickingWebKey: String? = null
+
+    /** Resolves a `web:` key to the browser's clock. See [WebSessionUsageProvider]. */
+    private lateinit var webSessionUsageProvider: WebSessionUsageProvider
+
+    /** The time-based auto-kick, reading the web clock. Same class, same evaluator, same executor. */
+    private lateinit var autoKickWebTimeHandler: AutoKickTimeHandler
 
     @Volatile
     private var grayscaleActiveForPackage: String? = null
@@ -660,10 +685,11 @@ class NudgeAccessibilityService : AccessibilityService() {
         if (passthrough.clearIfAppChanged(packageName)) {
             entryPoint.nudgeLogger().d("passthrough cleared on home screen package=$packageName")
         }
-        // Same "the user left" semantics for the web passthrough: lastBlockedDomain is otherwise
-        // only cleared inside evaluateForegroundPackage, which the system-package return skips, so a
+        // Same "the user left" semantics for the web passthrough: the web grant is otherwise only
+        // cleared inside evaluateForegroundPackage, which the system-package return skips, so a
         // completed web delay survived Home exactly as the app-level one did.
-        lastBlockedDomain = null
+        passthrough.clearWebGrant()
+        endWebSession()
     }
 
     private fun refreshCurrentImePackage() {
@@ -722,6 +748,16 @@ class NudgeAccessibilityService : AccessibilityService() {
             counterCache = counterCache,
             interactionTracker = entryPoint.interactionTracker(),
             usageProvider = entryPoint.usageRepository(),
+            logger = entryPoint.nudgeLogger()
+        )
+
+        // The same time-based auto-kick, for websites. Only the clock differs: a `web:` key has no
+        // UsageStatsManager stream of its own, so it reads the browser's.
+        webSessionUsageProvider = WebSessionUsageProvider(entryPoint.usageRepository())
+        autoKickWebTimeHandler = AutoKickTimeHandler(
+            counterCache = counterCache,
+            interactionTracker = entryPoint.interactionTracker(),
+            usageProvider = webSessionUsageProvider,
             logger = entryPoint.nudgeLogger()
         )
 
@@ -1004,11 +1040,14 @@ class NudgeAccessibilityService : AccessibilityService() {
             grayscaleActiveForPackage = null
         }
 
-        // If leaving a browser, clear web domain passthrough state
+        // If leaving a browser, the user has stopped being on whatever site they earned entry to:
+        // drop the web grant and end the web session's clock. The app-level grant is a separate
+        // axis and is handled by clearIfAppChanged further down.
         if (entryPoint.webDomainDetector().isBrowser(lastPackage ?: "") &&
             !entryPoint.webDomainDetector().isBrowser(packageName)
         ) {
-            lastBlockedDomain = null
+            passthrough.clearWebGrant()
+            endWebSession()
         }
 
         if (!counterCache.hasEntry(packageName)) {
@@ -1110,35 +1149,198 @@ class NudgeAccessibilityService : AccessibilityService() {
         }
 
         val extractedDomain = WebDomainMatcher.extractDomain(urlBarText)
+        val passthrough = entryPoint.passthroughManager()
 
-        // If domain hasn't changed and we already blocked it, skip (passthrough)
-        if (extractedDomain != null && extractedDomain == lastBlockedDomain) {
-            entryPoint.nudgeLogger().d("web domain: passthrough for already-blocked domain=$extractedDomain")
+        when (WebDomainGate.decide(extractedDomain, passthrough.lastDomain)) {
+            // The URL bar was readable but held no domain (a page title, a search query, a
+            // half-typed address, an internal scheme). Unverifiable means DO NOTHING -- the old code
+            // treated it as "a different domain" and revoked a live pass mid-visit, re-blocking a
+            // user who had not gone anywhere. Same call the issue-#7 fallback makes for a null
+            // active window.
+            WebDomainGate.Action.UNREADABLE -> {
+                entryPoint.nudgeLogger().d("web domain: url=$urlBarText yields no domain — ignoring")
+                return
+            }
+
+            // Still on the site whose block the user completed. The SESSION bookkeeping below the
+            // `when` must still run: this is the branch the user spends their whole visit in, and
+            // everything that measures that visit used to sit AFTER this return, which is why a
+            // blocked website tracked nothing at all once you were on it.
+            WebDomainGate.Action.PASSTHROUGH -> {
+                onWebDomainForeground(browserPackage, extractedDomain)
+                entryPoint.nudgeLogger().d(
+                    "web domain: passthrough for already-blocked domain=$extractedDomain"
+                )
+                return
+            }
+
+            WebDomainGate.Action.EVALUATE -> passthrough.clearWebGrant()
+        }
+
+        onWebDomainForeground(browserPackage, extractedDomain)
+
+        // The 2-minute daily pass is scoped to the app the user is IN -- the browser -- exactly as
+        // the overlay grants it. Checked here for the same reason evaluateForegroundPackage checks
+        // it: without this, taking the escape hatch on a website re-blocked on the next event.
+        if (entryPoint.emergencyPassManager().isPassActive(browserPackage)) {
+            entryPoint.nudgeLogger().d("web domain: skip evaluation reason=emergency_pass")
             return
         }
 
-        // Domain changed -- clear passthrough
-        if (extractedDomain != lastBlockedDomain) {
-            lastBlockedDomain = null
-        }
+        if (enforceWebCooldown(browserPackage, extractedDomain)) return
 
         val result = entryPoint.evaluateBlockUseCase().evaluateWebDomain(urlBarText)
         entryPoint.nudgeLogger().d("web domain: url=$urlBarText decision=${result.decision}")
 
         when (result.decision) {
             is BlockDecision.Block -> {
-                // Only set passthrough for delay/breathing (user completed the exercise).
-                // HARD_BLOCK has no "completed" state — always re-evaluate on return.
-                if (result.decision.mode != BlockMode.HARD_BLOCK) {
-                    lastBlockedDomain = extractedDomain
-                }
-                handleDecision(result.decision, result.trackingPackage ?: browserPackage)
+                // The pass is EARNED, in BlockOverlayActivity.onTimerComplete, like every other
+                // grant in this app. It used to be handed over here, before the overlay had even
+                // been shown, so walking away from a website's delay (or tabbing out of it) let the
+                // site through anyway. HARD_BLOCK has no completion path and so can never grant.
+                handleDecision(
+                    decision = result.decision,
+                    packageName = result.trackingPackage ?: browserPackage,
+                    web = WebBlockContext(browserPackage, extractedDomain)
+                )
             }
             is BlockDecision.Allow -> {
                 // Not blocked -- nothing to do
             }
         }
     }
+
+    /**
+     * Record that [domain] is the website in the foreground of [browserPackage], starting or
+     * continuing its session.
+     *
+     * This is the web equivalent of the `counterCache.hasEntry` / `onAppChanged` /
+     * `updateForegroundTimeTicker` block at the top of [evaluateForegroundPackage], and it is called
+     * from BOTH the passthrough branch and the evaluate branch of [evaluateWebDomain] for the reason
+     * that block sits above that function's own early returns: a user who has just completed a delay
+     * is exactly who a time-based auto-kick is for, and their minutes must keep accruing.
+     *
+     * A domain with no cache entry (no rule wants a clock on it) ends any running session, so the
+     * ticker only exists while it can do something.
+     */
+    private suspend fun onWebDomainForeground(browserPackage: String, domain: String?) {
+        val key = domain
+            ?.let { WebSessionKey.forDomain(it) }
+            ?.takeIf { counterCache.getEntry(it) != null }
+
+        if (key == null) {
+            endWebSession()
+            return
+        }
+        // Cheap guard first: this runs on every debounced content change for the whole visit, and
+        // everything below it only has to happen when the domain actually changes.
+        if (key == activeWebSessionKey && webTimeJob?.isActive == true) return
+
+        activeWebSessionKey = key
+        webSessionUsageProvider.browserPackage = browserPackage
+        // Same session semantics as an app: a short hop away and back CONTINUES the session (a
+        // detour must not refill a time budget), a real break restarts it.
+        //
+        // On Main because InteractionTracker holds plain (non-concurrent) maps and its other
+        // structural writer, `interactionHandler.onAppChanged`, always runs on the accessibility
+        // event thread. This function runs on the service's IO scope, so without the hop the two
+        // would interleave on `currentPackage` / `lastLeftAt` whenever a browser window event and a
+        // domain change land together — which is exactly when they both fire.
+        withContext(Dispatchers.Main) { entryPoint.interactionTracker().onAppChanged(key) }
+        startWebTimeTicker(key)
+    }
+
+    /**
+     * After a web auto-kick, returning to the same site inside the cooldown gets the same DELAY
+     * overlay the app-level cooldown gets. Keyed by DOMAIN, never by the browser package -- a
+     * cooldown on `com.android.chrome` would lock every website the user has.
+     *
+     * @return true when the cooldown overlay was shown and evaluation must stop.
+     */
+    private fun enforceWebCooldown(browserPackage: String, domain: String?): Boolean {
+        val key = domain?.let { WebSessionKey.forDomain(it) } ?: return false
+        val tracker = entryPoint.interactionTracker()
+        if (!tracker.isInCooldown(key)) return false
+
+        val remainingMs = tracker.getCooldownRemainingMs(key)
+        val remainingSeconds = ((remainingMs + 999) / 1000).toInt().coerceAtLeast(1)
+        entryPoint.nudgeLogger().i(
+            "web cooldown enforced domain=$domain remaining=${remainingSeconds}s"
+        )
+        val overlayIntent = Intent(applicationContext, BlockOverlayActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            putExtra(BlockOverlayActivity.EXTRA_BLOCK_MODE, "DELAY")
+            putExtra(BlockOverlayActivity.EXTRA_DELAY_SECONDS, remainingSeconds)
+            putExtra(BlockOverlayActivity.EXTRA_PACKAGE_NAME, browserPackage)
+            putExtra(BlockOverlayActivity.EXTRA_PASSTHROUGH_PACKAGE, browserPackage)
+            putExtra(BlockOverlayActivity.EXTRA_WEB_DOMAIN, domain)
+            // Named with the site, not just "Auto-kick cooldown": the overlay's app label resolves
+            // to the BROWSER here (it is the package we are blocking re-entry to), and "Chrome" on
+            // its own would not tell the user which site they were just removed from.
+            putExtra(BlockOverlayActivity.EXTRA_RULE_NAME, "Auto-kick cooldown — $domain")
+        }
+        markOverlayActive(browserPackage)
+        applicationContext.startActivity(overlayIntent)
+        return true
+    }
+
+    /**
+     * Start (or keep) the 30s web foreground-time clock for [key].
+     *
+     * Idempotent per key for the same reason [updateForegroundTimeTicker] is: this is re-entered on
+     * every debounced content change while the user browses, and restarting the job each time would
+     * keep resetting the `delay` so the clock would never tick.
+     */
+    private fun startWebTimeTicker(key: String) {
+        if (key == tickingWebKey && webTimeJob?.isActive == true) return
+        stopWebTimeTicker()
+        tickingWebKey = key
+        webTimeJob = serviceScope.launch {
+            while (isActive) {
+                tickWebTime(key)
+                delay(FOREGROUND_TICK_MS)
+            }
+        }
+    }
+
+    private fun stopWebTimeTicker() {
+        webTimeJob?.cancel()
+        webTimeJob = null
+        tickingWebKey = null
+    }
+
+    /** End the current web session: no domain is in front, so nothing should be on its clock. */
+    private fun endWebSession() {
+        if (activeWebSessionKey == null && webTimeJob == null) return
+        activeWebSessionKey = null
+        webSessionUsageProvider.browserPackage = null
+        stopWebTimeTicker()
+    }
+
+    /**
+     * One pass of the web foreground-time clock. Mirrors [tickForegroundTime]: re-check the master
+     * toggle and the emergency pass (a timer is not covered by the synchronous event gate), then
+     * feed the same [AutoKickTimeHandler] / [AutoKickExecutor] the app path uses.
+     */
+    private suspend fun tickWebTime(key: String) {
+        if (!globalEnabledCached) return
+        if (activeWebSessionKey != key) return
+        val browser = webSessionUsageProvider.browserPackage ?: return
+        if (entryPoint.emergencyPassManager().isPassActive(browser)) return
+
+        if (!autoKickWebTimeHandler.shouldKick(key)) return
+
+        withContext(Dispatchers.Main) {
+            autoKickExecutor.kick(key, reason = "web session time")
+        }
+        // The kick is only real if the site re-blocks on return: leaving the completed-delay pass
+        // in place would put the user straight back on the page they were just removed from.
+        entryPoint.passthroughManager().clearWebGrant()
+        endWebSession()
+    }
+
+    /** Identifies a block that happened on a website rather than in an app. */
+    private data class WebBlockContext(val browserPackage: String, val domain: String?)
 
     private fun clearOverlays(
         packageName: String,
@@ -1153,6 +1355,10 @@ class NudgeAccessibilityService : AccessibilityService() {
         // Whatever is in front now is not a clock-driven package (or is our own window / a system
         // one), so stop reading the foreground-time clock.
         stopForegroundTimeTicker()
+        // The web clock is a separate job precisely so a browser's own events don't tear it down —
+        // a browser IS in front while a blocked site is open. Everything else (a system package,
+        // our own overlay, another app) means the user is no longer looking at that site.
+        if (!entryPoint.webDomainDetector().isBrowser(packageName)) endWebSession()
 
         try {
             interactionHandler.hideCounter()
@@ -1168,6 +1374,7 @@ class NudgeAccessibilityService : AccessibilityService() {
      */
     private fun hideAllOverlays() {
         stopForegroundTimeTicker()
+        endWebSession()
         try {
             if (::interactionHandler.isInitialized) interactionHandler.hideCounter()
             if (::timeRemainingHandler.isInitialized) timeRemainingHandler.hide()
@@ -1300,10 +1507,20 @@ class NudgeAccessibilityService : AccessibilityService() {
         null
     }
 
+    /**
+     * @param packageName what the block is ATTRIBUTED to: the app whose rule matched. Drives the
+     *   `UsageEvent`, the overlay's app label and the PiP session record. For a web block this is
+     *   the rule's app (Instagram), not the browser, so a website block still shows up in that
+     *   app's stats and the overlay still names the app the user recognises.
+     * @param web set when the block happened on a website. Carries the browser (the app the user is
+     *   actually in, and therefore what a passthrough grant or an emergency pass must apply to) and
+     *   the domain (so the grant is scoped to the site, not the whole browser).
+     */
     private suspend fun handleDecision(
         decision: BlockDecision,
         packageName: String,
-        featureKey: String? = null
+        featureKey: String? = null,
+        web: WebBlockContext? = null
     ) {
         when (decision) {
             is BlockDecision.Block -> {
@@ -1331,6 +1548,10 @@ class NudgeAccessibilityService : AccessibilityService() {
                     putExtra(BlockOverlayActivity.EXTRA_PACKAGE_NAME, packageName)
                     putExtra(BlockOverlayActivity.EXTRA_FEATURE_KEY, featureKey)
                     putExtra(BlockOverlayActivity.EXTRA_RULE_NAME, decision.ruleName)
+                    web?.let {
+                        putExtra(BlockOverlayActivity.EXTRA_PASSTHROUGH_PACKAGE, it.browserPackage)
+                        putExtra(BlockOverlayActivity.EXTRA_WEB_DOMAIN, it.domain)
+                    }
                     decision.dailyTimeRemainingMs?.let {
                         putExtra(BlockOverlayActivity.EXTRA_DAILY_TIME_REMAINING_MS, it)
                     }
@@ -1434,24 +1655,36 @@ class NudgeAccessibilityService : AccessibilityService() {
 
     private suspend fun loadCounterCacheEntries(): Map<String, CounterCacheEntry> {
         val rules = entryPoint.blockRuleRepository().getEnabledRules().first()
-        return CounterCacheRefresher.mergeEntries(
-            rules
-                // A time-based auto-kick needs no counter and no overlay, so it must be able to put
-                // a package in the cache on its own — otherwise the hot path would never see it.
-                .filter { it.showCounter || it.showTimeRemaining || it.autoKickAfterMinutes != null }
-                .mapNotNull { rule ->
-                    rule.packageName?.let { pkg ->
-                        pkg to CounterCacheEntry(
-                            showCounter = rule.showCounter,
-                            autoKickAfter = rule.autoKickAfter,
-                            showTimeRemaining = rule.showTimeRemaining,
-                            dailyLimitMinutes = rule.dailyLimitMinutes,
-                            autoKickCooldownSeconds = rule.autoKickCooldownSeconds,
-                            autoKickAfterMinutes = rule.autoKickAfterMinutes
-                        )
-                    }
+        val appEntries = rules
+            // A time-based auto-kick needs no counter and no overlay, so it must be able to put
+            // a package in the cache on its own — otherwise the hot path would never see it.
+            .filter { it.showCounter || it.showTimeRemaining || it.autoKickAfterMinutes != null }
+            .mapNotNull { rule ->
+                rule.packageName?.let { pkg ->
+                    pkg to CounterCacheEntry(
+                        showCounter = rule.showCounter,
+                        autoKickAfter = rule.autoKickAfter,
+                        showTimeRemaining = rule.showTimeRemaining,
+                        dailyLimitMinutes = rule.dailyLimitMinutes,
+                        autoKickCooldownSeconds = rule.autoKickCooldownSeconds,
+                        autoKickAfterMinutes = rule.autoKickAfterMinutes
+                    )
                 }
-        )
+            }
+
+        // A rule's websites are tracked under their own keys, so a kick or a cooldown lands on the
+        // site rather than on the whole browser. Gated on the resolved WEB mode (#21), never the
+        // app-level one: a rule that blocks nothing on the web must not eject anyone from it.
+        val webEntries = rules.flatMap { rule ->
+            CounterCacheRefresher.webEntriesFor(
+                webDomains = rule.webDomains,
+                webEnforces = WebBlockMode.resolve(rule.mode, rule.webBlockMode) != BlockMode.NONE,
+                autoKickAfterMinutes = rule.autoKickAfterMinutes,
+                autoKickCooldownSeconds = rule.autoKickCooldownSeconds
+            )
+        }
+
+        return CounterCacheRefresher.mergeEntries(appEntries + webEntries)
     }
 
     override fun onInterrupt() {}
@@ -1460,6 +1693,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         super.onDestroy()
         if (instance === this) instance = null
         stopForegroundTimeTicker()
+        endWebSession()
         try {
             contentResolver.unregisterContentObserver(imeSettingObserver)
         } catch (_: Exception) {

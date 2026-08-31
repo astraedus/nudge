@@ -1,5 +1,7 @@
 package com.astraedus.nudge.service
 
+import com.astraedus.nudge.domain.web.WebSessionKey
+
 /**
  * Per-package snapshot of everything the accessibility hot path needs to know about a rule WITHOUT
  * touching the database. One entry exists for every package that needs *any* foreground awareness:
@@ -73,6 +75,49 @@ class CounterCacheRefresher(
     }
 
     companion object {
+        /**
+         * The cache entries a rule's WEBSITES contribute, one per configured domain, keyed by
+         * [WebSessionKey]. Empty unless the rule actually enforces on the web AND wants something
+         * clock-driven there.
+         *
+         * Why per domain and not per browser package: a cooldown or a kick armed on
+         * `com.android.chrome` would lock the entire browser. Why not per app package: time on
+         * instagram.com would then spend the Instagram app's session.
+         *
+         * The counter and the time-remaining overlay are deliberately NOT carried across. The
+         * counter is fed by tap/scroll events, which arrive carrying the browser's package rather
+         * than a domain; the time-remaining overlay needs a DAILY web total, which needs persisted
+         * per-domain records (`docs/BACKLOG.md`). Promising either here would put a control in the
+         * UI that silently does nothing, which is the defect class this whole area exists to fix.
+         *
+         * @param webEnforces whether the rule's resolved web mode actually blocks
+         *   ([com.astraedus.nudge.domain.model.WebBlockMode.resolve] != NONE). A rule that blocks
+         *   nothing on the web must not eject the user from a site it is not blocking.
+         */
+        fun webEntriesFor(
+            webDomains: String?,
+            webEnforces: Boolean,
+            autoKickAfterMinutes: Int?,
+            autoKickCooldownSeconds: Int
+        ): List<Pair<String, CounterCacheEntry>> {
+            if (!webEnforces || autoKickAfterMinutes == null || webDomains.isNullOrBlank()) {
+                return emptyList()
+            }
+            return webDomains.split(',')
+                .mapNotNull { WebSessionKey.forDomain(it) }
+                .distinct()
+                .map { key ->
+                    key to CounterCacheEntry(
+                        showCounter = false,
+                        autoKickAfter = null,
+                        showTimeRemaining = false,
+                        dailyLimitMinutes = null,
+                        autoKickCooldownSeconds = autoKickCooldownSeconds,
+                        autoKickAfterMinutes = autoKickAfterMinutes
+                    )
+                }
+        }
+
         /**
          * Collapses every rule targeting the same package into one entry. Where rules disagree the
          * merge always takes the STRICTEST interpretation: the lowest kick threshold, the lowest

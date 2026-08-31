@@ -54,7 +54,35 @@ class BlockOverlayActivity : ComponentActivity() {
         const val EXTRA_RULE_NAME = "rule_name"
         const val EXTRA_DAILY_TIME_REMAINING_MS = "daily_time_remaining_ms"
         const val EXTRA_DAILY_LIMIT_MINUTES = "daily_limit_minutes"
+
+        /**
+         * The package the passthrough grant and the emergency pass belong to, when that is NOT the
+         * package being displayed. Only web blocks set it: a website is blocked under its app's
+         * package (so the overlay says "Instagram" and the stats land on Instagram) while the app
+         * the user is actually sitting in is the BROWSER.
+         *
+         * Without this, completing an instagram.com delay in Chrome granted a free pass to the
+         * Instagram *app* -- and granted nothing at all to the browser the user was in.
+         */
+        const val EXTRA_PASSTHROUGH_PACKAGE = "passthrough_package"
+
+        /**
+         * The normalised web domain this block is for, or absent for an app block. Carried so the
+         * grant is earned on COMPLETION like every other grant in the app; the service used to mark
+         * the domain passed the moment it launched this overlay, so walking away still let the site
+         * through.
+         */
+        const val EXTRA_WEB_DOMAIN = "web_domain"
     }
+
+    /**
+     * The package a grant applies to: the browser for a web block, the blocked app otherwise.
+     * [EXTRA_PACKAGE_NAME] stays what is DISPLAYED and what stats are attributed to.
+     */
+    private fun passthroughPackage(intent: Intent): String =
+        intent.getStringExtra(EXTRA_PASSTHROUGH_PACKAGE)?.takeIf { it.isNotBlank() }
+            ?: intent.getStringExtra(EXTRA_PACKAGE_NAME)
+            ?: ""
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -148,8 +176,11 @@ class BlockOverlayActivity : ComponentActivity() {
         // Grant the pass and return to the blocked app. finish() brings it back to the foreground;
         // the service's isPassActive check then lets it through. NOT navigateHome and NOT a
         // "changed my mind" event — this is a deliberate escape, not a walk-away.
+        // Scoped to the package the user is actually IN, which for a web block is the browser --
+        // the service checks `isPassActive` against the foreground package, so a window opened on
+        // the rule's app package would never be seen and the escape would silently re-block.
         val onUsePass = {
-            emergencyPassManager.usePass(packageName)
+            emergencyPassManager.usePass(passthroughPackage(intent))
             finish()
         }
 
@@ -255,11 +286,12 @@ class BlockOverlayActivity : ComponentActivity() {
         // Only grant passthrough if the overlay is genuinely on screen. A countdown that somehow
         // reached zero while backgrounded must never open the app: that silent grant was the
         // issue #8 bypass. Belt-and-braces behind the lifecycle-gated ticker and onStop above.
-        val pkg = intent.getStringExtra(EXTRA_PACKAGE_NAME) ?: ""
+        val pkg = passthroughPackage(intent)
         if (pkg.isNotEmpty() && lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
             passthroughManager.grant(
                 packageName = pkg,
-                featureKey = intent.getStringExtra(EXTRA_FEATURE_KEY)
+                featureKey = intent.getStringExtra(EXTRA_FEATURE_KEY),
+                webDomain = intent.getStringExtra(EXTRA_WEB_DOMAIN)
             )
         }
         NudgeAccessibilityService.markOverlayInactive()

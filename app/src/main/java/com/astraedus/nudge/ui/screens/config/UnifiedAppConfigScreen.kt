@@ -153,7 +153,18 @@ fun UnifiedAppConfigScreen(
                         )
                         InfoButton(
                             "Set a daily usage budget for this app.\n\n" +
-                            "Once you've used the app for this many minutes today, it switches to a hard block for the rest of the day."
+                            "Once you've used the app for this many minutes today, it switches to a hard block for the rest of the day." +
+                            // Honest about the one direction that does not work rather than letting
+                            // the budget silently never count web time. The reverse DOES work and is
+                            // worth saying: spending the budget in the app closes the website too.
+                            if (state.webDomainEnabled) {
+                                "\n\nThis budget counts time in the app only. Once it runs out the " +
+                                    "websites below are hard-blocked as well, but time spent on " +
+                                    "them does not yet count towards it -- use Auto-kick's time " +
+                                    "trigger to limit the websites."
+                            } else {
+                                ""
+                            }
                         )
                     }
                     Switch(
@@ -537,7 +548,17 @@ fun UnifiedAppConfigScreen(
                         InfoButton(
                             "Sends you to the home screen after a set number of scrolls/taps, or after a set amount " +
                             "of time in the app -- whichever fires first.\n\n" +
-                            "The counter and timer reset when you re-open the app. This is the nuclear option for stopping infinite scroll."
+                            "The counter and timer reset when you re-open the app. This is the nuclear option for stopping infinite scroll." +
+                            // The two triggers differ on the web: the timer measures browser time on
+                            // the blocked site, while scrolls/taps arrive carrying the browser's
+                            // package, not the site's, so they cannot be attributed to it.
+                            if (state.webDomainEnabled) {
+                                "\n\nThe time trigger also covers the websites below -- each site " +
+                                    "gets its own timer and its own cooldown. The interaction " +
+                                    "trigger is app-only."
+                            } else {
+                                ""
+                            }
                         )
                     }
                     Switch(

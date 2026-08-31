@@ -118,4 +118,60 @@ class PassthroughManagerTest {
         assertEquals(0L, manager.lastTime)
         assertFalse(manager.isGranted("com.example.alpha"))
     }
+
+    // --- The web axis ---
+    //
+    // A completed website block grants TWO things at once: the browser is the app the user is in,
+    // and the domain is the site they earned entry to. They are granted and cleared together, which
+    // is why they live in one manager rather than in a stray field on the accessibility service.
+
+    @Test
+    fun `a web grant records the browser and the domain together`() {
+        manager.grant("com.android.chrome", webDomain = "instagram.com")
+
+        assertEquals("com.android.chrome", manager.lastPackage)
+        assertEquals("instagram.com", manager.lastDomain)
+    }
+
+    /**
+     * An app block must never leave a domain behind. Before the two axes shared a manager, the
+     * domain lived on the service and nothing about an app-level grant touched it.
+     */
+    @Test
+    fun `an app grant does not inherit a stale domain`() {
+        manager.grant("com.android.chrome", webDomain = "instagram.com")
+
+        manager.grant("com.example.alpha")
+
+        assertNull(manager.lastDomain)
+    }
+
+    @Test
+    fun `clearWebGrant drops the domain and leaves the app grant alone`() {
+        manager.grant("com.android.chrome", webDomain = "instagram.com")
+
+        manager.clearWebGrant()
+
+        assertNull(manager.lastDomain)
+        assertEquals("com.android.chrome", manager.lastPackage)
+        assertTrue(manager.isGranted("com.android.chrome"))
+    }
+
+    @Test
+    fun `leaving the browser clears the domain with everything else`() {
+        manager.grant("com.android.chrome", webDomain = "instagram.com")
+
+        assertTrue(manager.clearIfAppChanged("com.whatsapp"))
+        assertNull(manager.lastDomain)
+        assertNull(manager.lastPackage)
+    }
+
+    @Test
+    fun `clear resets the domain too`() {
+        manager.grant("com.android.chrome", webDomain = "instagram.com")
+
+        manager.clear()
+
+        assertNull(manager.lastDomain)
+    }
 }
