@@ -2,6 +2,14 @@
 
 All notable changes to Nudge are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.15.3] - 2026-09-05
+
+### Fixed
+- **The back gesture on a block screen still sends you home on Android 16.** On the newest Android, pressing back or swiping back on a block, delay or breathing screen would have handed you straight into the app you were being blocked from, with no delay and no walk-away recorded. Back turns you around, the way it always has. The same fix covers the Strict Mode screen, where back would have dropped you back onto the settings page it was protecting.
+
+### Changed
+- Nudge now targets Android 16 and is built against it, so it behaves correctly on the newest phones. The block screens sit inside the safe area on devices that draw content under the status and navigation bars.
+
 ## [1.15.2] - 2026-09-01
 
 ### Fixed
