@@ -18,12 +18,12 @@ val keystoreProperties = Properties().apply {
 
 android {
     namespace = "com.astraedus.nudge"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "dev.astraedus.nudge"
         minSdk = 26
-        targetSdk = 35
+        targetSdk = 36
         versionCode = 45
         versionName = "1.15.2"
 

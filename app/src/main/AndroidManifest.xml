@@ -32,7 +32,7 @@
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.Nudge"
-        tools:targetApi="34">
+        tools:targetApi="36">
 
         <activity
             android:name=".MainActivity"

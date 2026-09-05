@@ -19,7 +19,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk  # Install on device
 
 Test device: Pixel 3 on ADB at `192.168.1.68:5555` (Android 12, API 31).
 
-**Gradle version: stay on 8.x.** Do NOT upgrade to Gradle 9.x -- it removed `JvmVendorSpec.IBM_SEMERU` which the React Native / Android Gradle plugins still reference. Gradle 8.13 is the latest compatible version. Currently on 8.7.
+**Gradle version: stay on 8.x.** Do NOT upgrade to Gradle 9.x -- it removed `JvmVendorSpec.IBM_SEMERU` which the React Native / Android Gradle plugins still reference. Gradle 8.13 is the latest compatible version, and we are on it (AGP 8.13.2, compile/target SDK 36).
 
 ## Releasing
 
@@ -122,7 +122,7 @@ AccessibilityService: TYPE_WINDOW_STATE_CHANGED
 - Kotlin, Jetpack Compose, Material 3
 - Hilt (DI), Room (DB), DataStore (preferences)
 - Coroutines + Flow
-- Min SDK 26, Target SDK 34, Compile SDK 34
+- Min SDK 26, Target SDK 36, Compile SDK 36
 
 ## Key conventions
 
