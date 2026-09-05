@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PictureInPicture
@@ -47,6 +48,10 @@ fun PipEscapeContent(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                // targetSdk 36 enforces edge-to-edge with no opt-out, so the window now spans
+                // under the status and navigation bars. The Surface above stays full-bleed (the
+                // block must cover every pixel of the app behind it); only the CONTENT is inset.
+                .safeDrawingPadding()
                 .padding(32.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center

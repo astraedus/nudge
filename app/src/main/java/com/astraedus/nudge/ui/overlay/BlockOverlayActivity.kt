@@ -3,6 +3,7 @@ package com.astraedus.nudge.ui.overlay
 import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.key
 import androidx.lifecycle.Lifecycle
@@ -86,7 +87,30 @@ class BlockOverlayActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        registerBackHandler()
         render(intent)
+    }
+
+    /**
+     * Back must ALWAYS walk away, never dismiss the overlay.
+     *
+     * From targetSdk 36 the platform runs predictive back by default: `onBackPressed()` is no longer
+     * called and no KEYCODE_BACK is dispatched, so the override this replaced would have been dead
+     * code and the system default would have taken over. That default is `finish()`, and finishing a
+     * singleInstance activity with an empty taskAffinity pops straight back to the task underneath:
+     * the blocked app. The back gesture would have become a one-swipe bypass of every block.
+     *
+     * An always-enabled callback keeps the pre-36 semantics exactly: [navigateHome] records the
+     * walk-away (once, via [walkedAway]) and leaves for the launcher. Registered here in [onCreate]
+     * rather than in [render] because this activity is singleInstance. [render] also runs from
+     * [onNewIntent], which would stack a second callback on every re-delivered block.
+     */
+    private fun registerBackHandler() {
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                navigateHome()
+            }
+        })
     }
 
     /**
@@ -360,11 +384,5 @@ class BlockOverlayActivity : ComponentActivity() {
     override fun onDestroy() {
         super.onDestroy()
         NudgeAccessibilityService.markOverlayInactive()
-    }
-
-    @Deprecated("Use OnBackPressedDispatcher")
-    override fun onBackPressed() {
-        // All modes: back button navigates home (never back to the blocked app)
-        navigateHome()
     }
 }

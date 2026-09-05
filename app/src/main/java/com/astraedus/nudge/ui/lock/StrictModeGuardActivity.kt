@@ -3,9 +3,11 @@ package com.astraedus.nudge.ui.lock
 import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.getValue
@@ -59,6 +61,7 @@ class StrictModeGuardActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         isActive = true
+        registerBackHandler()
 
         val length = intent.getIntExtra(EXTRA_CHALLENGE_LENGTH, StrictModeChallenge.DEFAULT_LENGTH)
         val target = StrictModeChallenge.generate(length)
@@ -71,7 +74,11 @@ class StrictModeGuardActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.surface
                 ) {
-                    Box(modifier = Modifier.fillMaxSize()) {
+                    // The Surface above deliberately stays full-bleed: under the edge-to-edge
+                    // enforced from targetSdk 36 it is what keeps the protected Settings screen
+                    // completely obscured. The challenge itself is an AlertDialog in its own
+                    // window, so the platform insets it; this guards anything added here later.
+                    Box(modifier = Modifier.fillMaxSize().safeDrawingPadding()) {
                         val challengeTarget = remember { target }
                         ChallengeDialog(
                             target = challengeTarget,
@@ -114,10 +121,20 @@ class StrictModeGuardActivity : ComponentActivity() {
         }
     }
 
-    @Deprecated("Use OnBackPressedDispatcher")
-    override fun onBackPressed() {
-        // Back is treated as "I changed my mind": go home, never back into the protected screen.
-        onChangedMind()
+    /**
+     * Back is treated as "I changed my mind": go home, never back into the protected screen.
+     *
+     * Replaces an `onBackPressed()` override, which targetSdk 36 stops calling because predictive
+     * back is on by default. The system's own handler would simply `finish()` us, dropping the user
+     * back onto the accessibility toggle / App Info page this guard exists to stand in front of.
+     * The callback is always enabled and registered once, from [onCreate].
+     */
+    private fun registerBackHandler() {
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                onChangedMind()
+            }
+        })
     }
 
     override fun onDestroy() {

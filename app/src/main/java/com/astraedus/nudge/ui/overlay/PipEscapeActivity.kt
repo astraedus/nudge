@@ -4,6 +4,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -50,6 +51,7 @@ class PipEscapeActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         isActive = true
+        registerBackHandler()
 
         val packageName = intent.getStringExtra(EXTRA_PACKAGE_NAME) ?: ""
         val appLabel = try {
@@ -145,9 +147,20 @@ class PipEscapeActivity : ComponentActivity() {
         dismiss()
     }
 
-    @Deprecated("Use OnBackPressedDispatcher")
-    override fun onBackPressed() {
-        onDismiss()
+    /**
+     * Back dismisses, exactly as the "Not now" button does.
+     *
+     * The system default would also finish this activity, so unlike the other two overlays nothing
+     * user-visible hangs on this callback. It still matters: [dismiss] clears [isActive] BEFORE
+     * finishing, and the default path would leave enforcement suspended until [onDestroy] runs. See
+     * [dismiss]. Replaces an `onBackPressed()` override, which targetSdk 36 no longer calls.
+     */
+    private fun registerBackHandler() {
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                onDismiss()
+            }
+        })
     }
 
     /**
