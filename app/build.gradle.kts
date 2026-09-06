@@ -98,6 +98,11 @@ dependencies {
     // DataStore
     implementation("androidx.datastore:datastore-preferences:1.1.1")
 
+    // WorkManager — the protection watchdog's 15-minute periodic check. Deliberately not
+    // AlarmManager: an exact alarm needs SCHEDULE_EXACT_ALARM (a Play-review surface) and is
+    // rate-limited on Android 14+, for a check whose tolerance is a quarter of an hour.
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
+
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 

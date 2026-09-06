@@ -19,9 +19,41 @@ class NudgeMonitorService : Service() {
         private const val NOTIFICATION_ID = 1
         private const val CHANNEL_ID = "nudge_monitor"
 
-        fun start(context: Context) {
-            val intent = Intent(context, NudgeMonitorService::class.java)
-            ContextCompat.startForegroundService(context, intent)
+        /**
+         * Whether this service is currently running, as the watchdog sees it.
+         *
+         * A static flag is the honest answer here precisely BECAUSE it dies with the process: the
+         * failure being watched for is the OS killing us, and a killed process comes back with
+         * this false, which is exactly the state that needs reporting. (`getRunningServices()` is
+         * restricted since API 26 and returns only our own services anyway, and a heartbeat
+         * timestamp would just be this flag with extra I/O.)
+         */
+        @Volatile
+        var isRunning: Boolean = false
+            private set
+
+        /**
+         * Starts the service if it is not already running; starting a running service is a no-op
+         * beyond one extra `onStartCommand`.
+         *
+         * Returns false when the platform refused the start. Android 12+ forbids starting a
+         * foreground service from the background, and the watchdog calls this from a
+         * `WorkManager` worker — which is a background start. Nudge normally qualifies for the
+         * `SYSTEM_ALERT_WINDOW` exemption, but that permission can be missing (onboarding lets it
+         * be skipped), and then `startForegroundService` throws
+         * `ForegroundServiceStartNotAllowedException`, an `IllegalStateException`. Throwing out of
+         * a watchdog whose entire job is noticing failure would be its own kind of silent death.
+         * The refusal is returned rather than logged here so the caller, which has the injected
+         * [com.astraedus.nudge.util.NudgeLogger], can report it under the app's own log gate.
+         */
+        fun start(context: Context): Boolean = try {
+            ContextCompat.startForegroundService(
+                context,
+                Intent(context, NudgeMonitorService::class.java)
+            )
+            true
+        } catch (_: IllegalStateException) {
+            false
         }
 
         fun stop(context: Context) {
@@ -39,7 +71,13 @@ class NudgeMonitorService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val notification = buildNotification()
         startForeground(NOTIFICATION_ID, notification)
+        isRunning = true
         return START_STICKY
+    }
+
+    override fun onDestroy() {
+        isRunning = false
+        super.onDestroy()
     }
 
     private fun createNotificationChannel() {

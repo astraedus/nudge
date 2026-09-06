@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.astraedus.nudge.data.export.ExportedSettings
@@ -39,6 +40,8 @@ class NudgePreferences @Inject constructor(
         val EMERGENCY_PASS_ENABLED = booleanPreferencesKey("emergency_pass_enabled")
         val EMERGENCY_PASS_USAGE = stringPreferencesKey("emergency_pass_usage")
         val PIP_ESCAPE_PROMPTED = stringPreferencesKey("pip_escape_prompted")
+        val PROTECTION_DEGRADED = booleanPreferencesKey("protection_degraded")
+        val PROTECTION_ALERT_SHOWN_AT = longPreferencesKey("protection_alert_shown_at")
     }
 
     override val isGlobalEnabled: Flow<Boolean> = context.dataStore.data
@@ -227,6 +230,32 @@ class NudgePreferences @Inject constructor(
             prefs[Keys.PIP_ESCAPE_PROMPTED] = com.astraedus.nudge.domain.pip.PipEscapeLedger.serialize(
                 com.astraedus.nudge.domain.pip.PipEscapeLedger.record(current, packageName)
             )
+        }
+    }
+
+    // --- Protection watchdog state (see [com.astraedus.nudge.domain.health.ProtectionWatchdog]) ---
+
+    /**
+     * Whether the last watchdog run found protection degraded. Persisted rather than kept in
+     * memory on purpose: the failure this exists for is the OS killing our process, so the very
+     * state the next run needs is the state a field would have lost.
+     */
+    val protectionDegraded: Flow<Boolean> = context.dataStore.data
+        .map { prefs -> prefs[Keys.PROTECTION_DEGRADED] ?: false }
+
+    /** Epoch millis of the last protection alert we posted; 0 = never. Backs the alert cooldown. */
+    val protectionAlertShownAt: Flow<Long> = context.dataStore.data
+        .map { prefs -> prefs[Keys.PROTECTION_ALERT_SHOWN_AT] ?: 0L }
+
+    /**
+     * Records one watchdog verdict. Both values are written under a single `edit` because they are
+     * read together as one snapshot — a run that recorded "degraded" but lost the alert timestamp
+     * would re-alert on the next run and burn through the cooldown the user is being spared.
+     */
+    suspend fun recordProtectionCheck(degraded: Boolean, alertShownAtMs: Long?) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.PROTECTION_DEGRADED] = degraded
+            alertShownAtMs?.let { prefs[Keys.PROTECTION_ALERT_SHOWN_AT] = it }
         }
     }
 
