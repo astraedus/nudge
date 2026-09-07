@@ -4,4 +4,6 @@
     <string name="accessibility_service_description">Nudge monitors which app is in the foreground to apply your blocking rules. No data leaves your device.</string>
     <string name="notification_channel_name">Nudge Monitor</string>
     <string name="notification_channel_description">Shows when Nudge is actively monitoring apps</string>
+    <string name="health_channel_name">Blocking stopped</string>
+    <string name="health_channel_description">Alerts you when Nudge has stopped blocking, for example after your phone stops the accessibility service</string>
 </resources>
