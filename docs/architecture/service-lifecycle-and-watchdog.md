@@ -228,11 +228,57 @@ The master toggle is Nudge's own switch on the Home screen. `X` below is the acc
 |---|---|---|
 | **Healthy** | Master toggle on, accessibility on. Confirm with `adb shell dumpsys accessibility \| grep -E "Enabled services\|Bound services"` - our component must be in BOTH. | `notify=none dismiss=true degradedNow=false` |
 | **Monitoring off** | Master toggle off in the app. | `global=false notify=none dismiss=true` - never nag a user who opted out. |
-| **Granted but not connected** (`ACCESSIBILITY_CRASHED`) | `adb shell am crash dev.astraedus.nudge` (works because a debug build is debuggable). The process dies, AOSP adds the component to `mCrashedServices` and never rebinds it, and it stays in the settings string. `dumpsys accessibility` then shows it under `Enabled services` with `Bound services:{}` - that exact divergence is the shipping bug. | First broadcast: `connected=false notify=none degradedNow=true`. **Second** broadcast: `notify=ACCESSIBILITY_CRASHED`. |
+| **Granted but not connected** (`ACCESSIBILITY_CRASHED`) | `adb shell am crash dev.astraedus.nudge` produces the state, but on an idle device it heals in 150ms-3s - see "What could NOT be verified" below before spending time here. Confirm with `adb shell dumpsys accessibility \| grep -E "Enabled services\|Bound services\|Crashed services"`: ours under Enabled, absent from Bound. | First broadcast: `connected=false notify=none degradedNow=true`. **Second**: `notify=ACCESSIBILITY_CRASHED`. Unverified on device to date. |
 | **User-disabled** (`ACCESSIBILITY_DISABLED`) | Turn the toggle off in system Settings, or `adb shell settings put secure enabled_accessibility_services ""` - **record the old value first** (`settings get secure enabled_accessibility_services`), that key holds every service on the device, not just ours. | `granted=false notify=ACCESSIBILITY_DISABLED` on the FIRST broadcast - we cannot re-grant it, so waiting a cycle only costs the user 15 more minutes. |
 | **Foreground service dead** (`MONITOR_SERVICE_DEAD`) | Same `am crash`; `NudgeMonitorService.isRunning` is a static, so it comes back false in the new process. Reachable only with accessibility healthy, since the fault order is granted, then connected, then service. | First: `startService=true`. Second, if the restart did not hold: `notify=MONITOR_SERVICE_DEAD`. |
 
 A fresh run of a two-cycle state is therefore: broadcast with `--ez reset true`, then broadcast plain.
+
+### Three ways the broadcast returns no verdict (none of them mean the trigger is broken)
+
+Device QA hit all three. `result=0` with **no `data=`** is the shared symptom, and it looks exactly
+like the receiver not existing, so check these before concluding the trigger is dead:
+
+1. **Two `am crash`es on the same process within ~90 seconds poisons broadcast delivery to it for
+   minutes.** AMS logs `BroadcastQueue: Timeout of broadcast` and `Crashing app skipping ANR`, the
+   broadcast hangs for the full 60s timeout, and no result data comes back. It persists after the
+   accessibility service itself has healed, so it is an AMS-level state about the process, not
+   anything to do with this check. Only `am force-stop` plus a relaunch clears it. **Discipline: one
+   `am crash` per force-stop/relaunch cycle.**
+2. **Broadcasting at t+0 after a crash** can reach a receiver that runs before the process is ready
+   to complete it, and no result data is set.
+3. Genuinely not installed: `adb shell dumpsys package dev.astraedus.nudge | grep -A5
+   WatchdogDebugReceiver` shows nothing. That is the real failure, and it means a release build.
+
+### What could NOT be verified on the bench, and why
+
+`ACCESSIBILITY_CRASHED` has never been observed firing on a device, after eight attempts across
+several fault-injection strategies. Not because the logic is wrong: **on an idle Pixel 3 the
+accessibility service rebinds in 150ms to 3s after `am crash`, and `Crashed services` empties with
+it, faster than an `am broadcast` round trip.** QA could prove the granted-but-unbound state exists
+(repeatedly, via `dumpsys accessibility`) and could prove the posting pipeline works (the sibling
+`ACCESSIBILITY_DISABLED` and `MONITOR_SERVICE_DEAD` faults both posted real notifications on
+`nudge_protection_alerts` through the identical `notify()` body), but never got the two to coincide.
+Even a 50ms on-device poll that fired the broadcast the instant `dumpsys` showed `Bound services:{}`
+had the service back by the time the receiver evaluated.
+
+**Do not "fix" this with a fake fault or a QA hold that bypasses the check.** A trigger that runs
+different code than production is the failure mode this whole file exists to avoid. What this
+observation actually tells us is more useful than a green tick would have been:
+
+- The 10+ minute stuck-unbound state a previous QA run recorded is real, but it is NOT what `am
+  crash` on an idle device produces. The field cause is a low-memory kill or an OEM force-stop with
+  the screen off, where nothing is trying to restart us. That is not reproducible on the bench.
+- **The two-strike rule on this fault is therefore load-bearing, not a formality.** It is what stops
+  us alerting on a crash the system heals within seconds. If it were removed, this device would post
+  a false "your phone broke Nudge" on every transient.
+- Because the state self-heals so readily, `ACCESSIBILITY_CRASHED` should be rare in the field. That
+  is the design working, not the alert failing.
+
+The residual risk is the copy, not the delivery: a crashed user's switch already reads ON, so being
+told the permission is off would send them nowhere. `ProtectionAlertCopyTest` pins the fault-to-copy
+mapping over the whole `ProtectionFault` enum, so a new fault cannot ship without copy and the
+crashed message cannot drift into the grant prompt.
 
 ### Asserting the notification
 
