@@ -129,10 +129,10 @@ AccessibilityService: TYPE_WINDOW_STATE_CHANGED
 - Domain layer is pure Kotlin — no `android.*` imports. Fully unit-testable on JVM.
 - Single Activity architecture (MainActivity) + Compose Navigation.
 - BlockOverlayActivity is a separate activity with `singleInstance` launch mode, `excludeFromRecents`, empty `taskAffinity`.
-- AccessibilityService handles foreground app detection — it is the app's ONLY detector, so if it stops, blocking stops completely. `NudgeMonitorService` holds process priority (it monitors nothing); `ProtectionWatchdogWorker` is what notices when either dies and tells the user. See `docs/architecture/service-lifecycle-and-watchdog.md`.
+- AccessibilityService handles foreground app detection AND every enforcement decision, so if it stops, blocking stops completely. `NudgeMonitorService` holds process priority and the ongoing notification, and polls `ServiceHealth` so that notification stops claiming Nudge is active when it is not; it reads no rules, evaluates nothing, and must NEVER start an Activity (pinned by `MonitorServiceContractTest`, because "a service put its UI over another app" is a bug report this repo has already received once). Both that poll and `ProtectionWatchdogWorker` reach one shared `ProtectionCheck`, which owns the single alert that tells the user blocking has stopped. See `docs/architecture/service-lifecycle-and-watchdog.md`.
 - All entities use Room `@Entity` annotations. DAOs return `Flow<>` for reactive queries.
 - ViewModels use `@HiltViewModel` and inject use cases/repositories.
-- No internet permission. No analytics. No telemetry.
+- No internet permission. No analytics. No telemetry. `allowBackup="false"` + `res/xml/data_extraction_rules.xml` / `backup_rules.xml` excluding every domain on both transports: Auto Backup would otherwise upload the database to Google Drive, and running a backup force-kills the process. Export/import is the only backup path.
 
 ## Block modes
 

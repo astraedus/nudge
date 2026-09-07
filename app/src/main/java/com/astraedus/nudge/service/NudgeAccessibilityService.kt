@@ -15,6 +15,7 @@ import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.data.repository.BlockRuleRepository
 import com.astraedus.nudge.data.repository.UsageRepository
 import com.astraedus.nudge.domain.WebDomainMatcher
+import com.astraedus.nudge.domain.block.CooldownGate
 import com.astraedus.nudge.domain.lock.StrictModeEscapeGuard
 import com.astraedus.nudge.domain.model.BlockDecision
 import com.astraedus.nudge.domain.model.BlockMode
@@ -377,6 +378,17 @@ class NudgeAccessibilityService : AccessibilityService() {
          */
         @Volatile
         private var instance: NudgeAccessibilityService? = null
+
+        /**
+         * Is the accessibility service bound and enforcing *right now*?
+         *
+         * Deliberately a different question from "is Nudge listed in
+         * `Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES`". After an OS process kill (the nightly
+         * `full_backup_package`, memory pressure, a force stop) the setting still says yes and this
+         * says no, for as long as it takes the system to rebind. Every block Nudge enforces hangs
+         * off this being true, so [NudgeMonitorService] polls it and tells the user when it is not.
+         */
+        fun isConnected(): Boolean = instance != null
 
         /**
          * Send the user to the home screen. Uses [AccessibilityService.GLOBAL_ACTION_HOME] when the
@@ -823,6 +835,10 @@ class NudgeAccessibilityService : AccessibilityService() {
                 val wasEnabled = globalEnabledCached
                 globalEnabledCached = enabled
                 if (wasEnabled && !enabled) onGlobalDisabled()
+                // The monitor service's existence must track the master toggle, not track whether
+                // the phone has rebooted since install. It is also what tells the user when the OS
+                // has stopped THIS service, so it has to be running whenever Nudge is on.
+                NudgeMonitorService.sync(applicationContext, enabled)
             }
         }
 
@@ -1098,7 +1114,19 @@ class NudgeAccessibilityService : AccessibilityService() {
         }
 
         val tracker = entryPoint.interactionTracker()
-        if (tracker.isInCooldown(packageName)) {
+        // The ONE enforcement path in this service that runs before any rule is looked up, and the
+        // only one that writes no UsageEvent. Its authority must be derived from a rule that still
+        // exists, never remembered from one that used to: delete a rule (or turn its auto-kick off)
+        // with a cooldown armed and the in-memory map would keep ejecting the user from an app
+        // nothing is configured to block, invisibly, for the whole cooldown. See [CooldownGate].
+        val hasRuleEntry = counterCache.hasEntry(packageName)
+        if (CooldownGate.isStale(hasRuleEntry, tracker.isInCooldown(packageName))) {
+            entryPoint.nudgeLogger().i(
+                "stale auto-kick cooldown dropped package=$packageName reason=no_rule_entry"
+            )
+            tracker.clearCooldown(packageName)
+        }
+        if (CooldownGate.shouldEnforce(hasRuleEntry, tracker.isInCooldown(packageName))) {
             val remainingMs = tracker.getCooldownRemainingMs(packageName)
             val remainingSeconds = ((remainingMs + 999) / 1000).toInt().coerceAtLeast(1)
             entryPoint.nudgeLogger().i(
@@ -1281,7 +1309,16 @@ class NudgeAccessibilityService : AccessibilityService() {
     private fun enforceWebCooldown(browserPackage: String, domain: String?): Boolean {
         val key = domain?.let { WebSessionKey.forDomain(it) } ?: return false
         val tracker = entryPoint.interactionTracker()
-        if (!tracker.isInCooldown(key)) return false
+        // Same gate as the app-level cooldown, for the same reason: a cooldown keyed on a domain no
+        // rule enforces on any more is stale state, and acting on it blocks a site nothing blocks.
+        val hasRuleEntry = counterCache.getEntry(key) != null
+        if (CooldownGate.isStale(hasRuleEntry, tracker.isInCooldown(key))) {
+            entryPoint.nudgeLogger().i(
+                "stale web auto-kick cooldown dropped domain=$domain reason=no_rule_entry"
+            )
+            tracker.clearCooldown(key)
+        }
+        if (!CooldownGate.shouldEnforce(hasRuleEntry, tracker.isInCooldown(key))) return false
 
         val remainingMs = tracker.getCooldownRemainingMs(key)
         val remainingSeconds = ((remainingMs + 999) / 1000).toInt().coerceAtLeast(1)

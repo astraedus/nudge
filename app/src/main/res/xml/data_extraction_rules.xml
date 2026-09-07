@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  API 31+. Excludes everything from BOTH transports.
+
+  cloud-backup: Nudge's data must never leave the device (no INTERNET permission, "all data local"
+  in the store listing). device-transfer is excluded too: allowBackup="false" does not govern it on
+  31+, so leaving it open would still copy the whole database to a new phone through Google's
+  transfer flow, and a rule set silently arriving on a device the user never configured is a
+  surprise an app blocker cannot afford.
+
+  Users move their rules with Settings -> Export rules / Import rules.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="file" />
+        <exclude domain="external" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="file" />
+        <exclude domain="external" />
+    </device-transfer>
+</data-extraction-rules>

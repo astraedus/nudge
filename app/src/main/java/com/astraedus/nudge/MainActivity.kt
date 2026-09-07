@@ -75,11 +75,10 @@ class MainActivity : ComponentActivity() {
                 ) { enabled, onboarded -> enabled && onboarded }
                     .distinctUntilChanged()
                     .collect { shouldMonitor ->
-                        if (shouldMonitor) {
-                            NudgeMonitorService.start(this@MainActivity)
-                        } else {
-                            NudgeMonitorService.stop(this@MainActivity)
-                        }
+                        // sync(), not start()/stop() by hand: one lifecycle API, so "the service
+                        // exists exactly when monitoring is on" is decided in one place rather
+                        // than at each of the four call sites that can change the answer.
+                        NudgeMonitorService.sync(this@MainActivity, shouldMonitor)
                     }
             }
         }

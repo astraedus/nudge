@@ -2,6 +2,14 @@
 
 All notable changes to Nudge are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.15.4] - 2026-09-07
+
+### Fixed
+- **Nudge now tells you when it has stopped blocking.** Android can stop the accessibility service on its own, after a nightly backup or when it needs memory, and when it does, Nudge quietly enforces nothing until the system rebinds it. Android's own Settings screen said so ("Enabled, but your phone stopped it") while Nudge's notification carried on reading "Nudge is active". That notification now says what is actually true, and if blocking is down you get a notification that takes you straight to the toggle that restarts it.
+- **Nudge is no longer backed up to Google Drive.** Nudge has never asked for internet access and its data has always been meant to stay on your phone, but Android's automatic backup was uploading the database anyway, on a schedule nobody chose. Running that backup also force-killed the app every night, which is what stopped the blocking in the first place. Both are gone. To move your rules to a new phone, use Settings, Export rules, and import the file on the other side.
+- **An auto-kick cooldown can no longer outlive the rule that created it.** Deleting a rule, or turning its auto-kick off, while the cooldown timer was still running left the cooldown behind: Nudge would keep sending you out of an app that nothing was set to block, for as long as the timer had left, and none of it appeared in your stats. Cooldowns are now dropped as soon as no rule wants them, on websites as well as apps.
+- **The background service now follows the on/off switch.** It only ever started after a reboot, so a fresh install had nothing running until you next restarted your phone, and once running it never stopped, so its "Nudge is active" notification stayed up after you switched Nudge off.
+
 ## [1.15.3] - 2026-09-05
 
 ### Fixed

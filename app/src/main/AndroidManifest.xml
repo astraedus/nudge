@@ -25,9 +25,32 @@
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
         tools:ignore="QueryAllPackagesPermission" />
 
+        <!-- Backup is OFF, deliberately, for two independent reasons.
+
+             1. PRIVACY. Nudge holds no INTERNET permission and its listing promises "all data
+                local". Android Auto Backup ignores both: with allowBackup="true" the framework
+                uploads the Room database (every rule, every app the user blocks, their whole usage
+                history) to Google Drive on the user's behalf. An app that advertises local-only
+                data must not have a cloud copy it never mentions.
+
+             2. RELIABILITY. Running a full backup force-kills the app's process. On 2026-09-07 the
+                Pixel's 01:59 `full_backup_package dev.astraedus.nudge` killed Nudge (am_proc_died
+                reason 100); the OS rescheduled both services and Settings reported "Enabled, but
+                your phone stopped it, turn it off and back on to restart blocking". A blocker that
+                is killed nightly by a backup it does not want is a blocker that stops blocking
+                nightly.
+
+             The backup path users actually have is Settings -> Export rules / Import rules
+             (docs/architecture/export-import.md), which is explicit, inspectable, carries usage
+             history, and does not leave the device unless the user sends it somewhere.
+
+             dataExtractionRules covers API 31+, where allowBackup alone no longer governs
+             device-to-device transfer; fullBackupContent covers API 26-30. -->
     <application
         android:name=".NudgeApp"
-        android:allowBackup="true"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:supportsRtl="true"

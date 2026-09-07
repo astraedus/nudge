@@ -52,11 +52,12 @@ class BootReceiver : BroadcastReceiver() {
             entryPoint.nudgePreferences().isGlobalEnabled.first()
         }
 
-        if (globalEnabled) {
-            NudgeMonitorService.start(context)
-        }
+        // sync(), not start(): the service's existence tracks the master toggle everywhere it can
+        // change, so a reboot with Nudge switched off does not resurrect a "Nudge is active"
+        // notification for an app that is enforcing nothing.
+        NudgeMonitorService.sync(context, globalEnabled)
 
-        // Re-arm the watchdog even when monitoring is off: the worker no-ops on a disabled master
+        // Re-arm the watchdog even when monitoring is off: the check no-ops on a disabled master
         // toggle, and it is what will notice if the user turns protection back on while the
         // foreground service is somehow not running.
         ProtectionWatchdogWorker.enqueue(context)

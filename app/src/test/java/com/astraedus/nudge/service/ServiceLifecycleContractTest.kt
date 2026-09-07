@@ -124,8 +124,15 @@ class ServiceLifecycleContractTest {
      */
     @Test
     fun `the foreground service is started from more than the boot receiver`() {
+        // start() OR sync(): sync is the lifecycle API the UI and the receiver use now, and it is
+        // start-or-stop decided in one place. ProtectionCheck still calls start() directly, since
+        // a watchdog restarting a dead service is not a master-toggle change.
         val callers = allMainSources()
-            .filter { it.readText().contains("NudgeMonitorService.start(") }
+            .filter {
+                val text = it.readText()
+                text.contains("NudgeMonitorService.start(") ||
+                    text.contains("NudgeMonitorService.sync(")
+            }
             .map { it.name }
             .toSet()
 
@@ -136,7 +143,7 @@ class ServiceLifecycleContractTest {
             callers.size > 1
         )
         assertTrue(
-            "MainActivity must start monitoring on app launch / master-toggle-on / onboarding " +
+            "MainActivity must sync monitoring on app launch / master-toggle-on / onboarding " +
                 "completion. Found callers: $callers",
             callers.contains("MainActivity.kt")
         )
@@ -166,10 +173,19 @@ class ServiceLifecycleContractTest {
             "$mainActivity must observe isOnboardingComplete",
             text.contains("isOnboardingComplete")
         )
+        // The stop half moved into sync() in the 2026-09-07 merge, so "the service exists exactly
+        // when monitoring is on" is decided in ONE place rather than at each of the four call
+        // sites that can change the answer. The invariant is unchanged, and is now pinned in both
+        // halves: the screen calls sync, and sync is what stops.
         assertTrue(
-            "$mainActivity must stop the service when monitoring goes off — a permanent " +
-                "'Nudge is active' notification over disabled monitoring is a false claim",
-            text.contains("NudgeMonitorService.stop(")
+            "$mainActivity must drive the service through NudgeMonitorService.sync",
+            text.contains("NudgeMonitorService.sync(")
+        )
+        assertTrue(
+            "sync() must stop the service when monitoring goes off: a permanent " +
+                "ongoing notification over disabled monitoring is a false claim",
+            Regex("""fun sync\([\s\S]{0,400}?stop\(context\)""")
+                .containsMatchIn(source(monitorService))
         )
     }
 
