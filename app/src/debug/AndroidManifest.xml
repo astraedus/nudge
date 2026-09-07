@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+
+        <!-- QA-only trigger for the protection watchdog. Lives in the `debug` source set, so
+             neither this declaration nor the class it names exists in a release build at all:
+             AGP merges this manifest only into the debug variant, and `src/debug/java` is only on
+             the debug compile path. `WatchdogDebugTriggerContractTest` fails if either leaks into
+             `src/main`. That absence, not a runtime `BuildConfig.DEBUG` branch, is the guarantee.
+
+             `exported="true"` is what makes it reachable from `adb shell am broadcast`, which runs
+             as the shell uid and not as ours. No `android:permission` guard on top: it would only
+             narrow a surface that already cannot ship, and an unverified sender-permission
+             assumption is exactly the kind of thing that turns a QA session into a debugging
+             session. The broadcast carries no secrets, and its worst effect is running the same
+             health check the app already runs on its own every 15 minutes.
+
+             See docs/architecture/service-lifecycle-and-watchdog.md, "How to test this". -->
+        <receiver
+            android:name=".service.WatchdogDebugReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="dev.astraedus.nudge.debug.RUN_WATCHDOG" />
+            </intent-filter>
+        </receiver>
+
+    </application>
+
+</manifest>

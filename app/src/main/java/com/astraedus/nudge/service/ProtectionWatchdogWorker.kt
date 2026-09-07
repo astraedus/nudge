@@ -6,15 +6,6 @@ import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
-import com.astraedus.nudge.data.preferences.NudgePreferences
-import com.astraedus.nudge.domain.health.ProtectionSnapshot
-import com.astraedus.nudge.domain.health.ProtectionWatchdog
-import com.astraedus.nudge.util.NudgeLogger
-import dagger.hilt.EntryPoint
-import dagger.hilt.InstallIn
-import dagger.hilt.android.EntryPointAccessors
-import dagger.hilt.components.SingletonComponent
-import kotlinx.coroutines.flow.first
 import java.util.concurrent.TimeUnit
 
 /**
@@ -33,64 +24,24 @@ import java.util.concurrent.TimeUnit
  * built on the setting alone would sit here reporting "all good" through the exact failure it
  * exists to catch.
  *
- * The policy lives in [ProtectionWatchdog], which is pure and unit-tested. This class only gathers
- * the values and carries out the verdict.
+ * This class is now only the SCHEDULE. The check itself lives in [ProtectionCheck] and the policy
+ * in `ProtectionWatchdog`, which is pure and unit-tested. That split is not tidiness: WorkManager
+ * cannot be made to run this worker on demand (`cmd jobscheduler run -f` finishes the job in ~12ms
+ * without `doWork()` ever executing), so the check had to become reachable from somewhere else
+ * before anyone could watch the alert fire even once.
  */
 class ProtectionWatchdogWorker(
     appContext: Context,
     params: WorkerParameters
 ) : CoroutineWorker(appContext, params) {
 
-    @EntryPoint
-    @InstallIn(SingletonComponent::class)
-    interface WatchdogEntryPoint {
-        fun nudgePreferences(): NudgePreferences
-        fun nudgeLogger(): NudgeLogger
-    }
-
+    /**
+     * The whole of the periodic run. [ProtectionCheck.run] holds the gather-decide-act body so the
+     * debug trigger can exercise the exact same code, see that file for why a trigger that runs a
+     * parallel reimplementation would be worse than having no trigger.
+     */
     override suspend fun doWork(): Result {
-        val entryPoint = EntryPointAccessors.fromApplication(
-            applicationContext,
-            WatchdogEntryPoint::class.java
-        )
-        val preferences = entryPoint.nudgePreferences()
-        val logger = entryPoint.nudgeLogger()
-
-        val snapshot = ProtectionSnapshot(
-            globalEnabled = preferences.isGlobalEnabled.first(),
-            // Two reads, deliberately. The settings string is INTENT and survives a crash; the
-            // bound-services list is REALITY and does not. The gap between them is the failure.
-            accessibilityGranted = ProtectionStatus.isAccessibilityServiceGranted(applicationContext),
-            accessibilityConnected = ProtectionStatus.isAccessibilityServiceConnected(applicationContext),
-            monitorServiceRunning = NudgeMonitorService.isRunning,
-            wasDegradedLastCheck = preferences.protectionDegraded.first(),
-            lastNotifiedAtMs = preferences.protectionAlertShownAt.first(),
-            nowMs = System.currentTimeMillis()
-        )
-        val decision = ProtectionWatchdog.decide(snapshot)
-
-        if (decision.startMonitorService) {
-            val started = NudgeMonitorService.start(applicationContext)
-            if (!started) {
-                logger.w(
-                    "Watchdog: the system refused a background foreground-service start",
-                    tag = TAG
-                )
-            }
-        }
-
-        if (decision.dismissNotification) ProtectionAlertNotifier.dismiss(applicationContext)
-        decision.notifyOf?.let { fault ->
-            logger.w("Watchdog: protection degraded ($fault), alerting the user", tag = TAG)
-            ProtectionAlertNotifier.notify(applicationContext, fault)
-        }
-
-        preferences.recordProtectionCheck(
-            degraded = decision.degradedNow,
-            // Only advance the cooldown clock when an alert actually went out. Writing `now` on
-            // every run would keep the window permanently open and mute the next real alert.
-            alertShownAtMs = if (decision.notifyOf != null) snapshot.nowMs else null
-        )
+        ProtectionCheck.run(applicationContext)
 
         // Never Result.retry(): the next periodic run is 15 minutes away and this check is only
         // ever about "right now". A retry backlog would just alert about a state that has passed.
@@ -98,7 +49,6 @@ class ProtectionWatchdogWorker(
     }
 
     companion object {
-        private const val TAG = "ProtectionWatchdog"
         private const val WORK_NAME = "nudge_protection_watchdog"
 
         /**

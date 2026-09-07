@@ -48,6 +48,7 @@ class ServiceLifecycleContractTest {
     private val bootReceiver = "main/java/com/astraedus/nudge/service/BootReceiver.kt"
     private val monitorService = "main/java/com/astraedus/nudge/service/NudgeMonitorService.kt"
     private val watchdogWorker = "main/java/com/astraedus/nudge/service/ProtectionWatchdogWorker.kt"
+    private val protectionCheck = "main/java/com/astraedus/nudge/service/ProtectionCheck.kt"
     private val mainActivity = "main/java/com/astraedus/nudge/MainActivity.kt"
     private val application = "main/java/com/astraedus/nudge/NudgeApp.kt"
 
@@ -140,8 +141,10 @@ class ServiceLifecycleContractTest {
             callers.contains("MainActivity.kt")
         )
         assertTrue(
-            "The watchdog must be able to restart a dead service. Found callers: $callers",
-            callers.contains("ProtectionWatchdogWorker.kt")
+            "The watchdog must be able to restart a dead service. It carries the verdict out from " +
+                "ProtectionCheck, the body the periodic worker and the debug trigger share. " +
+                "Found callers: $callers",
+            callers.contains("ProtectionCheck.kt")
         )
     }
 
@@ -245,25 +248,51 @@ class ServiceLifecycleContractTest {
 
     @Test
     fun `the watchdog reads both accessibility signals and holds no policy of its own`() {
-        val text = source(watchdogWorker)
+        val text = source(protectionCheck)
 
         assertTrue(
-            "$watchdogWorker must read the enabled setting (user intent) through ProtectionStatus",
+            "$protectionCheck must read the enabled setting (user intent) through ProtectionStatus",
             text.contains("ProtectionStatus.isAccessibilityServiceGranted(")
         )
         assertTrue(
-            "$watchdogWorker must ALSO read boundness — granted is not connected, and only the " +
+            "$protectionCheck must ALSO read boundness — granted is not connected, and only the " +
                 "gap between them reveals a service the OS killed and will never rebind",
             text.contains("ProtectionStatus.isAccessibilityServiceConnected(")
         )
         assertTrue(
-            "$watchdogWorker must delegate the decision to the pure, tested ProtectionWatchdog",
+            "$protectionCheck must delegate the decision to the pure, tested ProtectionWatchdog",
             text.contains("ProtectionWatchdog.decide(")
         )
         assertFalse(
-            "$watchdogWorker must not branch on the master toggle itself — that rule lives in " +
+            "$protectionCheck must not branch on the master toggle itself — that rule lives in " +
                 "ProtectionWatchdog, where 'never nag a user who opted out' is pinned by a test",
             Regex("""if\s*\(\s*!?\s*\w*[Gg]lobalEnabled""").containsMatchIn(text)
+        )
+    }
+
+    /**
+     * The check body lives outside the worker so the debug trigger can run the very same code, 
+     * WorkManager cannot be made to run the worker on demand, so before the split the alert path
+     * was unobservable (`WatchdogDebugTriggerContractTest` owns that half of the contract). The
+     * worker keeps the SCHEDULE and nothing else; a check re-inlined here would silently become
+     * the only version anyone tests.
+     */
+    @Test
+    fun `the periodic worker holds the schedule, not the check`() {
+        val text = source(watchdogWorker)
+
+        assertTrue(
+            "$watchdogWorker must run the shared ProtectionCheck",
+            text.contains("ProtectionCheck.run(")
+        )
+        assertFalse(
+            "$watchdogWorker must not gather signals itself, a second copy of the check is a " +
+                "copy nobody can trigger, and the triggerable one would stop proving anything",
+            text.contains("ProtectionStatus.isAccessibilityService")
+        )
+        assertFalse(
+            "$watchdogWorker must not decide anything itself",
+            text.contains("ProtectionWatchdog.decide(")
         )
     }
 

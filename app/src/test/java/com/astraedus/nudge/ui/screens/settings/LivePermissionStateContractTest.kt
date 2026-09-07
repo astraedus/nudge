@@ -160,6 +160,86 @@ class LivePermissionStateContractTest {
     }
 
     /**
+     * The recovery half, and the one that shipped broken.
+     *
+     * `ENABLED_ACCESSIBILITY_SERVICES` is written when the toggle flips; the system binds the
+     * service AFTERWARDS and asynchronously (`AccessibilityManagerService.updateServicesLocked` →
+     * `bindServiceAsUser`, the component sitting in `mBindingServices` until `onServiceConnected`).
+     * So the ContentObserver above fires DURING the gap and reads granted-but-not-connected, which
+     * is byte-for-byte the crashed state. That is a momentary wrong tick only if something reads
+     * again, and while this screen stays resumed, nothing did: `ON_RESUME` never fires for a
+     * re-enable from a split window, from `adb shell settings put`, or from a quick-settings tile.
+     * Device QA watched the ✖ and the "turn it off and back on" copy sit there for 20+ seconds over
+     * a service `dumpsys accessibility` had shown bound within 3. It would never have healed.
+     *
+     * The fix is the event, not a timer: `onServiceConnected` IS the bind completing. A poll would
+     * be wrong for its whole interval and would hide the mechanism.
+     */
+    @Test
+    fun `accessibility state is re-read when the service actually binds, not only when the setting changes`() {
+        val text = source(settingsScreen)
+
+        assertTrue(
+            "$settingsScreen must react to AccessibilityConnectionSignal, the ContentObserver " +
+                "fires BEFORE the bind completes, so on its own it latches a stale 'crashed' " +
+                "reading for as long as the screen stays resumed",
+            text.contains("AccessibilityConnectionSignal")
+        )
+        assertTrue(
+            "$settingsScreen must re-read ProtectionStatus on that signal rather than trusting " +
+                "the signal's own value, the signal says 'look again', it is not the answer",
+            text.contains("readAccessibilityState(")
+        )
+    }
+
+    /**
+     * A retry loop would make the symptom go away while leaving the cause, the screen would still
+     * be reading at a moment unrelated to the bind, just repeatedly, and it would keep waking to
+     * ask a question whose answer changes a handful of times a year.
+     */
+    @Test
+    fun `the accessibility re-read is event-driven, not polled`() {
+        val text = normalized(source(settingsScreen))
+
+        listOf("while (true)", "delay(", "repeat(").forEach { polling ->
+            assertFalse(
+                "$settingsScreen must not contain `$polling`, the permission refresh is driven " +
+                    "by the ContentObserver, the connection signal and ON_RESUME. A poll here " +
+                    "would paper over the bind race instead of reading at the moment it resolves.",
+                text.contains(normalized(polling))
+            )
+        }
+    }
+
+    /**
+     * The signal has to be raised from the service's own lifecycle callbacks, because those ARE
+     * the transitions: `onServiceConnected` is the system finishing the bind, `onDestroy` is
+     * blocking stopping. Raising it anywhere else would be guessing at the moment again.
+     */
+    @Test
+    fun `the accessibility service announces both its bind and its teardown`() {
+        val text = source("main/java/com/astraedus/nudge/service/NudgeAccessibilityService.kt")
+
+        val connectedBody = text.substringAfter("fun onServiceConnected()", "")
+            .substringBefore("\n    override fun ")
+        val destroyBody = text.substringAfter("fun onDestroy()", "")
+            .substringBefore("\n    override fun ")
+
+        assertTrue(
+            "NudgeAccessibilityService.onServiceConnected must call " +
+                "AccessibilityConnectionSignal.onConnectionChanged(), that callback is the " +
+                "earliest correct moment to re-read, and without it the Settings screen stays " +
+                "latched on the pre-bind reading",
+            connectedBody.contains("AccessibilityConnectionSignal.onConnectionChanged()")
+        )
+        assertTrue(
+            "NudgeAccessibilityService.onDestroy must call the same signal, a green tick over a " +
+                "service that has just stopped is the original false-success bug, mirrored",
+            destroyBody.contains("AccessibilityConnectionSignal.onConnectionChanged()")
+        )
+    }
+
+    /**
      * A user whose switch already reads "on" cannot be told to grant a permission they already
      * granted — that copy would read as nonsense. The crashed state needs its own recovery message
      * (toggle off/on, or reboot), which is the only user-accessible exit from AOSP's crashed set.

@@ -701,6 +701,10 @@ class NudgeAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
+        // The bind has just completed. Anything displaying protection state read the settings
+        // string BEFORE this moment and saw "granted but not connected", i.e. crashed, so tell it
+        // to look again. See AccessibilityConnectionSignal for the latch this deletes.
+        AccessibilityConnectionSignal.onConnectionChanged()
         entryPoint.counterOverlayManager().setServiceContext(this)
         entryPoint.timeRemainingOverlayManager().setServiceContext(this)
 
@@ -1697,6 +1701,9 @@ class NudgeAccessibilityService : AccessibilityService() {
     override fun onDestroy() {
         super.onDestroy()
         if (instance === this) instance = null
+        // The other direction: blocking has just stopped, and a screen sitting on a green tick
+        // needs to stop claiming otherwise.
+        AccessibilityConnectionSignal.onConnectionChanged()
         stopForegroundTimeTicker("service_destroyed")
         endWebSession("service_destroyed")
         try {

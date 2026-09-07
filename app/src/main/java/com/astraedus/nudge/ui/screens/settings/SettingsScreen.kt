@@ -46,6 +46,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -67,6 +68,7 @@ import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.domain.lock.LockedToggle
 import com.astraedus.nudge.domain.lock.SettingsWeakening
 import com.astraedus.nudge.domain.lock.StrictModeChallenge
+import com.astraedus.nudge.service.AccessibilityConnectionSignal
 import com.astraedus.nudge.service.ProtectionStatus
 import com.astraedus.nudge.ui.components.AccessibilityDisclosureDialog
 import com.astraedus.nudge.ui.components.ChallengeDialog
@@ -576,13 +578,21 @@ private fun readAccessibilityState(context: Context): AccessibilityReadout {
  * service; an OEM battery-optimizer kills the process and it lands in AOSP's crashed set) left a
  * green tick over a dead permission with no way for the user to tell (docs/BACKLOG.md).
  *
- * Two refresh paths, because the three permissions don't share a way to be watched:
+ * Three refresh paths, because the three permissions don't share a way to be watched, and because
+ * the accessibility one has TWO halves that change at different moments:
  * - Accessibility has [ProtectionStatus.ACCESSIBILITY_SERVICES_URI], a `Settings.Secure` key that a
  *   `ContentObserver` can watch LIVE — it fires the instant the user (or a force-stop) flips it,
  *   including while they're sitting in the system Settings screen in a split window right next to
  *   this one. It will NEVER fire for a crash, because AOSP leaves a crashed service IN that string —
  *   which is exactly why this observer still reads both halves of [readAccessibilityState] on every
  *   fire rather than trusting the string alone.
+ * - The bind that FOLLOWS that string being written is asynchronous, so the observer above fires
+ *   while the service is granted-but-not-yet-connected, indistinguishable from crashed. Nothing
+ *   read again afterwards, so re-enabling the service without leaving this screen (a split window,
+ *   `adb shell settings put`, a quick-settings tile) LATCHED the ✖ and the "turn it off and back
+ *   on" copy over a service that had been bound for twenty seconds. [AccessibilityConnectionSignal]
+ *   fires from the service's own `onServiceConnected`/`onDestroy`, which is the bind completing:
+ *   the earliest correct moment to look again, with no interval to tune.
  * - Overlay and usage-stats grants are `AppOpsManager` modes with no equivalent watchable key, so
  *   they can only be re-checked on `ON_RESUME` — which is also exactly the moment the user lands
  *   back here after visiting either system settings page this screen sends them to.
@@ -610,6 +620,18 @@ private fun rememberPermissionStates(context: Context): PermissionStates {
             observer
         )
         onDispose { context.contentResolver.unregisterContentObserver(observer) }
+    }
+
+    // Collecting a StateFlow delivers its current value first, so a bind that happened between the
+    // initial read above and this effect starting is picked up too rather than missed.
+    LaunchedEffect(context) {
+        AccessibilityConnectionSignal.generation.collect {
+            val accessibility = readAccessibilityState(context)
+            state = state.copy(
+                accessibility = accessibility.working,
+                accessibilityCrashed = accessibility.crashed
+            )
+        }
     }
 
     val lifecycleOwner = LocalLifecycleOwner.current
