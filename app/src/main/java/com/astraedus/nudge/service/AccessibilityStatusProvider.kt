@@ -1,9 +1,6 @@
 package com.astraedus.nudge.service
 
-import android.content.ComponentName
 import android.content.Context
-import android.provider.Settings
-import android.text.TextUtils
 
 /**
  * The two independent facts that decide whether Nudge is actually enforcing anything.
@@ -17,38 +14,35 @@ interface AccessibilityStatusProvider {
     /** Our service is listed in `Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES`. */
     fun isPermissionGranted(): Boolean
 
-    /** Our `AccessibilityService` is bound and live in this process right now. */
+    /** Our `AccessibilityService` is bound and enforcing right now. */
     fun isServiceConnected(): Boolean
 }
 
+/**
+ * Delegates to [ProtectionStatus], which is the app's single answer to both questions.
+ *
+ * This class used to parse the settings string itself and read a static
+ * `NudgeAccessibilityService.isConnected()`. Two lanes had independently built a health model from
+ * the same base commit, so the app briefly carried two: a health poll here and a watchdog in
+ * `ProtectionCheck`, each with its own reader. Two readers of the same fact is a bug waiting for
+ * the day they disagree, and the Settings screen's permission tick reads a third path still, so
+ * they all now come through one place.
+ *
+ * The connected read changed in the merge, deliberately. The old one was
+ * `instance != null` - an in-process static, true only if `onServiceConnected` has run in THIS
+ * process. That cannot tell "the OS killed us and will never rebind" from "we have only just
+ * started", which is the exact distinction the alert copy turns on: one needs an off-and-on-again,
+ * the other needs nothing at all. [ProtectionStatus.isAccessibilityServiceConnected] asks the
+ * framework for its bound-services list instead, so the answer survives our own process dying and
+ * is the same answer the Settings screen shows the user.
+ */
 class AndroidAccessibilityStatusProvider(
     private val context: Context
 ) : AccessibilityStatusProvider {
 
-    /**
-     * Read the raw setting rather than `AccessibilityManager.getEnabledAccessibilityServiceList`:
-     * that list reflects *bound* services on some builds, which would collapse the two questions
-     * into one and hide the exact state we are trying to detect.
-     *
-     * Fails CLOSED on an unreadable setting — reporting "permission missing" nags a working install
-     * at worst, while reporting "granted" would let a genuinely un-granted install look healthy.
-     */
-    override fun isPermissionGranted(): Boolean {
-        val expected = ComponentName(context, NudgeAccessibilityService::class.java)
-        val raw = try {
-            Settings.Secure.getString(
-                context.contentResolver,
-                Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
-            )
-        } catch (_: Exception) {
-            null
-        } ?: return false
+    override fun isPermissionGranted(): Boolean =
+        ProtectionStatus.isAccessibilityServiceGranted(context)
 
-        val splitter = TextUtils.SimpleStringSplitter(':').apply { setString(raw) }
-        return splitter.any { entry ->
-            ComponentName.unflattenFromString(entry)?.equals(expected) == true
-        }
-    }
-
-    override fun isServiceConnected(): Boolean = NudgeAccessibilityService.isConnected()
+    override fun isServiceConnected(): Boolean =
+        ProtectionStatus.isAccessibilityServiceConnected(context)
 }

@@ -4,6 +4,20 @@
     <string name="accessibility_service_description">Nudge monitors which app is in the foreground to apply your blocking rules. No data leaves your device.</string>
     <string name="notification_channel_name">Nudge Monitor</string>
     <string name="notification_channel_description">Shows when Nudge is actively monitoring apps</string>
-    <string name="health_channel_name">Blocking stopped</string>
-    <string name="health_channel_description">Alerts you when Nudge has stopped blocking, for example after your phone stops the accessibility service</string>
+
+    <!-- Protection watchdog. Copy rule: say what happened and what fixes it, without alarm and
+         without blaming the user. This fires when their phone switched Nudge off, not when they
+         did. -->
+    <string name="protection_alert_channel_name">Protection alerts</string>
+    <string name="protection_alert_channel_description">Tells you if blocking stops working</string>
+    <string name="protection_alert_accessibility_title">Nudge has stopped blocking</string>
+    <string name="protection_alert_accessibility_body">Nudge\'s accessibility permission is off, so apps are not being blocked. Tap to turn it back on.</string>
+    <!-- The "enabled but dead" case. Android leaves the switch showing ON after it kills an
+         accessibility service and never restarts it, so "turn it on" would read as nonsense here.
+         Off-and-on-again is genuinely the only user-accessible recovery (AOSP clears its crashed
+         set on a toggle, an update, an uninstall or a force-stop, and on nothing else). -->
+    <string name="protection_alert_crashed_title">Nudge has stopped blocking</string>
+    <string name="protection_alert_crashed_body">Your phone shut Nudge down. It still shows as switched on, so blocking will not restart on its own — turn Nudge off and back on in Accessibility settings, or restart your phone. Tap for the steps.</string>
+    <string name="protection_alert_service_title">Your phone keeps stopping Nudge</string>
+    <string name="protection_alert_service_body">Nudge is being shut down in the background, so blocking may not work reliably. Tap to check its status.</string>
 </resources>

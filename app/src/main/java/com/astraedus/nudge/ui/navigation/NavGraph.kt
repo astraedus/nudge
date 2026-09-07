@@ -1,6 +1,7 @@
 package com.astraedus.nudge.ui.navigation
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
@@ -64,16 +65,32 @@ sealed class Screen(val route: String) {
 
 @Composable
 fun NudgeNavGraph(
-    nudgePreferences: NudgePreferences? = null
+    nudgePreferences: NudgePreferences? = null,
+    /**
+     * Set when the user tapped the protection alert. That notification's whole promise is
+     * "tap to fix it", so it has to land on the screen carrying the permission rows and the
+     * prominent-disclosure dialog, not on the dashboard with the fix two taps further on.
+     */
+    openSettingsOnLaunch: Boolean = false
 ) {
     val navController = rememberNavController()
 
     // Determine start destination
-    val startDestination = if (nudgePreferences != null) {
-        val onboardingComplete by nudgePreferences.isOnboardingComplete.collectAsStateWithLifecycle(initialValue = true)
-        if (onboardingComplete) Screen.Home.route else Screen.Onboarding.route
+    val onboardingComplete = if (nudgePreferences != null) {
+        val complete by nudgePreferences.isOnboardingComplete.collectAsStateWithLifecycle(initialValue = true)
+        complete
     } else {
-        Screen.Home.route
+        true
+    }
+    val startDestination = if (onboardingComplete) Screen.Home.route else Screen.Onboarding.route
+
+    // Never jump a first-run user out of onboarding: an alert can only have fired for someone who
+    // has already been through it, but the start destination reads `true` for one frame while the
+    // preference loads, and that frame must not be enough to navigate away from it.
+    LaunchedEffect(openSettingsOnLaunch, onboardingComplete) {
+        if (openSettingsOnLaunch && onboardingComplete) {
+            navController.navigate(Screen.Settings.route) { launchSingleTop = true }
+        }
     }
 
     NavHost(navController = navController, startDestination = startDestination) {

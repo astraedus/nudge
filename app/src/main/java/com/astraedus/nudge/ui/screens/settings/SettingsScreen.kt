@@ -3,7 +3,10 @@ package com.astraedus.nudge.ui.screens.settings
 import android.app.AppOpsManager
 import android.content.Context
 import android.content.Intent
+import android.database.ContentObserver
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.os.Process
 import android.provider.Settings
 import android.widget.Toast
@@ -41,6 +44,9 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -54,11 +60,16 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.astraedus.nudge.BuildConfig
 import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.domain.lock.LockedToggle
 import com.astraedus.nudge.domain.lock.SettingsWeakening
 import com.astraedus.nudge.domain.lock.StrictModeChallenge
+import com.astraedus.nudge.service.AccessibilityConnectionSignal
+import com.astraedus.nudge.service.ProtectionStatus
 import com.astraedus.nudge.ui.components.AccessibilityDisclosureDialog
 import com.astraedus.nudge.ui.components.ChallengeDialog
 import com.astraedus.nudge.ui.hasGrayscalePermission
@@ -74,9 +85,13 @@ fun SettingsScreen(
     onNavigateToMessagesEditor: () -> Unit = {}
 ) {
     val context = LocalContext.current
-    val accessibilityEnabled by remember { mutableStateOf(isAccessibilityEnabled(context)) }
-    val overlayEnabled by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
-    val usageStatsEnabled by remember { mutableStateOf(hasUsageStatsPermission(context)) }
+    // See rememberPermissionStates: these three used to be `remember { mutableStateOf(x) }` —
+    // computed once at first composition and never again — which is how a green tick survived a
+    // dead accessibility service (an in-place update, or a phone that killed the process overnight).
+    val permissionStates = rememberPermissionStates(context)
+    val accessibilityEnabled = permissionStates.accessibility
+    val overlayEnabled = permissionStates.overlay
+    val usageStatsEnabled = permissionStates.usageStats
     val preferences = remember { NudgePreferences(context.applicationContext) }
     val debugLoggingEnabled by preferences.isDebugLoggingEnabled.collectAsStateWithLifecycle(initialValue = false)
     val contentFilterEnabled by preferences.contentFilterEnabled.collectAsStateWithLifecycle(initialValue = false)
@@ -161,7 +176,15 @@ fun SettingsScreen(
 
             PermissionItem(
                 title = "Accessibility Service",
-                description = "Required to detect foreground apps",
+                // "Granted but not connected" (see ProtectionStatus) means the switch reads on but
+                // the process is dead — turning the permission on again is not the fix, because it
+                // is already on; only toggling the service off/on (or a reboot) drops it out of
+                // AOSP's crashed-services set and lets it rebind.
+                description = if (permissionStates.accessibilityCrashed) {
+                    "Enabled, but your phone stopped it — turn it off and back on to restart blocking."
+                } else {
+                    "Required to detect foreground apps"
+                },
                 granted = accessibilityEnabled,
                 icon = { Icon(Icons.Outlined.Accessibility, contentDescription = null) },
                 onClick = {
@@ -503,12 +526,126 @@ private fun PermissionItem(
     )
 }
 
-private fun isAccessibilityEnabled(context: Context): Boolean {
-    val enabledServices = Settings.Secure.getString(
-        context.contentResolver,
-        Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
-    ) ?: return false
-    return enabledServices.contains(context.packageName)
+/**
+ * The permission ticks this screen draws. See [rememberPermissionStates].
+ *
+ * [accessibility] is deliberately not "is the setting string on" — see [readAccessibilityState] —
+ * and [accessibilityCrashed] carries the one state that string can never distinguish from healthy:
+ * granted by the user, dead in reality.
+ */
+@Immutable
+private data class PermissionStates(
+    val accessibility: Boolean,
+    val accessibilityCrashed: Boolean,
+    val overlay: Boolean,
+    val usageStats: Boolean
+)
+
+private fun readPermissionStates(context: Context): PermissionStates {
+    val accessibility = readAccessibilityState(context)
+    return PermissionStates(
+        accessibility = accessibility.working,
+        accessibilityCrashed = accessibility.crashed,
+        overlay = Settings.canDrawOverlays(context),
+        usageStats = hasUsageStatsPermission(context)
+    )
+}
+
+/** [readAccessibilityState]'s two-boolean answer, shared by every refresh path below. */
+private data class AccessibilityReadout(val working: Boolean, val crashed: Boolean)
+
+/**
+ * The accessibility half of [readPermissionStates], on its own because it needs care the other two
+ * don't: `Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES` is INTENT, not liveness (see the class doc
+ * on [ProtectionStatus] for the AOSP trace — a killed service is left IN that string forever, which
+ * is our 3-star review, "It doesn't work sometimes"). [ProtectionStatus.isAccessibilityServiceWorking]
+ * is the "granted AND connected" answer a tick must show, but this screen also needs the OTHER half
+ * of that same pair — granted but NOT connected, i.e. crashed — to tell the user the real fix. Both
+ * halves come from the same two reads, taken once here, rather than calling
+ * [ProtectionStatus.isAccessibilityServiceConnected] a second time to get what `isWorking` already
+ * computed once.
+ */
+private fun readAccessibilityState(context: Context): AccessibilityReadout {
+    val granted = ProtectionStatus.isAccessibilityServiceGranted(context)
+    val connected = ProtectionStatus.isAccessibilityServiceConnected(context)
+    return AccessibilityReadout(working = granted && connected, crashed = granted && !connected)
+}
+
+/**
+ * Keeps the three permission ticks honest after they leave this screen's control — the defect this
+ * fixes: `remember { mutableStateOf(x) }` reads `x` once at first composition and never again, so a
+ * grant revoked behind the app's back (an in-place update silently disables the accessibility
+ * service; an OEM battery-optimizer kills the process and it lands in AOSP's crashed set) left a
+ * green tick over a dead permission with no way for the user to tell (docs/BACKLOG.md).
+ *
+ * Three refresh paths, because the three permissions don't share a way to be watched, and because
+ * the accessibility one has TWO halves that change at different moments:
+ * - Accessibility has [ProtectionStatus.ACCESSIBILITY_SERVICES_URI], a `Settings.Secure` key that a
+ *   `ContentObserver` can watch LIVE — it fires the instant the user (or a force-stop) flips it,
+ *   including while they're sitting in the system Settings screen in a split window right next to
+ *   this one. It will NEVER fire for a crash, because AOSP leaves a crashed service IN that string —
+ *   which is exactly why this observer still reads both halves of [readAccessibilityState] on every
+ *   fire rather than trusting the string alone.
+ * - The bind that FOLLOWS that string being written is asynchronous, so the observer above fires
+ *   while the service is granted-but-not-yet-connected, indistinguishable from crashed. Nothing
+ *   read again afterwards, so re-enabling the service without leaving this screen (a split window,
+ *   `adb shell settings put`, a quick-settings tile) LATCHED the ✖ and the "turn it off and back
+ *   on" copy over a service that had been bound for twenty seconds. [AccessibilityConnectionSignal]
+ *   fires from the service's own `onServiceConnected`/`onDestroy`, which is the bind completing:
+ *   the earliest correct moment to look again, with no interval to tune.
+ * - Overlay and usage-stats grants are `AppOpsManager` modes with no equivalent watchable key, so
+ *   they can only be re-checked on `ON_RESUME` — which is also exactly the moment the user lands
+ *   back here after visiting either system settings page this screen sends them to.
+ *
+ * Accessibility is re-read on resume too, so a stale value from before the screen was backgrounded
+ * is never trusted over a fresh one.
+ */
+@Composable
+private fun rememberPermissionStates(context: Context): PermissionStates {
+    var state by remember { mutableStateOf(readPermissionStates(context)) }
+
+    DisposableEffect(context) {
+        val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
+            override fun onChange(selfChange: Boolean) {
+                val accessibility = readAccessibilityState(context)
+                state = state.copy(
+                    accessibility = accessibility.working,
+                    accessibilityCrashed = accessibility.crashed
+                )
+            }
+        }
+        context.contentResolver.registerContentObserver(
+            ProtectionStatus.ACCESSIBILITY_SERVICES_URI,
+            /* notifyForDescendants = */ false,
+            observer
+        )
+        onDispose { context.contentResolver.unregisterContentObserver(observer) }
+    }
+
+    // Collecting a StateFlow delivers its current value first, so a bind that happened between the
+    // initial read above and this effect starting is picked up too rather than missed.
+    LaunchedEffect(context) {
+        AccessibilityConnectionSignal.generation.collect {
+            val accessibility = readAccessibilityState(context)
+            state = state.copy(
+                accessibility = accessibility.working,
+                accessibilityCrashed = accessibility.crashed
+            )
+        }
+    }
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(context, lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                state = readPermissionStates(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    return state
 }
 
 private fun hasUsageStatsPermission(context: Context): Boolean {

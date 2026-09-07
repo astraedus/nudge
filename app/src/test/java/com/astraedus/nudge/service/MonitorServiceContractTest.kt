@@ -126,24 +126,60 @@ class MonitorServiceContractTest {
     // --- 2. The recovery prompt is a notification -------------------------------------------------
 
     /**
-     * The degraded states must actually reach the user. An `IMPORTANCE_LOW` line on the permanent
-     * channel is how "blocking is down" stayed invisible for hours, so a second, higher-importance
-     * channel has to exist and the deep link has to go to accessibility settings.
+     * The degraded states must actually reach the user, on a channel that can be heard.
+     *
+     * This assertion moved in the 2026-09-07 merge and is worth explaining, because it looks like a
+     * weakening and is not. It used to require this file to build the alert itself: an
+     * `IMPORTANCE_DEFAULT` channel deep-linking to `Settings.ACTION_ACCESSIBILITY_SETTINGS`. Two
+     * lanes had branched from the same commit and both built a "blocking is down" notification -
+     * this one, and `ProtectionAlertNotifier` - and BOTH claimed notification id 2. Shipping both
+     * would have meant two notifications for one condition, each overwriting the other's id, and
+     * this service's `onDestroy` cancelling the watchdog's alert at the moment it came true.
+     *
+     * So there is one alert now and this file hands off to it. What is pinned is the property, not
+     * the location: a degraded state reaches a HIGHER-importance channel than the permanent
+     * `IMPORTANCE_LOW` one (a silent low-importance line is how "blocking is down" went unnoticed
+     * for hours), the handoff is gated on `isDegraded` rather than on any single cause, and the
+     * recovery prompt is still a notification rather than an Activity this service launches.
+     *
+     * The deep link deliberately goes to Nudge's own Settings screen instead of straight to the
+     * system accessibility list: that screen carries the Play-mandated prominent-disclosure dialog,
+     * and this app has been rejected on that gate once already (`docs/play-store.md`).
      */
     @Test
-    fun `a degraded state raises a separate accessibility-settings notification`() {
+    fun `a degraded state reaches the user on a higher-importance channel`() {
         val body = code(read(monitorService))
-        assertTrue(
-            "a second notification channel is needed: importance cannot be raised on an existing one",
-            body.contains("IMPORTANCE_DEFAULT")
-        )
-        assertTrue(
-            "the recovery prompt must deep-link to accessibility settings",
-            body.contains("Settings.ACTION_ACCESSIBILITY_SETTINGS")
-        )
         assertTrue(
             "the alert must be gated on ServiceHealth.isDegraded, not on any single cause",
             body.contains("isDegraded")
+        )
+        assertTrue(
+            "the degraded branch must hand off to ProtectionCheck, the one decision path - two " +
+                "notifications for one condition is what this merge removed",
+            body.contains("ProtectionCheck.run(")
+        )
+        assertFalse(
+            "this service must not post an alert of its own any more: a second poster means a " +
+                "second notification id, and its onDestroy would cancel the watchdog's alert",
+            body.contains("HEALTH_NOTIFICATION_ID") || body.contains("buildHealthAlert")
+        )
+
+        val notifier = code(read("java/com/astraedus/nudge/service/ProtectionAlertNotifier.kt"))
+        assertTrue(
+            "the alert channel's importance must beat the permanent IMPORTANCE_LOW one - " +
+                "importance cannot be raised on an existing channel, so it needs its own",
+            notifier.contains("IMPORTANCE_HIGH") || notifier.contains("IMPORTANCE_DEFAULT")
+        )
+        assertTrue(
+            "the recovery prompt must be a notification the user taps, never an Activity a " +
+                "service launches",
+            notifier.contains("PendingIntent.getActivity(")
+        )
+        assertFalse(
+            "the alert must not deep-link straight into the system accessibility list: the " +
+                "re-grant flow has to pass Nudge's own Settings screen, which carries the " +
+                "Play-mandated prominent disclosure (docs/play-store.md, rejected there once)",
+            notifier.contains("ACTION_ACCESSIBILITY_SETTINGS")
         )
     }
 

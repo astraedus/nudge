@@ -9,7 +9,6 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
-import android.provider.Settings
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.astraedus.nudge.MainActivity
@@ -50,9 +49,16 @@ import kotlinx.coroutines.launch
  * nothing prompts the user to fix it.
  *
  * So the notification is now a function of [ServiceHealth], refreshed on a slow poll, and a
- * degraded state also raises a separate DEFAULT-importance alert that deep-links to accessibility
- * settings. `allowBackup` is off as of the same change, which removes the nightly kill that
- * produced this window in the first place — the poll is the belt to that braces.
+ * degraded state hands off to [ProtectionCheck], which owns the one alert this app raises about
+ * blocking being down. `allowBackup` is off as of the same change, which removes the nightly kill
+ * that produced this window in the first place: the poll is the belt to that braces.
+ *
+ * ## Two clocks, one decision
+ * This poll and [ProtectionWatchdogWorker] both reach [ProtectionCheck], and they are not
+ * redundant. This one is fast (30s) but exists only while this process does, and the process dying
+ * is the failure being watched for. The worker is slow (WorkManager's 15-minute floor) but survives
+ * it. Neither holds any policy: the confirming cycle and the alert cooldown live in
+ * `ProtectionWatchdog`, so the same fault produces the same decision from either clock.
  *
  * Poll rather than observe: "the system unbound our service" fires no callback we can receive in a
  * process that was not running at the time. 30s is the same interval as the service's own clocks and
@@ -69,16 +75,47 @@ class NudgeMonitorService : Service() {
 
     companion object {
         private const val NOTIFICATION_ID = 1
-        private const val HEALTH_NOTIFICATION_ID = 2
         private const val CHANNEL_ID = "nudge_monitor"
-        private const val HEALTH_CHANNEL_ID = "nudge_service_health"
 
         /** How often the health of the accessibility service is re-checked. */
         internal const val HEALTH_POLL_INTERVAL_MS = 30_000L
 
-        fun start(context: Context) {
-            val intent = Intent(context, NudgeMonitorService::class.java)
-            ContextCompat.startForegroundService(context, intent)
+        /**
+         * Whether this service is currently running, as the watchdog sees it.
+         *
+         * A static flag is the honest answer here precisely BECAUSE it dies with the process: the
+         * failure being watched for is the OS killing us, and a killed process comes back with
+         * this false, which is exactly the state that needs reporting. (`getRunningServices()` is
+         * restricted since API 26 and returns only our own services anyway, and a heartbeat
+         * timestamp would just be this flag with extra I/O.)
+         *
+         * It answers "is the FOREGROUND SERVICE alive", never "is Nudge enforcing" - that second
+         * question is [ProtectionStatus]'s, because an in-process boolean cannot tell a process
+         * that was killed from one that has only just started.
+         */
+        @Volatile
+        var isRunning: Boolean = false
+            private set
+
+        /**
+         * Starts the service if it is not already running.
+         *
+         * Returns false when the platform refused the start. Android 12+ forbids starting a
+         * foreground service from the background, and [ProtectionCheck] calls this from a
+         * `WorkManager` worker - which is a background start. Nudge normally qualifies for the
+         * `SYSTEM_ALERT_WINDOW` exemption, but that permission can be missing (onboarding lets it
+         * be skipped), and then `startForegroundService` throws
+         * `ForegroundServiceStartNotAllowedException`, an `IllegalStateException`. Throwing out of
+         * the one component whose job is noticing failure would be its own kind of silent death.
+         */
+        fun start(context: Context): Boolean = try {
+            ContextCompat.startForegroundService(
+                context,
+                Intent(context, NudgeMonitorService::class.java)
+            )
+            true
+        } catch (_: IllegalStateException) {
+            false
         }
 
         fun stop(context: Context) {
@@ -104,6 +141,9 @@ class NudgeMonitorService : Service() {
         EntryPointAccessors.fromApplication(applicationContext, MonitorEntryPoint::class.java)
     }
 
+    // ONE status reader for the whole app. See AndroidAccessibilityStatusProvider: it delegates
+    // to ProtectionStatus, which the Settings screen and the watchdog also read, so a health
+    // poll and a permission tick can never disagree about whether Nudge is enforcing.
     private val statusProvider: AccessibilityStatusProvider by lazy {
         AndroidAccessibilityStatusProvider(applicationContext)
     }
@@ -125,6 +165,7 @@ class NudgeMonitorService : Service() {
         // startForeground within a few seconds of being started, and after an OS-scheduled restart
         // this runs with a null intent and no guarantee that anything below it succeeds.
         startForeground(NOTIFICATION_ID, buildStatusNotification(ServiceHealth.ACTIVE))
+        isRunning = true
         startHealthPoll()
         return START_STICKY
     }
@@ -168,6 +209,7 @@ class NudgeMonitorService : Service() {
             serviceConnected = statusProvider.isServiceConnected()
         )
 
+        val previouslyDegraded = lastPublishedHealth?.isDegraded == true
         if (health != lastPublishedHealth) {
             entryPoint.monitorLogger().i(
                 "monitor health $lastPublishedHealth -> $health " +
@@ -186,10 +228,26 @@ class NudgeMonitorService : Service() {
 
         val manager = getSystemService(NotificationManager::class.java)
         manager?.notify(NOTIFICATION_ID, buildStatusNotification(health))
-        if (health.isDegraded) {
-            manager?.notify(HEALTH_NOTIFICATION_ID, buildHealthAlert(health))
-        } else {
-            manager?.cancel(HEALTH_NOTIFICATION_ID)
+
+        // The ALERT is not posted here. Two lanes built a "blocking is down" notification in
+        // parallel and both claimed notification id 2: this poll's, and ProtectionAlertNotifier's.
+        // Shipping both would have been two notifications for one condition, each cancelling the
+        // other's id - and this service's onDestroy cancelling the watchdog's alert at the exact
+        // moment the alert became true.
+        //
+        // So there is one alert, and ProtectionCheck decides it. That keeps the policy the pure,
+        // tested one for every caller: the confirming cycle that stops us crying wolf over a crash
+        // the system heals in under three seconds (measured on the Pixel 3: 150ms-3s), the 12-hour
+        // cooldown, and copy that names the right recovery per fault. What this poll adds is
+        // LATENCY: reaching the same decision every 30s while the process is alive, instead of
+        // waiting up to 15 minutes for WorkManager. The worker remains the path that still runs
+        // when this service does not - which is the failure it was built for.
+        //
+        // Only when something is, or just was, wrong. A healthy check that stays healthy has
+        // nothing to decide and must not write to DataStore every 30 seconds for the life of the
+        // process.
+        if (health.isDegraded || previouslyDegraded) {
+            ProtectionCheck.run(applicationContext)
         }
         return true
     }
@@ -210,20 +268,6 @@ class NudgeMonitorService : Service() {
             }
         )
 
-        // Separate channel because the importance is the point: the ongoing status notification is
-        // deliberately IMPORTANCE_LOW (it is always there), and a silent low-importance line is
-        // exactly how "blocking is down" went unnoticed for hours. Importance cannot be raised on an
-        // existing channel, so the alert needs its own — and its own, so the user can silence the
-        // permanent one without silencing this.
-        manager.createNotificationChannel(
-            NotificationChannel(
-                HEALTH_CHANNEL_ID,
-                getString(com.astraedus.nudge.R.string.health_channel_name),
-                NotificationManager.IMPORTANCE_DEFAULT
-            ).apply {
-                description = getString(com.astraedus.nudge.R.string.health_channel_description)
-            }
-        )
     }
 
     /**
@@ -253,41 +297,12 @@ class NudgeMonitorService : Service() {
             .build()
     }
 
-    /**
-     * The recovery prompt for a degraded state.
-     *
-     * **A notification, never an Activity.** Recovery needs the user to go and flip a toggle in
-     * Settings; the tempting shortcut is for the service to open that screen (or Nudge's own) by
-     * itself, which is how an app blocker turns into an app that throws its UI over whatever the
-     * user is doing, at a moment it cannot know is convenient. The deep link is the notification's
-     * tap target, so the launch is the user's.
-     */
-    private fun buildHealthAlert(health: ServiceHealth): Notification {
-        val copy = health.notificationCopy()
-        val settingsIntent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        val pendingIntent = PendingIntent.getActivity(
-            this,
-            1,
-            settingsIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        return NotificationCompat.Builder(this, HEALTH_CHANNEL_ID)
-            .setContentTitle(copy.title)
-            .setContentText(copy.body)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(copy.body))
-            .setSmallIcon(android.R.drawable.ic_dialog_alert)
-            .setContentIntent(pendingIntent)
-            .setAutoCancel(true)
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-            .build()
-    }
-
     override fun onDestroy() {
+        isRunning = false
         super.onDestroy()
-        getSystemService(NotificationManager::class.java)?.cancel(HEALTH_NOTIFICATION_ID)
+        // The alert is ProtectionCheck's to post and to dismiss. This service must not cancel
+        // it on the way out: the watchdog outlives this process, and a degraded state that is
+        // still degraded must survive the very death that caused it.
         serviceScope.cancel()
     }
 }

@@ -110,13 +110,27 @@
         <service
             android:name=".service.NudgeMonitorService"
             android:exported="false"
-            android:foregroundServiceType="specialUse" />
+            android:foregroundServiceType="specialUse">
+            <!-- Android asks for this justification so a Play reviewer can see why "specialUse"
+                 rather than one of the named types. None of them fit: nothing is synced, played,
+                 projected or called; the service exists to hold process priority so the
+                 accessibility binding that does the blocking is not reaped. -->
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keeps the on-device app-blocking service running so scheduled and time-limit blocks are enforced while the user is in other apps." />
+        </service>
 
         <receiver
             android:name=".service.BootReceiver"
             android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <!-- An in-place update replaces the process, killing this foreground service.
+                     Android rebinds the accessibility service itself, but nothing restarted
+                     THIS service, and it is the process-priority protection that stops the
+                     accessibility binding being reaped once the screen goes off. Without this
+                     action every update left the app unprotected overnight until a reboot. -->
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
 
