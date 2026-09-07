@@ -129,10 +129,10 @@ AccessibilityService: TYPE_WINDOW_STATE_CHANGED
 - Domain layer is pure Kotlin — no `android.*` imports. Fully unit-testable on JVM.
 - Single Activity architecture (MainActivity) + Compose Navigation.
 - BlockOverlayActivity is a separate activity with `singleInstance` launch mode, `excludeFromRecents`, empty `taskAffinity`.
-- AccessibilityService handles foreground app detection. ForegroundService keeps monitoring alive.
+- AccessibilityService handles foreground app detection AND every enforcement decision. `NudgeMonitorService` is a foreground service that holds the ongoing notification, keeps the process alive, and polls `ServiceHealth` so the user is told when Android has stopped the accessibility service. It reads no rules, evaluates nothing, and must NEVER start an Activity — pinned by `MonitorServiceContractTest`, because "a service put its UI over another app" is a bug report this repo has already received once.
 - All entities use Room `@Entity` annotations. DAOs return `Flow<>` for reactive queries.
 - ViewModels use `@HiltViewModel` and inject use cases/repositories.
-- No internet permission. No analytics. No telemetry.
+- No internet permission. No analytics. No telemetry. `allowBackup="false"` + `res/xml/data_extraction_rules.xml` / `backup_rules.xml` excluding every domain on both transports: Auto Backup would otherwise upload the database to Google Drive, and running a backup force-kills the process. Export/import is the only backup path.
 
 ## Block modes
 

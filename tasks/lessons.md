@@ -206,3 +206,59 @@ fired" being indistinguishable is what cost a release cycle.*
   test asserting "exactly one event loop", scoped to `ScreenTimeProvider`. The FOURTH copy sat in
   `UsageRepository`, uncapped open tail and all, and was the clock behind the auto-kick and every
   daily budget. Scope the invariant to the CODEBASE, not to the file you were editing.
+
+## The mechanism a bug report names is a hypothesis, not a finding (2026-09-07)
+
+A QA session on the shared Pixel reported Nudge "throwing its MainActivity in front of Telegram
+repeatedly" after the nightly backup killed the process, with one YouTube rule configured, zero block
+events ever recorded for Telegram, and one "keeps stopping" dialog. The written-up cause was
+`NudgeMonitorService`, described as a foreground service that "independently polls foreground-app
+usage and can relaunch Nudge's UI".
+
+It does not, and it never has. The file was 81 lines: create a channel, `startForeground`, return
+`START_STICKY`. Its only `MainActivity` reference was a notification `contentIntent`. A grep for
+`startActivity` across the whole app finds **no** programmatic `MainActivity` launch anywhere, so the
+only routes to that screen are the launcher icon and the ongoing notification's own tap target, which
+is very reachable on a device being driven blind over ADB. The `am_crash` in the same logcat is
+`RemoteServiceException: shell-induced crash` -- the QA session's own induced crash -- and the two
+`FATAL EXCEPTION`s are `UiAutomationService ... already registered` collisions from two ADB drivers,
+the one-agent-per-device lesson from 2026-08-20 showing up again.
+
+- **Settle the mechanism in the source before fixing the mechanism.** Three greps (`startActivity`,
+  `MainActivity`, the accused file itself) were enough, and they cost less than one device session.
+  Fixing the reported cause here would have meant rewriting a file that had no defect in it.
+- **Read the reporter's evidence for what it RULES OUT, not just what it shows.** "Zero block events
+  for Telegram" is a strong negative: every decision `EvaluateBlockUseCase` makes writes a
+  `UsageEvent`, so the absence of rows proves the block path was not involved. That pointed straight
+  at the one enforcement branch that writes no event -- the auto-kick cooldown.
+- **An induced crash in a logcat is not a crash.** `shell-induced` and `UiAutomation` in a stack trace
+  mean the harness, not the app. Grepping for `FATAL EXCEPTION` and reporting the count is how a QA
+  artifact becomes a phantom P0.
+
+Four real defects came out of root-causing it anyway, and they are the useful part:
+
+1. **A blocker that stops blocking must say so.** After the kill, Android's Settings said "Enabled,
+   but your phone stopped it" while Nudge's permanent notification read "Nudge is active" -- because
+   that string was a constant. `ServiceHealth` (pure, four states, no `else`) now drives the copy, and
+   a degraded state raises a separate `IMPORTANCE_DEFAULT` alert deep-linking to accessibility
+   settings. **The recovery prompt is a notification, never an Activity**: a service that opens a
+   screen over whatever the user is doing is the very thing the report described.
+2. **"Enabled" and "connected" are different questions**, and they disagree for minutes after a
+   process kill. `Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES` is what the user controls;
+   `NudgeAccessibilityService.isConnected()` is what the system controls. Collapsing them hides the
+   whole failure window.
+3. **`android:allowBackup="true"` on a no-INTERNET, "all data local" app.** It uploaded the database
+   to Google Drive, and running the backup force-killed the process nightly -- the trigger for
+   everything above. Off now on every API level (`allowBackup` + `dataExtractionRules` +
+   `fullBackupContent`, every domain excluded on both cloud-backup and device-transfer).
+4. **The auto-kick cooldown enforced on remembered authority.** It is the only branch that blocks
+   before reading a rule and writes no `UsageEvent`; delete the rule while the timer runs and it kept
+   ejecting the user from an app nothing was configured to block, invisibly. `CooldownGate` makes the
+   authority derived (a live counter-cache entry) instead of remembered, in **both** places the
+   pattern existed -- the app path and the web path.
+
+Also fixed in passing: `NudgeMonitorService.start` had exactly one caller (`BootReceiver`) and `stop`
+had none, so a fresh install ran no foreground service until the next reboot and the notification
+outlived the master toggle. `sync(context, enabled)` is now called from boot, app launch, and the
+toggle collector. **A `stop()` with no callers is a lifecycle that was never finished, not dead code
+to delete.**
