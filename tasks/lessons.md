@@ -262,3 +262,12 @@ had none, so a fresh install ran no foreground service until the next reboot and
 outlived the master toggle. `sync(context, enabled)` is now called from boot, app launch, and the
 toggle collector. **A `stop()` with no callers is a lifecycle that was never finished, not dead code
 to delete.**
+
+## Do NOT re-enable `allowBackup` "for testing" (2026-09-07)
+`android:allowBackup="false"` landed in 1.15.4 for two reasons, and the weaker one is the one that will tempt someone to revert it.
+
+**The strong reason (privacy, non-negotiable):** with backup on and no rules, Android Auto Backup uploads the Room database to the user's Drive. Nudge has no INTERNET permission and its whole positioning is that data stays on the device. That was untrue while backup was on.
+
+**The weaker reason (reliability):** the backup run kills our process. Verified signature in logcat, `full_backup_package: <pkg>` immediately followed by `am_proc_died`, with services `am_schedule_service_restart`'d a few seconds later. (Note "reason 100" in `am_proc_died` is the OomAdj field, not a reason code.) Measured rebinds are 150ms-3s, so this produces a **seconds-long** window, enough to make the ongoing status notification lie. It is NOT an explanation of the overnight stoppages in issue #23; that remains unexplained and is why the watchdog exists. Do not let the changelog or a future investigation conflate the two.
+
+**The trap:** turning backup back on is the only way to make `bmgr backupnow` kill our process, which makes it an attractive fault injector for testing the watchdog. With backup off the framework skips our package entirely and `bmgr backupnow` returns `Backup is not allowed`. **Losing that injector is an accepted trade.** If you need to exercise a process-death path, use `run-as <pkg> am stopservice` (stops a service while the process lives, which is what the notification-id regression test needs) or a real low-memory kill. Never ship, and never QA against, a build with the privacy bug reinstated.
