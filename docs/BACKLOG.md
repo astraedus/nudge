@@ -23,6 +23,29 @@ Entries marked `[x]` shipped, the version is noted so the history stays readable
 - [x] ~~**Settings screen shows stale Accessibility Service state**~~ (v1.12.0 QA) — **RESOLVED**: the three permission rows read `remember { mutableStateOf(...) }`, i.e. once at first composition, so the screen could show a green tick over a dead service. Now a `ContentObserver` on `ENABLED_ACCESSIBILITY_SERVICES` plus an `ON_RESUME` recheck, both pinned by `LivePermissionStateContractTest`. See `docs/architecture/service-lifecycle-and-watchdog.md`. **CORRECTED 2026-09-06:** the original title and note blamed "after an in-place APK update Android disables the a11y service", that is FALSE. AOSP `onPackageUpdateFinished()` clears the crashed set and rebinds, and never touches `mEnabledServices` (verified across Android 13/14/15/master). QA had misread our OWN stale UI as evidence of the OS acting, and that wrong note went on to mislead two later investigations. The real killer: the a11y binding uses `BIND_FOREGROUND_SERVICE_WHILE_AWAKE`, so oom_adj protection lapses with the screen off; once LMK reaps the process, `binderDied()` adds it to `mCrashedServices` and AOSP never rebinds, while the component stays in `ENABLED_ACCESSIBILITY_SERVICES`, so every settings-string check reports "enabled" over a dead service. Liveness must come from `getEnabledAccessibilityServiceList(FEEDBACK_ALL_MASK)`.
 - [ ] **Content Filter over-promises vs. what a URL-bar architecture can deliver** (surfaced 2026-07-07, Anti tested it and it failed on Google Images). The accessibility URL-bar filter can catch known porn *domains* + keyword-in-URL navigations, but it structurally CANNOT block image-search results: (a) it only sees the URL, never the images on the page; the explicit thumbnails come from Google's own CDN (encrypted-tbn*.gstatic.com) which can't be blocked without blocking Google; (b) Firefox drops `q=` from the URL bar on the Images tab (`udm=2`), so the query is invisible; (c) keyword tuning is whack-a-mole and can't cover arbitrary explicit phrasings. The ONLY robust mechanism is DNS-level SafeSearch enforcement — **device-wide Private DNS → `family-filter-dns.cleanbrowsing.org`** (CleanBrowsing Family) or `family.adguard-dns.com` (AdGuard Family), both force-lock Google/Bing/YouTube SafeSearch AND NXDOMAIN porn domains, survive incognito, work in every browser. **Device-verified on the Pixel 3 2026-07-07** (pornhub.com → ERR_NAME_NOT_RESOLVED; Google Images "porn" → "SafeSearch is locked by your network or device", no explicit thumbnails). Cheap honest fix so users don't hit the wall and 1-star it: in the Content Filter settings, add a one-tap "Block adult content device-wide" that deep-links to Private DNS + pre-fills the hostname (`Settings.ACTION_PRIVATE_DNS_SETTINGS` where available), framed honestly as device-level; keep the in-app URL-bar filter as a light domain/keyword catch, don't imply it does image search. Strict Mode could additionally guard the Private DNS settings screen from being toggled off (same escape-route-guard pattern already used for the a11y settings page). Decision on whether to build this (wizard vs. bundled VpnService filter vs. leave as-is) left to Anti — he leaned "that's as fair as Nudge can go" / handle it via DNS himself.
 
+## Known-unverified device paths (2026-09-07 post-merge QA)
+
+Both are documented limitations of what a bench can reach, not open defects. Each says what IS
+pinned, so nobody re-investigates from scratch.
+
+- **Auto-kick cooldown on a deleted rule (`CooldownGate`) has no end-to-end device proof.** QA could
+  not drive the device into the state: a passthrough grant masked all further evaluation
+  (`skip evaluation ... reason=passthrough`), so the cooldown never armed and `CooldownGate.isStale`
+  was never reached. The LOGIC is pinned by `CooldownGateTest` plus the contract assertion that both
+  call sites (app path and web path) are gated; what is unverified is only the on-device path. To
+  retry: needs a rule shape that arms a cooldown without first triggering a whole-app block, since
+  the block's own passthrough grant is what suppresses the follow-up evaluation.
+- **`ACCESSIBILITY_CRASHED` has never been observed firing on a device.** On an idle Pixel 3 the
+  accessibility service rebinds 150ms-3s after `am crash` and `Crashed services` empties with it,
+  which is faster than an `am broadcast` round trip, so the debug trigger cannot observe
+  `connected=false` at the moment it evaluates (8 attempts, several strategies, including a 50ms
+  on-device poll). The state itself is real and reproducible via `dumpsys accessibility`; the
+  posting pipeline is proven by the sibling `ACCESSIBILITY_DISABLED` and `MONITOR_SERVICE_DEAD`
+  faults firing through the identical `notify()` body. What is unverified is one `when` branch
+  selecting one string pair, and `ProtectionAlertCopyTest` pins that mapping over the whole
+  `ProtectionFault` enum. The field cause is a low-memory kill with the screen off, which the bench
+  cannot simulate; `bmgr` is no longer an option since `allowBackup="false"` excludes the package.
+
 ## Service-resilience audit 2026-09-06 — remaining lanes (NOT built with the watchdog)
 
 Full audit with `file:line` evidence and a fix order lives outside this repo:
