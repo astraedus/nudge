@@ -282,7 +282,7 @@ where a missing resource is an exception rather than a blank.
 
 ## What the tests pin
 
-45 tests across five JVM classes. The two source-scanning classes use the `source()` helper that **strips
+50 tests across six JVM classes. The source-scanning classes use the `source()` helper that **strips
 comments before scanning**, the same technique as `ScreenTimeSourceContractTest` — the widget files deliberately
 document in prose the very calls they must not make, and scanning raw text would make writing that explanation
 fail the test that protects it.
@@ -306,14 +306,28 @@ fail the test that protects it.
   `togglesInWidget`; nothing in the package writes any other preference; every widget wraps its read in
   `runCatching`/`getOrElse`; no widget file uses `.collect {`, `collectAsState` or `stateIn(`; and the hot-path
   refresh is non-suspending, debounced, monotonic and not routed through WorkManager.
-- **`WidgetManifestContractTest`** (5) — the set of `GlanceAppWidgetReceiver` subclasses **discovered from
+- **`WidgetManifestContractTest`** (6) — the set of `GlanceAppWidgetReceiver` subclasses **discovered from
   source** equals the set declared in the manifest, in both directions, so a fourth widget cannot ship
   half-wired; exported + intent-filter + provider meta-data on each; every referenced `@xml` provider and its
-  `initialLayout` exists; `MainActivity` is `singleTop`; and every `@string` the widget XML names is defined.
+  `initialLayout` exists; `MainActivity` is `singleTop`; every `@string` the widget XML names is defined; and each widget has its OWN debug pin row, with the requesting function iterating nothing (the launcher services one pin request at a time, so a loop drops every dialog but the last).
 
-**Mutation-checked.** Removing the `!strictModeEnabled` guard, flipping one receiver to `exported="false"`, and
-deleting `launchMode="singleTop"` each fail their specific test. A source-scanning test that passes on broken
-code is worse than no test, so the check was run rather than assumed.
+- **`WidgetRefreshCoverageContractTest`** (4) — added after device QA, and the only one here that **discovers
+  its own inputs**. It reads `WidgetReads.kt` for the preference flows the widget layer consumes, resolves each
+  to its `Keys.*` constant, finds every function that ASSIGNS that key, and requires each to push a refresh —
+  after its own `dataStore.edit`, and never from a file that hand-builds a `NudgePreferences`. A fourth
+  assertion fails if the discovery finds nothing, so a refactor that breaks the resolver fails loudly instead
+  of passing vacuously. Hand-listing the writers would have pinned the two bugs QA had already found and missed
+  the settings-import path entirely — which is exactly what happened before this test existed.
+
+  Two parsing traps are worth knowing if you extend it: splitting the file on the `suspend fun` keyword
+  misattributes a write to the function declared *above* the real one, and the marker `prefs[Keys.X]` matches
+  the READ inside each `Flow` declaration as well as the write. Hence backward search plus brace matching, and
+  the `] =` in the marker. A contract test that cries wolf gets deleted.
+
+**Mutation-checked.** Removing the `!strictModeEnabled` guard, flipping one receiver to `exported="false"`,
+deleting `launchMode="singleTop"`, reintroducing the pin-row loop, deleting the degraded-state push, and
+restoring the hand-built `NudgePreferences` in `SettingsScreen` each fail their specific test. A source-scanning
+test that passes on broken code is worse than no test, so every one of these was run rather than assumed.
 
 ## Deliberately not built (v1)
 
