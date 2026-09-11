@@ -95,8 +95,15 @@ class NudgeAccessibilityService : AccessibilityService() {
 
     /**
      * Converts framework events into the pure [com.astraedus.nudge.domain.events.AccessibilityEventRecord].
-     * The `viewIdResourceName` binder read is paid ONLY while the trace is on: it is a capture-time
-     * diagnostic that tells a human which view scrolled, never an input to a production decision.
+     * The `viewIdResourceName` binder read has TWO callers with different budgets, and conflating
+     * them is how a doc comes to claim the release build pays nothing:
+     *  - this factory reads it into the RECORD only while the trace is on, because there it is a
+     *    capture-time diagnostic for a human;
+     *  - `InteractionHandler` reads it directly, in every build including release, because telling a
+     *    comments sheet from the feed behind it is a production decision the counter cannot make
+     *    without it.
+     * So the release hot path does pay for it, once per scroll event. That is the deliberate trade
+     * documented on `InteractionHandler.sourceViewIdFor`.
      */
     private val eventRecordFactory by lazy {
         AccessibilityEventRecordFactory(
@@ -287,47 +294,6 @@ class NudgeAccessibilityService : AccessibilityService() {
                 candidate != FRAMEWORK_PACKAGE &&
                 candidate !in NEVER_LAUNCHER_PACKAGES &&
                 candidate !in IME_PACKAGES
-        }
-
-        /**
-         * True when this event means the user went HOME — i.e. genuinely left whatever app they were
-         * in — and any post-overlay passthrough for that app must therefore be dropped.
-         *
-         * The bug this exists for: [SYSTEM_PACKAGES] contains the stock launchers, and the
-         * `SYSTEM_PACKAGES` early-return in [onAccessibilityEvent] fires long before
-         * [evaluateForegroundPackage] reaches `PassthroughManager.clearIfAppChanged`. So completing a
-         * delay for app X, pressing Home and re-opening X skipped the delay — indefinitely, and only
-         * opening some OTHER non-system app in between re-armed it. That is the most common exit
-         * path there is, so the delay was effectively one-shot per app.
-         *
-         * The launcher must be distinguished from the rest of [SYSTEM_PACKAGES] rather than clearing
-         * for all of them: the notification shade / SystemUI, the IME, a permission dialog and our
-         * own overlay all foreground briefly WITHOUT the user leaving the app, and clearing on those
-         * would re-delay a user for pulling the shade — a worse bug than the one being fixed. The
-         * allowlist direction is deliberate: an unresolvable or stale launcher set clears nothing and
-         * behaves exactly as this service did before.
-         *
-         * Restricted to `TYPE_WINDOW_STATE_CHANGED`, for the same reason
-         * [isOverlayBypassedByForeground] is: that is the only event type that means "a new activity
-         * is in front". Launcher content-change churn (widgets, wallpaper, the icon grid redrawing
-         * behind a fullscreen app) is not evidence that anything came forward.
-         *
-         * Note a launcher that is NOT in [SYSTEM_PACKAGES] (a third-party one like Nova) already
-         * worked: those events fall through to [evaluateForegroundPackage], which clears passthrough
-         * via the normal app-switch path. This restores parity for the stock launchers.
-         */
-        internal fun isHomeScreenForeground(
-            eventType: Int,
-            packageName: String,
-            launcherPackages: Set<String>,
-            ownPackageName: String,
-            currentImePackage: String?
-        ): Boolean {
-            if (eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return false
-            if (packageName.isBlank()) return false
-            if (packageName == ownPackageName) return false
-            if (isTransientNonAppPackage(packageName, currentImePackage)) return false
-            return packageName in launcherPackages
         }
 
         /**
@@ -704,9 +670,10 @@ class NudgeAccessibilityService : AccessibilityService() {
     /**
      * Re-read the home-screen packages if the cached set is older than [LAUNCHER_REFRESH_MS].
      *
-     * Called only from the system-package branch of [onAccessibilityEvent] and only for a genuine
-     * foreground change, so the steady-state cost inside an app is zero and the worst case is one
-     * small `queryIntentActivities` every five minutes.
+     * Called from [onAccessibilityEvent] on every `TYPE_WINDOW_STATE_CHANGED`, because the
+     * classifier needs the launcher set to answer "is this Home?" and now runs BEFORE the branch
+     * that used to own this call. The per-event cost is one `Long` comparison; the throttle means
+     * the worst case is still one small `queryIntentActivities` every five minutes.
      */
     private fun refreshLauncherPackagesIfStale(now: Long) {
         if (now - lastLauncherResolveTime < LAUNCHER_REFRESH_MS) return
@@ -782,6 +749,19 @@ class NudgeAccessibilityService : AccessibilityService() {
         // string BEFORE this moment and saw "granted but not connected", i.e. crashed, so tell it
         // to look again. See AccessibilityConnectionSignal for the latch this deletes.
         AccessibilityConnectionSignal.onConnectionChanged()
+
+        // A bind is the START of observation, so nothing observed before it can be trusted. The
+        // sitting model's whole premise is a continuous stream of foreground signals; a disconnect
+        // (the user toggling the service, an OS process kill, a crash) is a blind gap of unknown
+        // length, which makes an inherited away-clock meaningless and an inherited GRANT a free pass
+        // through whatever happened during the gap. `PassthroughManager` is a `@Singleton`, so both
+        // outlive the service without this.
+        //
+        // Same "unverifiable means do nothing" call this service already makes for a null active
+        // window and an unresolved launcher set — except here the safe direction is to DROP the
+        // grant, because the cost of being wrong is one extra delay rather than a bypass.
+        entryPoint.passthroughManager().resetSitting()
+
         entryPoint.counterOverlayManager().setServiceContext(this)
         entryPoint.timeRemainingOverlayManager().setServiceContext(this)
 
@@ -1597,9 +1577,15 @@ class NudgeAccessibilityService : AccessibilityService() {
      * this runs on the collector's IO scope). New events are already gated by [globalEnabledCached].
      */
     private fun onGlobalDisabled() {
-        entryPoint.interactionTracker().clearAllCooldowns()
-        entryPoint.emergencyPassManager().cancelAll()
+        // ALL of this on Main, not just the sitting reset. This runs on the isGlobalEnabled
+        // collector, which lives on serviceScope (Dispatchers.IO), and `InteractionTracker` holds
+        // the same plain non-concurrent maps that the accessibility thread reads on the hot path
+        // (`isInCooldown` on every foreground evaluation). Hopping only the newest of the three
+        // calls would have left the two older ones racing, which is how this kind of thing survives
+        // a fix.
         serviceScope.launch(Dispatchers.Main) {
+            entryPoint.interactionTracker().clearAllCooldowns()
+            entryPoint.emergencyPassManager().cancelAll()
             // A disabled Nudge must behave as if uninstalled, and a live sitting is enforcement
             // state: leaving one standing would mean the first app re-enabling Nudge finds itself
             // mid-sitting with a grant it never earned in this session.
@@ -1638,7 +1624,7 @@ class NudgeAccessibilityService : AccessibilityService() {
             // throttle the attempt: evaluation early-returns (emergency pass, passthrough) leave
             // lastPackage untouched, so without this the node-tree read would repeat on every
             // content change for the whole of that window.
-            maybeEvaluateContentChangeAsAppSwitch(packageName)
+            maybeEvaluateContentChangeAsAppSwitch(record)
 
             // What used to be here: `interactionHandler.handleContentChanged(packageName)`, which
             // counted one "tap" per second of content change for any package outside
@@ -1705,7 +1691,8 @@ class NudgeAccessibilityService : AccessibilityService() {
      * inside the decision function would not fire and the active-window read would run on every
      * content-change event for the duration of that window.
      */
-    private fun maybeEvaluateContentChangeAsAppSwitch(packageName: String) {
+    private fun maybeEvaluateContentChangeAsAppSwitch(record: AccessibilityEventRecord) {
+        val packageName = record.packageName
         val now = System.currentTimeMillis()
         val lastAttempt = lastSwitchCheckTime[packageName] ?: 0L
         if ((now - lastAttempt) < SWITCH_CHECK_DEBOUNCE_MS) return
@@ -1722,6 +1709,23 @@ class NudgeAccessibilityService : AccessibilityService() {
 
         entryPoint.nudgeLogger().i(
             "foreground switch detected from content change package=$packageName"
+        )
+        // THE SITTING MUST BE UPDATED HERE TOO. This is the service's SECOND entry point into
+        // evaluation, and the only one that is not a window event — so the classification at the top
+        // of onAccessibilityEvent saw a `NotForeground` signal and correctly did nothing with it.
+        // Without this line the away clock never starts for an app entered via a notification tap
+        // (exactly the case issue #7 exists for), so the user could switch away for half an hour,
+        // come back, and still skip the delay: the sitting never learned they had left.
+        //
+        // `classifyVerifiedContentChangeAsSwitch` is the promotion that the verification above has
+        // earned — the event's package really does own the active window, so it IS a foreground
+        // change, whatever its type says.
+        applySitting(
+            eventClassifier.classifyVerifiedContentChangeAsSwitch(
+                record = record,
+                currentImePackage = currentImePackage,
+                pipOnlyPackages = pipOnlyPackagesCached
+            )
         )
         evaluateForegroundPackage(packageName)
     }

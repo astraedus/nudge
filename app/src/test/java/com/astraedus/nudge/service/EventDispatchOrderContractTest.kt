@@ -180,6 +180,66 @@ class EventDispatchOrderContractTest {
     }
 
     /**
+     * THE SECOND ENTRY POINT, and the one that silently bypassed the sitting.
+     *
+     * `maybeEvaluateContentChangeAsAppSwitch` is issue #7's fallback: a re-entry via a notification
+     * tap or the recents overview sometimes arrives as a content change only, and once verified
+     * against the real active window it is routed straight into `evaluateForegroundPackage`. The
+     * classification at the top of `onAccessibilityEvent` correctly saw a `NotForeground` signal for
+     * that event and did nothing with it, so for the WHOLE of that path the sitting never moved.
+     *
+     * Concretely: switch away from a granted app, come back via a notification half an hour later,
+     * and the away clock never started, so the delay is skipped. A bypass introduced by the fix for
+     * a bypass, invisible to every value-level test because both functions are individually correct.
+     *
+     * Hence this test, and hence the rule it encodes: EVERY path into `evaluateForegroundPackage`
+     * must have updated the sitting first.
+     */
+    @Test
+    fun `the content-change app-switch fallback updates the sitting before evaluating`() {
+        val start = source.indexOf("private fun maybeEvaluateContentChangeAsAppSwitch(")
+        assertTrue("the issue #7 fallback must still exist", start >= 0)
+        val end = source.indexOf("\n    private fun ", start + 1)
+        val body = stripComments(source.substring(start, if (end > start) end else source.length))
+
+        val applySitting = body.indexOf("applySitting(")
+        val evaluate = body.indexOf("evaluateForegroundPackage(")
+        assertTrue("the fallback must apply the sitting", applySitting >= 0)
+        assertTrue("the fallback must evaluate", evaluate >= 0)
+        assertTrue(
+            "the sitting must be updated BEFORE evaluation, or a notification re-entry never " +
+                "starts the away clock and the delay is skipped forever",
+            applySitting < evaluate
+        )
+        assertTrue(
+            "a verified content change must be promoted to a real foreground signal, not " +
+                "hand-built, so the promotion rules live in one place",
+            body.contains("classifyVerifiedContentChangeAsSwitch(")
+        )
+    }
+
+    /**
+     * A bind is the start of observation, so nothing observed before it can be trusted.
+     *
+     * `PassthroughManager` is a `@Singleton` and outlives the service, so a disconnect (the user
+     * toggling the service, an OS low-memory kill, a crash) leaves BOTH a stale sitting and a live
+     * grant across a blind gap of unknown length. The away clock cannot have been running, so the
+     * grant would survive whatever happened during the gap.
+     */
+    @Test
+    fun `reconnecting drops the sitting rather than inheriting one across a blind gap`() {
+        val start = source.indexOf("override fun onServiceConnected()")
+        assertTrue("onServiceConnected must exist", start >= 0)
+        val end = source.indexOf("\n    override fun ", start + 1)
+        val body = stripComments(source.substring(start, if (end > start) end else source.length))
+        assertTrue(
+            "a fresh bind must reset the sitting; PassthroughManager is a @Singleton and both the " +
+                "sitting and the grant otherwise survive a service death",
+            body.contains("resetSitting()")
+        )
+    }
+
+    /**
      * The trace has to see the events that get DROPPED — a picture-in-picture bubble, our own
      * window, a keyboard, a system surface — because those are what a report in this family turns
      * out to be about. A trace that only saw the events we already act on would record our
@@ -206,9 +266,21 @@ class EventDispatchOrderContractTest {
         val end = source.indexOf("\n    }", start)
         val body = stripComments(source.substring(start, end))
         assertTrue(
-            "the source read policy must be conditional on the trace being enabled",
+            "the factory must only put the source id in the RECORD while tracing",
             body.contains("eventTrace.isEnabled()") &&
                 body.contains("SourceReadPolicy.NEVER")
+        )
+
+        // ...and the OTHER caller must keep reading it in every build. This half is what makes the
+        // counter able to tell a comments sheet from the feed behind it, so an "optimisation" that
+        // gated it on the trace would silently break the fix in release only -- the worst place.
+        val handler = listOf(
+            java.io.File("src/main/java/com/astraedus/nudge/service/InteractionHandler.kt"),
+            java.io.File("app/src/main/java/com/astraedus/nudge/service/InteractionHandler.kt")
+        ).first { it.exists() }.readText()
+        assertFalse(
+            "the counter's source read must NOT be gated on debug logging",
+            stripComments(handler).contains("isDebugEnabled")
         )
     }
 }
