@@ -1,5 +1,7 @@
 package com.astraedus.nudge.service
 
+import android.os.Build
+
 import android.view.accessibility.AccessibilityEvent
 import com.astraedus.nudge.domain.events.A11yEventType
 import com.astraedus.nudge.domain.events.AccessibilityEventRecord
@@ -50,8 +52,12 @@ class AccessibilityEventRecordFactory(
             toIndex = event.toIndex,
             currentItemIndex = event.currentItemIndex,
             itemCount = event.itemCount,
-            scrollDeltaX = event.scrollDeltaX,
-            scrollDeltaY = event.scrollDeltaY,
+            // API 28+ only. minSdk is 26, and an unguarded read is a NoSuchMethodError on EVERY
+            // event on Android 8.x, which kills the accessibility service outright. The -1 sentinel
+            // is what the framework itself reports for "never set", and InteractionCounter treats
+            // it as "no delta available" (index path only, no horizontal detection).
+            scrollDeltaX = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) event.scrollDeltaX else -1,
+            scrollDeltaY = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) event.scrollDeltaY else -1,
             scrollX = event.scrollX,
             scrollY = event.scrollY,
             maxScrollX = event.maxScrollX,
