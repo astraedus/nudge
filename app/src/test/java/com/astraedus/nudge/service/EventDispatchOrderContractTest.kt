@@ -219,6 +219,45 @@ class EventDispatchOrderContractTest {
     }
 
     /**
+     * The ORDER inside that fallback, which is what let the parallel eligibility gate be deleted.
+     *
+     * `shouldTreatContentChangeAsAppSwitch` used to hand-test blank / own / system / transient
+     * before `EventClassifier` tested the same things again -- two answers to "what is on screen" on
+     * the one entry point where they could disagree. Collapsing them is only safe while the
+     * classification stays CHEAP and comes first, and the binder read stays LAST: this path runs on
+     * every content-change event of every app, so a node read reached before the free checks would
+     * put an IPC on the hot path for the overwhelmingly common case.
+     *
+     * `ContentChangeAppSwitchTest` asserts the same order at the value level, but it models the
+     * sequence locally; this is what stops the model and the service drifting apart.
+     */
+    @Test
+    fun `the content-change fallback classifies before it reads the active window`() {
+        val start = source.indexOf("private fun maybeEvaluateContentChangeAsAppSwitch(")
+        assertTrue("the issue #7 fallback must still exist", start >= 0)
+        val end = source.indexOf("\n    private fun ", start + 1)
+        val body = stripComments(source.substring(start, if (end > start) end else source.length))
+
+        val cheapReject = body.indexOf("packageName == lastPackage")
+        val classify = body.indexOf("classifyVerifiedContentChangeAsSwitch(")
+        val activeWindow = body.indexOf("activeWindowPackageOrNull()")
+        assertTrue("the cheap same-package rejection must come first", cheapReject >= 0)
+        assertTrue("the active window must still be verified", activeWindow >= 0)
+        assertTrue("the cheap rejection must precede classification", cheapReject < classify)
+        assertTrue(
+            "the binder read must come LAST, after every free check has had its say",
+            classify < activeWindow
+        )
+        assertFalse(
+            "the parallel eligibility gate must not come back -- one classifier, one answer",
+            // Comments stripped: the fallback deliberately NAMES the deleted gate, so that whoever
+            // reads it next knows what used to be there. Grepping raw source would read that
+            // explanation as the thing it explains. Third time this file has had to say so.
+            stripComments(source).contains("shouldTreatContentChangeAsAppSwitch")
+        )
+    }
+
+    /**
      * A bind is the start of observation, so nothing observed before it can be trusted.
      *
      * `PassthroughManager` is a `@Singleton` and outlives the service, so a disconnect (the user

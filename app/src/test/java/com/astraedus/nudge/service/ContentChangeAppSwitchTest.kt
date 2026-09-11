@@ -1,5 +1,9 @@
 package com.astraedus.nudge.service
 
+import com.astraedus.nudge.domain.events.A11yEventType
+import com.astraedus.nudge.domain.events.AccessibilityEventRecord
+import com.astraedus.nudge.domain.events.EventClassifier
+import com.astraedus.nudge.domain.events.ForegroundSignal
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -7,6 +11,13 @@ import org.junit.Test
 
 /**
  * Tests for issue #7: "occasionally app timer does not start on re-entrance of app".
+ *
+ * RE-PINNED, not rewritten. Every claim below is the one it always made; what changed is who
+ * answers it. The service used to carry a second eligibility gate
+ * (`shouldTreatContentChangeAsAppSwitch`) that hand-tested blank / own / system / transient before
+ * `EventClassifier` tested the same things again -- "what is on screen" answered twice, on the one
+ * entry point where the two answers could disagree. The gate is gone; these now drive the real
+ * classifier plus the active-window verification the service performs around it, in that order.
  *
  * Re-entering an app via the recents overview or a notification tap sometimes delivers only
  * TYPE_WINDOW_CONTENT_CHANGED — no TYPE_WINDOW_STATE_CHANGED — and only in-app-detection packages
@@ -25,19 +36,42 @@ class ContentChangeAppSwitchTest {
     private val discord = "com.discord"
     private val futo = "org.futo.inputmethod.latin"
 
-    /** Convenience wrapper: the active window is whatever the OS would report at that moment. */
+    private val classifier = EventClassifier(
+        ownPackageName = own,
+        systemPackages = NudgeAccessibilityService.SYSTEM_PACKAGES,
+        imePackages = NudgeAccessibilityService.IME_PACKAGES,
+        frameworkPackage = NudgeAccessibilityService.FRAMEWORK_PACKAGE
+    )
+
+    /** How many times the active window was read. The node read is the expensive part. */
+    private var activeWindowReads = 0
+
+    /**
+     * The service's decision, assembled from the same three steps it performs and in the same
+     * order: the cheap same-package rejection, ONE classification, then the binder verification.
+     *
+     * Written out here rather than hidden behind a production helper precisely because the ORDER is
+     * the contract -- the node read must come last, after everything free has had its say.
+     */
     private fun shouldSwitch(
         packageName: String,
         lastPackage: String?,
         activeWindowPackage: String?,
         currentImePackage: String? = futo
-    ): Boolean = NudgeAccessibilityService.shouldTreatContentChangeAsAppSwitch(
-        packageName = packageName,
-        lastPackage = lastPackage,
-        ownPackageName = own,
-        currentImePackage = currentImePackage,
-        activeWindowPackage = { activeWindowPackage }
-    )
+    ): Boolean {
+        if (packageName.isBlank() || packageName == lastPackage) return false
+        val signal = classifier.classifyVerifiedContentChangeAsSwitch(
+            record = AccessibilityEventRecord(
+                type = A11yEventType.WINDOW_CONTENT_CHANGED,
+                packageName = packageName
+            ),
+            currentImePackage = currentImePackage,
+            pipOnlyPackages = emptySet()
+        )
+        if (signal !is ForegroundSignal.AppWindow) return false
+        activeWindowReads++
+        return activeWindowPackage == packageName
+    }
 
     // --- The issue #7 fix: a verified re-entry is evaluated ---
 
@@ -140,26 +174,29 @@ class ContentChangeAppSwitchTest {
     @Test
     fun `the active window is not read for packages rejected by the cheap checks`() {
         // This runs on every content-change event of every app, so the node-tree read must be
-        // reached only when the cheap comparisons cannot already rule the event out.
-        var reads = 0
-        val counting = { reads++; keep }
+        // reached only when everything FREE has failed to rule the event out. Kept through the
+        // collapse of the parallel gate, because the ordering it pins is the whole reason that
+        // collapse was safe: classification is cheap and comes first, the binder read comes last.
+        activeWindowReads = 0
 
-        fun check(packageName: String, lastPackage: String?) =
-            NudgeAccessibilityService.shouldTreatContentChangeAsAppSwitch(
-                packageName = packageName,
-                lastPackage = lastPackage,
-                ownPackageName = own,
-                currentImePackage = futo,
-                activeWindowPackage = counting
-            )
+        shouldSwitch(packageName = keep, lastPackage = keep, activeWindowPackage = keep)
+        shouldSwitch(packageName = own, lastPackage = keep, activeWindowPackage = keep)
+        shouldSwitch(packageName = futo, lastPackage = keep, activeWindowPackage = keep)
+        shouldSwitch(
+            packageName = "com.android.systemui",
+            lastPackage = keep,
+            activeWindowPackage = keep
+        )
+        shouldSwitch(packageName = "android", lastPackage = keep, activeWindowPackage = keep)
+        shouldSwitch(packageName = "", lastPackage = keep, activeWindowPackage = keep)
+        assertEquals(
+            "the same app, our overlay, the keyboard, a system surface, the framework package and " +
+                "a blank package must all be rejected without touching the node tree",
+            0,
+            activeWindowReads
+        )
 
-        check(packageName = keep, lastPackage = keep)      // same app — the common case
-        check(packageName = own, lastPackage = keep)       // our own overlay
-        check(packageName = futo, lastPackage = keep)      // the keyboard
-        check(packageName = "com.android.systemui", lastPackage = keep)
-        assertEquals(0, reads)
-
-        check(packageName = keep, lastPackage = discord)   // a real candidate
-        assertEquals(1, reads)
+        shouldSwitch(packageName = keep, lastPackage = discord, activeWindowPackage = keep)
+        assertEquals(1, activeWindowReads)
     }
 }

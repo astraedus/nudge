@@ -296,42 +296,6 @@ class NudgeAccessibilityService : AccessibilityService() {
                 candidate !in IME_PACKAGES
         }
 
-        /**
-         * Issue #7: re-entering an app via the recents overview or a notification tap sometimes
-         * delivers ONLY [AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED] — no
-         * TYPE_WINDOW_STATE_CHANGED — so [evaluateForegroundPackage] never ran for that return.
-         * The user got no delay re-block, no counter session and no time-remaining overlay: "the
-         * app timer does not start on re-entrance".
-         *
-         * Edge-triggering on *every* content change would fix that and immediately reintroduce
-         * issue #5: content-change events also arrive from windows that are NOT in front, so a
-         * ghost app-switch would clear the post-delay passthrough and re-block the user. The
-         * decision is therefore STATE-VERIFIED — the event's package must also own the real active
-         * window ([AccessibilityService.getRootInActiveWindow]) before it counts as a switch.
-         *
-         * Cheap rejections run before [activeWindowPackage] is invoked, so the node-tree read never
-         * happens for the app the user is already in (the overwhelmingly common case on this very
-         * hot path).
-         *
-         * @param activeWindowPackage package owning the active window, or null when it could not be
-         *   read — an unverifiable event is never treated as a switch (fail soft toward doing
-         *   nothing, since a false positive costs the user their passthrough).
-         */
-        internal fun shouldTreatContentChangeAsAppSwitch(
-            packageName: String,
-            lastPackage: String?,
-            ownPackageName: String,
-            currentImePackage: String?,
-            activeWindowPackage: () -> String?
-        ): Boolean {
-            if (packageName.isBlank()) return false
-            if (packageName == lastPackage) return false
-            if (packageName == ownPackageName) return false
-            if (packageName in SYSTEM_PACKAGES) return false
-            if (isTransientNonAppPackage(packageName, currentImePackage)) return false
-            return activeWindowPackage() == packageName
-        }
-
         val WINDOW_CHANGE_EVENT_TYPES = setOf(
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
             AccessibilityEvent.TYPE_WINDOWS_CHANGED
@@ -1716,35 +1680,38 @@ class NudgeAccessibilityService : AccessibilityService() {
         if ((now - lastAttempt) < SWITCH_CHECK_DEBOUNCE_MS) return
         lastSwitchCheckTime[packageName] = now
 
-        val isSwitch = shouldTreatContentChangeAsAppSwitch(
-            packageName = packageName,
-            lastPackage = lastPackage,
-            ownPackageName = applicationContext.packageName,
+        // The cheap rejection that is about COST, not about what is on screen: an event from the
+        // app we already believe we are in cannot be a switch into it, and skipping it here is what
+        // keeps the node-tree read off the overwhelmingly common case.
+        if (packageName.isBlank() || packageName == lastPackage) return
+
+        // Then ONE classification, from the same classifier every other path uses. This used to be
+        // a second, parallel eligibility gate (`shouldTreatContentChangeAsAppSwitch`) re-testing
+        // blank / own / system / transient by hand before the classifier tested them again: "what is
+        // on screen" answered twice, on the one entry point where the two answers could disagree.
+        val signal = eventClassifier.classifyVerifiedContentChangeAsSwitch(
+            record = record,
             currentImePackage = currentImePackage,
-            activeWindowPackage = { activeWindowPackageOrNull() }
+            pipOnlyPackages = pipOnlyPackagesCached
         )
-        if (!isSwitch) return
+        if (signal !is ForegroundSignal.AppWindow) return
+
+        // Only NOW is the binder read worth paying for, and it is what earns the promotion: a
+        // content change claims nothing about the foreground unless its package owns the REAL
+        // active window. A null or unreadable window is never a switch -- a false positive costs
+        // the user their passthrough, a false negative just retries on the next event.
+        if (activeWindowPackageOrNull() != packageName) return
 
         entryPoint.nudgeLogger().i(
             "foreground switch detected from content change package=$packageName"
         )
         // THE SITTING MUST BE UPDATED HERE TOO. This is the service's SECOND entry point into
-        // evaluation, and the only one that is not a window event — so the classification at the top
+        // evaluation, and the only one that is not a window event, so the classification at the top
         // of onAccessibilityEvent saw a `NotForeground` signal and correctly did nothing with it.
-        // Without this line the away clock never starts for an app entered via a notification tap
-        // (exactly the case issue #7 exists for), so the user could switch away for half an hour,
-        // come back, and still skip the delay: the sitting never learned they had left.
-        //
-        // `classifyVerifiedContentChangeAsSwitch` is the promotion that the verification above has
-        // earned — the event's package really does own the active window, so it IS a foreground
-        // change, whatever its type says.
-        applySitting(
-            eventClassifier.classifyVerifiedContentChangeAsSwitch(
-                record = record,
-                currentImePackage = currentImePackage,
-                pipOnlyPackages = pipOnlyPackagesCached
-            )
-        )
+        // Without this the away clock never starts for an app entered via a notification tap
+        // (exactly the case issue #7 exists for), and the user could switch away for half an hour,
+        // come back, and still skip the delay.
+        applySitting(signal)
         evaluateForegroundPackage(packageName)
     }
 
