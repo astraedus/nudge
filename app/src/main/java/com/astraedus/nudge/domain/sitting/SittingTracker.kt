@@ -143,6 +143,13 @@ class SittingTracker(
     var awaySinceMs: Long? = null
         private set
 
+    /**
+     * @param nowMs a MONOTONIC clock reading (the service passes `SystemClock.elapsedRealtime()`),
+     *   never epoch time. The return window decides whether a grant survives, so a wall clock that
+     *   jumped -- an NTP correction, or a user changing the time in Settings -- would revoke a pass
+     *   earned seconds ago, or extend one indefinitely by moving the clock backwards. The second of
+     *   those is a bypass anyone could trigger deliberately.
+     */
     fun onSignal(signal: ForegroundSignal, nowMs: Long): SittingEvent = when (signal) {
         is ForegroundSignal.Home -> end(SittingEndCause.WENT_HOME)
 

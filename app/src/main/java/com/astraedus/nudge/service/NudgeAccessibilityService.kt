@@ -551,13 +551,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         object : android.content.BroadcastReceiver() {
             override fun onReceive(context: android.content.Context?, intent: Intent?) {
                 if (intent?.action != Intent.ACTION_SCREEN_OFF) return
-                val event = entryPoint.passthroughManager().onScreenOff()
-                if (event is SittingEvent.Ended) {
-                    entryPoint.nudgeLogger().i(
-                        "sitting ended package=${event.packageName} cause=${event.cause} — passthrough revoked"
-                    )
-                    interactionHandler.onSittingChanged()
-                }
+                entryPoint.passthroughManager().onScreenOff()
                 // The awareness overlays and the clocks belong to a screen nobody is looking at.
                 hideAllOverlays()
             }
@@ -761,6 +755,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         // window and an unresolved launcher set — except here the safe direction is to DROP the
         // grant, because the cost of being wrong is one extra delay rather than a bypass.
         entryPoint.passthroughManager().resetSitting()
+        entryPoint.passthroughManager().setSittingReaction(::onSittingEvent)
 
         entryPoint.counterOverlayManager().setServiceContext(this)
         entryPoint.timeRemainingOverlayManager().setServiceContext(this)
@@ -1084,8 +1079,28 @@ class NudgeAccessibilityService : AccessibilityService() {
      * left here is the *reaction* — the log, the counter's per-source state, and the web clock.
      */
     private fun applySitting(signal: ForegroundSignal) {
-        val event = entryPoint.passthroughManager()
-            .onForegroundSignal(signal, System.currentTimeMillis())
+        entryPoint.passthroughManager().onForegroundSignal(signal, sittingClock())
+    }
+
+    /**
+     * The clock the sitting's return window is measured on.
+     *
+     * `SystemClock.elapsedRealtime()` rather than wall time: the window decides whether a grant
+     * survives, and an epoch clock can jump. An NTP correction or a manual time change mid-sub-flow
+     * would revoke a pass the user earned thirty seconds ago, or extend one indefinitely by moving
+     * the clock backwards -- and the second of those is a bypass anyone could trigger from the
+     * Settings app. Monotonic since boot, unaffected by both, and it counts while the device sleeps,
+     * which is what "how long have they been away" means.
+     */
+    private fun sittingClock(): Long = android.os.SystemClock.elapsedRealtime()
+
+    /**
+     * React to every sitting transition, wherever it came from.
+     *
+     * Registered on `PassthroughManager` rather than called after each mutation, because a grant is
+     * earned in `BlockOverlayActivity` and used to move the sitting with nobody listening.
+     */
+    private fun onSittingEvent(event: SittingEvent) {
         when (event) {
             is SittingEvent.Unchanged -> return
             is SittingEvent.Ended -> logSittingEnded(event)
@@ -1212,7 +1227,11 @@ class NudgeAccessibilityService : AccessibilityService() {
         if (!counterCache.hasEntry(packageName)) {
             clearOverlays(packageName, "counter_disabled", markForeground = false)
         } else if (packageName != lastPackage) {
-            interactionHandler.activeReelLabel = null
+            // The label is NOT cleared here any more. It belongs to the session (InteractionTracker
+            // owns it) and a foreign package reaching this function is usually a sub-flow the user
+            // will return from -- a picker, a share sheet. Wiping it dropped a correctly-detected
+            // "reels" caption back to the generic word for the rest of the visit, until detection
+            // happened to fire again. The session's own reset paths clear it.
             interactionHandler.onAppChanged(packageName)
             timeRemainingHandler.resetDebounce()
         }
@@ -1534,7 +1553,6 @@ class NudgeAccessibilityService : AccessibilityService() {
         markForeground: Boolean = true,
         stopClocks: Boolean = true
     ) {
-        interactionHandler.activeReelLabel = null
         if (markForeground) {
             lastPackage = packageName
         }
@@ -1663,7 +1681,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         // permission to count at all, which is why the counter has never worked on surfaces we
         // cannot recognise (`docs/BACKLOG.md`: "counter doesn't increment on YouTube swipes"). This
         // reuses the tree read that was already happening here rather than adding one.
-        interactionHandler.noteDetectedFeature(feature)
+        interactionHandler.noteDetectedFeature(packageName, feature)
         val passthrough = entryPoint.passthroughManager()
 
         if (passthrough.shouldSkipFeatureEvaluation(packageName, feature.key)) return
@@ -1926,6 +1944,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         } catch (_: Exception) {
             // Receiver may never have registered (register failed) — ignore.
         }
+        entryPoint.passthroughManager().setSittingReaction(null)
         entryPoint.counterOverlayManager().clearServiceContext()
         entryPoint.timeRemainingOverlayManager().clearServiceContext()
         passthroughManagerInstance = null

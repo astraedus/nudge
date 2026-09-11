@@ -1,5 +1,6 @@
 package com.astraedus.nudge.service
 
+import com.astraedus.nudge.domain.sitting.SittingEvent
 import com.astraedus.nudge.domain.sitting.SittingTracker
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -195,4 +196,68 @@ class PassthroughManagerTest {
 
         assertNull(manager.lastDomain)
     }
+    // --- every sitting change is announced, wherever it came from (round-2 review) ---
+
+    /**
+     * A grant is earned in `BlockOverlayActivity`, not in the service, and `grant()` used to discard
+     * the `SittingEvent` it produced. So completing app B's delay while the sitting still belonged
+     * to app A moved the sitting silently: `InteractionCounter` kept A's scroll sources, A's primary
+     * source blocked B's counter for the whole handover window, and A's caption sat over B's count.
+     *
+     * The fix is structural rather than a call added at one site: there is no longer a way to move
+     * the sitting that does not notify.
+     */
+    @Test
+    fun `earning a grant announces the sitting move`() {
+        val seen = mutableListOf<SittingEvent>()
+        manager.setSittingReaction { seen += it }
+        manager.onForegroundSignal(ForegroundSignal.AppWindow("com.app.a"), 0)
+        seen.clear()
+
+        manager.grant("com.app.b")
+
+        assertEquals(1, seen.size)
+        val started = seen.single()
+        assertTrue("a grant for a different app starts a new sitting", started is SittingEvent.Started)
+        assertEquals("com.app.b", (started as SittingEvent.Started).packageName)
+        assertEquals("com.app.a", started.ended?.packageName)
+    }
+
+    /** ...and the grant it just handed out must survive being announced. */
+    @Test
+    fun `announcing a grant does not revoke it`() {
+        manager.setSittingReaction { }
+        manager.onForegroundSignal(ForegroundSignal.AppWindow("com.app.a"), 0)
+
+        manager.grant("com.app.b")
+
+        assertTrue(manager.isGranted("com.app.b"))
+    }
+
+    @Test
+    fun `a revocation is announced too`() {
+        val seen = mutableListOf<SittingEvent>()
+        manager.grant("com.app.a")
+        manager.setSittingReaction { seen += it }
+
+        manager.onForegroundSignal(ForegroundSignal.Home("com.launcher"), 1_000)
+
+        assertEquals(1, seen.size)
+        assertTrue(seen.single() is SittingEvent.Ended)
+        assertFalse(manager.isGranted("com.app.a"))
+    }
+
+    /** Clearing the reaction must actually stop it firing -- the service does this on destroy. */
+    @Test
+    fun `clearing the reaction stops the announcements`() {
+        var count = 0
+        manager.setSittingReaction { count++ }
+        manager.setSittingReaction(null)
+
+        manager.grant("com.app.b")
+        manager.onForegroundSignal(ForegroundSignal.Home("com.launcher"), 1_000)
+
+        assertEquals(0, count)
+    }
+
 }

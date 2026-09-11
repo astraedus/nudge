@@ -52,6 +52,27 @@ class PassthroughManager @Inject constructor() {
      */
     private val sitting = SittingTracker()
 
+    /**
+     * What to do when the sitting changes, registered by the accessibility service.
+     *
+     * A callback rather than the service reacting after each mutation, because the mutations do not
+     * all happen in the service: a grant is earned in `BlockOverlayActivity`, in a different class,
+     * and `grant()` therefore DISCARDED its transition. Moving the sitting from app A to app B
+     * without telling anyone left `InteractionCounter` holding A's scroll sources, so A's primary
+     * source blocked B's counter for the whole handover window and A's caption leaked over B's
+     * count.
+     *
+     * Routing every sitting change through one notifying path makes that unforgettable rather than
+     * merely fixed: there is no way to move the sitting that does not announce it.
+     */
+    @Volatile
+    private var sittingReaction: ((SittingEvent) -> Unit)? = null
+
+    /** Register the service's reaction. Set on connect, cleared on destroy. */
+    fun setSittingReaction(reaction: ((SittingEvent) -> Unit)?) {
+        sittingReaction = reaction
+    }
+
     @Volatile var lastPackage: String? = null
         private set
     @Volatile var lastFeature: String? = null
@@ -73,11 +94,17 @@ class PassthroughManager @Inject constructor() {
      * sitting would be revoked by the very next transition.
      */
     fun grant(packageName: String, featureKey: String? = null, webDomain: String? = null) {
-        sitting.onGrantEarned(packageName)
+        // The sitting moves FIRST, and its transition is announced like any other, so a grant that
+        // relocates the user from app A to app B resets A's counter state instead of leaking it.
+        val event = sitting.onGrantEarned(packageName)
         lastPackage = packageName
         lastFeature = featureKey
         lastDomain = webDomain
         lastTime = System.currentTimeMillis()
+        // Announced AFTER the grant is written, so the reaction observes the state the user is now
+        // in. Deliberately NOT routed through `applyAndNotify`, whose job is revoking -- that would
+        // clear the grant being handed out.
+        sittingReaction?.invoke(event)
     }
 
     /**
@@ -91,10 +118,16 @@ class PassthroughManager @Inject constructor() {
      * returned before the thing that had to happen"; there is now nothing left to skip.
      */
     fun onForegroundSignal(signal: ForegroundSignal, nowMs: Long): SittingEvent =
-        sitting.onSignal(signal, nowMs).also(::revokeIfSittingEnded)
+        applyAndNotify(sitting.onSignal(signal, nowMs))
 
     /** The screen went off: no sitting survives a locked phone (backlog F5). */
-    fun onScreenOff(): SittingEvent = sitting.onScreenOff().also(::revokeIfSittingEnded)
+    fun onScreenOff(): SittingEvent = applyAndNotify(sitting.onScreenOff())
+
+    private fun applyAndNotify(event: SittingEvent): SittingEvent {
+        revokeIfSittingEnded(event)
+        sittingReaction?.invoke(event)
+        return event
+    }
 
     /** Drop the sitting AND the grant (service disconnect, global disable). */
     fun resetSitting() {
