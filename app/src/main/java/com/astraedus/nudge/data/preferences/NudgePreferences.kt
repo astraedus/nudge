@@ -162,6 +162,11 @@ class NudgePreferences @Inject constructor(
         context.dataStore.edit { prefs ->
             prefs[Keys.STRICT_MODE_ENABLED] = enabled
         }
+        // The Protection widget chooses between a TOGGLE and an OPEN-THE-APP affordance from this
+        // value at compose time, so a stale widget offers a toggle the callback will then refuse.
+        // Device QA saw exactly that: the first tap after enabling Strict Mode appeared to do
+        // nothing (the guard correctly refused the write) and only the second tap opened the app.
+        widgetRefreshSignal.requestRefresh()
     }
 
     /**
@@ -271,6 +276,13 @@ class NudgePreferences @Inject constructor(
             prefs[Keys.PROTECTION_DEGRADED] = degraded
             alertShownAtMs?.let { prefs[Keys.PROTECTION_ALERT_SHOWN_AT] = it }
         }
+        // THE push that matters most, and the one that was missing. "Blocking has stopped" is the
+        // Protection widget's whole reason to exist, the widget is push-only
+        // (updatePeriodMillis="0"), and nothing here told it — so the single state it was built to
+        // surface was the one state it could never receive. Found by device QA: a widget placed
+        // while healthy stayed healthy-looking forever, and only a freshly-placed instance showed
+        // the truth. An alarm nobody can observe is not an alarm.
+        widgetRefreshSignal.requestRefresh()
     }
 
     // --- Backup: the settings an export file carries (see [ExportedSettings]) ---------------
@@ -325,5 +337,8 @@ class NudgePreferences @Inject constructor(
             settings.customDelaySubtitles?.let { prefs[Keys.CUSTOM_DELAY_SUBTITLES] = it }
             settings.customHardBlockMessages?.let { prefs[Keys.CUSTOM_HARD_BLOCK_MESSAGES] = it }
         }
+        // An import can flip Strict Mode, which decides which affordance the Protection widget
+        // draws. Restoring a backup is exactly when a placed widget is most likely to be stale.
+        widgetRefreshSignal.requestRefresh()
     }
 }

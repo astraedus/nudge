@@ -121,10 +121,39 @@ which a stable brand colour survives better than one extracted from that same wa
 and useless for "I just walked away from Instagram" — which is the moment the widget is worth having. So:
 
 - **One chokepoint: `UsageRepository.logEvent`.** Every block decision and every walk-away already passes
-  through it (`RecordWalkAwayUseCase`, and both write sites in `NudgeAccessibilityService`). Plus one call from
-  `NudgePreferences.setGlobalEnabled` for the Protection widget. **No WorkManager job** — the 15-minute
-  `ProtectionWatchdogWorker`, the 30-minute platform tick and these pushes already cover every case, and a
-  fourth scheduler would be a fourth thing to keep alive.
+  through it (`RecordWalkAwayUseCase`, and both write sites in `NudgeAccessibilityService`). **No WorkManager
+  job** — the 15-minute `ProtectionWatchdogWorker`, the 30-minute platform tick and these pushes already cover
+  every case, and a fourth scheduler would be a fourth thing to keep alive.
+
+### The Protection widget is push-ONLY, so a missed push is a frozen widget
+
+`protection_widget_info.xml` sets `updatePeriodMillis="0"` on purpose: polling a toggle every half hour is
+worse than useless. That makes the push the **entire** update mechanism for this widget, and it turns a
+forgotten push from a latency problem into a correctness one.
+
+Device QA found exactly that, twice over, and it is worth stating plainly because the bug was invisible in
+every other way: **the single state the Protection widget exists to announce — "protection has stopped" — was
+the one state it could never receive.** `recordProtectionCheck` wrote the degraded flag and pushed nothing, so
+a widget placed while healthy stayed healthy-looking indefinitely; only a *freshly placed* instance ever showed
+the truth. An alarm nobody can observe is not an alarm. `setStrictModeEnabled` had the same gap, so after
+enabling Strict Mode the widget kept drawing the unlocked TOGGLE affordance; the tap was then correctly refused
+by the guard in `ToggleProtectionAction`, which read to the tester as "the first tap does nothing".
+
+So the rule is not "push from `setGlobalEnabled`", it is:
+
+> **Every preference a widget renders pushes a refresh on every write path, after the write lands.**
+
+Four writers qualify today: `setGlobalEnabled`, `setStrictModeEnabled`, `recordProtectionCheck`, and
+`applyImportedSettings` (restoring a backup can flip Strict Mode, and a restore is precisely when a placed
+widget is most likely to be stale).
+
+`WidgetRefreshCoverageContractTest` enforces it by **discovery, not by a list**: it reads `WidgetReads.kt` to
+find which preference flows the widget layer actually consumes, resolves each to its `Keys.*` constant, finds
+every function that assigns that key, and requires each one to push — and to push *after* its own
+`dataStore.edit`, since a refresh that runs first reads the value it is replacing and renders one state behind,
+which looks identical to no push at all. A fifth write path, or a fourth widget-visible preference, fails the
+test until it is wired. Hand-listing the three known writers would have pinned yesterday's bug and missed the
+import path, which is exactly what happened before the test was written.
 - **`logEvent` is on the accessibility hot path, so the push must cost nothing there.**
   `WidgetRefreshSignal.requestRefresh()` is **not** suspending, does one atomic compare-and-set on the caller's
   thread, and hands off to an application-scoped `SupervisorJob` coroutine. A user hitting a wall of blocks

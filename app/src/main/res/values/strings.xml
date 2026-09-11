@@ -47,7 +47,7 @@
     <string name="widget_top_blocked_empty">Nothing blocked in the last 7 days.</string>
     <string name="widget_protection_on">Blocking on</string>
     <string name="widget_protection_off">Blocking off</string>
-    <string name="widget_protection_degraded">Blocking stopped</string>
+    <string name="widget_protection_degraded">Not blocking</string>
     <string name="widget_protection_locked">Turn off in app</string>
     <string name="widget_open_app">Open Nudge</string>
     <string name="widget_pin_row_title">Add widget: %1$s</string>
