@@ -2,6 +2,7 @@ package com.astraedus.nudge.domain.interaction
 
 import com.astraedus.nudge.domain.events.A11yEventType
 import com.astraedus.nudge.domain.events.AccessibilityEventRecord
+import kotlin.math.abs
 
 /** What a counted interaction represents, so the number and its label can never disagree. */
 enum class CountMode {
@@ -267,14 +268,50 @@ class InteractionCounter(
         return 0
     }
 
+    /**
+     * True when this event is a sideways move and nothing else — a carousel, a tab strip, a
+     * horizontal pager. None of those is content consumed, and a tab strip that counted would eject
+     * the user from an app for switching tabs.
+     *
+     * **Both deltas must be genuinely readable before this can answer.** `scrollDeltaX/Y` are API
+     * 28+ and arrive as [AccessibilityEventRecord.UNDEFINED] otherwise, and this app's `minSdk` is
+     * 26 — so a naive `dx > 0 && dy <= 0` silently returns false on every event from a quarter of
+     * the supported range, and horizontal pagers fall through to the index path, where
+     * `currentItemIndex` (which a `ViewPager` sets at ANY api level) makes every sideways swipe an
+     * item. Unset must mean "cannot tell", never "not horizontal".
+     *
+     * Magnitude, not sign, for the same reason: a swipe the other way reports a negative delta and
+     * is just as horizontal.
+     *
+     * **Known limitation.** When neither the deltas nor the scroll range are readable, this cannot
+     * tell, and says so rather than guessing. A horizontal pager on such a view then reaches the
+     * index path, where a `ViewPager`'s `currentItemIndex` makes each sideways swipe look like one
+     * consumed item. Bounded (tab switches are rare next to feed scrolling) and strictly better than
+     * the alternative, which would be treating "unreadable" as "horizontal" and silently refusing to
+     * count real feeds.
+     */
     private fun isHorizontalOnly(record: AccessibilityEventRecord): Boolean {
         val dx = record.scrollDeltaX
         val dy = record.scrollDeltaY
-        return dx > 0 && dy <= 0
+        if (dx != UNDEFINED_DELTA && dy != UNDEFINED_DELTA) {
+            // Magnitude, not sign: a swipe the other way reports a negative delta and is just as
+            // horizontal. `dx > 0` alone missed half of them at every API level.
+            return abs(dx) > 0 && abs(dy) == 0
+        }
+        // No deltas (API < 28, or a view that does not report them). The scroll RANGE is available
+        // at every API level and answers the same question for a pager: a thing that can only be
+        // scrolled sideways is a carousel or a tab strip.
+        if (record.maxScrollX > 0 && record.maxScrollY == 0) return true
+        // Genuinely cannot tell. Say so rather than guessing — see the KDoc's limitation note.
+        return false
     }
 
     companion object {
         private const val UNSET_INDEX = Int.MIN_VALUE
+
+        /** The framework's "this view never set a scroll delta" value (API < 28, or a view that
+         *  does not report one). Never a measurement of one pixel. */
+        private const val UNDEFINED_DELTA = AccessibilityEventRecord.UNDEFINED
 
         /**
          * Upper bound on items credited to a single scroll event. A fast fling really does cover

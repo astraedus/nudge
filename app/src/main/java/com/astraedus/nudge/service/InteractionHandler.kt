@@ -54,21 +54,6 @@ class InteractionHandler(
      */
     var activeReelLabel: String? = null
 
-    /** A `viewIdResourceName` resolved for one scrolling source, and when. See [sourceViewIdFor]. */
-    private class ResolvedSourceId(val viewId: String?, val atMs: Long)
-
-    /**
-     * Resolved source ids, keyed by the free part of a source's identity.
-     *
-     * Per key, NOT a single slot. A single slot looks like a throttle and is not one: two scroll
-     * sources alternating — a feed and the tab pager above it, which the Instagram capture shows
-     * arriving interleaved from one window — would miss the cache on every event and pay a binder
-     * IPC each time, which is the exact cost the throttle exists to prevent. Bounded by the number
-     * of distinct (windowId, className) pairs on a screen, which is a handful, and cleared with the
-     * sitting.
-     */
-    private val resolvedSourceIds = mutableMapOf<Pair<Int, String?>, ResolvedSourceId>()
-
     /**
      * Feed one click or scroll event.
      *
@@ -91,7 +76,7 @@ class InteractionHandler(
         // Only a scroll needs to know WHICH view moved. Resolving it for a click would pay a binder
         // round trip for an answer the click path does not read.
         val sourceViewId = if (record.type == A11yEventType.VIEW_SCROLLED) {
-            sourceViewIdFor(record, now, resolveSourceViewId)
+            sourceViewIdFor(resolveSourceViewId)
         } else {
             null
         }
@@ -137,38 +122,32 @@ class InteractionHandler(
     }
 
     /**
-     * Which view is scrolling, resolved at most once per [SOURCE_RESOLVE_THROTTLE_MS].
+     * Which view is scrolling. Resolved PER SCROLL EVENT, deliberately.
      *
      * The counter needs this to tell a comments sheet apart from the feed behind it: both are
      * commonly a `RecyclerView` in the same window, so without the view id they share a source key,
      * the sheet inherits the feed's primary status, and their indices interleave into phantom
      * counts. That is the reported "scrolling the comments counts ~10 taps".
      *
-     * But `AccessibilityEvent.getSource()` is a binder round trip into the observed app, and a
-     * single slow one-second drag produces ten scroll events (measured on a Pixel 3:
-     * `app/src/test/resources/a11y-captures/aosp-list-slow-scroll.jsonl`). Paying for each of them
-     * would put an IPC on the accessibility event thread ten times a second, which is exactly the
-     * cost this file already debounces node reads to avoid. A throttled read is correct in steady
-     * state — a source does not change identity mid-scroll — and the only error window is the few
-     * hundred milliseconds after the user opens a sheet, where "first seen counts zero" caps the
-     * damage at a single count.
+     * This was cached behind a 500ms throttle, keyed on `(windowId, className)`, and that was
+     * self-defeating: those are exactly the two fields that are IDENTICAL for a sheet and the feed
+     * it opened over, so within the throttle window the sheet was handed the feed's id, built an
+     * identical source key, and counted as the feed — reviving a milder version of the bug the view
+     * id exists to prevent. **A cache keyed on the ambiguity it is disambiguating cannot work.**
+     *
+     * The read is a binder round trip and a slow one-second drag emits ten scroll events, so this
+     * costs up to ~10 IPC/second — but only WHILE THE USER IS ACTIVELY SCROLLING, never at rest, and
+     * a single node fetch is far cheaper than the bounded 800-node tree walks this service already
+     * performs on a 1-second debounce. `AccessibilityEventTrace` reports the measured cost during a
+     * capture, so this is a number to check rather than a guess to argue about. Correctness of the
+     * whole primary-source mechanism depends on it; a throttle that breaks the mechanism is not an
+     * optimisation.
      */
-    private fun sourceViewIdFor(
-        record: AccessibilityEventRecord,
-        nowMs: Long,
-        resolve: () -> String?
-    ): String? {
-        val key = record.windowId to record.className
-        val cached = resolvedSourceIds[key]
-        if (cached != null && nowMs - cached.atMs < SOURCE_RESOLVE_THROTTLE_MS) return cached.viewId
-        val viewId = try {
-            resolve()
-        } catch (e: Exception) {
-            logger.w("failed to resolve scroll source view id", e)
-            null
-        }
-        resolvedSourceIds[key] = ResolvedSourceId(viewId, nowMs)
-        return viewId
+    private fun sourceViewIdFor(resolve: () -> String?): String? = try {
+        resolve()
+    } catch (e: Exception) {
+        logger.w("failed to resolve scroll source view id", e)
+        null
     }
 
     /**
@@ -264,7 +243,6 @@ class InteractionHandler(
     fun onSittingChanged() {
         counter.reset()
         activeReelLabel = null
-        resolvedSourceIds.clear()
     }
 
     fun isCounterVisible(): Boolean = counterOverlayManager.isVisible()
@@ -273,12 +251,4 @@ class InteractionHandler(
         if (counterOverlayManager.isVisible()) counterOverlayManager.hide()
     }
 
-    companion object {
-        /**
-         * Minimum gap between `viewIdResourceName` binder reads. Matches
-         * `NudgeAccessibilityService.SWITCH_CHECK_DEBOUNCE_MS`, which throttles the other
-         * per-event node read on this thread for the same reason.
-         */
-        const val SOURCE_RESOLVE_THROTTLE_MS = 500L
-    }
 }

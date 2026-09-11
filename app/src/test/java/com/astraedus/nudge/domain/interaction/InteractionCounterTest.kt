@@ -43,6 +43,8 @@ class InteractionCounterTest {
         itemCount: Int = unset,
         scrollDeltaX: Int = unset,
         scrollDeltaY: Int = unset,
+        maxScrollX: Int = unset,
+        maxScrollY: Int = unset,
         sourceViewId: String? = null
     ) = AccessibilityEventRecord(
         type = A11yEventType.VIEW_SCROLLED,
@@ -55,6 +57,8 @@ class InteractionCounterTest {
         itemCount = itemCount,
         scrollDeltaX = scrollDeltaX,
         scrollDeltaY = scrollDeltaY,
+        maxScrollX = maxScrollX,
+        maxScrollY = maxScrollY,
         sourceViewId = sourceViewId,
         isScrollable = true
     )
@@ -246,7 +250,7 @@ class InteractionCounterTest {
         val counter = InteractionCounter()
         repeat(3) { i ->
             val result = counter.onEvent(
-                scroll(className = tabPager, scrollDeltaX = 400, scrollDeltaY = unset),
+                scroll(className = tabPager, scrollDeltaX = 400, scrollDeltaY = 0),
                 100_000 + i * 200L
             )
             assertEquals(0, result.count)
@@ -259,6 +263,111 @@ class InteractionCounterTest {
             1,
             counter.onEvent(scroll(fromIndex = 1), 102_000).count
         )
+    }
+
+    /**
+     * Swiping a tab strip the OTHER way reports a NEGATIVE delta and is exactly as horizontal. The
+     * original check was `dx > 0`, which silently counted every right-to-left swipe as an item.
+     */
+    @Test
+    fun `a negative horizontal delta is still horizontal`() {
+        val counter = InteractionCounter()
+        val result = counter.onEvent(
+            scroll(className = tabPager, scrollDeltaX = -400, scrollDeltaY = 0, fromIndex = 3),
+            100_000
+        )
+        assertEquals(0, result.count)
+        assertEquals("horizontal", result.reason)
+    }
+
+    /**
+     * `scrollDeltaX/Y` are API 28+ and this app's minSdk is 26, so across a quarter of the supported
+     * range they arrive UNDEFINED. The scroll RANGE is populated at every API level and answers the
+     * same question for a pager: a thing that can only be scrolled sideways is a tab strip.
+     *
+     * Without this, a `ViewPager` on API 26-27 reaches the index path, where `currentItemIndex` (set
+     * at any API level) turns each sideways swipe into a consumed item, and thirty tab switches
+     * would auto-kick the user out of the app.
+     */
+    @Test
+    fun `a sideways-only scroll range is horizontal even with no deltas`() {
+        val counter = InteractionCounter()
+        val pager = scroll(
+            className = tabPager,
+            scrollDeltaX = unset,
+            scrollDeltaY = unset,
+            maxScrollX = 1080,
+            maxScrollY = 0,
+            currentItemIndex = 1
+        )
+        assertEquals("horizontal", counter.onEvent(pager, 100_000).reason)
+        assertEquals(0, counter.onEvent(pager.copy(currentItemIndex = 2), 100_500).count)
+    }
+
+    /**
+     * The documented limitation, asserted so it is a known shape rather than a surprise: with
+     * neither deltas nor a scroll range, orientation is genuinely unknowable. The counter says so
+     * rather than guessing, and the event reaches the index path. Treating "unreadable" as
+     * "horizontal" would be worse, because it would silently refuse to count real feeds.
+     */
+    @Test
+    fun `with neither deltas nor a scroll range orientation is unknowable and the event counts`() {
+        val counter = InteractionCounter()
+        counter.onEvent(scroll(fromIndex = 0), 100_000)
+        assertEquals(1, counter.onEvent(scroll(fromIndex = 1), 100_500).count)
+    }
+
+    /**
+     * The regression a 500ms cache on the source id created, and the reason that cache is gone.
+     *
+     * A comments sheet and the feed it opens over are both a `RecyclerView` in the SAME window, so
+     * `(windowId, className)` is IDENTICAL for the two. Caching the resolved `viewIdResourceName`
+     * under that key handed the sheet the FEED's id for the rest of the window, which rebuilt an
+     * identical `SourceKey` and let the sheet count as the feed. A cache keyed on the ambiguity it
+     * is disambiguating cannot work.
+     *
+     * This pins the outcome at the counter's own boundary: two sources that differ ONLY by view id,
+     * interleaved inside a few hundred milliseconds, must stay separate.
+     */
+    @Test
+    fun `two sources differing only by view id stay separate even when interleaved`() {
+        val counter = InteractionCounter()
+        fun feed(index: Int) = scroll(fromIndex = index, sourceViewId = "com.x:id/feed")
+        fun sheet(index: Int) = scroll(fromIndex = index, sourceViewId = "com.x:id/comments")
+
+        // The feed moves twice and becomes primary.
+        counter.onEvent(feed(0), 100_000)
+        assertEquals(1, counter.onEvent(feed(1), 100_100).count)
+
+        // The sheet opens over it and is scrolled hard, all inside the old cache window.
+        counter.onEvent(sheet(0), 100_200)
+        val sheetTotal = (1..5).sumOf { counter.onEvent(sheet(it), 100_200 + it * 60L).count }
+
+        assertEquals(
+            "a sheet over a live feed must count nothing, however fast it is scrolled",
+            0,
+            sheetTotal
+        )
+        assertEquals(
+            "and the feed must still be counting when the user returns to it",
+            1,
+            counter.onEvent(feed(2), 100_600).count
+        )
+    }
+
+    /**
+     * The same two sources when the view id is NOT readable (the resolve lambda returned null, or an
+     * older API). They collapse onto one key and the counter cannot tell them apart. Asserted so the
+     * degradation is a known, bounded shape rather than a surprise: the count is wrong by the
+     * sheet's transitions, not unbounded, and no crash or phantom primary election occurs.
+     */
+    @Test
+    fun `without a readable view id two same-class sources collapse onto one key`() {
+        val counter = InteractionCounter()
+        counter.onEvent(scroll(fromIndex = 0, sourceViewId = null), 100_000)
+        assertEquals(1, counter.onEvent(scroll(fromIndex = 1, sourceViewId = null), 100_100).count)
+        // The "sheet" is indistinguishable, so its forward moves are credited to the same source.
+        assertEquals(1, counter.onEvent(scroll(fromIndex = 2, sourceViewId = null), 100_200).count)
     }
 
     // --- the distance fallback ---------------------------------------------------------------------
