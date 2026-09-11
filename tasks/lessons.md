@@ -361,3 +361,65 @@ Second trap on the same run: **relaunching a backgrounded YouTube drops it into 
 when the block overlay backgrounds it, #19's PiP gate then swallows its events, and the gestures land
 on the launcher instead. 5 of 8 launches landed wrong. `tools/qa/scroll-capture.sh` force-stops
 first; anything that relaunches an app for a capture should.
+
+## A guard clause that returns before notifying a collaborator is a dropped message (2026-09-12)
+
+Issue #28 shipped a caption invalidation that could never fire. The handler had a correct, tested
+branch for "detection recognised nothing, so the caption is stale" — and the caller was:
+
+```kotlin
+val feature = detectFeature(packageName, rootNode) ?: return
+interactionHandler.noteDetectedFeature(packageName, feature)
+```
+
+The elvis-return reads like ordinary defensive style. It meant the handler was only ever told about a
+RECOGNISED feature, so the null branch was unreachable from production while passing its own unit
+tests happily. Device QA found it; nothing else could have.
+
+**The tell:** you add a branch to a callee for the null/empty/absent case, and never check that the
+caller can actually produce one. Grep the call sites for `?: return`, `?: return@`, `if (x == null)
+return` ABOVE the notification, every time you make a collaborator care about absence. "Absence" is a
+message, and an early return is how a message gets dropped.
+
+Corollary, cheap and worth it: the branch that consumes absence belongs in a SOURCE-LEVEL contract
+test, not only a unit test. A unit test calls `noteDetectedFeature(pkg, null)` directly and passes
+whether or not anything in the app ever does. Only the caller can be wrong, and only a test that
+reads the caller can see it.
+
+## Every test exercising the same trigger will miss a bug reached by a different one (2026-09-12)
+
+Five tests were written for the caption rule. All five made the counter tick by SCROLLING. On the
+device the first thing that counted after the user changed surface was the TAB TAP — a click. Same
+rule, same code path downstream, different entry point, and every test was blind to it.
+
+This is not a coverage-percentage problem; the line coverage was fine. It is an INPUT-SHAPE problem.
+When a rule is reachable through several entry points (click and scroll; window-state-changed and
+content-changed; app and web), write at least one test per entry point or state plainly which ones
+are untested and why. A suite that only ever pulls one lever is measuring one lever.
+
+## A fix can reintroduce the bug class it was written to fix (2026-09-12)
+
+Issue #28 is "the user gets re-blocked though they never left the app". The fix added a sitting
+model. A review round then hardened it with `resetSitting()` on `onServiceConnected`, reasoning that
+a bind is the start of observation so nothing before it can be trusted.
+
+That reasoning is correct about the away CLOCK and wrong about the GRANT — and `docs/BACKLOG.md`
+already recorded that this service churns and reconnects on the bench device under memory pressure.
+So the hardening turned every reconnect into a re-block of a user who never left: the original bug,
+wearing the fix's clothes, two rounds later.
+
+**When hardening a fix, re-read the bug it fixes and ask whether the hardening can produce that
+symptom.** Ask it specifically about the failure DIRECTION: this subsystem has always chosen "miss a
+revoke rather than interrupt someone mid-use", and the hardening silently chose the opposite. A
+direction that is stated in the docs should be quoted in the review of anything that changes it.
+
+## Rule out a hypothesis with the device, then write the ruling-out down (2026-09-12)
+
+The reported second-overlay bug came with a detailed and plausible picture-in-picture theory. Two
+scripted runs (one with a 150-second dwell) showed: one block, `pictureInPicture=false` throughout,
+the PiP set never changing, and no sitting end past the return window. PiP, the tab tap and the
+return window were all eliminated in about six minutes of device time, which is what left the rebind
+as the only candidate.
+
+The capture is committed WITH the three ruled-out hypotheses in its header. A fixture that records
+only what did happen invites the next person to re-derive the same three dead ends.

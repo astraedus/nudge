@@ -28,6 +28,21 @@ nudge_lines() {
     | grep -Ev 'skip evaluation|evaluate package=|counter cache|not counted' || true
 }
 
+# Install first, under the same lock hold: a run against a stale APK is worse than no run, and
+# `adb install -r` DROPS the accessibility grant, so re-enabling it is part of installing, not an
+# afterthought (docs/architecture/accessibility-event-pipeline.md).
+APK="${APK:-/tmp/nudge-28/app/build/outputs/apk/debug/app-debug.apk}"
+if [ -f "$APK" ]; then
+  echo "-- installing $(basename "$APK") --"
+  adb install -r "$APK" 2>&1 | tail -1
+  adb shell settings put secure enabled_accessibility_services "$SVC" >/dev/null 2>&1
+  adb shell settings put secure accessibility_enabled 1 >/dev/null 2>&1
+  sleep 3
+  BOUND=$(adb shell dumpsys accessibility 2>/dev/null | grep -c "Bound services:{Service" || true)
+  echo "   accessibility bound: $BOUND (must be 1, or the run exercises nothing)"
+  [ "$BOUND" = "1" ] || { echo "ABORT: service not bound"; exit 1; }
+fi
+
 echo "############ SEQUENCE A -- caption must not follow Shorts onto the feed ############"
 home; sleep 2
 adb shell am force-stop "$YT" >/dev/null 2>&1; sleep 1
