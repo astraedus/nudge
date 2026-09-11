@@ -217,6 +217,57 @@ class A11yCaptureReplayTest {
         )
     }
 
+    /**
+     * The device sequence behind issue #28 FAIL 2 (QA 2026-09-12): YouTube opens on Shorts, the user
+     * taps the in-app Home tab, and every item counted on the feed was still captioned "shorts".
+     *
+     * Replayed here as the counting oracle. The caption logic itself lives in `InteractionHandler`
+     * (it needs detection, which needs a node tree), so this pins what the STREAM says: the only
+     * scroll source in 150 seconds of Shorts swiping plus a feed visit is the feed's own list.
+     */
+    @Test
+    fun `the shorts-then-home-tab capture counts only the feed, because Shorts emits no scrolls`() {
+        val records = A11yCapture.load("yt-shorts-then-home-tab")
+        val scrolls = records.filter { it.type == A11yEventType.VIEW_SCROLLED }
+
+        assertEquals(
+            "150 seconds of swiping on the Shorts pager produced no scroll events at all; both of " +
+                "these are the home feed's list, which is why the reported run showed no counter " +
+                "activity on Shorts",
+            listOf("com.google.android.youtube:id/results"),
+            scrolls.mapNotNull { it.sourceViewId }.distinct()
+        )
+        assertEquals("one scroll event, from the feed, across the whole run", 1, scrolls.size)
+        assertEquals(
+            "and one click -- the tab tap itself, which is what counted FIRST on the feed and is " +
+                "why a scroll-only test would have missed this bug",
+            1,
+            records.count { it.type == A11yEventType.VIEW_CLICKED }
+        )
+    }
+
+    /**
+     * The counterfactual for FAIL 1, asserted so nobody re-investigates it from scratch: nothing in
+     * this capture ends a sitting. The reported second delay overlay did NOT come from the tab tap,
+     * from the two-minute return window, or from picture-in-picture -- all three are ruled out by
+     * this stream. It came from a service rebind, which `SittingTracker` no longer treats as the
+     * user leaving.
+     */
+    @Test
+    fun `nothing in the shorts-then-home-tab capture ends the sitting`() {
+        val tracker = SittingTracker()
+        val ends = mutableListOf<SittingEvent.Ended>()
+        A11yCapture.load("yt-shorts-then-home-tab").forEach { record ->
+            when (val event = tracker.onSignal(classify(record), record.eventTimeMs)) {
+                is SittingEvent.Ended -> ends += event
+                is SittingEvent.Started -> event.ended?.let { ends += it }
+                is SittingEvent.Unchanged -> Unit
+            }
+        }
+        assertEquals("the user never left YouTube; ended: $ends", emptyList<SittingEvent.Ended>(), ends)
+        assertEquals("com.google.android.youtube", tracker.currentApp)
+    }
+
     // --- bug 1: the sitting --------------------------------------------------------------------
 
     /**

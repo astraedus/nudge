@@ -705,6 +705,32 @@ class InteractionHandlerTest {
         assertEquals("shorts", tracker.snapshot("com.google.android.youtube").label)
     }
 
+    /**
+     * FAIL 2's real shape. The invalidation was correct and unreachable: the service did
+     * `detectFeature(...) ?: return`, so `noteDetectedFeature` was only ever called with a
+     * RECOGNISED feature and the null branch never ran in production.
+     *
+     * This drives the sequence the device produced -- SHORTS, then null, then a counted TAP (the tab
+     * tap itself is what counted first, not a scroll) -- and is the shape the earlier tests missed
+     * because they all counted via a scroll.
+     */
+    @Test
+    fun `a counted tap after a null detection also drops the caption`() {
+        enablePackage("com.google.android.youtube")
+        handler.noteDetectedFeature("com.google.android.youtube", InAppDetector.Feature.SHORTS)
+        clickOnce("com.google.android.youtube")
+        assertEquals("shorts", overlayManager.visibleLabel)
+
+        handler.noteDetectedFeature("com.google.android.youtube", null)
+        clickOnce("com.google.android.youtube")
+
+        assertEquals(
+            "the caption must not survive onto a surface detection no longer recognises",
+            "taps",
+            overlayManager.visibleLabel
+        )
+    }
+
     private class FakeCounterOverlayManager : CounterOverlayManagerApi {
         var visible = false
         var lastShowLabel: String? = null

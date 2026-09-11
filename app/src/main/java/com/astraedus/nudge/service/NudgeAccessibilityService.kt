@@ -708,17 +708,16 @@ class NudgeAccessibilityService : AccessibilityService() {
         // to look again. See AccessibilityConnectionSignal for the latch this deletes.
         AccessibilityConnectionSignal.onConnectionChanged()
 
-        // A bind is the START of observation, so nothing observed before it can be trusted. The
-        // sitting model's whole premise is a continuous stream of foreground signals; a disconnect
-        // (the user toggling the service, an OS process kill, a crash) is a blind gap of unknown
-        // length, which makes an inherited away-clock meaningless and an inherited GRANT a free pass
-        // through whatever happened during the gap. `PassthroughManager` is a `@Singleton`, so both
-        // outlive the service without this.
+        // A bind ends a gap we could not observe, so the AWAY CLOCK is meaningless -- it was timing
+        // an interval whose end we did not see. The grant is a different question, and dropping it
+        // here was wrong: `docs/BACKLOG.md` records this service churning and reconnecting on this
+        // device under memory pressure, so a revoke-on-bind re-blocks a user who never left their
+        // app. That is issue #28's own defect, reintroduced by its own fix.
         //
-        // Same "unverifiable means do nothing" call this service already makes for a null active
-        // window and an unresolved launcher set — except here the safe direction is to DROP the
-        // grant, because the cost of being wrong is one extra delay rather than a bypass.
-        entryPoint.passthroughManager().resetSitting()
+        // Same "unverifiable means do nothing" call this service makes for a null active window and
+        // an unresolved launcher set, with the same failure direction: miss a revoke rather than
+        // interrupt someone mid-use.
+        entryPoint.passthroughManager().onObservationResumed()
         entryPoint.passthroughManager().setSittingReaction(::onSittingEvent)
 
         entryPoint.counterOverlayManager().setServiceContext(this)
@@ -1646,12 +1645,23 @@ class NudgeAccessibilityService : AccessibilityService() {
         lastContentChangedTime[packageName] = now
 
         val rootNode = try { rootInActiveWindow } catch (_: Exception) { null } ?: return
-        val feature = entryPoint.inAppDetector().detectFeature(packageName, rootNode) ?: return
+        val feature = entryPoint.inAppDetector().detectFeature(packageName, rootNode)
+
+        // TOLD FIRST, AND TOLD EVEN WHEN THE ANSWER IS NULL. This used to be
+        // `detectFeature(...) ?: return`, which meant `noteDetectedFeature` was only ever reached
+        // with a RECOGNISED feature -- so the null branch that invalidates a stale caption was
+        // unreachable from production, and the caption stayed stuck to whatever surface last set it.
+        // Device-reproduced 2026-09-12: YouTube opens on Shorts, the user taps the Home tab, and
+        // every item counted on the feed is still captioned "shorts". A guard clause that skips
+        // telling someone the answer is not a guard clause, it is a dropped message.
+        //
         // The counter's LABEL is the only thing detection still owes it. It used to owe it
         // permission to count at all, which is why the counter has never worked on surfaces we
         // cannot recognise (`docs/BACKLOG.md`: "counter doesn't increment on YouTube swipes"). This
         // reuses the tree read that was already happening here rather than adding one.
         interactionHandler.noteDetectedFeature(packageName, feature)
+        if (feature == null) return
+
         val passthrough = entryPoint.passthroughManager()
 
         if (passthrough.shouldSkipFeatureEvaluation(packageName, feature.key)) return
