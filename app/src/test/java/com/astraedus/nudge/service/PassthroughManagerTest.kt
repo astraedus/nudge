@@ -260,4 +260,64 @@ class PassthroughManagerTest {
         assertEquals(0, count)
     }
 
+    // --- a service rebind is not the user leaving (device QA 2026-09-12) ---
+
+    /**
+     * FAIL 1. `onServiceConnected` used to call `resetSitting()`, which drops the grant, on the
+     * reasoning that a bind starts observation. `docs/BACKLOG.md` records this service churning and
+     * reconnecting under memory pressure, so that turned every rebind into a re-block of a user who
+     * never left -- issue #28's own defect, reintroduced by its own fix.
+     */
+    @Test
+    fun `a rebind keeps the grant and the sitting`() {
+        manager.onForegroundSignal(ForegroundSignal.AppWindow("com.app.a"), 0)
+        manager.grant("com.app.a")
+
+        manager.onObservationResumed()
+
+        assertTrue("the user did not go anywhere; a rebind is not evidence", manager.isGranted("com.app.a"))
+        assertTrue(manager.shouldSkipForegroundEvaluation("com.app.a"))
+    }
+
+    /**
+     * What a rebind DOES invalidate: the away clock, which was timing an interval whose end nobody
+     * observed. After a rebind the clock restarts from the next signal rather than counting the gap.
+     */
+    @Test
+    fun `a rebind discards the away clock so the gap is not counted as time away`() {
+        manager.onForegroundSignal(ForegroundSignal.AppWindow("com.app.a"), 0)
+        manager.grant("com.app.a")
+        // The user steps into another app, and THEN the service rebinds.
+        manager.onForegroundSignal(ForegroundSignal.AppWindow("com.other"), 1_000)
+
+        manager.onObservationResumed()
+
+        // Had the clock survived, this would be past the window and would revoke.
+        manager.onForegroundSignal(
+            ForegroundSignal.AppWindow("com.other"),
+            1_000 + SittingTracker.PASSTHROUGH_RETURN_WINDOW_MS
+        )
+        assertTrue(
+            "the gap must not be counted as time away -- the clock restarts from the next signal",
+            manager.isGranted("com.app.a")
+        )
+    }
+
+    /** ...and a genuine absence AFTER the rebind still ends the sitting on its own terms. */
+    @Test
+    fun `a real app switch after a rebind still revokes`() {
+        manager.onForegroundSignal(ForegroundSignal.AppWindow("com.app.a"), 0)
+        manager.grant("com.app.a")
+        manager.onObservationResumed()
+
+        val t = 10_000L
+        manager.onForegroundSignal(ForegroundSignal.AppWindow("com.other"), t)
+        manager.onForegroundSignal(
+            ForegroundSignal.AppWindow("com.other"),
+            t + SittingTracker.PASSTHROUGH_RETURN_WINDOW_MS
+        )
+
+        assertFalse(manager.isGranted("com.app.a"))
+    }
+
 }

@@ -129,10 +129,21 @@ class PassthroughManager @Inject constructor() {
         return event
     }
 
-    /** Drop the sitting AND the grant (service disconnect, global disable). */
+    /** Drop the sitting AND the grant (global disable). */
     fun resetSitting() {
         sitting.reset()
         clear()
+    }
+
+    /**
+     * The accessibility service rebound after a gap we could not observe.
+     *
+     * Deliberately NOT [resetSitting]: see [SittingTracker.onObservationResumed]. A rebind is not
+     * evidence the user went anywhere, and on a memory-pressured device it happens often enough that
+     * treating it as one re-blocks people mid-session.
+     */
+    fun onObservationResumed() {
+        sitting.onObservationResumed()
     }
 
     private fun revokeIfSittingEnded(event: SittingEvent) {

@@ -186,9 +186,31 @@ class SittingTracker(
         return SittingEvent.Started(packageName, ended)
     }
 
-    /** Drop all state (service disconnect, global disable, process teardown). */
+    /** Drop all state (global disable, process teardown). */
     fun reset() {
         currentApp = null
+        awaySinceMs = null
+    }
+
+    /**
+     * Observation resumed after a blind gap: the accessibility service rebound.
+     *
+     * Keeps the sitting and discards only the away clock, which is the one piece of state a gap
+     * genuinely invalidates -- it was measuring an interval whose end we did not see.
+     *
+     * This USED to be a full [reset], on the reasoning that a bind is the start of observation so
+     * nothing before it can be trusted. That reasoning is right about the CLOCK and wrong about the
+     * grant, and the cost of being wrong is asymmetric: `docs/BACKLOG.md` records that this service
+     * churns and reconnects on the bench device under memory pressure, so revoking on every bind
+     * re-blocks a user who never left their app -- the exact defect issue #28 is about,
+     * reintroduced by its own fix.
+     *
+     * The failure direction this subsystem has always chosen applies here too: missing a revoke
+     * costs a delay the user does not have to repeat, while a false revoke interrupts someone
+     * mid-use, which is the issue #5 class. If they really did leave during the gap, the next
+     * foreground signal starts a fresh away clock and the sitting ends on its own terms.
+     */
+    fun onObservationResumed() {
         awaySinceMs = null
     }
 

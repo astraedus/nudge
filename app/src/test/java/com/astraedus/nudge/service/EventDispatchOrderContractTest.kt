@@ -258,22 +258,32 @@ class EventDispatchOrderContractTest {
     }
 
     /**
-     * A bind is the start of observation, so nothing observed before it can be trusted.
+     * INVERTED, and the inversion is the point.
      *
-     * `PassthroughManager` is a `@Singleton` and outlives the service, so a disconnect (the user
-     * toggling the service, an OS low-memory kill, a crash) leaves BOTH a stale sitting and a live
-     * grant across a blind gap of unknown length. The away clock cannot have been running, so the
-     * grant would survive whatever happened during the gap.
+     * This used to require `onServiceConnected` to call `resetSitting()`, on the reasoning that a
+     * bind is the start of observation so nothing before it can be trusted. That is right about the
+     * away CLOCK and wrong about the grant, and device QA on 2026-09-12 showed what the difference
+     * costs: `docs/BACKLOG.md` records this service churning and reconnecting under memory pressure,
+     * so revoking on every bind re-blocks a user who never left their app -- issue #28's own defect,
+     * reintroduced by its own fix.
+     *
+     * `onObservationResumed()` discards the clock and keeps the sitting. The failure direction is
+     * the one this subsystem has always chosen: miss a revoke rather than interrupt someone mid-use.
      */
     @Test
-    fun `reconnecting drops the sitting rather than inheriting one across a blind gap`() {
+    fun `reconnecting discards the away clock but does not revoke the grant`() {
         val start = source.indexOf("override fun onServiceConnected()")
         assertTrue("onServiceConnected must exist", start >= 0)
         val end = source.indexOf("\n    override fun ", start + 1)
         val body = stripComments(source.substring(start, if (end > start) end else source.length))
         assertTrue(
-            "a fresh bind must reset the sitting; PassthroughManager is a @Singleton and both the " +
-                "sitting and the grant otherwise survive a service death",
+            "a fresh bind must discard the away clock, which was timing an interval whose end we " +
+                "did not see",
+            body.contains("onObservationResumed()")
+        )
+        assertFalse(
+            "a rebind must NOT revoke the grant -- this service reconnects often enough that doing " +
+                "so re-blocks users mid-session",
             body.contains("resetSitting()")
         )
     }
