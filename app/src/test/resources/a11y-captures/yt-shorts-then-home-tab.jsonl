@@ -19,7 +19,7 @@
 #      3. What it does NOT show: a second block. One `handling block` line for YouTube across the
 #         whole run, no picture-in-picture at any point, and no sitting end -- even past the
 #         two-minute return window. The reported second overlay needed a service REBIND, which
-#         tools/qa/rebind-revokes-grant-probe.sh forces deliberately.
+#         sequence B of tools/qa/issue28-device-verify.sh forces deliberately.
 {"t":"WINDOW_STATE_CHANGED","p":"com.google.android.youtube","c":"android.widget.FrameLayout","w":9675,"ts":3715210028,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":0}
 {"t":"WINDOW_STATE_CHANGED","p":"dev.astraedus.nudge","c":"android.widget.FrameLayout","w":9677,"ts":3715210210,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":0}
 {"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.widget.FrameLayout","w":9678,"ts":3715210822,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
