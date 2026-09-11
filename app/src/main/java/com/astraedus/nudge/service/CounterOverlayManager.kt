@@ -108,7 +108,12 @@ class CounterOverlayManager @Inject constructor(
         }
     }
 
-    fun updateLabel(label: String) {
+    override fun updateLabel(label: String) {
+        // Logged because the caption changing is a DECISION, and this subsystem's whole history is
+        // decisions that were invisible in logcat. "The caption is wrong" and "the caption was never
+        // corrected" look identical from the outside otherwise -- which is exactly how the stale
+        // "shorts" survived a QA pass.
+        logger.d("counter overlay label updated to $label")
         labelText?.text = label
     }
 

@@ -1,9 +1,14 @@
 package com.astraedus.nudge.service
 
 import android.view.accessibility.AccessibilityEvent
+import com.astraedus.nudge.domain.sitting.SittingTracker
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import com.astraedus.nudge.domain.events.AccessibilityEventRecord
+import com.astraedus.nudge.domain.events.EventClassifier
+import com.astraedus.nudge.domain.events.ForegroundSignal
+import com.astraedus.nudge.domain.sitting.SittingEvent
 import org.junit.Test
 
 /**
@@ -11,7 +16,7 @@ import org.junit.Test
  *
  * The defect: [NudgeAccessibilityService.SYSTEM_PACKAGES] contains the stock launchers and the
  * system-package early-return in `onAccessibilityEvent` fires long before `evaluateForegroundPackage`
- * reaches `PassthroughManager.clearIfAppChanged`. So "pass YouTube's delay → Home → reopen YouTube"
+ * reached the passthrough clear. So "pass YouTube's delay → Home → reopen YouTube"
  * skipped the delay indefinitely; only opening a DIFFERENT non-system app in between re-armed it.
  *
  * The fix must NOT be "clear for every system package": the shade, the IME, permission dialogs and
@@ -25,18 +30,35 @@ class HomeScreenPassthroughTest {
     private val pixelLauncher = "com.google.android.apps.nexuslauncher"
     private val launchers = setOf(pixelLauncher, "com.android.launcher3")
 
+    private val classifier = EventClassifier(
+        ownPackageName = ownPackage,
+        systemPackages = NudgeAccessibilityService.SYSTEM_PACKAGES,
+        imePackages = NudgeAccessibilityService.IME_PACKAGES,
+        frameworkPackage = NudgeAccessibilityService.FRAMEWORK_PACKAGE
+    )
+
+    /**
+     * Runs the REAL decision, not a copy of it.
+     *
+     * This used to call `NudgeAccessibilityService.isHomeScreenForeground`, which issue #28 left
+     * with no production caller once `EventClassifier` took over the question. A test that keeps a
+     * dead twin alive is worse than no test: it goes on passing while the code that actually ships
+     * diverges from it. Same reason `clearIfAppChanged` was deleted rather than kept "for the tests".
+     */
     private fun wentHome(
         packageName: String,
         eventType: Int = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
         launcherPackages: Set<String> = launchers,
         currentImePackage: String? = null
-    ): Boolean = NudgeAccessibilityService.isHomeScreenForeground(
-        eventType = eventType,
-        packageName = packageName,
+    ): Boolean = classifier.classify(
+        record = AccessibilityEventRecord(
+            type = AccessibilityEventRecordFactory.eventType(eventType),
+            packageName = packageName
+        ),
+        currentImePackage = currentImePackage,
         launcherPackages = launcherPackages,
-        ownPackageName = ownPackage,
-        currentImePackage = currentImePackage
-    )
+        pipOnlyPackages = emptySet()
+    ) is ForegroundSignal.Home
 
     // --- The launcher IS leaving the app ---
 
@@ -178,18 +200,39 @@ class HomeScreenPassthroughTest {
         val passthrough = PassthroughManager()
         passthrough.grant("com.google.android.youtube")
 
-        val cleared = passthrough.clearIfAppChanged(pixelLauncher)
+        // Re-pinned onto the real revocation path (issue #28). Going Home is one of only two
+        // signals SittingTracker allows to end a sitting, and ending a sitting is what revokes.
+        val event = passthrough.onForegroundSignal(ForegroundSignal.Home(pixelLauncher), 1_000)
 
-        assertTrue(cleared)
+        assertTrue("going home must end the sitting", event is SittingEvent.Ended)
         assertFalse(passthrough.shouldSkipForegroundEvaluation("com.google.android.youtube"))
     }
 
+    /**
+     * Re-pinned, not deleted: a genuine app switch must still cost the pass, but issue #28 moved
+     * WHEN. Another app in front for a few seconds is a sub-flow (a picker, a share sheet, a
+     * permission dialog) and must NOT revoke; one that holds the foreground past the return window
+     * is the user having actually left, and still does. Both halves are asserted here so neither
+     * can be lost.
+     */
     @Test
-    fun `a different app still clears passthrough, exactly as before`() {
+    fun `a different app clears passthrough once it has held the foreground past the return window`() {
         val passthrough = PassthroughManager()
         passthrough.grant("com.google.android.youtube")
 
-        assertTrue(passthrough.clearIfAppChanged("com.instagram.android"))
+        // A brief excursion is a sub-flow: the grant survives.
+        passthrough.onForegroundSignal(ForegroundSignal.AppWindow("com.instagram.android"), 1_000)
+        assertTrue(
+            "a few seconds in another app must not revoke a pass the user earned",
+            passthrough.shouldSkipForegroundEvaluation("com.google.android.youtube")
+        )
+
+        // Held past the window, it is a real app switch and the pass is gone.
+        val window = SittingTracker.PASSTHROUGH_RETURN_WINDOW_MS
+        passthrough.onForegroundSignal(
+            ForegroundSignal.AppWindow("com.instagram.android"),
+            1_000 + window
+        )
         assertFalse(passthrough.shouldSkipForegroundEvaluation("com.google.android.youtube"))
     }
 
@@ -203,7 +246,7 @@ class HomeScreenPassthroughTest {
         tracker.setCooldown("com.google.android.youtube", 60_000L)
         passthrough.grant("com.google.android.youtube")
 
-        passthrough.clearIfAppChanged(pixelLauncher)
+        passthrough.onForegroundSignal(ForegroundSignal.Home(pixelLauncher), 1_000)
 
         assertTrue(tracker.isInCooldown("com.google.android.youtube"))
     }
@@ -217,7 +260,7 @@ class HomeScreenPassthroughTest {
         tracker.recordInteraction("com.google.android.youtube")
         passthrough.grant("com.google.android.youtube")
 
-        passthrough.clearIfAppChanged(pixelLauncher)
+        passthrough.onForegroundSignal(ForegroundSignal.Home(pixelLauncher), 1_000)
 
         assertEquals(2, tracker.getSessionCount("com.google.android.youtube"))
     }

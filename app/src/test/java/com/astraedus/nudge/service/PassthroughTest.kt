@@ -1,6 +1,11 @@
 package com.astraedus.nudge.service
 
 import android.view.accessibility.AccessibilityEvent
+import com.astraedus.nudge.domain.events.A11yEventType
+import com.astraedus.nudge.domain.events.AccessibilityEventRecord
+import com.astraedus.nudge.domain.events.EventClassifier
+import com.astraedus.nudge.domain.events.ForegroundSignal
+import com.astraedus.nudge.domain.sitting.SittingTracker
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -10,6 +15,33 @@ import org.junit.Test
 class PassthroughTest {
 
     private lateinit var manager: PassthroughManager
+
+    /**
+     * The real classifier, wired from the service's own package sets.
+     *
+     * The overlay-bypass check no longer re-derives "is this a real app window" from package names;
+     * it takes the already-computed [ForegroundSignal]. So these tests must build that signal by
+     * CLASSIFYING an event, exactly as the service does. Hand-constructing a
+     * `ForegroundSignal.AppWindow("com.android.systemui")` would compile, pass, and prove nothing
+     * about the pipeline that actually runs on a device.
+     */
+    private val classifier = EventClassifier(
+        ownPackageName = OWN_PACKAGE,
+        systemPackages = NudgeAccessibilityService.SYSTEM_PACKAGES,
+        imePackages = NudgeAccessibilityService.IME_PACKAGES,
+        frameworkPackage = NudgeAccessibilityService.FRAMEWORK_PACKAGE
+    )
+
+    private fun signalFor(
+        packageName: String,
+        type: A11yEventType,
+        currentImePackage: String? = null
+    ): ForegroundSignal = classifier.classify(
+        AccessibilityEventRecord(type = type, packageName = packageName),
+        currentImePackage = currentImePackage,
+        launcherPackages = emptySet(),
+        pipOnlyPackages = emptySet()
+    )
 
     @Before
     fun setUp() {
@@ -25,12 +57,21 @@ class PassthroughTest {
     }
 
     @Test
-    fun `passthrough clears on app switch`() {
+    fun `passthrough clears on a real app switch`() {
         manager.grant("com.example.alpha")
 
-        val cleared = manager.clearIfAppChanged("com.example.beta")
+        // Issue #28: a foreign app window no longer revokes on sight. It revokes once that app has
+        // held the foreground past the return window, which is what a real switch looks like.
+        manager.onForegroundSignal(ForegroundSignal.AppWindow("com.example.beta"), 0)
+        assertTrue(
+            "a brief excursion is a sub-flow, not a switch",
+            manager.isGranted("com.example.alpha")
+        )
+        manager.onForegroundSignal(
+            ForegroundSignal.AppWindow("com.example.beta"),
+            SittingTracker.PASSTHROUGH_RETURN_WINDOW_MS
+        )
 
-        assertTrue(cleared)
         assertNull(manager.lastPackage)
         assertNull(manager.lastFeature)
         assertFalse(manager.isGranted("com.example.alpha"))
@@ -115,21 +156,21 @@ class PassthroughTest {
         // orphaning the overlay. A real foreground switch must clear the stale flag so we re-block.
         assertTrue(
             NudgeAccessibilityService.isOverlayBypassedByForeground(
-                eventType = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
-                packageName = "com.instagram.android",
-                ownPackageName = "com.astraedus.nudge"
+                eventType = A11yEventType.WINDOW_STATE_CHANGED,
+                signal = signalFor("com.instagram.android", A11yEventType.WINDOW_STATE_CHANGED)
             )
         )
     }
 
     @Test
     fun `own package window event does not count as overlay bypass`() {
-        // The overlay's own window appearing is not a bypass — keep swallowing it.
+        // The overlay's own window appearing is not a bypass — keep swallowing it. The exclusion
+        // now lives in the classifier (OwnUi, not AppWindow) rather than in an ownPackageName
+        // comparison inside the gate, so this asserts the whole path, not a local `if`.
         assertFalse(
             NudgeAccessibilityService.isOverlayBypassedByForeground(
-                eventType = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
-                packageName = "com.astraedus.nudge",
-                ownPackageName = "com.astraedus.nudge"
+                eventType = A11yEventType.WINDOW_STATE_CHANGED,
+                signal = signalFor(OWN_PACKAGE, A11yEventType.WINDOW_STATE_CHANGED)
             )
         )
     }
@@ -139,9 +180,8 @@ class PassthroughTest {
         // Launcher / systemui surfacing over the overlay is not the user re-entering the app.
         assertFalse(
             NudgeAccessibilityService.isOverlayBypassedByForeground(
-                eventType = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
-                packageName = "com.android.systemui",
-                ownPackageName = "com.astraedus.nudge"
+                eventType = A11yEventType.WINDOW_STATE_CHANGED,
+                signal = signalFor("com.android.systemui", A11yEventType.WINDOW_STATE_CHANGED)
             )
         )
     }
@@ -152,10 +192,13 @@ class PassthroughTest {
         // flag — only a real foreground switch (WINDOW_STATE_CHANGED) does.
         assertFalse(
             NudgeAccessibilityService.isOverlayBypassedByForeground(
-                eventType = AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
-                packageName = "com.instagram.android",
-                ownPackageName = "com.astraedus.nudge"
+                eventType = A11yEventType.WINDOW_CONTENT_CHANGED,
+                signal = signalFor("com.instagram.android", A11yEventType.WINDOW_CONTENT_CHANGED)
             )
         )
+    }
+
+    private companion object {
+        const val OWN_PACKAGE = "com.astraedus.nudge"
     }
 }

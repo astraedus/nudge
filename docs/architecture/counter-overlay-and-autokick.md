@@ -1,5 +1,16 @@
 # Counter overlay, time-remaining overlay and auto-kick
 
+> **WHAT FEEDS THE COUNTER CHANGED IN v1.16.0 — read `accessibility-event-pipeline.md` for that
+> half.** Issue [#28](https://github.com/astraedus/nudge/issues/28): the counter was counting EVENT
+> RATE (one per `TYPE_VIEW_SCROLLED` past a 500ms debounce, plus one per second of
+> `TYPE_WINDOW_CONTENT_CHANGED` for unsupported packages), so one slow drag scored 5-6 and an
+> untouched phone scored anything at all. It now counts item transitions from the scroll event's own
+> `fromIndex`/`currentItemIndex`, the content-change proxy is gone, taps count in every app, and
+> `InAppDetector.SUPPORTED_PACKAGES` no longer gates counting — it supplies the LABEL only. A session
+> counts ONE unit (`CountMode.ITEMS` or `CountMode.TAPS`), never a mixture. Everything below about
+> what the counter FEEDS — the overlay, both auto-kick triggers, the cooldown, the cache — is
+> unchanged.
+
 Covers the floating interaction counter, the time-remaining overlay, both auto-kick triggers
 (interaction count and foreground minutes), the auto-kick cooldown, and the duration inputs that configure them.
 **Read before touching `service/` overlay code, `InteractionTracker`, `CounterCacheRefresher`, `AutoKick*`, or `ui/components/DurationInput.kt`.**

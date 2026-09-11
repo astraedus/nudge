@@ -2,6 +2,17 @@
 
 All notable changes to Nudge are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.16.0] - 2026-09-11
+
+### Fixed
+- **You are no longer sent back to the delay screen for something your app opened.** Picking a photo, sharing, answering a permission prompt, opening a link in a custom tab, or adjusting the volume on phones whose volume panel is its own app all used to count as "leaving", so coming back cost you the delay you had already waited out ([#28](https://github.com/astraedus/nudge/issues/28)). Nudge now understands a sitting: a completed delay stays valid until you press Home, the screen goes off, or you have genuinely been in a different app for five minutes. Blocked apps you open from a picker or a share sheet are still blocked straight away. The same fix applies to websites you had waited for.
+- **The interaction counter counts what you did, not how many events your phone produced.** One slow scroll between two posts used to count five or six, scrolling a comments sheet counted continuously, and a phone left untouched on a feed still ticked up, which could trigger auto-kick for doing nothing. The counter now counts items you actually moved past and taps you actually made, and a session counts one kind of thing (reels or taps), never a mix.
+- **Locking the phone now ends a completed delay.** Completing a delay, locking the phone, and unlocking hours later straight back into the app used to skip the delay entirely.
+
+### Changed
+- Every accessibility event is now classified once, at the top of the service, into a fixed set of meanings, and a single component decides when a sitting ends. This is what makes the whole family of "a window from some other app was read as you leaving" bugs (#5, #7, #19, #28) unavailable to write again. Real device event streams are committed as replayable test fixtures, and there is a capture script so the next report can be turned into a test before it is turned into a fix. See `docs/architecture/accessibility-event-pipeline.md`.
+- Taps inside Instagram, YouTube and TikTok now count; apps that do not report taps or scrolls read zero instead of a made-up number. YouTube Shorts swipes are still not counted (the app reports no scroll events for them); this is now measured and filed rather than guessed at.
+
 ## [1.15.4] - 2026-09-07
 
 ### Fixed

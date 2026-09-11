@@ -16,7 +16,31 @@ Principles:
 
 Test locations:
 - `app/src/test/` — JVM unit tests (domain, data, use cases)
+- `app/src/test/resources/a11y-captures/` — **real device event streams, replayed as fixtures.** See
+  `docs/architecture/accessibility-event-pipeline.md`. The workflow for a report about the
+  accessibility service is: reproduce on a device with `scripts/a11y-capture.sh` running, commit the
+  `.jsonl`, write the assertion that FAILS on it, then fix. Two rules make this worth having: a
+  capture must state its own expected count in its `#` header (a fixture with no oracle cannot fail,
+  and `A11yCaptureReplayTest` asserts every capture has one), and each fixture assertion is paired
+  with a counterfactual that runs the OLD rule over the same capture and asserts it still fails —
+  otherwise a capture that quietly stops reproducing leaves a green test asserting nothing.
 - `app/src/androidTest/` — instrumented tests (Room migrations, accessibility service behavior)
+
+Two things this module cannot JVM-test, so nobody re-discovers them:
+- **There is no Robolectric here.** A JVM test cannot construct an `AccessibilityEvent` or an
+  `AccessibilityNodeInfo` (MockK can stub the latter). This is why the event pipeline converts to a
+  pure `AccessibilityEventRecord` at the service boundary — everything downstream is then testable,
+  and the untestable part is one field-copying function.
+- Consequently the node-tree label path (`InteractionHandler.resolveLabelIfUnknown` ->
+  `InAppDetector.detectFeature`) has no JVM coverage. It affects the counter's LABEL only, never its
+  number, which is the reason that split is drawn where it is.
+
+**Source-level contract tests** (`*ContractTest`) read a `.kt` file as text and assert on the SHAPE
+of the code — where an early return sits, that a call happens before a branch. They exist because
+this repo's worst bugs have been ordering bugs, which no value-level test can see. Two rules for
+writing one: strip comments before grepping (a comment that quotes the code it explains will
+otherwise be read as code, in either direction), and assert the invariant rather than the spelling,
+so a faithful refactor re-pins cleanly instead of being deleted.
 
 Coverage targets (aspirational, enforce on new code):
 - Domain layer: >90% line coverage
