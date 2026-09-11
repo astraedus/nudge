@@ -10,6 +10,7 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.astraedus.nudge.data.export.ExportedSettings
+import com.astraedus.nudge.domain.widget.WidgetRefreshSignal
 import com.astraedus.nudge.service.GlobalEnabledProvider
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
@@ -22,7 +23,16 @@ private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(na
 
 @Singleton
 class NudgePreferences @Inject constructor(
-    @ApplicationContext private val context: Context
+    @ApplicationContext private val context: Context,
+    /**
+     * Pushes the Protection widget when the master toggle moves.
+     *
+     * Defaulted to the no-op because two screens build a `NudgePreferences` by hand to READ
+     * preferences (Settings and the messages editor) and neither writes the master toggle. The real
+     * Hilt binding in `RepositoryModule` passes the live pusher, and that is the instance every
+     * writer (`HomeViewModel`, the widget's own callback) gets.
+     */
+    private val widgetRefreshSignal: WidgetRefreshSignal = WidgetRefreshSignal.NONE
 ) : GlobalEnabledProvider {
 
     private object Keys {
@@ -51,6 +61,10 @@ class NudgePreferences @Inject constructor(
         context.dataStore.edit { prefs ->
             prefs[Keys.GLOBAL_ENABLED] = enabled
         }
+        // After the write, so the widget's next read sees the new value. The Protection widget's
+        // whole job is telling the user whether blocking is on; a 30-minute platform tick is not an
+        // acceptable lag for a state the user just changed.
+        widgetRefreshSignal.requestRefresh()
     }
 
     val isOnboardingComplete: Flow<Boolean> = context.dataStore.data

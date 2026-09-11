@@ -75,4 +75,47 @@ class InterventionsDelegationContractTest {
             calculator.contains("topBlockedApps(events, sinceMs = rangeStart")
         )
     }
+
+    /** The home card is the second caller; if it stops calling in, the extraction was pointless. */
+    @Test
+    fun `the home dashboard reads the same shared function`() {
+        val homeViewModel =
+            source("main/java/com/astraedus/nudge/ui/screens/home/HomeViewModel.kt")
+
+        assertTrue(
+            "HomeViewModel must source its top-blocked list from InsightsCalculator.topBlockedApps.",
+            homeViewModel.contains("topBlockedApps(")
+        )
+    }
+
+    /**
+     * The home card and the week of rows it aggregates must be one emission, not two.
+     *
+     * `weekEventsFlow` and `screenTimeFlow` are independent `flatMapLatest` chains off a single
+     * `dayStartFlow`, so at a midnight rollover they restart independently and for one frame a
+     * consumer can hold a new day's boundary beside the previous day's rows. Re-deriving "a week
+     * ago" at the card would therefore describe a window its own data was not selected with.
+     *
+     * So the boundary is computed ONCE, in the query, and travels with the rows. Pinned two ways:
+     * exactly one `WEEK_DAYS - 1` expression exists in the file, and the card reads the window
+     * off the snapshot rather than off any other flow's day start.
+     */
+    @Test
+    fun `the week boundary is computed once and carried with the rows it selected`() {
+        val homeViewModel =
+            source("main/java/com/astraedus/nudge/ui/screens/home/HomeViewModel.kt")
+        val boundaries = Regex("""startOfDayDaysBefore\([^)]*WEEK_DAYS - 1\s*\)""")
+            .findAll(homeViewModel).count()
+
+        assertEquals(
+            "The trailing-week boundary must exist in exactly one place (the query that uses " +
+                "it); found $boundaries. A second one is a second answer to 'which week'.",
+            1,
+            boundaries
+        )
+        assertTrue(
+            "The top-blocked window must come from the snapshot the events arrived in.",
+            homeViewModel.contains("sinceMs = weekEvents.weekStartMs")
+        )
+    }
 }

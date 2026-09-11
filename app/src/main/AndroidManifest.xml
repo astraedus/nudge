@@ -57,9 +57,14 @@
         android:theme="@style/Theme.Nudge"
         tools:targetApi="36">
 
+        <!-- singleTop: the protection alert and the home-screen widgets both deep-link in here.
+             Without it, tapping a widget while the app is already open stacks a SECOND MainActivity
+             on top of the first, so the back button lands the user on a stale copy of their own
+             dashboard. singleTop instead routes the intent to onNewIntent on the live instance. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTop"
             android:theme="@style/Theme.Nudge">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -132,6 +137,46 @@
                      action every update left the app unprotected overnight until a reboot. -->
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
+        </receiver>
+
+        <!-- Home-screen widgets (Jetpack Glance). `exported="true"` is mandatory on all three:
+             the launcher is a different process and must be able to broadcast APPWIDGET_UPDATE to
+             them. They carry no data of their own and read through the same repositories the app
+             does, so there is nothing here an exported receiver leaks. -->
+        <receiver
+            android:name=".ui.widget.TodayWidgetReceiver"
+            android:exported="true"
+            android:label="@string/widget_today_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/today_widget_info" />
+        </receiver>
+
+        <receiver
+            android:name=".ui.widget.TopBlockedWidgetReceiver"
+            android:exported="true"
+            android:label="@string/widget_top_blocked_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/top_blocked_widget_info" />
+        </receiver>
+
+        <receiver
+            android:name=".ui.widget.ProtectionWidgetReceiver"
+            android:exported="true"
+            android:label="@string/widget_protection_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/protection_widget_info" />
         </receiver>
 
         <provider

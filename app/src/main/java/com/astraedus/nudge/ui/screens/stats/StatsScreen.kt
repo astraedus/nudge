@@ -21,6 +21,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.outlined.Block
+import androidx.compose.material.icons.outlined.ThumbUp
 import androidx.compose.material.icons.outlined.Today
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
@@ -39,7 +41,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -53,7 +58,9 @@ import com.astraedus.nudge.ui.screens.stats.charts.WeeklyBarChart
 fun StatsScreen(
     viewModel: StatsViewModel,
     onNavigateBack: () -> Unit,
-    onNavigateToAppDetail: (String) -> Unit = {}
+    onNavigateToAppDetail: (String) -> Unit = {},
+    onNavigateToWillpower: () -> Unit = {},
+    onNavigateToInterventions: () -> Unit = {}
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -151,6 +158,30 @@ fun StatsScreen(
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp)
                 )
+            }
+
+            item {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    InsightEntryCard(
+                        icon = Icons.Outlined.ThumbUp,
+                        title = "Willpower",
+                        supporting = "How often you walk away, and when you're strongest",
+                        onClick = onNavigateToWillpower,
+                        modifier = Modifier.weight(1f)
+                    )
+                    InsightEntryCard(
+                        icon = Icons.Outlined.Block,
+                        title = "Temptation patterns",
+                        supporting = "Which apps pull hardest, and at what hours",
+                        onClick = onNavigateToInterventions,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
             }
 
             item {
@@ -361,6 +392,91 @@ private fun DayStat(label: String, value: String) {
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+    }
+}
+
+/**
+ * A doorway from Usage Stats into one of the two insight screens.
+ *
+ * Willpower and Interventions used to be reachable ONLY by tapping an unlabelled Home tile, so
+ * the first person to use this app did not know two whole screens existed. Usage Stats is where
+ * someone goes when they want to understand their own numbers, which makes it the one place the
+ * interpretation of those numbers has to be offered by name.
+ *
+ * The supporting line is load-bearing, not decoration: an icon plus a single word is precisely
+ * the unlabelled affordance that caused the report, and a card that will not say what is behind
+ * it teaches nothing. Both texts carry a fixed line count so the two cards in the row are the
+ * same height at every screen width, with no intrinsic-measurement guesswork.
+ */
+@Composable
+private fun InsightEntryCard(
+    icon: ImageVector,
+    title: String,
+    supporting: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val openLabel = "Open $title"
+
+    Card(
+        modifier = modifier,
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Column(
+            // The click target lives inside the card, not on it: the card's own surface already
+            // clips to the corner radius, so the touch indication follows the rounded edge
+            // without a clip of our own eating the elevation shadow. mergeDescendants keeps the
+            // icon, title and supporting line as ONE TalkBack node that names its destination,
+            // rather than a stray unactionable chevron the user can focus and do nothing with.
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClickLabel = openLabel, role = Role.Button, onClick = onClick)
+                .semantics(mergeDescendants = true) {}
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Icon(
+                    icon,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(24.dp)
+                )
+                // No contentDescription: the card merges its descendants and already announces
+                // `openLabel` as its click action, so describing the chevron says it twice.
+                Icon(
+                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+
+            Text(
+                title,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurface,
+                // minLines only, never maxLines. The floor is what makes the two cards the same
+                // height when one title is a single word; a ceiling would silently ellipsise
+                // "Temptation patterns" at a large system font scale, and a card that hides half
+                // its own name is a worse failure than two cards of unequal height.
+                minLines = 2
+            )
+            Text(
+                supporting,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                minLines = 3
+            )
+        }
     }
 }
 

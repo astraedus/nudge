@@ -20,4 +20,36 @@
     <string name="protection_alert_crashed_body">Your phone shut Nudge down. It still shows as switched on, so blocking will not restart on its own — turn Nudge off and back on in Accessibility settings, or restart your phone. Tap for the steps.</string>
     <string name="protection_alert_service_title">Your phone keeps stopping Nudge</string>
     <string name="protection_alert_service_body">Nudge is being shut down in the background, so blocking may not work reliably. Tap to check its status.</string>
+
+    <!-- Home-screen widgets (Jetpack Glance): picker labels/descriptions, the Today widget,
+         the Blocked-most widget, and the Protection widget. -->
+    <string name="app_name_short">Nudge</string>
+    <string name="widget_today_label">Nudge: Today</string>
+    <string name="widget_today_description">Today\'s screen time, blocks and walk-aways at a glance.</string>
+    <string name="widget_top_blocked_label">Nudge: Blocked most</string>
+    <string name="widget_top_blocked_description">Which apps you were blocked from most in the last 7 days.</string>
+    <string name="widget_protection_label">Nudge: Protection</string>
+    <string name="widget_protection_description">Shows whether blocking is on, and turns it on or off.</string>
+    <string name="widget_today_title">Today</string>
+    <string name="widget_today_screen_time">Screen time</string>
+    <string name="widget_today_blocked">Blocked</string>
+    <string name="widget_today_walked_away">Walked away</string>
+    <string name="widget_today_no_usage_access">Usage access off</string>
+    <!-- The 2x2 variant has room for one extra line, not two labelled metrics, so the two counts
+         share it. Positional args so a translation can reorder them. -->
+    <string name="widget_today_compact_counts">%1$d blocked, %2$d walked away</string>
+    <!-- Rank shown in place of an app icon that could not be loaded (uninstalled app, or a
+         PackageManager read that failed). Never an emoji, never a blank row. -->
+    <string name="widget_top_blocked_rank">%1$d</string>
+    <string name="widget_top_blocked_open">Open temptation patterns</string>
+    <string name="widget_top_blocked_title">Blocked most</string>
+    <string name="widget_top_blocked_range">Last 7 days</string>
+    <string name="widget_top_blocked_empty">Nothing blocked in the last 7 days.</string>
+    <string name="widget_protection_on">Blocking on</string>
+    <string name="widget_protection_off">Blocking off</string>
+    <string name="widget_protection_degraded">Blocking has stopped</string>
+    <string name="widget_protection_locked">Turn off in app</string>
+    <string name="widget_open_app">Open Nudge</string>
+    <string name="widget_pin_row_title">Add widgets to home screen</string>
+    <string name="widget_pin_row_subtitle">Debug builds only. Asks the launcher to pin each Nudge widget.</string>
 </resources>

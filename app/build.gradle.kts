@@ -103,6 +103,16 @@ dependencies {
     // rate-limited on Android 14+, for a check whose tolerance is a quarter of an hour.
     implementation("androidx.work:work-runtime-ktx:2.9.1")
 
+    // Glance, home-screen widgets, written in Compose. 1.2.0 is the latest STABLE line
+    // (1.3.0-alpha exists; an alpha does not belong in a shipped widget). Needs compileSdk >= 35
+    // and the Compose compiler plugin, both already in place above.
+    //
+    // Deliberately NOT `glance-appwidget-testing`: it is Robolectric-backed and Robolectric is
+    // not on this project's classpath. Widget composables stay dumb and the PURE mappers behind
+    // them (WidgetSnapshotMapper, WidgetDeepLink, WidgetRefreshDebouncer) carry the tests.
+    implementation("androidx.glance:glance-appwidget:1.2.0")
+    implementation("androidx.glance:glance-material3:1.2.0")
+
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 

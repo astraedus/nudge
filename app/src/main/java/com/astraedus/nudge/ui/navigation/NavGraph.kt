@@ -67,11 +67,23 @@ sealed class Screen(val route: String) {
 fun NudgeNavGraph(
     nudgePreferences: NudgePreferences? = null,
     /**
-     * Set when the user tapped the protection alert. That notification's whole promise is
-     * "tap to fix it", so it has to land on the screen carrying the permission rows and the
-     * prominent-disclosure dialog, not on the dashboard with the fix two taps further on.
+     * The route an outside tap asked for, or null for an ordinary launch.
+     *
+     * This replaced an `openSettingsOnLaunch: Boolean`. Two entry points now navigate from outside
+     * the app — the protection alert ("tap to fix it", which must land on the screen carrying the
+     * permission rows and the prominent-disclosure dialog, not on the dashboard with the fix two
+     * taps further on) and the home-screen widgets — and a second boolean per destination would
+     * have meant a boolean per destination forever. `MainActivity` maps both through
+     * `WidgetDeepLink.routeFor`, which returns null for anything it does not recognise, so an
+     * unknown route can never reach `navigate()`.
      */
-    openSettingsOnLaunch: Boolean = false
+    deepLinkRoute: String? = null,
+    /**
+     * Called once the route has been navigated to, so `MainActivity` can clear it. Without it,
+     * tapping the same widget twice would be swallowed: the second tap sets an identical value and
+     * `LaunchedEffect` would not re-run.
+     */
+    onDeepLinkConsumed: () -> Unit = {}
 ) {
     val navController = rememberNavController()
 
@@ -84,12 +96,14 @@ fun NudgeNavGraph(
     }
     val startDestination = if (onboardingComplete) Screen.Home.route else Screen.Onboarding.route
 
-    // Never jump a first-run user out of onboarding: an alert can only have fired for someone who
-    // has already been through it, but the start destination reads `true` for one frame while the
-    // preference loads, and that frame must not be enough to navigate away from it.
-    LaunchedEffect(openSettingsOnLaunch, onboardingComplete) {
-        if (openSettingsOnLaunch && onboardingComplete) {
-            navController.navigate(Screen.Settings.route) { launchSingleTop = true }
+    // Never jump a first-run user out of onboarding: an alert or a widget can only have fired for
+    // someone who has already been through it, but the start destination reads `true` for one frame
+    // while the preference loads, and that frame must not be enough to navigate away from it.
+    LaunchedEffect(deepLinkRoute, onboardingComplete) {
+        val route = deepLinkRoute
+        if (route != null && onboardingComplete) {
+            navController.navigate(route) { launchSingleTop = true }
+            onDeepLinkConsumed()
         }
     }
 
@@ -117,7 +131,10 @@ fun NudgeNavGraph(
                 onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
                 onNavigateToActiveRules = { navController.navigate(Screen.ActiveRules.route) },
                 onNavigateToWillpower = { navController.navigate(Screen.Willpower.route) },
-                onNavigateToInterventions = { navController.navigate(Screen.Interventions.route) }
+                onNavigateToInterventions = { navController.navigate(Screen.Interventions.route) },
+                onNavigateToAppDetail = { pkg ->
+                    navController.navigate(Screen.AppDetail.createRoute(pkg))
+                }
             )
         }
 
@@ -208,7 +225,9 @@ fun NudgeNavGraph(
                 onNavigateBack = { navController.popBackStack() },
                 onNavigateToAppDetail = { pkg ->
                     navController.navigate(Screen.AppDetail.createRoute(pkg))
-                }
+                },
+                onNavigateToWillpower = { navController.navigate(Screen.Willpower.route) },
+                onNavigateToInterventions = { navController.navigate(Screen.Interventions.route) }
             )
         }
 

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Declared by .ui.widget.ProtectionWidgetReceiver -->
+<!-- updatePeriodMillis is 0 on purpose: this widget is pushed on state change,
+     not polled on a timer. -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:initialLayout="@layout/widget_loading"
+    android:previewLayout="@layout/widget_loading"
+    android:minWidth="110dp"
+    android:minHeight="40dp"
+    android:maxResizeWidth="180dp"
+    android:maxResizeHeight="110dp"
+    android:targetCellWidth="2"
+    android:targetCellHeight="1"
+    android:resizeMode="horizontal"
+    android:widgetCategory="home_screen"
+    android:updatePeriodMillis="0"
+    android:description="@string/widget_protection_description" />

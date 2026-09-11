@@ -1,10 +1,13 @@
 package com.astraedus.nudge.ui.screens.settings
 
 import android.app.AppOpsManager
+import android.appwidget.AppWidgetManager
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.database.ContentObserver
 import android.net.Uri
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.Process
@@ -32,6 +35,7 @@ import androidx.compose.material.icons.outlined.QueryStats
 import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material.icons.outlined.Timer
+import androidx.compose.material.icons.outlined.Widgets
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -63,7 +67,9 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.compose.ui.res.stringResource
 import com.astraedus.nudge.BuildConfig
+import com.astraedus.nudge.R
 import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.domain.lock.LockedToggle
 import com.astraedus.nudge.domain.lock.SettingsWeakening
@@ -73,6 +79,9 @@ import com.astraedus.nudge.service.ProtectionStatus
 import com.astraedus.nudge.ui.components.AccessibilityDisclosureDialog
 import com.astraedus.nudge.ui.components.ChallengeDialog
 import com.astraedus.nudge.ui.hasGrayscalePermission
+import com.astraedus.nudge.ui.widget.ProtectionWidgetReceiver
+import com.astraedus.nudge.ui.widget.TodayWidgetReceiver
+import com.astraedus.nudge.ui.widget.TopBlockedWidgetReceiver
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import kotlinx.coroutines.launch
@@ -465,10 +474,55 @@ fun SettingsScreen(
                         }
                     }
                 )
+
+                // A widget cannot be placed on the launcher from adb: there is no `cmd appwidget
+                // add`, and `appwidget grantbind` only grants a permission Pixel Launcher already
+                // holds. Without this row, every widget QA pass needs a human to drag one out of
+                // the picker. `requestPinAppWidget` still raises a system dialog that needs a tap,
+                // but a tap is something the device-tester agent can find by text and perform.
+                //
+                // BuildConfig.DEBUG-guarded, and the guard is on the composable rather than inside
+                // the handler, so the row does not exist at all in a release build.
+                if (BuildConfig.DEBUG) {
+                    ListItem(
+                        headlineContent = { Text(stringResource(R.string.widget_pin_row_title)) },
+                        supportingContent = {
+                            Text(stringResource(R.string.widget_pin_row_subtitle))
+                        },
+                        leadingContent = {
+                            Icon(Icons.Outlined.Widgets, contentDescription = null)
+                        },
+                        modifier = Modifier.clickable { requestPinNudgeWidgets(context) }
+                    )
+                }
             }
 
             Spacer(Modifier.height(16.dp))
         }
+    }
+}
+
+/**
+ * Asks the launcher to pin each Nudge widget, one dialog at a time.
+ *
+ * Debug-only (the single call site is `BuildConfig.DEBUG`-guarded) and best-effort: a launcher that
+ * does not support pinning simply returns false, and the loop moves on rather than failing. Nothing
+ * user-facing depends on it — it exists so device QA can get a widget onto the home screen without
+ * a human dragging it out of the picker.
+ */
+private fun requestPinNudgeWidgets(context: Context) {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+    val manager = context.getSystemService(AppWidgetManager::class.java) ?: return
+    if (!manager.isRequestPinAppWidgetSupported) {
+        Toast.makeText(context, "Launcher does not support pinning", Toast.LENGTH_SHORT).show()
+        return
+    }
+    listOf(
+        TodayWidgetReceiver::class.java,
+        TopBlockedWidgetReceiver::class.java,
+        ProtectionWidgetReceiver::class.java
+    ).forEach { receiver ->
+        manager.requestPinAppWidget(ComponentName(context, receiver), null, null)
     }
 }
 

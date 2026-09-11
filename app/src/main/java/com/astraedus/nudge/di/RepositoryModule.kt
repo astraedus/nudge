@@ -16,6 +16,7 @@ import com.astraedus.nudge.domain.engine.RuleEvaluator
 import com.astraedus.nudge.domain.engine.ScheduleEvaluator
 import com.astraedus.nudge.domain.engine.TimeTracker
 import com.astraedus.nudge.domain.logging.NudgeLog
+import com.astraedus.nudge.domain.widget.WidgetRefreshSignal
 import com.astraedus.nudge.ui.screens.stats.StatsCalculator
 import com.astraedus.nudge.util.NudgeLogger
 import dagger.Module
@@ -42,14 +43,17 @@ object RepositoryModule {
         @ApplicationContext context: Context,
         usageEventDao: UsageEventDao,
         timeTracker: TimeTracker,
-        screenTimeProvider: ScreenTimeProvider
-    ): UsageRepository = UsageRepository(context, usageEventDao, timeTracker, screenTimeProvider)
+        screenTimeProvider: ScreenTimeProvider,
+        widgetRefreshSignal: WidgetRefreshSignal
+    ): UsageRepository =
+        UsageRepository(context, usageEventDao, timeTracker, screenTimeProvider, widgetRefreshSignal)
 
     @Provides
     @Singleton
     fun provideNudgePreferences(
-        @ApplicationContext context: Context
-    ): NudgePreferences = NudgePreferences(context)
+        @ApplicationContext context: Context,
+        widgetRefreshSignal: WidgetRefreshSignal
+    ): NudgePreferences = NudgePreferences(context, widgetRefreshSignal)
 
     @Provides
     @Singleton

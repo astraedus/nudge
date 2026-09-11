@@ -1,15 +1,19 @@
 package com.astraedus.nudge.ui.screens.home
 
+import android.graphics.drawable.Drawable
 import androidx.compose.runtime.Immutable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.astraedus.nudge.data.db.entity.UsageEvent
 import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.data.repository.BlockRuleRepository
+import com.astraedus.nudge.data.repository.InstalledAppsRepository
 import com.astraedus.nudge.data.repository.ScreenTimeProvider
 import com.astraedus.nudge.data.repository.UsageRepository
 import com.astraedus.nudge.domain.engine.TimeTracker
 import com.astraedus.nudge.domain.lock.ChallengeState
 import com.astraedus.nudge.ui.lock.StrictModeGate
+import com.astraedus.nudge.ui.screens.stats.InsightsCalculator
 import com.astraedus.nudge.ui.screens.stats.StatsViewModel.Companion.formatDayTotal
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
@@ -26,7 +30,17 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
+
+/** One row of the dashboard's "Blocked most this week" card. */
+@Immutable
+data class TopBlockedApp(
+    val packageName: String,
+    val label: String,
+    val icon: Drawable?,
+    val count: Int
+)
 
 @Immutable
 data class HomeUiState(
@@ -40,7 +54,9 @@ data class HomeUiState(
     val hasUsagePermission: Boolean = true,
     /** The two mini charts on the dashboard. */
     val charts: HomeCharts = HomeCharts(),
-    val weekTotalFormatted: String = "0s"
+    val weekTotalFormatted: String = "0s",
+    /** Apps that pulled hardest over the same 7 days the card above them charts. */
+    val topBlocked: List<TopBlockedApp> = emptyList()
 )
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -51,7 +67,9 @@ class HomeViewModel @Inject constructor(
     private val blockRuleRepository: BlockRuleRepository,
     private val screenTimeProvider: ScreenTimeProvider,
     private val timeTracker: TimeTracker,
-    private val homeChartsBuilder: HomeChartsBuilder
+    private val homeChartsBuilder: HomeChartsBuilder,
+    private val installedAppsRepository: InstalledAppsRepository,
+    private val insightsCalculator: InsightsCalculator
 ) : ViewModel() {
 
     private val strictModeGate = StrictModeGate(nudgePreferences)
@@ -103,7 +121,16 @@ class HomeViewModel @Inject constructor(
     private val weekEventsFlow = dayStartFlow.flatMapLatest { dayStart ->
         // Calendar arithmetic, not `6 * DAY_MS`: a DST transition inside the trailing week
         // would otherwise shift the window start an hour off true local midnight.
-        usageRepository.getEventsSince(timeTracker.startOfDayDaysBefore(dayStart, WEEK_DAYS - 1))
+        val weekStart = timeTracker.startOfDayDaysBefore(dayStart, WEEK_DAYS - 1)
+        // The boundary travels WITH the rows it selected. This chain and [screenTimeFlow] are
+        // two independent subscriptions off one [dayStartFlow], so at a midnight rollover they
+        // restart independently and, for a frame, one can be a day ahead of the other. Anything
+        // that re-derives "a week ago" from the OTHER chain's day start is therefore describing
+        // a window these rows were not queried with. Carrying it here makes the pairing
+        // structural instead of a race that merely settles within one 30 s tick.
+        usageRepository.getEventsSince(weekStart).map { events ->
+            WeekEventsSnapshot(weekStartMs = weekStart, events = events)
+        }
     }
 
     /**
@@ -145,7 +172,7 @@ class HomeViewModel @Inject constructor(
     ) { enabled, activeRuleCount, counts, screenTime, weekEvents ->
         val charts = homeChartsBuilder.build(
             weeklyTotals = screenTime.weeklyTotals,
-            weekEvents = weekEvents,
+            weekEvents = weekEvents.events,
             todayStartMs = screenTime.dayStartMs
         )
         HomeUiState(
@@ -158,9 +185,54 @@ class HomeViewModel @Inject constructor(
             allTimeChangedMindCount = counts.allTimeChangedMind,
             hasUsagePermission = screenTime.hasPermission,
             charts = charts,
-            weekTotalFormatted = timeTracker.formatDuration(charts.weekTotalMs)
+            weekTotalFormatted = timeTracker.formatDuration(charts.weekTotalMs),
+            topBlocked = topBlocked(weekEvents)
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), HomeUiState())
+
+    /**
+     * The dashboard's "Blocked most this week" rows.
+     *
+     * Reads the SAME rows [weekEventsFlow] already holds, windowed by the boundary those rows
+     * were actually SELECTED with rather than one re-derived here, so the card cannot describe
+     * a week its own data does not cover. It goes through [InsightsCalculator.topBlockedApps],
+     * the one per-app aggregation in the app, so this card and the Interventions leaderboard
+     * cannot disagree about which app pulled hardest either. No new DAO query, no new Room
+     * subscription.
+     *
+     * Label and icon resolution is on IO: both resolvers are `suspend` PackageManager reads,
+     * memory-cached (negative misses included), so this is a map lookup in steady state and a
+     * handful of binder calls exactly once, but that once must not land on the main thread,
+     * which is where the `stateIn(viewModelScope)` transform runs.
+     */
+    private suspend fun topBlocked(weekEvents: WeekEventsSnapshot): List<TopBlockedApp> {
+        val stats = insightsCalculator.topBlockedApps(
+            events = weekEvents.events,
+            sinceMs = weekEvents.weekStartMs,
+            nowMs = System.currentTimeMillis(),
+            limit = TOP_BLOCKED_LIMIT
+        )
+        if (stats.isEmpty()) return emptyList()
+        return withContext(Dispatchers.IO) {
+            stats.map { stat ->
+                TopBlockedApp(
+                    packageName = stat.packageName,
+                    label = insightsCalculator.appDisplayLabel(
+                        stat.packageName,
+                        installedAppsRepository.resolveAppName(stat.packageName)
+                    ),
+                    icon = installedAppsRepository.resolveIcon(stat.packageName),
+                    count = stat.total
+                )
+            }
+        }
+    }
+
+    /** A week of block decisions, carrying the window boundary they were queried with. */
+    private data class WeekEventsSnapshot(
+        val weekStartMs: Long,
+        val events: List<UsageEvent>
+    )
 
     private data class CountsSnapshot(
         val blockedToday: Int,
@@ -204,5 +276,8 @@ class HomeViewModel @Inject constructor(
         /** Days of events behind the trend chart. Matches the screen-time window's own width. */
         private const val WEEK_DAYS = ScreenTimeProvider.WEEK_DAYS
         private const val POLL_INTERVAL_MS = 30_000L
+
+        /** Rows on the "Blocked most this week" card. Five fits without the card scrolling. */
+        private const val TOP_BLOCKED_LIMIT = 5
     }
 }
