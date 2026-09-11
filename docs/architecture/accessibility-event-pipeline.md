@@ -73,7 +73,16 @@ sitting ends for three reasons and no others.
 |---|---|---|
 | `WENT_HOME` | revoked | **untouched** — a trip home must not refill a time budget |
 | `SCREEN_OFF` | revoked | **untouched**, same reason |
-| `ANOTHER_APP_HELD_FOREGROUND` | revoked | reset — and the window is `InteractionTracker.SESSION_EXPIRY_MS`, the same constant, so the two can no longer disagree about what a sitting is |
+| `ANOTHER_APP_HELD_FOREGROUND` | revoked | reset once `InteractionTracker.SESSION_EXPIRY_MS` also passes |
+
+**Two windows, not one.** The sitting's return window (`SittingTracker.PASSTHROUGH_RETURN_WINDOW_MS`,
+2 minutes) is deliberately NOT `InteractionTracker.SESSION_EXPIRY_MS` (5 minutes), though sharing one
+constant reads tidier and was the first thing tried. They answer different questions: the session
+expiry asks *"should the time budget refill?"*, where generous is safe because the failure mode is a
+user farming a fresh budget; the return window asks *"did the user leave?"* and governs permission to
+skip a delay, where generous is a bypass. At five minutes a four-minute excursion keeps the pass, and
+ping-ponging under the window keeps it alive indefinitely. Two minutes is long enough to browse a
+gallery, short enough that using another app costs a fresh delay.
 
 **An unknown package is never evidence the user left.** That single sentence is the fix for #28. A
 photo picker, a share sheet, a permission dialog, a custom tab, a notification hop and an OEM volume
@@ -198,8 +207,11 @@ as a different stream than the device produced, and the tests would stay green a
 data — the worst failure a fixture suite can have.
 
 The trace costs one boolean test per event in a release build with debug logging off. The single
-expensive field, `viewIdResourceName`, is a binder read; the factory pays it only while tracing, and
-the trace reports its measured cost periodically so "can we afford this?" is answered with numbers.
+expensive field, `viewIdResourceName`, is a binder read with two callers on different budgets: the
+factory reads it into the RECORD only while tracing, but `InteractionHandler` reads it in every build
+including release, once per scroll event, because telling a sheet from the feed behind it is a
+production decision. The trace reports the measured cost periodically, so "can we afford this?" is
+answered with numbers rather than opinion.
 
 ### Probes that need no gestures
 

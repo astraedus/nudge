@@ -1,9 +1,12 @@
 package com.astraedus.nudge.service
 
 import android.view.accessibility.AccessibilityEvent
+import com.astraedus.nudge.domain.sitting.SittingTracker
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import com.astraedus.nudge.domain.events.AccessibilityEventRecord
+import com.astraedus.nudge.domain.events.EventClassifier
 import com.astraedus.nudge.domain.events.ForegroundSignal
 import com.astraedus.nudge.domain.sitting.SittingEvent
 import org.junit.Test
@@ -27,18 +30,35 @@ class HomeScreenPassthroughTest {
     private val pixelLauncher = "com.google.android.apps.nexuslauncher"
     private val launchers = setOf(pixelLauncher, "com.android.launcher3")
 
+    private val classifier = EventClassifier(
+        ownPackageName = ownPackage,
+        systemPackages = NudgeAccessibilityService.SYSTEM_PACKAGES,
+        imePackages = NudgeAccessibilityService.IME_PACKAGES,
+        frameworkPackage = NudgeAccessibilityService.FRAMEWORK_PACKAGE
+    )
+
+    /**
+     * Runs the REAL decision, not a copy of it.
+     *
+     * This used to call `NudgeAccessibilityService.isHomeScreenForeground`, which issue #28 left
+     * with no production caller once `EventClassifier` took over the question. A test that keeps a
+     * dead twin alive is worse than no test: it goes on passing while the code that actually ships
+     * diverges from it. Same reason `clearIfAppChanged` was deleted rather than kept "for the tests".
+     */
     private fun wentHome(
         packageName: String,
         eventType: Int = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
         launcherPackages: Set<String> = launchers,
         currentImePackage: String? = null
-    ): Boolean = NudgeAccessibilityService.isHomeScreenForeground(
-        eventType = eventType,
-        packageName = packageName,
+    ): Boolean = classifier.classify(
+        record = AccessibilityEventRecord(
+            type = AccessibilityEventRecordFactory.eventType(eventType),
+            packageName = packageName
+        ),
+        currentImePackage = currentImePackage,
         launcherPackages = launcherPackages,
-        ownPackageName = ownPackage,
-        currentImePackage = currentImePackage
-    )
+        pipOnlyPackages = emptySet()
+    ) is ForegroundSignal.Home
 
     // --- The launcher IS leaving the app ---
 
@@ -208,7 +228,7 @@ class HomeScreenPassthroughTest {
         )
 
         // Held past the window, it is a real app switch and the pass is gone.
-        val window = InteractionTracker.SESSION_EXPIRY_MS
+        val window = SittingTracker.PASSTHROUGH_RETURN_WINDOW_MS
         passthrough.onForegroundSignal(
             ForegroundSignal.AppWindow("com.instagram.android"),
             1_000 + window
