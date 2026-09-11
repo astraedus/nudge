@@ -88,7 +88,14 @@ class InteractionHandler(
         if (!counterCache.isCounterEnabled(packageName)) return
 
         val now = clock()
-        val result = counter.onEvent(record, now, sourceViewIdFor(record, now, resolveSourceViewId))
+        // Only a scroll needs to know WHICH view moved. Resolving it for a click would pay a binder
+        // round trip for an answer the click path does not read.
+        val sourceViewId = if (record.type == A11yEventType.VIEW_SCROLLED) {
+            sourceViewIdFor(record, now, resolveSourceViewId)
+        } else {
+            null
+        }
+        val result = counter.onEvent(record, now, sourceViewId)
         if (!result.counted) {
             // Logged at debug because "the counter did not move" and "the counter is broken" were
             // indistinguishable in logcat, which is the ambiguity that cost this repo a release
