@@ -34,7 +34,19 @@ nudge_lines() {
 APK="${APK:-/tmp/nudge-28/app/build/outputs/apk/debug/app-debug.apk}"
 if [ -f "$APK" ]; then
   echo "-- installing $(basename "$APK") --"
-  adb install -r "$APK" 2>&1 | tail -1
+  # -d allows a version DOWNGRADE. Another agent's build can be newer than this branch's, and
+  # without it the install fails INSTALL_FAILED_VERSION_DOWNGRADE. Preferred over uninstalling,
+  # which would wipe the rules this run depends on.
+  #
+  # The output is shown in FULL, not piped through `tail -1`: a failed install under `set -e` killed
+  # a whole run and printed nothing but the banner, so "the device is busy" and "the APK will not
+  # install" looked identical. An abort must say why.
+  if ! INSTALL_OUT=$(adb install -r -d "$APK" 2>&1); then
+    echo "$INSTALL_OUT"
+    echo "ABORT: install failed -- refusing to verify against whatever build is already on the device"
+    exit 1
+  fi
+  echo "$INSTALL_OUT" | tail -1
   adb shell settings put secure enabled_accessibility_services "$SVC" >/dev/null 2>&1
   adb shell settings put secure accessibility_enabled 1 >/dev/null 2>&1
   sleep 3
@@ -87,8 +99,12 @@ adb shell am force-stop "$YT" >/dev/null 2>&1; sleep 1
 adb logcat -c || true
 launch; sleep 12
 echo "-- forcing an accessibility rebind (settings toggle, no gestures) --"
-adb shell settings put secure enabled_accessibility_services "" >/dev/null 2>&1
-sleep 2
+# `settings put <key> ""` is "Bad arguments" (exit 255), which under `set -e` killed this whole
+# sequence AND left the service enabled -- so the run would have "passed" without ever rebinding.
+# `delete` is the supported way to clear a secure setting.
+adb shell settings delete secure enabled_accessibility_services >/dev/null 2>&1 || true
+adb shell settings put secure accessibility_enabled 0 >/dev/null 2>&1 || true
+sleep 3
 adb shell settings put secure enabled_accessibility_services "$SVC" >/dev/null 2>&1
 adb shell settings put secure accessibility_enabled 1 >/dev/null 2>&1
 sleep 4
@@ -98,19 +114,22 @@ adb logcat -d > /tmp/nudge-verify-b.log
 
 nudge_lines /tmp/nudge-verify-b.log
 echo
-BLOCKS=$(grep -c "handling block package=$YT" /tmp/nudge-verify-b.log || true)
-# A rebind that did not happen would give 1 block and a vacuous PASS. The service logs its own
-# connect, so require the evidence that the thing under test actually occurred.
-REBINDS=$(grep -c "accessibility service connected\|onServiceConnected" /tmp/nudge-verify-b.log || true)
-CONNECTS=$(grep -c "counter overlay service context set" /tmp/nudge-verify-b.log || true)
+TOTAL_BLOCKS=$(grep -c "handling block package=$YT" /tmp/nudge-verify-b.log || true)
+CONNECTS=$(grep -c "accessibility service connected" /tmp/nudge-verify-b.log || true)
+# Blocks BEFORE the rebind are the ordinary cold-launch block (plus the overlay-bypass re-assert
+# that immediately follows it). Only what happens AFTER the service reconnects tests anything, so
+# the verdict is measured in that window rather than over the whole run -- counting the whole run
+# is how a pre-existing launch behaviour gets reported as this fix failing.
+BLOCKS_AFTER=$(awk '/accessibility service connected/{seen=1; next} seen && /handling block package='"$YT"'/{n++} END{print n+0}' /tmp/nudge-verify-b.log)
 
-echo "B RESULT: blocks of YouTube = $BLOCKS"
-echo "          service connects observed = $CONNECTS (the toggle must actually have rebound it)"
-if [ "$CONNECTS" -lt 2 ]; then
-  echo "          INCONCLUSIVE: fewer than two binds in this run, so the rebind under test may not"
-  echo "                        have happened -- a PASS here would be vacuous. Re-run."
-elif [ "$BLOCKS" -le 1 ]; then
-  echo "          PASS: the grant survived a real rebind ($BLOCKS block, $CONNECTS binds)"
+echo "B RESULT: blocks before the rebind = $((TOTAL_BLOCKS - BLOCKS_AFTER)) (cold launch; expected)"
+echo "          blocks AFTER the rebind  = $BLOCKS_AFTER   <- this is the test"
+echo "          service reconnects observed = $CONNECTS"
+if [ "$CONNECTS" -lt 1 ]; then
+  echo "          INCONCLUSIVE: no reconnect in this run, so nothing was tested -- a PASS would be"
+  echo "                        vacuous. Check the settings toggle actually disabled the service."
+elif [ "$BLOCKS_AFTER" -eq 0 ]; then
+  echo "          PASS: the grant survived the rebind -- no re-block of a user who never left"
 else
-  echo "          FAIL: $BLOCKS blocks -- the rebind re-blocked a user who never left"
+  echo "          FAIL: $BLOCKS_AFTER block(s) after the rebind -- it re-blocked a user who never left"
 fi
