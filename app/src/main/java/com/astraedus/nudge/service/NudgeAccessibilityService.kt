@@ -1599,11 +1599,18 @@ class NudgeAccessibilityService : AccessibilityService() {
     private fun onGlobalDisabled() {
         entryPoint.interactionTracker().clearAllCooldowns()
         entryPoint.emergencyPassManager().cancelAll()
-        // A disabled Nudge must behave as if uninstalled, and a live sitting is enforcement state:
-        // leaving one standing would mean the first app re-enabling Nudge finds itself mid-sitting
-        // with a grant it never earned in this session.
-        entryPoint.passthroughManager().resetSitting()
-        serviceScope.launch(Dispatchers.Main) { hideAllOverlays() }
+        serviceScope.launch(Dispatchers.Main) {
+            // A disabled Nudge must behave as if uninstalled, and a live sitting is enforcement
+            // state: leaving one standing would mean the first app re-enabling Nudge finds itself
+            // mid-sitting with a grant it never earned in this session.
+            //
+            // ON MAIN, not on this collector's IO scope. `SittingTracker` holds plain fields that
+            // `onAccessibilityEvent` writes from the main thread, so an IO-thread reset would race
+            // them — the exact hop `onWebDomainForeground` already makes for `InteractionTracker`,
+            // and which that class's own doc requires.
+            entryPoint.passthroughManager().resetSitting()
+            hideAllOverlays()
+        }
     }
 
     private fun handleWindowContentChanged(record: AccessibilityEventRecord) {
