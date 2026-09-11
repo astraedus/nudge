@@ -166,6 +166,17 @@ class EventDispatchOrderContractTest {
             "the app-switch passthrough clear is issue #28 — the sitting owns revocation now",
             body.contains("clearIfAppChanged(")
         )
+        assertFalse(
+            "the same defect one axis over: leaving a browser for a picker or a share sheet must " +
+                "not revoke a completed WEB delay either. The sitting owns both axes; a genuine " +
+                "navigation is caught by WebDomainGate.EVALUATE, which actually knows the domain " +
+                "changed",
+            body.contains("clearWebGrant()")
+        )
+        assertTrue(
+            "leaving the browser must still stop the web foreground-time CLOCK, which is not a grant",
+            body.contains("endWebSession(\"left_the_browser\")")
+        )
     }
 
     /**

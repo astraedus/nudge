@@ -1214,13 +1214,18 @@ class NudgeAccessibilityService : AccessibilityService() {
             grayscaleActiveForPackage = null
         }
 
-        // If leaving a browser, the user has stopped being on whatever site they earned entry to:
-        // drop the web grant and end the web session's clock. The app-level grant is a separate
-        // axis and is handled by clearIfAppChanged further down.
+        // Leaving a browser stops the web session's CLOCK — the user is no longer looking at the
+        // site, and the clock restarts by itself on return.
+        //
+        // It deliberately does NOT drop the web grant any more. That was issue #28 one axis over:
+        // opening a photo picker or a share sheet from Chrome is not a browser package, so this
+        // branch fired and the completed delay for the SITE was revoked exactly as the app-level one
+        // was. Both axes now expire with the sitting (`PassthroughManager.clear()` drops both), and
+        // a genuine navigation away is still caught by `WebDomainGate.Action.EVALUATE` below, which
+        // is the check that actually knows the domain changed.
         if (entryPoint.webDomainDetector().isBrowser(lastPackage ?: "") &&
             !entryPoint.webDomainDetector().isBrowser(packageName)
         ) {
-            passthrough.clearWebGrant()
             endWebSession("left_the_browser")
         }
 
