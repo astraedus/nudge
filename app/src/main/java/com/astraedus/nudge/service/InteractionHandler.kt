@@ -54,10 +54,20 @@ class InteractionHandler(
      */
     var activeReelLabel: String? = null
 
-    /** Last `viewIdResourceName` resolved for a scrolling source, and when. See [sourceViewIdFor]. */
-    private var cachedSourceViewId: String? = null
-    private var cachedSourceViewIdAtMs: Long = 0L
-    private var cachedSourceViewIdKey: Pair<Int, String?>? = null
+    /** A `viewIdResourceName` resolved for one scrolling source, and when. See [sourceViewIdFor]. */
+    private class ResolvedSourceId(val viewId: String?, val atMs: Long)
+
+    /**
+     * Resolved source ids, keyed by the free part of a source's identity.
+     *
+     * Per key, NOT a single slot. A single slot looks like a throttle and is not one: two scroll
+     * sources alternating — a feed and the tab pager above it, which the Instagram capture shows
+     * arriving interleaved from one window — would miss the cache on every event and pay a binder
+     * IPC each time, which is the exact cost the throttle exists to prevent. Bounded by the number
+     * of distinct (windowId, className) pairs on a screen, which is a handful, and cleared with the
+     * sitting.
+     */
+    private val resolvedSourceIds = mutableMapOf<Pair<Int, String?>, ResolvedSourceId>()
 
     /**
      * Feed one click or scroll event.
@@ -142,17 +152,16 @@ class InteractionHandler(
         resolve: () -> String?
     ): String? {
         val key = record.windowId to record.className
-        val stale = nowMs - cachedSourceViewIdAtMs >= SOURCE_RESOLVE_THROTTLE_MS
-        if (!stale && cachedSourceViewIdKey == key) return cachedSourceViewId
-        cachedSourceViewIdAtMs = nowMs
-        cachedSourceViewIdKey = key
-        cachedSourceViewId = try {
+        val cached = resolvedSourceIds[key]
+        if (cached != null && nowMs - cached.atMs < SOURCE_RESOLVE_THROTTLE_MS) return cached.viewId
+        val viewId = try {
             resolve()
         } catch (e: Exception) {
             logger.w("failed to resolve scroll source view id", e)
             null
         }
-        return cachedSourceViewId
+        resolvedSourceIds[key] = ResolvedSourceId(viewId, nowMs)
+        return viewId
     }
 
     /**
@@ -248,9 +257,7 @@ class InteractionHandler(
     fun onSittingChanged() {
         counter.reset()
         activeReelLabel = null
-        cachedSourceViewId = null
-        cachedSourceViewIdKey = null
-        cachedSourceViewIdAtMs = 0L
+        resolvedSourceIds.clear()
     }
 
     fun isCounterVisible(): Boolean = counterOverlayManager.isVisible()
