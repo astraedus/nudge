@@ -42,11 +42,15 @@ import javax.inject.Singleton
 class PassthroughManager @Inject constructor() {
 
     /**
-     * The one definition of "the user is in a sitting with app X", shared with the interaction
-     * counter and the time-kick baseline through [InteractionTracker.SESSION_EXPIRY_MS] -- the same
-     * constant, so "still the same sitting" cannot mean two different things in one app.
+     * The one definition of "the user is in a sitting with app X".
+     *
+     * Its return window is deliberately SHORTER than [InteractionTracker.SESSION_EXPIRY_MS] -- see
+     * [SittingTracker]'s constructor doc. Sharing one constant reads tidier and is wrong: the
+     * session expiry answers "should the time budget refill" (where generous is safe), while this
+     * answers "did the user leave" and governs permission to skip a delay (where generous is a
+     * bypass).
      */
-    private val sitting = SittingTracker(returnWindowMs = InteractionTracker.SESSION_EXPIRY_MS)
+    private val sitting = SittingTracker()
 
     @Volatile var lastPackage: String? = null
         private set

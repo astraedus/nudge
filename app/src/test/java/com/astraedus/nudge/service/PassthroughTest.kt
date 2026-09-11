@@ -5,6 +5,7 @@ import com.astraedus.nudge.domain.events.A11yEventType
 import com.astraedus.nudge.domain.events.AccessibilityEventRecord
 import com.astraedus.nudge.domain.events.EventClassifier
 import com.astraedus.nudge.domain.events.ForegroundSignal
+import com.astraedus.nudge.domain.sitting.SittingTracker
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -68,7 +69,7 @@ class PassthroughTest {
         )
         manager.onForegroundSignal(
             ForegroundSignal.AppWindow("com.example.beta"),
-            InteractionTracker.SESSION_EXPIRY_MS
+            SittingTracker.PASSTHROUGH_RETURN_WINDOW_MS
         )
 
         assertNull(manager.lastPackage)

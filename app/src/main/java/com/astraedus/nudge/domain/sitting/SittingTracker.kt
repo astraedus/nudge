@@ -102,10 +102,31 @@ class SittingTracker(
     /**
      * How long another app must hold the foreground before the sitting it interrupted is over.
      *
-     * Defaults to [com.astraedus.nudge.service.InteractionTracker.SESSION_EXPIRY_MS] at the call
-     * site rather than being duplicated here, so "the same sitting" means one thing in this app.
+     * **Deliberately NOT `InteractionTracker.SESSION_EXPIRY_MS`,** though the temptation to share
+     * one constant is strong and was the first thing tried. The two answer different questions:
+     *
+     *  - `SESSION_EXPIRY_MS` (5 minutes) answers *"should the time budget refill?"*. Generous is
+     *    right there, because the failure mode is a user farming a fresh budget by tabbing out.
+     *  - This answers *"did the user leave?"*, and the grant it governs is permission to skip a
+     *    delay the user asked to be given. Generous is WRONG here: at five minutes, a four-minute
+     *    excursion into another app keeps the pass alive, and ping-ponging A → B → A under the
+     *    window keeps it alive indefinitely, because every return clears the away clock. That is an
+     *    ordinary app switch, and re-blocking it is the behaviour the user configured.
+     *
+     * The value is a judgement about how long a SUB-FLOW lasts, and a sub-flow is bounded by the
+     * user's task inside it, not by the few seconds a scripted capture happens to take. Browsing a
+     * gallery for the right photo, or working through a crop screen, routinely runs past thirty
+     * seconds — so a short window would reintroduce the reported bug for exactly the user who takes
+     * their time. Conversely a notification hop into another app that lasts more than a couple of
+     * minutes is a real switch and should re-arm the delay. [PASSTHROUGH_RETURN_WINDOW_MS] sits
+     * between those.
+     *
+     * A timer is the approximation, not the goal. `UsageEvents.Event.getTaskRootPackageName()`
+     * (API 29+) can distinguish a sub-flow from a real switch OUTRIGHT — a picker launched from the
+     * granted app has that app as its task root — which would demote this window to a fallback for
+     * API 26-28 rather than the mechanism. Recorded in `docs/BACKLOG.md`.
      */
-    private val returnWindowMs: Long
+    private val returnWindowMs: Long = PASSTHROUGH_RETURN_WINDOW_MS
 ) {
 
     /** The app whose sitting is currently alive, or null when there is none. */
@@ -205,5 +226,17 @@ class SittingTracker(
         currentApp = null
         awaySinceMs = null
         return SittingEvent.Ended(current, cause)
+    }
+
+    companion object {
+        /**
+         * How long another app must hold the foreground before the sitting it interrupted ends.
+         *
+         * Two minutes: long enough to browse a gallery or finish a crop screen without losing a pass
+         * that was already earned, short enough that going off to use another app costs a fresh
+         * delay. See the constructor doc for why this is NOT `InteractionTracker.SESSION_EXPIRY_MS`
+         * — the two windows answer different questions and are deliberately different lengths.
+         */
+        const val PASSTHROUGH_RETURN_WINDOW_MS = 2L * 60L * 1000L
     }
 }

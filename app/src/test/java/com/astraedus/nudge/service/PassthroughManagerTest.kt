@@ -1,5 +1,6 @@
 package com.astraedus.nudge.service
 
+import com.astraedus.nudge.domain.sitting.SittingTracker
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -90,7 +91,7 @@ class PassthroughManagerTest {
         manager.onForegroundSignal(ForegroundSignal.AppWindow("com.example.beta"), 0)
         manager.onForegroundSignal(
             ForegroundSignal.AppWindow("com.example.beta"),
-            InteractionTracker.SESSION_EXPIRY_MS
+            SittingTracker.PASSTHROUGH_RETURN_WINDOW_MS
         )
 
         assertNull(manager.lastPackage)
