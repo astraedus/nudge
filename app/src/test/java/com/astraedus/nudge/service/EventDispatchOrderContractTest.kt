@@ -289,6 +289,38 @@ class EventDispatchOrderContractTest {
     }
 
     /**
+     * Detection must be REPORTED before it is acted on, null included.
+     *
+     * `detectAndEvaluateFeature` did `detectFeature(...) ?: return`, so `noteDetectedFeature` was
+     * only ever reached with a recognised feature. The handler's null branch -- whose entire job is
+     * to notice that the caption no longer describes what is on screen -- was therefore unreachable
+     * from production, and the caption stayed stuck to whatever surface last set it (issue #28
+     * FAIL 2, device QA 2026-09-12).
+     *
+     * This is a source-level pin because it is an ORDERING fact: the handler's own tests pass with
+     * or without it, since they call `noteDetectedFeature(pkg, null)` directly. Only the caller can
+     * be wrong, and only here is that visible.
+     */
+    @Test
+    fun `the feature detector reports its result before the null early-return`() {
+        val start = source.indexOf("private fun detectAndEvaluateFeature(")
+        assertTrue("detectAndEvaluateFeature must exist", start >= 0)
+        val end = source.indexOf("\n    private fun ", start + 1)
+        val body = stripComments(source.substring(start, if (end > start) end else source.length))
+
+        assertFalse(
+            "detectFeature must not early-return on null before the handler is told -- that is what " +
+                "made the caption invalidation unreachable",
+            body.contains("detectFeature(packageName, rootNode) ?: return")
+        )
+        val note = body.indexOf("noteDetectedFeature(")
+        val nullReturn = body.indexOf("if (feature == null) return")
+        assertTrue("the handler must be told the detection result", note >= 0)
+        assertTrue("a null result must still stop the BLOCK evaluation", nullReturn >= 0)
+        assertTrue("but only AFTER the handler has been told", note < nullReturn)
+    }
+
+    /**
      * The trace has to see the events that get DROPPED — a picture-in-picture bubble, our own
      * window, a keyboard, a system surface — because those are what a report in this family turns
      * out to be about. A trace that only saw the events we already act on would record our
