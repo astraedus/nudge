@@ -60,9 +60,24 @@ adb pull /sdcard/vA.png /home/astraedus/Pictures/screenshots/nudge-issue28-verif
 
 nudge_lines /tmp/nudge-verify-a.log
 echo
-echo "A RESULT: captions shown = [$(grep -oE 'counter overlay shown label=[a-z]+' /tmp/nudge-verify-a.log | sed 's/.*label=//' | tr '\n' ' ')]"
-echo "          caption updates = [$(grep -oE 'counter overlay label updated to [a-z]+' /tmp/nudge-verify-a.log | sed 's/.*to //' | tr '\n' ' ')]"
-echo "          PASS if the LAST caption is scrolls/taps, FAIL if it is shorts"
+CAPTIONS=$(grep -oE 'counter overlay (shown label=|label updated to )[a-z]+' /tmp/nudge-verify-a.log \
+  | sed -E 's/.*(label=|to )//' | tr '\n' ' ')
+LAST_CAPTION=$(echo "$CAPTIONS" | awk '{print $NF}')
+COUNTED=$(grep -c 'interaction counted' /tmp/nudge-verify-a.log || true)
+
+echo "A RESULT: captions over time = [$CAPTIONS]"
+echo "          interactions counted = $COUNTED"
+# Two different failures, reported differently on purpose. A run where NOTHING counted cannot say
+# anything about the caption, and calling that a caption FAIL would send the next person hunting the
+# wrong bug -- the same "one error string, two causes" trap this repo has already paid for once.
+if [ "$COUNTED" -eq 0 ]; then
+  echo "          INCONCLUSIVE: nothing was counted on the feed, so the caption was never asked to"
+  echo "                        update. Re-run; check the swipes landed on a scrollable feed."
+elif [ "$LAST_CAPTION" = "shorts" ] || [ "$LAST_CAPTION" = "reels" ] || [ "$LAST_CAPTION" = "videos" ]; then
+  echo "          FAIL: the last caption is '$LAST_CAPTION' -- a feature caption survived onto the feed"
+else
+  echo "          PASS: the last caption is '$LAST_CAPTION' (generic), after $COUNTED counted interactions"
+fi
 echo "          screenshot: ~/Pictures/screenshots/nudge-issue28-verify-feed-caption.png"
 
 echo
