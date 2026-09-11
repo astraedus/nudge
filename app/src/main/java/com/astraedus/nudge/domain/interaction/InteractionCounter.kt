@@ -123,13 +123,18 @@ class InteractionCounter(
     private class SourceState {
         var lastIndex: Int = UNSET_INDEX
         var accumulatedPx: Int = 0
-        var lastTransitionAtMs: Long = 0L
+
+        /** When this source last produced an event. Used only to evict the stalest source. */
+        var lastSeenMs: Long = 0L
     }
 
     private val sources = mutableMapOf<SourceKey, SourceState>()
     private var primary: SourceKey? = null
     private var primaryLastTransitionMs: Long = 0L
     private var lastClickAtMs: Long = 0L
+
+    /** How many scroll sources are currently tracked. Exposed so the bound is testable. */
+    fun trackedSourceCount(): Int = sources.size
 
     /** Forget everything. Called when the sitting changes, so state cannot leak between apps. */
     fun reset() {
@@ -175,7 +180,8 @@ class InteractionCounter(
         if (isHorizontalOnly(record)) return CountResult.none("horizontal")
 
         val key = SourceKey(record.windowId, record.className, sourceViewId)
-        val state = sources.getOrPut(key) { SourceState() }
+        val state = sources.getOrPut(key) { evictStalestIfFull(nowMs); SourceState() }
+        state.lastSeenMs = nowMs
 
         val index = itemIndexOf(record)
         val counted: Int
@@ -209,9 +215,27 @@ class InteractionCounter(
         // scrolled while the feed behind it is still live is not a reel watched.
         if (!claimPrimary(key, nowMs)) return CountResult.none("secondary_source")
 
-        state.lastTransitionAtMs = nowMs
         primaryLastTransitionMs = nowMs
         return CountResult(counted, CountMode.ITEMS, reason)
+    }
+
+    /**
+     * Keep [sources] bounded.
+     *
+     * A sitting is not short and an app is not one screen: every activity gets a fresh `windowId`,
+     * so an hour in one app can mint a new source key many times over. The entries are tiny, but
+     * this is an accessibility service that runs for days on a 3GB device, and an unbounded map on
+     * the hot path is the kind of thing that is only ever noticed as "the phone got slow".
+     *
+     * Evicting the stalest is safe: a source that has not fired in a while is one the user is no
+     * longer scrolling, and the cost of being wrong is one `source_first_seen` event — the same zero
+     * a genuinely new source costs.
+     */
+    private fun evictStalestIfFull(nowMs: Long) {
+        if (sources.size < MAX_TRACKED_SOURCES) return
+        val stalest = sources.minByOrNull { it.value.lastSeenMs }?.key ?: return
+        if (stalest == primary) primary = null
+        sources.remove(stalest)
     }
 
     /**
@@ -267,5 +291,11 @@ class InteractionCounter(
 
         /** Duplicate-delivery guard for clicks. */
         const val DEFAULT_CLICK_DEBOUNCE_MS = 300L
+
+        /**
+         * Upper bound on distinct scroll sources tracked within one sitting. Comfortably more than
+         * any real screen has; it exists so the map cannot grow with the length of the sitting.
+         */
+        const val MAX_TRACKED_SOURCES = 32
     }
 }

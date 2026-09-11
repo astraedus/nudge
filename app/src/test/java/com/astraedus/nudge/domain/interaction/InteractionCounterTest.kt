@@ -422,4 +422,49 @@ class InteractionCounterTest {
         assertTrue("after reset, the first source to move must be able to claim primary", claim.counted)
         assertEquals(1, claim.count)
     }
+
+    /**
+     * A sitting is not short and an app is not one screen: every activity gets a fresh `windowId`,
+     * so an hour in one app mints new source keys steadily. This is an accessibility service that
+     * runs for days on a 3GB device, and an unbounded map on its hottest path is only ever noticed
+     * as "the phone got slow".
+     */
+    @Test
+    fun `the tracked-source map is bounded however many screens a sitting visits`() {
+        val counter = InteractionCounter()
+        repeat(InteractionCounter.MAX_TRACKED_SOURCES * 10) { i ->
+            counter.onEvent(scroll(windowId = i, fromIndex = 0), 1_000L + i)
+            counter.onEvent(scroll(windowId = i, fromIndex = 1), 1_001L + i)
+        }
+        assertTrue(
+            "sources must stay bounded by MAX_TRACKED_SOURCES",
+            counter.trackedSourceCount() <= InteractionCounter.MAX_TRACKED_SOURCES
+        )
+    }
+
+    /**
+     * Eviction must not silently break counting: the source the user is actually scrolling is the
+     * one firing events, so it is never the stalest, and it keeps counting across the eviction of
+     * screens they have left.
+     */
+    @Test
+    fun `the source being scrolled keeps counting while stale ones are evicted`() {
+        val counter = InteractionCounter()
+        var clock = 1_000L
+        // Establish the live feed as primary.
+        counter.onEvent(scroll(windowId = 1, fromIndex = 0), clock++)
+        assertEquals(1, counter.onEvent(scroll(windowId = 1, fromIndex = 1), clock++).count)
+
+        // Churn through far more screens than the cap, keeping the feed active throughout.
+        var feedCounts = 0
+        repeat(InteractionCounter.MAX_TRACKED_SOURCES * 3) { i ->
+            counter.onEvent(scroll(windowId = 1_000 + i, fromIndex = 0), clock++)
+            feedCounts += counter.onEvent(scroll(windowId = 1, fromIndex = 2 + i), clock++).count
+        }
+        assertEquals(
+            "every forward move of the live source must still count",
+            InteractionCounter.MAX_TRACKED_SOURCES * 3,
+            feedCounts
+        )
+    }
 }
