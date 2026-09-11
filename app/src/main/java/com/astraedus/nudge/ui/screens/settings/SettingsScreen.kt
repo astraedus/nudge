@@ -70,7 +70,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.res.stringResource
 import com.astraedus.nudge.BuildConfig
 import com.astraedus.nudge.R
-import com.astraedus.nudge.data.preferences.NudgePreferences
+import com.astraedus.nudge.di.PreferencesEntryPoint
 import com.astraedus.nudge.domain.lock.LockedToggle
 import com.astraedus.nudge.domain.lock.SettingsWeakening
 import com.astraedus.nudge.domain.lock.StrictModeChallenge
@@ -102,7 +102,11 @@ fun SettingsScreen(
     val accessibilityEnabled = permissionStates.accessibility
     val overlayEnabled = permissionStates.overlay
     val usageStatsEnabled = permissionStates.usageStats
-    val preferences = remember { NudgePreferences(context.applicationContext) }
+    // The Hilt singleton, NOT a hand-built instance. This screen WRITES Strict Mode, which the
+    // Protection widget renders, and a hand-built NudgePreferences carries WidgetRefreshSignal.NONE
+    // - so it would write correctly and push nothing, leaving the widget offering a toggle the
+    // commitment lock has already taken away.
+    val preferences = remember { PreferencesEntryPoint.preferences(context) }
     val debugLoggingEnabled by preferences.isDebugLoggingEnabled.collectAsStateWithLifecycle(initialValue = false)
     val contentFilterEnabled by preferences.contentFilterEnabled.collectAsStateWithLifecycle(initialValue = false)
     val contentFilterStrictKeywords by preferences.contentFilterStrictKeywords.collectAsStateWithLifecycle(initialValue = false)

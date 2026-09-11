@@ -159,4 +159,61 @@ class WidgetRefreshCoverageContractTest {
 
         assertTrue(failures.joinToString("\n"), failures.isEmpty())
     }
+
+    /**
+     * A file that WRITES a widget-visible preference must not build its own `NudgePreferences`.
+     *
+     * `NudgePreferences(context)` is constructible by hand, and `widgetRefreshSignal` defaults to
+     * `NONE`, so a hand-built instance writes correctly and pushes nothing. That is not a
+     * hypothetical: `SettingsScreen` owns the Strict Mode toggle — the only way a user turns the
+     * commitment lock on — and built its own instance, so the push added to `setStrictModeEnabled`
+     * was correct, tested, and unreachable from the one path anybody actually takes. The widget
+     * went on offering a toggle the lock had already taken away.
+     *
+     * Read-only screens may still construct one (DataStore is process-wide, so they see the same
+     * values); it is the combination of hand-built AND writing that is banned. Writers go through
+     * `di/PreferencesEntryPoint`.
+     */
+    @Test
+    fun `no screen writes a widget-visible preference through a hand-built NudgePreferences`() {
+        val setters = widgetVisibleFlows()
+            .flatMap { flow -> writersOf(keyFor(flow)).map { it.first } }
+            .filter { it.startsWith("set") || it.startsWith("record") || it.startsWith("apply") }
+            .toSet()
+
+        assertTrue(
+            "Discovered no setter names; the resolver broke and this test would pass vacuously.",
+            setters.isNotEmpty()
+        )
+
+        val root = listOf(File("src/main/java"), File("app/src/main/java"))
+            .firstOrNull { it.exists() }
+            ?: error("source root not found from ${File("").absolutePath}")
+
+        val offenders = root.walkTopDown()
+            .filter { it.isFile && it.extension == "kt" }
+            .filter { file ->
+                // The preferences class itself, and the DI that builds it, are exempt by definition.
+                file.name != "NudgePreferences.kt" &&
+                    file.name != "RepositoryModule.kt" &&
+                    file.name != "PreferencesEntryPoint.kt"
+            }
+            .mapNotNull { file ->
+                val text = file.readText()
+                    .replace(Regex("""/\*[\s\S]*?\*/"""), "")
+                    .lines()
+                    .joinToString("\n") { it.substringBefore("//") }
+                val buildsOwn = text.contains("NudgePreferences(")
+                val writes = setters.any { text.contains("$it(") }
+                if (buildsOwn && writes) file.name else null
+            }
+            .toList()
+
+        assertTrue(
+            "These build their own NudgePreferences AND write a preference a widget renders, so " +
+                "the write lands but the widget is never told (WidgetRefreshSignal.NONE). Use " +
+                "di/PreferencesEntryPoint instead: $offenders",
+            offenders.isEmpty()
+        )
+    }
 }
