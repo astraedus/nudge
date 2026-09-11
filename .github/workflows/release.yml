@@ -43,6 +43,15 @@ jobs:
       - name: Run tests
         run: ./gradlew test
 
+      # Lint is the ONLY check here that can see an API-level mistake. minSdk is 26, so a call to
+      # a method added in API 28/29 is a NoSuchMethodError on a real Android 8 or 9 phone — which
+      # no JVM test can see (no Android runtime) and the bench Pixel 3 cannot reproduce (API 31).
+      # Three such calls reached main before this step existed, one on the accessibility hot path.
+      # Gates BOTH paths below, since the tag release and the rolling main-latest build share
+      # this job. `lint { abortOnError = true }` in app/build.gradle.kts is what makes it bite.
+      - name: Run lint (catches API-level errors nothing else can)
+        run: ./gradlew lintDebug
+
       - name: Decode keystore
         run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > nudge-release.keystore
 

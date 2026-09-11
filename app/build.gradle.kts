@@ -59,6 +59,25 @@ android {
         compose = true
         buildConfig = true
     }
+
+    /**
+     * Lint is a CI gate, not a suggestion.
+     *
+     * It is the ONLY check in this project that can see an API-level mistake. `minSdk` is 26, so
+     * calling a method added in API 28 or 29 is a `NoSuchMethodError` on a real Android 8 or 9
+     * phone — and no JVM test can see that (there is no Android runtime) and the bench Pixel 3
+     * cannot reproduce it (it is API 31). Three such calls shipped undetected, one of them on the
+     * accessibility hot path where it would have killed blocking outright on those devices.
+     *
+     * `abortOnError` so `NewApi` fails the build. `warningsAsErrors` stays FALSE deliberately: the
+     * point is to gate the class of defect that is invisible everywhere else, not to make an
+     * unrelated deprecation warning block a release at 2am. No baseline file — a baseline for
+     * correctness errors is just a list of bugs nobody will read again.
+     */
+    lint {
+        abortOnError = true
+        warningsAsErrors = false
+    }
 }
 
 dependencies {

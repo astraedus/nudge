@@ -85,6 +85,7 @@ import com.astraedus.nudge.ui.widget.TopBlockedWidgetReceiver
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import kotlinx.coroutines.launch
+import com.astraedus.nudge.util.hasUsageAccess
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -601,7 +602,7 @@ private fun readPermissionStates(context: Context): PermissionStates {
         accessibility = accessibility.working,
         accessibilityCrashed = accessibility.crashed,
         overlay = Settings.canDrawOverlays(context),
-        usageStats = hasUsageStatsPermission(context)
+        usageStats = hasUsageAccess(context)
     )
 }
 
@@ -702,14 +703,5 @@ private fun rememberPermissionStates(context: Context): PermissionStates {
     return state
 }
 
-private fun hasUsageStatsPermission(context: Context): Boolean {
-    val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
-    val mode = appOps.unsafeCheckOpNoThrow(
-        AppOpsManager.OPSTR_GET_USAGE_STATS,
-        Process.myUid(),
-        context.packageName
-    )
-    return mode == AppOpsManager.MODE_ALLOWED
-}
 
 // hasGrayscalePermission is now in com.astraedus.nudge.ui.PermissionUtils
