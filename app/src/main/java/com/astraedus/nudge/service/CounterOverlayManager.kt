@@ -108,7 +108,7 @@ class CounterOverlayManager @Inject constructor(
         }
     }
 
-    fun updateLabel(label: String) {
+    override fun updateLabel(label: String) {
         labelText?.text = label
     }
 

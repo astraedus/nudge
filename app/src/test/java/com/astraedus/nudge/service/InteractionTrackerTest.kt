@@ -1,5 +1,6 @@
 package com.astraedus.nudge.service
 
+import com.astraedus.nudge.domain.interaction.CountMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Before
@@ -243,4 +244,80 @@ class InteractionTrackerTest {
         assertEquals(0, tracker.getSessionCount("com.example.alpha"))
         assertNull(tracker.getSessionUsageBaseline("com.example.alpha"))
     }
+    // --- one session, one unit, all the way down to "today" (round-2 review) ---
+
+    /**
+     * The overlay renders the daily total directly beneath the session count, so a single mixed
+     * total is the same lie the session's mode rule exists to prevent, surviving one field over:
+     * three taps then five reels rendered "5 reels / today: 8".
+     */
+    @Test
+    fun `daily totals are kept per mode so today never mixes taps into items`() {
+        val pkg = "com.instagram.android"
+        repeat(3) { tracker.recordInteractions(pkg, 1, CountMode.TAPS) }
+        assertEquals(3, tracker.getDailyTotal(pkg))
+
+        repeat(5) { tracker.recordInteractions(pkg, 1, CountMode.ITEMS) }
+
+        val snapshot = tracker.snapshot(pkg)
+        assertEquals(CountMode.ITEMS, snapshot.mode)
+        assertEquals("the promotion resets the session count", 5, snapshot.sessionCount)
+        assertEquals("and today must be items too, not 8", 5, snapshot.dailyTotal)
+    }
+
+    /** The taps are not destroyed, only kept in their own unit -- they are still today's taps. */
+    @Test
+    fun `the taps recorded before a promotion survive under their own mode`() {
+        val pkg = "com.instagram.android"
+        repeat(3) { tracker.recordInteractions(pkg, 1, CountMode.TAPS) }
+        tracker.recordInteractions(pkg, 1, CountMode.ITEMS)
+
+        tracker.resetSession(pkg)
+        // A fresh session starts in TAPS, which is the unit those three were counted in.
+        assertEquals(3, tracker.getDailyTotal(pkg))
+    }
+
+    /**
+     * The label is part of the session, so every path that resets a session must clear it. It used
+     * to live on `InteractionHandler` and be cleared on the SITTING's schedule instead, which drifted
+     * from the count's in both directions.
+     */
+    @Test
+    fun `resetting a session clears its label`() {
+        val pkg = "com.instagram.android"
+        tracker.setSessionLabel(pkg, "reels")
+        tracker.recordInteractions(pkg, 1, CountMode.ITEMS)
+        assertEquals("reels", tracker.snapshot(pkg).label)
+
+        tracker.resetSession(pkg)
+
+        assertNull(tracker.snapshot(pkg).label)
+    }
+
+    @Test
+    fun `a session expiring clears its label along with its count`() {
+        val pkg = "com.instagram.android"
+        fakeTime = 1_000L
+        tracker.onAppChanged(pkg)
+        tracker.setSessionLabel(pkg, "reels")
+        tracker.recordInteractions(pkg, 1, CountMode.ITEMS)
+
+        tracker.onAppChanged("com.other.app")
+        fakeTime += InteractionTracker.SESSION_EXPIRY_MS + 1
+        tracker.onAppChanged(pkg)
+
+        assertNull("the caption must not outlive the count it described", tracker.snapshot(pkg).label)
+        assertEquals(0, tracker.getSessionCount(pkg))
+    }
+
+    /** A label is a description of a session, never evidence that one exists. */
+    @Test
+    fun `setting a label starts no session and touches no count`() {
+        val pkg = "com.instagram.android"
+        tracker.setSessionLabel(pkg, "reels")
+
+        assertEquals(0, tracker.getSessionCount(pkg))
+        assertEquals(0, tracker.getDailyTotal(pkg))
+    }
+
 }

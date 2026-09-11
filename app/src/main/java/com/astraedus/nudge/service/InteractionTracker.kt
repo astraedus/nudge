@@ -31,7 +31,18 @@ class InteractionTracker @Inject constructor() {
         val sessionCount: Int = 0,
         val dailyTotal: Int = 0,
         /** What this session's number is counting. See [recordInteractions]. */
-        val mode: CountMode = CountMode.TAPS
+        val mode: CountMode = CountMode.TAPS,
+        /**
+         * The caption the counter overlay should show, or null for the mode's generic word.
+         *
+         * Lives HERE, with the count it describes, because it used to live on `InteractionHandler`
+         * and be cleared on a different schedule: the label went when the SITTING changed (2 min)
+         * while the count and mode reset on this class's 5-minute expiry and on [resetSession]. The
+         * two drifted in both directions -- a stale "shorts" caption over a fresh TAPS count, and a
+         * generic "scrolls" caption over a session that was still watching reels. A caption and the
+         * number under it are one fact and now have one lifetime.
+         */
+        val label: String? = null
     )
 
     /** Override in tests to control time. */
@@ -42,7 +53,23 @@ class InteractionTracker @Inject constructor() {
 
     /** What each package's current session is counting. See [recordInteractions]. */
     private val sessionModes = mutableMapOf<String, CountMode>()
-    private val dailyTotals = mutableMapOf<String, Int>()
+
+    /**
+     * The in-app feature caption for each package's current session ("reels" / "shorts" /
+     * "videos"), set from node-tree detection. Cleared wherever the session resets, which is the
+     * whole point of it living here rather than on the handler.
+     */
+    private val sessionLabels = mutableMapOf<String, String>()
+
+    /**
+     * Daily interaction totals, keyed by package AND [CountMode].
+     *
+     * Per mode because the overlay renders this as "today: N" directly beneath a session count that
+     * means one unit. A single total mixes them: three taps then five reels rendered "today: 8",
+     * which is the same lie -- adding reels to taps -- that the session's mode rule exists to
+     * prevent, surviving one field over.
+     */
+    private val dailyTotals = mutableMapOf<Pair<String, CountMode>, Int>()
     private var currentPackage: String? = null
 
     /** Package -> epoch ms when the user last left the app. */
@@ -74,6 +101,7 @@ class InteractionTracker @Inject constructor() {
                 if (leftAt == null || (now - leftAt) >= SESSION_EXPIRY_MS) {
                     sessionCounts[packageName] = 0
                     sessionModes.remove(packageName)
+                    sessionLabels.remove(packageName)
                     sessionUsageBaseline.remove(packageName)
                 }
             }
@@ -112,7 +140,7 @@ class InteractionTracker @Inject constructor() {
     fun recordInteractions(packageName: String, count: Int, mode: CountMode): SessionCount {
         val currentMode = sessionModes[packageName] ?: CountMode.TAPS
         if (count <= 0 || (mode == CountMode.TAPS && currentMode == CountMode.ITEMS)) {
-            return SessionCount(packageName, getSessionCount(packageName), getDailyTotal(packageName), currentMode)
+            return snapshot(packageName)
         }
         val promoting = mode == CountMode.ITEMS && currentMode != CountMode.ITEMS
         val previousSession = if (promoting) 0 else (sessionCounts[packageName] ?: 0)
@@ -120,17 +148,50 @@ class InteractionTracker @Inject constructor() {
 
         val session = previousSession + count
         sessionCounts[packageName] = session
-        val daily = (dailyTotals[packageName] ?: 0) + count
-        dailyTotals[packageName] = daily
-        return SessionCount(packageName, session, daily, mode)
+        val dailyKey = packageName to mode
+        val daily = (dailyTotals[dailyKey] ?: 0) + count
+        dailyTotals[dailyKey] = daily
+        return SessionCount(packageName, session, daily, mode, sessionLabels[packageName])
+    }
+
+    /**
+     * Everything the overlay needs for [packageName] right now, with no side effects.
+     *
+     * One accessor rather than four, because the count, the mode, the label and the daily total have
+     * to agree -- the daily total is keyed by the session's CURRENT mode, so reading them separately
+     * is how a caller ends up rendering an items count above a taps total.
+     */
+    fun snapshot(packageName: String): SessionCount {
+        val mode = sessionModes[packageName] ?: CountMode.TAPS
+        return SessionCount(
+            packageName = packageName,
+            sessionCount = sessionCounts[packageName] ?: 0,
+            dailyTotal = dailyTotals[packageName to mode] ?: 0,
+            mode = mode,
+            label = sessionLabels[packageName]
+        )
+    }
+
+    /**
+     * Record the in-app feature caption for this package's current session.
+     *
+     * Deliberately does NOT start a session or touch the count: detection can fire before the user
+     * has interacted at all, and a label is a description of a session, never evidence one exists.
+     */
+    fun setSessionLabel(packageName: String, label: String) {
+        sessionLabels[packageName] = label
     }
 
     fun getSessionCount(packageName: String): Int = sessionCounts[packageName] ?: 0
-    fun getDailyTotal(packageName: String): Int = dailyTotals[packageName] ?: 0
+
+    /** Today's total for [packageName] in the unit its CURRENT session is counting. */
+    fun getDailyTotal(packageName: String): Int =
+        dailyTotals[packageName to (sessionModes[packageName] ?: CountMode.TAPS)] ?: 0
 
     fun resetSession(packageName: String) {
         sessionCounts[packageName] = 0
         sessionModes.remove(packageName)
+        sessionLabels.remove(packageName)
         sessionUsageBaseline.remove(packageName)
         lastLeftAt.remove(packageName)
         if (currentPackage == packageName) {

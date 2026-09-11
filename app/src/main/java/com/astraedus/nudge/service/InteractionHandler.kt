@@ -49,12 +49,6 @@ class InteractionHandler(
     private val clock: () -> Long = System::currentTimeMillis
 ) {
     /**
-     * The feature label for the surface currently being scrolled ("reels" / "shorts" / "videos"),
-     * resolved once from the node tree and then reused so a tree walk does not happen per scroll.
-     */
-    var activeReelLabel: String? = null
-
-    /**
      * Feed one click or scroll event.
      *
      * Takes the pure record rather than a package name because the counter's whole answer lives in
@@ -62,8 +56,9 @@ class InteractionHandler(
      * `itemCount` / `scrollDeltaY` / `windowId`.
      *
      * @param resolveSourceViewId reads the scrolling view's `viewIdResourceName`. A binder round
-     *   trip, so it is called at most once per [SOURCE_RESOLVE_THROTTLE_MS] — see [sourceViewIdFor].
-     *   Defaults to the record's own field, which is what a replayed capture carries.
+     *   trip, paid once per SCROLL event and never for a click; see [sourceViewIdFor] for why it
+     *   cannot be cached. Skipped entirely when the record already carries the id, which is the case
+     *   both for a replayed capture and for a live event while tracing is on.
      */
     fun handleInteraction(
         record: AccessibilityEventRecord,
@@ -75,10 +70,13 @@ class InteractionHandler(
         val now = clock()
         // Only a scroll needs to know WHICH view moved. Resolving it for a click would pay a binder
         // round trip for an answer the click path does not read.
-        val sourceViewId = if (record.type == A11yEventType.VIEW_SCROLLED) {
-            sourceViewIdFor(resolveSourceViewId)
-        } else {
-            null
+        val sourceViewId = when {
+            record.type != A11yEventType.VIEW_SCROLLED -> null
+            // While tracing, the factory has already paid for this and put it on the record.
+            // Reading it again would double the binder cost of the exact runs we measure the cost
+            // with, which would make the measurement describe a build nobody ships.
+            record.sourceViewId != null -> record.sourceViewId
+            else -> sourceViewIdFor(resolveSourceViewId)
         }
         val result = counter.onEvent(record, now, sourceViewId)
         if (!result.counted) {
@@ -103,7 +101,7 @@ class InteractionHandler(
             "interaction counted package=$packageName n=${result.count} " +
                 "mode=${result.mode} reason=${result.reason} session=${count.sessionCount}"
         )
-        showOrUpdateCounter(count, labelFor(count.mode))
+        showOrUpdateCounter(count)
     }
 
     /**
@@ -116,10 +114,11 @@ class InteractionHandler(
      * feed (`docs/BACKLOG.md`). A label we cannot resolve is a cosmetic loss; a count we refuse to
      * make is the feature not working.
      */
-    private fun labelFor(mode: CountMode): String = when (mode) {
-        CountMode.TAPS -> activeReelLabel ?: "taps"
-        CountMode.ITEMS -> activeReelLabel ?: "scrolls"
-    }
+    private fun labelFor(count: InteractionTracker.SessionCount): String =
+        count.label ?: when (count.mode) {
+            CountMode.TAPS -> "taps"
+            CountMode.ITEMS -> "scrolls"
+        }
 
     /**
      * Which view is scrolling. Resolved PER SCROLL EVENT, deliberately.
@@ -155,41 +154,60 @@ class InteractionHandler(
      * surface. Called from the service's content-change path, which already owns a debounced tree
      * read — the counter itself must never trigger one, because scroll events arrive in bursts.
      */
-    fun noteDetectedFeature(feature: InAppDetector.Feature?) {
+    fun noteDetectedFeature(packageName: String, feature: InAppDetector.Feature?) {
         val label = when (feature) {
             InAppDetector.Feature.SHORTS -> "shorts"
             InAppDetector.Feature.REELS -> "reels"
             InAppDetector.Feature.TIKTOK_FEED -> "videos"
             InAppDetector.Feature.EXPLORE, null -> return
         }
-        activeReelLabel = label
+        interactionTracker.setSessionLabel(packageName, label)
+        // The overlay may already be up under the generic caption; correct it now rather than at the
+        // next interaction, or the user watches "3 scrolls" sit there while they scroll reels.
+        if (counterOverlayManager.isVisible()) refreshLabel(label)
     }
 
     /**
-     * Resolve the label for a scrolled surface if it is cheap to do so.
+     * The ONE path that writes to the counter overlay.
      *
-     * Kept as an explicitly-optional lookup: [rootNodeProvider] is a binder read, and the counter's
-     * correctness must never depend on it. If it returns null, the count still happens under a
-     * generic label.
+     * `onAppChanged` used to carry its own copy of the isVisible/show/updateCount/try-catch block
+     * with a hand-built label, which is how it came to caption a re-entered session "taps" even
+     * after the tracker had promoted it to items.
+     *
+     * The caption is refreshed whenever it CHANGES, not only when the overlay is first shown. A
+     * promotion from taps to items resets the number, so an overlay that set its caption once
+     * displayed "5 taps" and then "1 taps": a stale word over a new unit, in the one place the user
+     * actually looks.
      */
-    fun resolveLabelIfUnknown(packageName: String, rootNodeProvider: () -> AccessibilityNodeInfo?) {
-        if (activeReelLabel != null) return
-        if (packageName !in InAppDetector.SUPPORTED_PACKAGES) return
-        val rootNode = rootNodeProvider() ?: return
-        noteDetectedFeature(inAppDetector.detectFeature(packageName, rootNode))
-    }
-
-    private fun showOrUpdateCounter(count: InteractionTracker.SessionCount, label: String) {
+    private fun showOrUpdateCounter(
+        count: InteractionTracker.SessionCount,
+        runSideEffects: Boolean = true
+    ) {
+        val label = labelFor(count)
         try {
             if (!counterOverlayManager.isVisible()) {
                 counterOverlayManager.show(label)
+                shownLabel = label
+            } else {
+                refreshLabel(label)
             }
             counterOverlayManager.updateCount(count.sessionCount, count.dailyTotal)
-            timeRemainingHandler.maybeUpdate(count.packageName)
-            checkAutoKick(count)
+            if (runSideEffects) {
+                timeRemainingHandler.maybeUpdate(count.packageName)
+                checkAutoKick(count)
+            }
         } catch (e: Exception) {
             logger.w("counter overlay update failed package=${count.packageName}", e)
         }
+    }
+
+    /** The caption currently on screen, so a no-op refresh costs nothing. */
+    private var shownLabel: String? = null
+
+    private fun refreshLabel(label: String) {
+        if (shownLabel == label) return
+        counterOverlayManager.updateLabel(label)
+        shownLabel = label
     }
 
     private fun checkAutoKick(count: InteractionTracker.SessionCount) {
@@ -216,19 +234,11 @@ class InteractionHandler(
         // Show counter on app entry only if there is a persisted session count > 0
         // (avoids showing a confusing "0" when the user first opens an app)
         if (counterCache.isCounterEnabled(packageName)) {
-            val sessionCount = interactionTracker.getSessionCount(packageName)
-            val dailyTotal = interactionTracker.getDailyTotal(packageName)
-            if (sessionCount > 0) {
-                val label = activeReelLabel ?: "taps"
-                try {
-                    if (!counterOverlayManager.isVisible()) {
-                        counterOverlayManager.show(label)
-                    }
-                    counterOverlayManager.updateCount(sessionCount, dailyTotal)
-                } catch (e: Exception) {
-                    logger.w("counter overlay show on app entry failed package=$packageName", e)
-                }
-            }
+            val count = interactionTracker.snapshot(packageName)
+            // Only when there is something to show: a "0" on entry reads as a broken counter.
+            // Side effects are suppressed because this is not an interaction -- re-entering an app
+            // must not tick the time-remaining overlay or trip auto-kick.
+            if (count.sessionCount > 0) showOrUpdateCounter(count, runSideEffects = false)
         }
     }
 
@@ -242,7 +252,7 @@ class InteractionHandler(
      */
     fun onSittingChanged() {
         counter.reset()
-        activeReelLabel = null
+        shownLabel = null
     }
 
     fun isCounterVisible(): Boolean = counterOverlayManager.isVisible()

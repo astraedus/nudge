@@ -125,6 +125,16 @@ class InteractionHandlerTest {
         handler.handleInteraction(scroll(packageName, index = 1, windowId = windowId, className = className))
     }
 
+    /**
+     * One counted tap. The clock is frozen in these tests, and the counter debounces clicks as a
+     * guard against the same tap being delivered twice, so a test that fires several taps has to
+     * move time along or it is really only firing one.
+     */
+    private fun clickOnce(packageName: String) {
+        handler.handleInteraction(click(packageName))
+        now += 1_000L
+    }
+
     // --- click tests ---
 
     @Test
@@ -249,8 +259,10 @@ class InteractionHandlerTest {
     @Test
     fun `handleInteraction increments count for supported packages with detected feature`() {
         enablePackage("com.instagram.android")
-        // Pre-set activeReelLabel to skip AccessibilityNodeInfo detection in JVM tests
-        handler.activeReelLabel = "reels"
+        // The label lives on the SESSION now, set the way production sets it. It used to be a
+        // handler field cleared on a different schedule from the count it captions, which is how a
+        // stale "shorts" ended up over a fresh taps count and vice versa.
+        tracker.setSessionLabel("com.instagram.android", "reels")
 
         scrollOnce("com.instagram.android")
 
@@ -281,10 +293,10 @@ class InteractionHandlerTest {
         enablePackage("com.instagram.android")
         inAppDetector.featureToReturn = null
 
-        handler.noteDetectedFeature(inAppDetector.featureToReturn)
+        handler.noteDetectedFeature("com.instagram.android", inAppDetector.featureToReturn)
         scrollOnce("com.instagram.android")
 
-        assertNull(handler.activeReelLabel)
+        assertNull(tracker.snapshot("com.instagram.android").label)
         assertEquals(1, tracker.getSessionCount("com.instagram.android"))
         assertEquals("scrolls", overlayManager.lastShowLabel)
     }
@@ -298,10 +310,10 @@ class InteractionHandlerTest {
         enablePackage("com.instagram.android")
         inAppDetector.featureToReturn = InAppDetector.Feature.EXPLORE
 
-        handler.noteDetectedFeature(InAppDetector.Feature.EXPLORE)
+        handler.noteDetectedFeature("com.instagram.android", InAppDetector.Feature.EXPLORE)
         scrollOnce("com.instagram.android")
 
-        assertNull(handler.activeReelLabel)
+        assertNull(tracker.snapshot("com.instagram.android").label)
         assertEquals(1, tracker.getSessionCount("com.instagram.android"))
         assertEquals("scrolls", overlayManager.lastShowLabel)
     }
@@ -309,7 +321,7 @@ class InteractionHandlerTest {
     @Test
     fun `handleInteraction detects YouTube Shorts via cached label`() {
         enablePackage("com.google.android.youtube")
-        handler.activeReelLabel = "shorts"
+        tracker.setSessionLabel("com.google.android.youtube", "shorts")
 
         scrollOnce("com.google.android.youtube")
 
@@ -320,7 +332,7 @@ class InteractionHandlerTest {
     @Test
     fun `handleInteraction detects TikTok feed via cached label`() {
         enablePackage("com.zhiliaoapp.musically")
-        handler.activeReelLabel = "videos"
+        tracker.setSessionLabel("com.zhiliaoapp.musically", "videos")
 
         scrollOnce("com.zhiliaoapp.musically")
 
@@ -329,20 +341,17 @@ class InteractionHandlerTest {
     }
 
     @Test
-    fun `activeReelLabel caches feature label and the counting path never runs detection`() {
+    fun `the session label captions the count and the counting path never runs detection`() {
         // Stronger than it was: detection used to happen inline in the scroll path and was skipped
-        // only because a label was already cached. The node-tree read is now a separate, explicitly
-        // optional call (resolveLabelIfUnknown), so the counter's correctness can never depend on a
-        // binder round trip fired from a burst of scroll events.
+        // only because a label was already cached. The node-tree read now happens only on the
+        // service's already-debounced content-change path, so the counter's correctness can never
+        // depend on a binder round trip fired from a burst of scroll events.
         enablePackage("com.instagram.android")
+        tracker.setSessionLabel("com.instagram.android", "reels")
 
-        // Simulate that feature was previously detected by setting the cache
-        handler.activeReelLabel = "reels"
-
-        // Scroll should use cached label without calling detectFeature
         scrollOnce("com.instagram.android")
 
-        assertEquals("reels", handler.activeReelLabel)
+        assertEquals("reels", tracker.snapshot("com.instagram.android").label)
         assertEquals(1, tracker.getSessionCount("com.instagram.android"))
         assertEquals(0, inAppDetector.detectCallCount)
     }
@@ -516,6 +525,89 @@ class InteractionHandlerTest {
 
     // --- Test doubles ---
 
+    // --- the caption and the number it describes must never disagree (round-2 review) ---
+
+    /**
+     * The user-visible bug: the caption was written once, in `show`, so a promotion that reset the
+     * number left the old word above it. Five taps, then the first reel, and the overlay read
+     * "1 taps" -- a stale unit over a fresh count, in the one place the user actually looks.
+     */
+    @Test
+    fun `promoting a visible counter from taps to items refreshes the caption`() {
+        enablePackage("com.example.notes")
+        repeat(5) { clickOnce("com.example.notes") }
+        assertEquals("taps", overlayManager.visibleLabel)
+        assertEquals(5, overlayManager.lastSessionCount)
+
+        scrollOnce("com.example.notes")
+
+        assertEquals(1, overlayManager.lastSessionCount)
+        assertEquals(
+            "the caption must follow the unit the number is now in",
+            "scrolls",
+            overlayManager.visibleLabel
+        )
+    }
+
+    /**
+     * Detection usually lands AFTER the user has already scrolled a few times, so correcting the
+     * caption only at the next interaction leaves "3 scrolls" sitting over a reel feed.
+     */
+    @Test
+    fun `detecting a feature while the counter is up corrects the caption immediately`() {
+        enablePackage("com.instagram.android")
+        scrollOnce("com.instagram.android")
+        assertEquals("scrolls", overlayManager.visibleLabel)
+
+        handler.noteDetectedFeature("com.instagram.android", InAppDetector.Feature.REELS)
+
+        assertEquals("reels", overlayManager.visibleLabel)
+    }
+
+    /** A caption that has not changed must not be rewritten on every single interaction. */
+    @Test
+    fun `an unchanged caption is not rewritten`() {
+        enablePackage("com.example.notes")
+        repeat(4) { clickOnce("com.example.notes") }
+
+        assertEquals(emptyList<String>(), overlayManager.labelUpdates)
+    }
+
+    /**
+     * Item 11: re-entering an app used to caption it "taps" unconditionally, because `onAppChanged`
+     * carried its own copy of the overlay-writing block and built its own label. A session already
+     * counting reels was captioned "taps" the moment the user came back to it.
+     */
+    @Test
+    fun `re-entering a session captions it with the unit that session is counting`() {
+        enablePackage("com.instagram.android")
+        tracker.setSessionLabel("com.instagram.android", "reels")
+        scrollOnce("com.instagram.android")
+        handler.hideCounter()
+
+        handler.onAppChanged("com.instagram.android")
+
+        assertEquals("reels", overlayManager.visibleLabel)
+        assertEquals(1, overlayManager.lastSessionCount)
+    }
+
+    /** Re-entering is not an interaction: it must not trip a threshold the session already met. */
+    @Test
+    fun `re-entering an app runs no interaction side effects`() {
+        enablePackage("com.example.notes", autoKickAfter = 2)
+        repeat(2) { clickOnce("com.example.notes") }
+        val kicksAfterInteractions = goHomeCount
+        handler.hideCounter()
+
+        handler.onAppChanged("com.example.notes")
+
+        assertEquals(
+            "re-entry must not re-trip a threshold the session already crossed",
+            kicksAfterInteractions,
+            goHomeCount
+        )
+    }
+
     private class FakeCounterOverlayManager : CounterOverlayManagerApi {
         var visible = false
         var lastShowLabel: String? = null
@@ -523,10 +615,19 @@ class InteractionHandlerTest {
         var lastDailyTotal: Int = 0
         var hideCount = 0
 
+        /** Every caption change applied to an already-visible overlay, in order. */
+        val labelUpdates = mutableListOf<String>()
+
+        /** What the user would actually be reading right now. */
+        val visibleLabel: String? get() = labelUpdates.lastOrNull() ?: lastShowLabel
+
         override fun isVisible(): Boolean = visible
         override fun show(label: String) {
             visible = true
             lastShowLabel = label
+        }
+        override fun updateLabel(label: String) {
+            labelUpdates += label
         }
         override fun updateCount(sessionCount: Int, dailyTotal: Int) {
             lastSessionCount = sessionCount
