@@ -123,7 +123,18 @@ object AccessibilityEventCodec {
                 ch == '\n' -> append("\\n")
                 ch == '\r' -> append("\\r")
                 ch == '\t' -> append("\\t")
+                // Everything below here would survive a lenient JSON reader untouched, and must
+                // still be escaped, because this format's real constraint is ONE RECORD PER LINE
+                // through logcat and a UTF-8 file -- not JSON validity.
                 ch < ' ' -> append("\\u").append("%04x".format(ch.code))
+                // U+2028 / U+2029 are legal unescaped inside a JSON string, and are line
+                // terminators to plenty of tooling. A class name carrying one would split its
+                // record in two somewhere between the device and the test loader.
+                ch == '\u2028' || ch == '\u2029' -> append("\\u").append("%04x".format(ch.code))
+                // DEL, and any surrogate: a LONE surrogate (what a truncated UTF-16 read produces)
+                // is not encodable in UTF-8, so writing it raw turns it into '?' on the way to the
+                // file and the record no longer round trips.
+                ch == '\u007F' || ch.isSurrogate() -> append("\\u").append("%04x".format(ch.code))
                 else -> append(ch)
             }
         }

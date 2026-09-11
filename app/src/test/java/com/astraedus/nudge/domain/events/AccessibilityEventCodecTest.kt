@@ -1,6 +1,7 @@
 package com.astraedus.nudge.domain.events
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -110,4 +111,32 @@ class AccessibilityEventCodecTest {
     fun `encoding never emits a newline`() {
         assertTrue(AccessibilityEventCodec.encode(fullyPopulated).none { it == '\n' || it == '\r' })
     }
+    /**
+     * The hostile characters a real app can put in a class name or a view id, which the hand-rolled
+     * escaper has to survive because the fixture format has no external moving parts by design.
+     *
+     * U+2028 / U+2029 are the interesting ones: they are legal, unescaped, INSIDE a JSON string, and
+     * a strict reader is entitled to accept them -- but they are also line terminators to plenty of
+     * tooling, so a capture containing one would split into two records somewhere between logcat and
+     * the test loader. DEL is the boundary case just past the C0 range the escaper handles, and a
+     * lone surrogate is what a truncated UTF-16 read produces.
+     */
+    @Test
+    fun `line separators control characters and a lone surrogate all round trip on one line`() {
+        val hostile = fullyPopulated.copy(
+            className = "a\u2028b\u2029c",
+            sourceViewId = "x\u007Fy\u0000z\uD800"
+        )
+
+        val line = AccessibilityEventCodec.encode(hostile)
+
+        assertEquals("the payload must stay on ONE line", 1, line.lines().size)
+        assertFalse(
+            "a bare U+2028 would split the record for any reader that treats it as a terminator",
+            line.contains('\u2028')
+        )
+        assertFalse(line.contains('\u2029'))
+        assertEquals(hostile, AccessibilityEventCodec.decode(line))
+    }
+
 }
