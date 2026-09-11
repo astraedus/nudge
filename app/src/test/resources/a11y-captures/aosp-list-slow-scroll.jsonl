@@ -1,0 +1,67 @@
+# a11y capture: aosp-list-slow-scroll
+# device: Pixel 3 (192.168.1.68:5555), Android 12 / API 31. Captured 2026-09-11.
+# HOW: tools/qa/scroll-capture.sh settings-list-slow — ONE slow drag on the AOSP app list
+#      (`adb shell input swipe 540 1500 540 900 2500`), i.e. a single deliberate 2.5-second scroll
+#      of about a third of a screen. Settings rather than a social app because Instagram and TikTok
+#      are never driven over adb (tools/qa/ig-walkthrough-capture.sh) and because the counter must
+#      decide from GENERIC fields, never from per-app knowledge — a stock androidx RecyclerView is
+#      the honest control.
+# EXPECTED (test oracle): 1. One gesture, one item consumed.
+# WHAT IT PROVES: this is issue #28's "scrolling slowly between two posts counts as 5-6", measured.
+#      ONE drag produced TEN TYPE_VIEW_SCROLLED events, ~115ms apart, spanning ~1.03 seconds. The
+#      old counter took one per event past a 500ms debounce, so it scored this 2-3; with a longer
+#      or faster gesture it scores more, which is exactly the reported 5-6.
+#      The ground truth was in the events the whole time: fromIndex reads
+#      0,0,0,0,0,0,0,0,1,1 — ONE forward transition. Counting transitions scores it 1.
+#      Also settled here: scrollDeltaY IS populated on a stock RecyclerView (25-28px per event,
+#      ~247px total for one item), which is what makes the distance fallback viable — while the
+#      Instagram capture shows deltas of 0, which is why indices, not distance, are the primary
+#      mechanism. And every event carries vid=com.android.settings:id/apps_list, the source
+#      identity the counter uses to tell a feed from a sheet opened over it.
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.android.settings","c":"androidx.recyclerview.widget.RecyclerView","w":9312,"ts":3680406114,"fi":0,"ti":7,"ci":-1,"n":87,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1,"scr":true}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.android.settings","c":"android.view.ViewGroup","w":9312,"ts":3680406215,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.android.settings","c":"android.view.ViewGroup","w":9312,"ts":3680406330,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.android.settings","c":"android.view.ViewGroup","w":9312,"ts":3680406445,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.android.settings","c":"android.view.ViewGroup","w":9312,"ts":3680406545,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.android.settings","c":"android.view.ViewGroup","w":9312,"ts":3680407113,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.android.settings","c":"android.view.ViewGroup","w":9312,"ts":3680407213,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.android.settings","c":"android.view.ViewGroup","w":9312,"ts":3680407313,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.android.settings","c":"android.view.ViewGroup","w":9312,"ts":3680407413,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.android.settings","c":"android.view.ViewGroup","w":9312,"ts":3680407513,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.android.settings","c":"android.view.ViewGroup","w":9312,"ts":3680407620,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.android.settings","c":"android.view.ViewGroup","w":9312,"ts":3680407735,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.android.settings","c":"android.view.ViewGroup","w":9312,"ts":3680407850,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.android.settings","c":"android.view.ViewGroup","w":9312,"ts":3680407964,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.android.settings","c":"android.view.ViewGroup","w":9312,"ts":3680408079,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.android.settings","c":"android.view.ViewGroup","w":9312,"ts":3680408193,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.android.settings","c":"android.view.ViewGroup","w":9312,"ts":3680408308,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.android.settings","c":"android.view.ViewGroup","w":9312,"ts":3680408423,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.android.settings","c":"android.view.ViewGroup","w":9312,"ts":3680408526,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.android.settings","c":"android.view.ViewGroup","w":9312,"ts":3680408624,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"VIEW_SCROLLED","p":"com.android.settings","c":"androidx.recyclerview.widget.RecyclerView","w":9312,"ts":3680408624,"fi":0,"ti":8,"ci":-1,"n":87,"dx":0,"dy":28,"sx":0,"sy":0,"mx":0,"my":0,"cct":0,"vid":"com.android.settings:id/apps_list","scr":true}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.android.settings","c":"android.view.ViewGroup","w":9312,"ts":3680408724,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.android.settings","c":"android.view.ViewGroup","w":9312,"ts":3680408735,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"VIEW_SCROLLED","p":"com.android.settings","c":"androidx.recyclerview.widget.RecyclerView","w":9312,"ts":3680408735,"fi":0,"ti":8,"ci":-1,"n":87,"dx":0,"dy":27,"sx":0,"sy":0,"mx":0,"my":0,"cct":0,"vid":"com.android.settings:id/apps_list","scr":true}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.android.settings","c":"android.view.ViewGroup","w":9312,"ts":3680408835,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.android.settings","c":"android.view.ViewGroup","w":9312,"ts":3680408849,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"VIEW_SCROLLED","p":"com.android.settings","c":"androidx.recyclerview.widget.RecyclerView","w":9312,"ts":3680408849,"fi":0,"ti":8,"ci":-1,"n":87,"dx":0,"dy":28,"sx":0,"sy":0,"mx":0,"my":0,"cct":0,"vid":"com.android.settings:id/apps_list","scr":true}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.android.settings","c":"android.view.ViewGroup","w":9312,"ts":3680408949,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.android.settings","c":"android.view.ViewGroup","w":9312,"ts":3680408964,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"VIEW_SCROLLED","p":"com.android.settings","c":"androidx.recyclerview.widget.RecyclerView","w":9312,"ts":3680408964,"fi":0,"ti":8,"ci":-1,"n":87,"dx":0,"dy":27,"sx":0,"sy":0,"mx":0,"my":0,"cct":0,"vid":"com.android.settings:id/apps_list","scr":true}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.android.settings","c":"android.view.ViewGroup","w":9312,"ts":3680409065,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.android.settings","c":"android.view.ViewGroup","w":9312,"ts":3680409079,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"VIEW_SCROLLED","p":"com.android.settings","c":"androidx.recyclerview.widget.RecyclerView","w":9312,"ts":3680409079,"fi":0,"ti":8,"ci":-1,"n":87,"dx":0,"dy":28,"sx":0,"sy":0,"mx":0,"my":0,"cct":0,"vid":"com.android.settings:id/apps_list","scr":true}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.android.settings","c":"android.view.ViewGroup","w":9312,"ts":3680409179,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.android.settings","c":"android.view.ViewGroup","w":9312,"ts":3680409194,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"VIEW_SCROLLED","p":"com.android.settings","c":"androidx.recyclerview.widget.RecyclerView","w":9312,"ts":3680409194,"fi":0,"ti":8,"ci":-1,"n":87,"dx":0,"dy":27,"sx":0,"sy":0,"mx":0,"my":0,"cct":0,"vid":"com.android.settings:id/apps_list","scr":true}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.android.settings","c":"android.view.ViewGroup","w":9312,"ts":3680409294,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.android.settings","c":"android.view.ViewGroup","w":9312,"ts":3680409308,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"VIEW_SCROLLED","p":"com.android.settings","c":"androidx.recyclerview.widget.RecyclerView","w":9312,"ts":3680409308,"fi":0,"ti":8,"ci":-1,"n":87,"dx":0,"dy":28,"sx":0,"sy":0,"mx":0,"my":0,"cct":0,"vid":"com.android.settings:id/apps_list","scr":true}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.android.settings","c":"android.view.ViewGroup","w":9312,"ts":3680409408,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.android.settings","c":"android.view.ViewGroup","w":9312,"ts":3680409423,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"VIEW_SCROLLED","p":"com.android.settings","c":"androidx.recyclerview.widget.RecyclerView","w":9312,"ts":3680409423,"fi":0,"ti":8,"ci":-1,"n":87,"dx":0,"dy":27,"sx":0,"sy":0,"mx":0,"my":0,"cct":0,"vid":"com.android.settings:id/apps_list","scr":true}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.android.settings","c":"android.view.ViewGroup","w":9312,"ts":3680409523,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.android.settings","c":"android.view.ViewGroup","w":9312,"ts":3680409537,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"VIEW_SCROLLED","p":"com.android.settings","c":"androidx.recyclerview.widget.RecyclerView","w":9312,"ts":3680409538,"fi":1,"ti":9,"ci":-1,"n":87,"dx":0,"dy":25,"sx":0,"sy":0,"mx":0,"my":0,"cct":0,"vid":"com.android.settings:id/apps_list","scr":true}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.android.settings","c":"android.view.ViewGroup","w":9312,"ts":3680409638,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"VIEW_SCROLLED","p":"com.android.settings","c":"androidx.recyclerview.widget.RecyclerView","w":9312,"ts":3680409652,"fi":1,"ti":9,"ci":-1,"n":87,"dx":0,"dy":2,"sx":0,"sy":0,"mx":0,"my":0,"cct":0,"vid":"com.android.settings:id/apps_list","scr":true}
