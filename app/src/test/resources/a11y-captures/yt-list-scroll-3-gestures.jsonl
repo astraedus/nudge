@@ -1,25 +1,33 @@
-# a11y capture: yt-comments-sheet-scroll
+# a11y capture: yt-list-scroll-3-gestures
 # device: Pixel 3 (192.168.1.68:5555), Android 12 / API 31. Captured 2026-09-11.
 # HOW: YouTube force-stopped, relaunched, its 3-second DELAY overlay left to auto-complete
-#      untouched, then the comments of a feed item opened by hand, then EXACTLY THREE slow scroll
-#      gestures inside the comments list, 1.5s apart. Driven by the device-tester agent; YouTube
-#      rather than Instagram because Instagram and TikTok are never driven over adb
-#      (tools/qa/ig-walkthrough-capture.sh).
-# EXPECTED (test oracle): 0 while a feed is the established primary scroll source (21 events) — scrolling a
-#      sheet opened over a feed is not content consumed from the feed, and the overlay calling it
-#      "reels" is what the report objects to. Replayed on its OWN, with nothing else ever having
-#      scrolled, this list IS what the user is consuming and scores 8 (the number of comments they
-#      actually moved past), NOT 20 (the number of events).
-# WHAT IT PROVES: three human gestures produced TWENTY-ONE TYPE_VIEW_SCROLLED events. That is issue
-#      #28's "scrolling the comments counts ~10 taps continuously", measured: the old event-rate
-#      rule turns three gestures into roughly one count per 500ms of gesture. fromIndex across the
-#      stream reads 2,3,4,4,4,4,4,5,6,7,7,7,7,8,9,10,10,10,10,10 — eight forward transitions.
-# CAVEAT, recorded honestly: no counter RULE was active on this surface (the whole-app DELAY rule
-#      did not apply once feature=SHORTS was detected), so this capture cannot show what Nudge's
-#      counter DID — only what the event stream was. The counting is asserted by replay instead.
-# CAVEAT 2: this stream contains ONE scroll source. The feed-vs-sheet exclusion is therefore
-#      exercised in the replay test by priming a feed source first, not by the capture itself —
-#      because YouTube's own feed emits no scroll events at all on this build (see docs/BACKLOG.md).
+#      untouched, the comments of a feed item opened by hand, then EXACTLY THREE slow scroll
+#      gestures inside that list, 1.5s apart. Screen content screenshot-verified before capture --
+#      checking mCurrentFocus alone is NOT enough inside YouTube's single-activity shell, which is
+#      how three earlier attempts silently captured a video player instead. Driven by the
+#      device-tester agent; YouTube rather than Instagram because Instagram and TikTok are never
+#      driven over adb (tools/qa/ig-walkthrough-capture.sh).
+# EXPECTED (test oracle): 8. The user moved past eight items in three gestures. NOT 21, which is
+#      how many events those three gestures emitted, and which is what the old rule counted.
+# WHAT IT PROVES: issue #28's "scrolling the comments counts ~10 taps continuously", measured.
+#      Three human gestures produced TWENTY-ONE TYPE_VIEW_SCROLLED events in 4.6 seconds. fromIndex
+#      across the stream reads 2,3,4,4,4,4,4,5,6,7,7,7,7,7,8,9,10,10,10,10,10 -- eight forward
+#      transitions. Counting transitions scores the items; counting events scores the gesture's
+#      duration.
+#
+# IMPORTANT, and the reason this file is NOT named "comments-sheet": on YouTube the comments list
+# and the home feed carry the SAME viewIdResourceName (com.google.android.youtube:id/results) and
+# the same class (android.support.v7.widget.RecyclerView) -- device-verified against the feed
+# captures from the same session. They appear to be one reused list surface rather than a sheet
+# over a feed, so on YouTube the counter cannot and should not try to tell them apart; it counts
+# whichever list the user is scrolling, which is the honest answer. The feed-versus-sheet
+# separation InteractionCounter implements is for screens that really do have two sources, which
+# instagram-idle-no-input.jsonl shows Instagram does (android:id/list alongside
+# com.instagram.android:id/swipeable_tab_view_pager in one window).
+#
+# NOTE: no counter RULE was active on this surface (the whole-app DELAY rule stops applying once
+#      feature=SHORTS is detected), so this capture cannot show what Nudge's counter DID -- only
+#      what the event stream was. The counting is asserted by replay instead.
 {"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.youtube","c":"android.widget.FrameLayout","w":9386,"ts":3681214861,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
 {"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.youtube","c":"android.widget.FrameLayout","w":9386,"ts":3681214961,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
 {"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.youtube","c":"android.widget.FrameLayout","w":9386,"ts":3681215759,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}

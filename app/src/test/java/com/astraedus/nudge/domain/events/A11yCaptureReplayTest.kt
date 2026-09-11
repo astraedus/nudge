@@ -121,27 +121,50 @@ class A11yCaptureReplayTest {
     }
 
     /**
-     * The comments-sheet oracle: *"scrolling the comments counts ~10 taps continuously"*.
+     * The oracle behind *"scrolling the comments counts ~10 taps continuously"*.
      *
-     * Three human gestures produced twenty-one scroll events. With a feed already established as the
-     * primary source — which is the real-world shape, the user was scrolling a feed before they
-     * opened comments on something in it — the sheet is a secondary source and consumes nothing
-     * from the feed. The overlay calling it "reels" is precisely what the report objects to.
+     * Three human gestures inside a YouTube list produced TWENTY-ONE scroll events over 4.6
+     * seconds, which is how the old rate rule turned one gesture into several counts. The number
+     * has to be the eight items the user moved past, never the events the gesture emitted.
      */
     @Test
-    fun `scrolling a sheet opened over a live feed counts nothing`() {
+    fun `three gestures over a real list count items consumed and not events emitted`() {
+        val records = A11yCapture.load("yt-list-scroll-3-gestures")
+        val scrolls = records.count { it.type == A11yEventType.VIEW_SCROLLED }
+        assertEquals("the capture must still hold all twenty-one scroll events", 21, scrolls)
+        assertEquals(
+            "three gestures, eight items moved past, twenty-one events — the number must be the " +
+                "items, never the events",
+            8,
+            replayCounter("yt-list-scroll-3-gestures")
+        )
+    }
+
+    /**
+     * A sheet opened over a live feed must not be counted as the feed being consumed — the overlay
+     * calling it "reels" is what the report objects to.
+     *
+     * Built from a real stream plus a synthetic second source rather than from one capture, and the
+     * reason is worth recording. On YouTube the comments list and the home feed carry the *same*
+     * `viewIdResourceName` (`com.google.android.youtube:id/results`) and the same class — verified
+     * on device — so they are one reused list surface and there is nothing there to separate. The
+     * screen shape this rule exists for is the one `instagram-idle-no-input.jsonl` shows: two
+     * genuinely distinct sources, `android:id/list` and `…:id/swipeable_tab_view_pager`, alive in
+     * ONE window. The feed below models that, and the sheet events are the real ones.
+     */
+    @Test
+    fun `a second scroll source over a live primary counts nothing`() {
         val counter = InteractionCounter()
-        val sheet = A11yCapture.load("yt-comments-sheet-scroll")
-        // Establish the feed as primary the way a real sitting does, on the SAME clock as the
-        // capture: the user scrolled the feed a moment before tapping into comments. Same windowId
-        // as the sheet, which is exactly the case the view id in the source key exists to separate —
-        // without it these two share a key and their indices interleave into phantom counts.
+        val sheet = A11yCapture.load("yt-list-scroll-3-gestures")
+        // Same clock as the capture: the user scrolled the feed a moment before opening the sheet.
         val firstSheetScroll = sheet.first { it.type == A11yEventType.VIEW_SCROLLED }.eventTimeMs
         val justBefore = firstSheetScroll - 1_000
         val feed = AccessibilityEventRecord(
             type = A11yEventType.VIEW_SCROLLED,
             packageName = "com.google.android.youtube",
             className = "android.support.v7.widget.RecyclerView",
+            // Same windowId as the sheet — which is exactly the case the view id in the source key
+            // exists to separate. Without it these two share a key and their indices interleave.
             windowId = 9386,
             itemCount = 40,
             sourceViewId = "com.google.android.youtube:id/feed"
@@ -155,14 +178,14 @@ class A11yCaptureReplayTest {
 
     /**
      * The limit of the rule above, asserted rather than left to be discovered. The handover is
-     * time-based, so a sheet the user stays in past the window does eventually take over — at which
-     * point they really are consuming that list, and pretending otherwise would be its own lie. The
-     * capture spans ~4.6 seconds, well inside the window, which is why the test above reads zero.
+     * time-based, so a list the user stays in past the window does take over — at which point they
+     * really are consuming it, and pretending otherwise would be its own lie. The capture spans
+     * ~4.6 seconds, well inside the default window, which is why the test above reads zero.
      */
     @Test
-    fun `a sheet does take over once the feed has been silent past the handover window`() {
+    fun `a second source does take over once the primary has been silent past the handover window`() {
         val counter = InteractionCounter(handoverMs = 1_000)
-        val sheet = A11yCapture.load("yt-comments-sheet-scroll")
+        val sheet = A11yCapture.load("yt-list-scroll-3-gestures")
         val feed = AccessibilityEventRecord(
             type = A11yEventType.VIEW_SCROLLED,
             packageName = "com.google.android.youtube",
@@ -174,25 +197,6 @@ class A11yCaptureReplayTest {
         counter.onEvent(feed.copy(fromIndex = 0), longBefore - 100)
         counter.onEvent(feed.copy(fromIndex = 1), longBefore)
         assertTrue(sheet.sumOf { counter.onEvent(it, it.eventTimeMs).count } > 0)
-    }
-
-    /**
-     * The same stream with nothing else on screen. It is then genuinely what the user is consuming,
-     * and the number must be the eight comments they moved past — not the twenty events the sheet
-     * emitted while they did it. This is the rate bug dying even in the case where the sheet is
-     * legitimately the thing being counted.
-     */
-    @Test
-    fun `a sheet scrolled on its own counts items consumed and not events emitted`() {
-        val records = A11yCapture.load("yt-comments-sheet-scroll")
-        val scrolls = records.count { it.type == A11yEventType.VIEW_SCROLLED }
-        assertEquals("the capture must still hold all twenty-one scroll events", 21, scrolls)
-        assertEquals(
-            "three gestures, eight comments moved past, twenty-one events — the number must be " +
-                "the comments, never the events",
-            8,
-            replayCounter("yt-comments-sheet-scroll")
-        )
     }
 
     /**

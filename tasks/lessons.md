@@ -271,3 +271,93 @@ to delete.**
 **The weaker reason (reliability):** the backup run kills our process. Verified signature in logcat, `full_backup_package: <pkg>` immediately followed by `am_proc_died`, with services `am_schedule_service_restart`'d a few seconds later. (Note "reason 100" in `am_proc_died` is the OomAdj field, not a reason code.) Measured rebinds are 150ms-3s, so this produces a **seconds-long** window, enough to make the ongoing status notification lie. It is NOT an explanation of the overnight stoppages in issue #23; that remains unexplained and is why the watchdog exists. Do not let the changelog or a future investigation conflate the two.
 
 **The trap:** turning backup back on is the only way to make `bmgr backupnow` kill our process, which makes it an attractive fault injector for testing the watchdog. With backup off the framework skips our package entirely and `bmgr backupnow` returns `Backup is not allowed`. **Losing that injector is an accepted trade.** If you need to exercise a process-death path, use `run-as <pkg> am stopservice` (stops a service while the process lives, which is what the notification-id regression test needs) or a real low-memory kill. Never ship, and never QA against, a build with the privacy bug reinstated.
+
+## A package list is never the answer to "has the user left the app?" (2026-09-11)
+
+Issue #28 was the fifth bug in this subsystem, and the first four fixes are why it happened.
+
+Each one — #5 (keyboards), the Home path, #7 (recents re-entry), #19 (picture-in-picture) — found a
+window event that was being misread as "the user switched apps", and each one fixed it by adding
+names to a set: `SYSTEM_PACKAGES`, `IME_PACKAGES`, `NEVER_LAUNCHER_PACKAGES`. Every one of those
+fixes was correct. Together they guaranteed a fifth bug, because the thing they were all patching was
+a **model**: *a foreign package fired a window event, therefore the user left*. That model is simply
+false. A photo picker, a share sheet, the Pixel's `com.google.android.permissioncontroller` (which is
+NOT the `com.android.permissioncontroller` that was in the list), a custom tab, a notification hop and
+an OEM volume panel are all ordinary app packages that an app puts in front of you while you are
+still using it. No list will ever contain them all, and the list you write today goes stale the next
+time an OEM ships a package you have not heard of.
+
+**The tell:** you are adding an entry to a hardcoded set to fix a bug report, and that set already
+has entries added by previous bug reports. The number of previous entries is the number of times this
+has already failed. Fix the question, not the list.
+
+The replacement — `SittingTracker` — ends a sitting only on evidence that the user actually stopped:
+Home, screen-off, or another app holding the foreground past a five-minute return window (the same
+`SESSION_EXPIRY_MS` the interaction counter already used, so the two cannot disagree). A sub-flow is
+then a sub-flow by construction, with nothing to recognise.
+
+Related trap, same file, third occurrence: **one membership test answering two different questions.**
+`SYSTEM_PACKAGES` had already sprung this on the passthrough grant and on the foreground-time clock
+before it sprang here. It now answers only "should this be evaluated / should the overlays hide", and
+is structurally barred from the "did the user leave" question.
+
+## A debounce is a rate limit, and rate is not a measurement (2026-09-11)
+
+The other half of #28. The interaction counter counted one interaction per `TYPE_VIEW_SCROLLED` that
+survived a 500ms debounce, and — for packages outside `InAppDetector.SUPPORTED_PACKAGES` — one per
+second of `TYPE_WINDOW_CONTENT_CHANGED` as a stand-in for taps.
+
+Measured on the Pixel 3: **one deliberate 2.5-second drag emits ten scroll events**, and an
+**untouched phone sitting on the Instagram feed emits them anyway**. So the counter reported 5-6 for
+one gesture and ticked upward with nobody touching the device — and it feeds auto-kick, so it could
+eject a user for doing nothing. Every previous attempt to fix "the counter is wrong" tuned the
+debounce, which cannot work: the debounce was never the bug, using rate as the unit was.
+
+The ground truth had been in the events the whole time and was never read. `TYPE_VIEW_SCROLLED`
+carries `fromIndex`, `toIndex`, `currentItemIndex`, `itemCount`, and `scrollDeltaX/Y` on API 28+.
+Across that ten-event drag, `fromIndex` reads `0,0,0,0,0,0,0,0,1,1` — one transition.
+
+**Before tuning a threshold on a signal, check whether the event already carries the quantity you
+actually want.** Debounces are fine as guards against duplicate delivery. They are never the thing
+that decides what a user did.
+
+Corollary that cost a release here: **a proxy signal that cannot fail visibly will not be noticed for
+years.** The content-change-as-taps proxy shipped, and "the counter is a bit odd" sat in the backlog
+as an unexplained item for four versions. It is now deleted rather than tightened: a package we
+cannot measure reads zero, which is honest, where the old number was fabricated and wore the word
+"taps".
+
+## Capture the event stream before theorising about it (2026-09-11)
+
+Every bug in this subsystem — #5, #7, #19, #28 — was a disagreement between the event stream we
+assumed and the one the device produces, and each cost at least one device cycle to localise by
+guessing. #19 cost a whole release.
+
+`scripts/a11y-capture.sh` now writes the real stream to
+`app/src/test/resources/a11y-captures/<name>.jsonl` and JVM tests replay it. **The workflow for the
+next report is: reproduce with the capture running, commit the `.jsonl`, write the assertion that
+FAILS on it, then fix.** Three things learned building it, all of which cost time:
+
+- **A fixture with no stated oracle cannot fail.** Each capture's `#` header carries HOW it was taken
+  and what a human EXPECTED, and a test asserts every committed capture has both.
+- **Pair each fixture assertion with a counterfactual** that runs the OLD rule over the same capture
+  and asserts it still fails. Otherwise a capture that quietly stops reproducing leaves a green test
+  asserting nothing.
+- **A source-level contract test must strip comments before grepping.** The comments in this file
+  necessarily quote the code they explain; a contract test greping raw source read its own
+  explanation of the fix as evidence the bug was still there — and, worse, could pass because a
+  comment mentions something the code no longer does.
+
+## `mCurrentFocus` does not tell you which SCREEN you are on (2026-09-11)
+
+Three device captures were taken on a YouTube video player while every focus check said
+`com.google.android.youtube`, because YouTube is a single-activity shell. The captures looked clean
+and contained no scroll events at all, which nearly became the finding "YouTube emits no scroll
+events" — false for the feed, true for Shorts, and the two are only distinguishable by looking.
+**Screenshot the screen and read it.** A capture of the wrong surface is worse than no capture,
+because it looks like data.
+
+Second trap on the same run: **relaunching a backgrounded YouTube drops it into picture-in-picture**
+when the block overlay backgrounds it, #19's PiP gate then swallows its events, and the gestures land
+on the launcher instead. 5 of 8 launches landed wrong. `tools/qa/scroll-capture.sh` force-stops
+first; anything that relaunches an app for a capture should.
