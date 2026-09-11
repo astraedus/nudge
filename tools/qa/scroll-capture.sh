@@ -46,10 +46,20 @@ CX=540
 open_youtube() {
   adb shell am start -a android.intent.action.MAIN -c android.intent.category.HOME >/dev/null 2>&1
   sleep 2
+  # FORCE-STOP FIRST, always. Relaunching a YouTube that was backgrounded mid-video puts it into
+  # picture-in-picture when the block overlay backgrounds it again, and issue #19's PiP gate then
+  # swallows every later event from it -- so the window that receives the gestures is the LAUNCHER,
+  # and the capture silently records the launcher's own RecyclerView. Measured: 5 of 8 launches
+  # landed wrong without this, 7 of 7 landed clean with it.
+  adb shell am force-stop com.google.android.youtube >/dev/null 2>&1
+  sleep 1
   adb shell monkey -p com.google.android.youtube -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
   # The DELAY overlay auto-completes on its own timer; wait it out so the capture is of USE, not of
   # the block screen.
   sleep 12
+  # Say what actually got the gestures. A capture of the wrong window is worse than no capture: it
+  # looks like data.
+  echo "   focused window: $(adb shell dumpsys window 2>/dev/null | grep -m1 mCurrentFocus | tr -d '\r')"
 }
 
 open_settings() {
@@ -119,7 +129,13 @@ mkdir -p "$OUT_DIR"
 
 echo
 echo "-- scroll events grouped by source view (count | view id | class | index moves | deltaY set?) --"
-grep 'NudgeA11yTrace' "$RAW" | sed 's/.*EV //' | grep '"t":"VIEW_SCROLLED"' | python3 - <<'PY'
+# The analyser is written to a file and then fed the events on stdin. `python3 - <<'PY'` would
+# SHADOW the pipe with the heredoc, so the script would read its own source as input, print
+# "(no scroll events)" on every run whatever the log contained, and then die on pipefail before the
+# blocks below ever ran. A capture tool that silently reports nothing is worse than one that fails.
+ANALYSER="$(mktemp)"
+trap 'rm -f "$RAW.tmp" "$ANALYSER"' EXIT
+cat > "$ANALYSER" <<'PY'
 import sys, json, collections
 rows = collections.OrderedDict()
 for line in sys.stdin:
@@ -142,6 +158,7 @@ for (vid, cls), r in rows.items():
     print(f"         index moves: {r['moves'][:8]}{' ...' if len(r['moves'])>8 else ''}")
     print(f"         distinct-transitions={transitions}  deltaY values={sorted(r['dy'])}  scrollY={sorted(r['sy'])}  itemCount={sorted(r['items'])}")
 PY
+grep 'NudgeA11yTrace' "$RAW" | sed 's/.*EV //' | grep '"t":"VIEW_SCROLLED"' | python3 "$ANALYSER" || true
 
 echo
 echo "-- clicks --"

@@ -1,0 +1,203 @@
+package com.astraedus.nudge.service
+
+import java.io.File
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+/**
+ * Source-level guard on the ORDER of `NudgeAccessibilityService.onAccessibilityEvent`.
+ *
+ * ## Why a test that reads source code
+ *
+ * Every defect this subsystem has shipped was an ordering bug, not a logic bug:
+ *
+ * | Issue | What actually went wrong |
+ * |---|---|
+ * | [#5](https://github.com/astraedus/nudge/issues/5) | a keyboard's window event reached the passthrough clear |
+ * | Home path (v1.13) | the `SYSTEM_PACKAGES` return fired ~200 lines before the clear |
+ * | [#7](https://github.com/astraedus/nudge/issues/7) | a content-change re-entry returned before evaluation |
+ * | [#19](https://github.com/astraedus/nudge/issues/19) | the PiP gate was attached to one branch instead of the pipeline |
+ * | [#28](https://github.com/astraedus/nudge/issues/28) | any foreign package's event reached the passthrough clear |
+ *
+ * Each fix was correct and each left the same shape in place: "what is on screen" derived
+ * independently inside several branches, each free to return before something that had to happen. No
+ * value-level test can see where a `return` sits, which is why `HomeScreenPassthroughContractTest`
+ * and `BlockOverlayWalkAwayContractTest` already work this way.
+ *
+ * The structural fix is that the event is classified ONCE and the sitting updated ONCE, both above
+ * every `return` in the method. This test is what keeps that true: it fails the moment someone adds
+ * an early return above the classification, or re-derives the classification below it.
+ */
+class EventDispatchOrderContractTest {
+
+    private val source: String by lazy {
+        val candidates = listOf(
+            File("src/main/java/com/astraedus/nudge/service/NudgeAccessibilityService.kt"),
+            File("app/src/main/java/com/astraedus/nudge/service/NudgeAccessibilityService.kt")
+        )
+        (candidates.firstOrNull { it.exists() }
+            ?: error("NudgeAccessibilityService.kt not found from ${File("").absolutePath}"))
+            .readText()
+    }
+
+    /** The body of `onAccessibilityEvent`, up to the start of the next top-level declaration. */
+    private val dispatchBody: String by lazy {
+        val start = source.indexOf("override fun onAccessibilityEvent(")
+        assertTrue("onAccessibilityEvent must exist", start >= 0)
+        val end = source.indexOf("\n    /**\n     * Feed the classified signal", start)
+        assertTrue("the dispatch body must be followed by applySitting's doc", end > start)
+        source.substring(start, end)
+    }
+
+    /**
+     * The same body with comments removed.
+     *
+     * Load-bearing, not tidiness. This file's comments necessarily QUOTE the code they are about —
+     * the block explaining the fix says the word "return" several times, and the one marking issue
+     * #28's old line names `clearIfAppChanged(` verbatim. A contract test that greps raw source
+     * therefore reads its own explanations as code and fails, or worse, passes because a comment
+     * mentions the thing the code no longer does. Both happened while writing this test.
+     */
+    private val dispatchCode: String by lazy { stripComments(dispatchBody) }
+
+    private fun stripComments(text: String): String = text
+        .replace(Regex("""/\*[\s\S]*?\*/"""), " ")
+        .lines()
+        .joinToString("\n") { line -> line.substringBefore("//") }
+
+    private fun indexIn(body: String, needle: String): Int {
+        val i = body.indexOf(needle)
+        assertTrue("expected to find `$needle` in onAccessibilityEvent", i >= 0)
+        return i
+    }
+
+    /**
+     * The whole point. Classification and the sitting update must precede EVERY early return except
+     * the three that cannot proceed without them: a null event, a null package, and a record the
+     * factory could not build — none of which carry any information to act on.
+     */
+    @Test
+    fun `the event is classified and the sitting updated before any early return`() {
+        val classify = indexIn(dispatchCode, "eventClassifier.classify(")
+        val applySitting = indexIn(dispatchCode, "applySitting(signal)")
+        assertTrue("the sitting must be updated from the classification", applySitting > classify)
+
+        val preamble = dispatchCode.substring(0, dispatchCode.indexOf("applySitting(signal)"))
+        // The only returns allowed above the sitting update are the "there is nothing to classify"
+        // ones. Anything else is a branch that can skip the sitting, which is this whole bug family.
+        val allowedPreambleReturns = listOf(
+            "if (event == null) return",
+            "val packageName = event.packageName?.toString() ?: return",
+            "val record = eventRecordFactory.toRecord(event) ?: return",
+            "if (PipEscapeActivity.isActive) return"
+        )
+        val returns = Regex("""\breturn\b""").findAll(preamble).count()
+        assertTrue(
+            "every return above applySitting must be one of the allowed 'nothing to classify' " +
+                "returns; found $returns returns and ${allowedPreambleReturns.size} allowed forms",
+            returns <= allowedPreambleReturns.size
+        )
+        allowedPreambleReturns.forEach { form ->
+            assertTrue("expected the allowed early return `$form` to still be present", preamble.contains(form))
+        }
+    }
+
+    /**
+     * One classification per event. A second `classify(` call in the dispatch would be a second
+     * opinion about what is on screen, which is exactly the condition the six hand-rolled package
+     * tests used to create.
+     */
+    @Test
+    fun `the dispatch classifies exactly once`() {
+        assertTrue(
+            "onAccessibilityEvent must call the classifier exactly once",
+            Regex("""eventClassifier\.classify\(""").findAll(dispatchCode).count() == 1
+        )
+        assertTrue(
+            "onAccessibilityEvent must apply the sitting exactly once",
+            Regex("""applySitting\(""").findAll(dispatchCode).count() == 1
+        )
+    }
+
+    /**
+     * The branches below must READ the signal, never re-derive it. A re-derivation is how the Pixel's
+     * `com.google.android.permissioncontroller` ended up classified two different ways in one file.
+     */
+    @Test
+    fun `the dispatch branches on the signal rather than on package sets`() {
+        listOf(
+            "packageName in SYSTEM_PACKAGES",
+            "isTransientNonAppPackage(packageName",
+            "packageName == applicationContext.packageName",
+            "packageName in pipOnlyPackagesCached"
+        ).forEach { rederivation ->
+            assertFalse(
+                "onAccessibilityEvent must not re-derive `$rederivation` — it has the signal",
+                dispatchCode.contains(rederivation)
+            )
+        }
+        listOf(
+            "ForegroundSignal.PipOnly",
+            "ForegroundSignal.OwnUi",
+            "ForegroundSignal.Transient",
+            "ForegroundSignal.Home",
+            "ForegroundSignal.SystemSurface"
+        ).forEach { branch ->
+            assertTrue("the dispatch must branch on $branch", dispatchCode.contains(branch))
+        }
+    }
+
+    /**
+     * Issue #28's actual line. `clearIfAppChanged` on the app-switch path is what revoked a grant
+     * for a photo picker, a share sheet or a permission dialog. It must never come back to
+     * `evaluateForegroundPackage`: revocation belongs to the sitting, which a sub-flow cannot end.
+     */
+    @Test
+    fun `evaluateForegroundPackage never clears the passthrough on an app switch`() {
+        val start = source.indexOf("private fun evaluateForegroundPackage(")
+        assertTrue("evaluateForegroundPackage must exist", start >= 0)
+        val end = source.indexOf("\n    private suspend fun evaluateWebDomain(", start)
+        assertTrue("evaluateForegroundPackage must be followed by evaluateWebDomain", end > start)
+        // Comments stripped: the function deliberately carries a marker comment naming the removed
+        // call, so that the next person to read it knows what used to be there and why it is gone.
+        val body = stripComments(source.substring(start, end))
+        assertFalse(
+            "the app-switch passthrough clear is issue #28 — the sitting owns revocation now",
+            body.contains("clearIfAppChanged(")
+        )
+    }
+
+    /**
+     * The trace has to see the events that get DROPPED — a picture-in-picture bubble, our own
+     * window, a keyboard, a system surface — because those are what a report in this family turns
+     * out to be about. A trace that only saw the events we already act on would record our
+     * assumptions rather than the device.
+     */
+    @Test
+    fun `the event trace runs before every gate`() {
+        val trace = indexIn(dispatchCode, "eventTrace.record(record)")
+        val pipGate = indexIn(dispatchCode, "PipEscapeActivity.isActive")
+        val classify = indexIn(dispatchCode, "eventClassifier.classify(")
+        assertTrue("the trace must precede the PiP-explainer gate", trace < pipGate)
+        assertTrue("the trace must precede classification", trace < classify)
+    }
+
+    /**
+     * The trace must stay free in a release build with debug logging off. `AccessibilityEventTrace`
+     * gates internally, and the one genuinely expensive field — the `viewIdResourceName` binder read
+     * — must be paid only while the trace is on.
+     */
+    @Test
+    fun `the source-node binder read is paid only while tracing`() {
+        val start = source.indexOf("private val eventRecordFactory by lazy {")
+        assertTrue("eventRecordFactory must exist", start >= 0)
+        val end = source.indexOf("\n    }", start)
+        val body = stripComments(source.substring(start, end))
+        assertTrue(
+            "the source read policy must be conditional on the trace being enabled",
+            body.contains("eventTrace.isEnabled()") &&
+                body.contains("SourceReadPolicy.NEVER")
+        )
+    }
+}

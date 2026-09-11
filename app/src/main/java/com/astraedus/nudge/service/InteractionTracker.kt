@@ -1,6 +1,7 @@
 package com.astraedus.nudge.service
 
 import androidx.annotation.VisibleForTesting
+import com.astraedus.nudge.domain.interaction.CountMode
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -29,16 +30,18 @@ class InteractionTracker @Inject constructor() {
         val packageName: String,
         val sessionCount: Int = 0,
         val dailyTotal: Int = 0,
-        val countType: CountType = CountType.TAP
+        /** What this session's number is counting. See [recordInteractions]. */
+        val mode: CountMode = CountMode.TAPS
     )
-
-    enum class CountType { TAP, SCROLL }
 
     /** Override in tests to control time. */
     @VisibleForTesting
     internal var clock: () -> Long = System::currentTimeMillis
 
     private val sessionCounts = mutableMapOf<String, Int>()
+
+    /** What each package's current session is counting. See [recordInteractions]. */
+    private val sessionModes = mutableMapOf<String, CountMode>()
     private val dailyTotals = mutableMapOf<String, Int>()
     private var currentPackage: String? = null
 
@@ -70,6 +73,7 @@ class InteractionTracker @Inject constructor() {
                 val now = clock()
                 if (leftAt == null || (now - leftAt) >= SESSION_EXPIRY_MS) {
                     sessionCounts[packageName] = 0
+                    sessionModes.remove(packageName)
                     sessionUsageBaseline.remove(packageName)
                 }
             }
@@ -78,20 +82,59 @@ class InteractionTracker @Inject constructor() {
         }
     }
 
-    /** Records a single interaction and returns the updated counts. */
-    fun recordInteraction(packageName: String): SessionCount {
-        val session = (sessionCounts[packageName] ?: 0) + 1
+    /** Records a single tap and returns the updated counts. */
+    fun recordInteraction(packageName: String): SessionCount =
+        recordInteractions(packageName, 1, CountMode.TAPS)
+
+    /**
+     * Records [count] interactions of [mode] and returns the updated counts.
+     *
+     * A single scroll event can legitimately represent more than one item consumed — a fling moves
+     * the adapter several positions — and [com.astraedus.nudge.domain.interaction.InteractionCounter]
+     * is what decides how many. Non-positive counts are ignored rather than clamped silently to one:
+     * "this event was not an interaction" is the common answer and must cost nothing.
+     *
+     * ## One session counts ONE unit
+     *
+     * Reels watched and buttons tapped are different things, and a number that silently adds them is
+     * how "opening the comments counted as a tap" comes back wearing a different name — the overlay
+     * would read "7 reels" after five swipes and two taps, and auto-kick would fire two items early.
+     * So a session has a [CountMode], and only interactions of that mode are recorded:
+     *
+     *  - [CountMode.ITEMS] wins. The first item consumed switches a tap-counting session over, and
+     *    **resets the count**, because the taps recorded so far were a different unit and adding
+     *    them to a reel count would be the exact lie this avoids. The alternative — locking the mode
+     *    to whatever came first — would let one stray tap on entering an app silence the reel
+     *    counter for the whole sitting.
+     *  - Once a session counts items, taps are dropped entirely rather than tallied elsewhere. A
+     *    second number nothing displays is state that can only go stale.
+     */
+    fun recordInteractions(packageName: String, count: Int, mode: CountMode): SessionCount {
+        val currentMode = sessionModes[packageName] ?: CountMode.TAPS
+        if (count <= 0 || (mode == CountMode.TAPS && currentMode == CountMode.ITEMS)) {
+            return SessionCount(packageName, getSessionCount(packageName), getDailyTotal(packageName), currentMode)
+        }
+        val promoting = mode == CountMode.ITEMS && currentMode != CountMode.ITEMS
+        val previousSession = if (promoting) 0 else (sessionCounts[packageName] ?: 0)
+        sessionModes[packageName] = mode
+
+        val session = previousSession + count
         sessionCounts[packageName] = session
-        val daily = (dailyTotals[packageName] ?: 0) + 1
+        val daily = (dailyTotals[packageName] ?: 0) + count
         dailyTotals[packageName] = daily
-        return SessionCount(packageName, session, daily)
+        return SessionCount(packageName, session, daily, mode)
     }
+
+    /** What this package's current session is counting. */
+    fun getSessionMode(packageName: String): CountMode =
+        sessionModes[packageName] ?: CountMode.TAPS
 
     fun getSessionCount(packageName: String): Int = sessionCounts[packageName] ?: 0
     fun getDailyTotal(packageName: String): Int = dailyTotals[packageName] ?: 0
 
     fun resetSession(packageName: String) {
         sessionCounts[packageName] = 0
+        sessionModes.remove(packageName)
         sessionUsageBaseline.remove(packageName)
         lastLeftAt.remove(packageName)
         if (currentPackage == packageName) {

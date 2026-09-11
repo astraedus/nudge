@@ -1,6 +1,9 @@
 package com.astraedus.nudge.service
 
-import android.view.accessibility.AccessibilityEvent
+import com.astraedus.nudge.domain.events.A11yEventType
+import com.astraedus.nudge.domain.events.AccessibilityEventRecord
+import com.astraedus.nudge.domain.events.EventClassifier
+import com.astraedus.nudge.domain.events.ForegroundSignal
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -19,6 +22,34 @@ class TransientWindowTest {
     private val futo = "org.futo.inputmethod.latin"
     private val gboard = "com.google.android.inputmethod.latin"
     private val instagram = "com.instagram.android"
+    private val ownPackage = "com.astraedus.nudge"
+
+    /**
+     * The real classifier, wired from the service's own package sets.
+     *
+     * The transient exclusion the overlay-bypass gate relies on is no longer inside that gate — it
+     * is one branch of [EventClassifier], which answers [ForegroundSignal.Transient] for an active
+     * IME or the framework package. These tests therefore have to CLASSIFY, not hand-build a
+     * signal: a hand-built `ForegroundSignal.Transient(futo)` would pass while the real pipeline
+     * regressed straight back into issue #5.
+     */
+    private val classifier = EventClassifier(
+        ownPackageName = ownPackage,
+        systemPackages = NudgeAccessibilityService.SYSTEM_PACKAGES,
+        imePackages = NudgeAccessibilityService.IME_PACKAGES,
+        frameworkPackage = NudgeAccessibilityService.FRAMEWORK_PACKAGE
+    )
+
+    private fun signalFor(
+        packageName: String,
+        type: A11yEventType,
+        currentImePackage: String? = null
+    ): ForegroundSignal = classifier.classify(
+        AccessibilityEventRecord(type = type, packageName = packageName),
+        currentImePackage = currentImePackage,
+        launcherPackages = emptySet(),
+        pipOnlyPackages = emptySet()
+    )
 
     // --- isTransientNonAppPackage: the core recognition the fix hinges on ---
 
@@ -78,10 +109,8 @@ class TransientWindowTest {
     fun `active keyboard while overlay up is not an overlay bypass`() {
         assertFalse(
             NudgeAccessibilityService.isOverlayBypassedByForeground(
-                eventType = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
-                packageName = futo,
-                ownPackageName = "com.astraedus.nudge",
-                currentImePackage = futo
+                eventType = A11yEventType.WINDOW_STATE_CHANGED,
+                signal = signalFor(futo, A11yEventType.WINDOW_STATE_CHANGED, currentImePackage = futo)
             )
         )
     }
@@ -90,10 +119,12 @@ class TransientWindowTest {
     fun `android popup while overlay up is not an overlay bypass`() {
         assertFalse(
             NudgeAccessibilityService.isOverlayBypassedByForeground(
-                eventType = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
-                packageName = NudgeAccessibilityService.FRAMEWORK_PACKAGE,
-                ownPackageName = "com.astraedus.nudge",
-                currentImePackage = futo
+                eventType = A11yEventType.WINDOW_STATE_CHANGED,
+                signal = signalFor(
+                    NudgeAccessibilityService.FRAMEWORK_PACKAGE,
+                    A11yEventType.WINDOW_STATE_CHANGED,
+                    currentImePackage = futo
+                )
             )
         )
     }
@@ -103,10 +134,12 @@ class TransientWindowTest {
         // The transient exclusions must not weaken the genuine tab-out-and-back-in re-block path.
         assertTrue(
             NudgeAccessibilityService.isOverlayBypassedByForeground(
-                eventType = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
-                packageName = instagram,
-                ownPackageName = "com.astraedus.nudge",
-                currentImePackage = futo
+                eventType = A11yEventType.WINDOW_STATE_CHANGED,
+                signal = signalFor(
+                    instagram,
+                    A11yEventType.WINDOW_STATE_CHANGED,
+                    currentImePackage = futo
+                )
             )
         )
     }

@@ -198,7 +198,11 @@ class WebDomainEnforcementContractTest {
      */
     @Test
     fun `a transient system window must not stop the foreground clock`() {
-        val branch = service.substringAfter("if (packageName in SYSTEM_PACKAGES) {")
+        // The branch used to be keyed on `packageName in SYSTEM_PACKAGES`. It now reads the single
+        // classified `ForegroundSignal` (issue #28) — the same branch, asking the question once
+        // instead of re-deriving it. The invariant below is unchanged.
+        val branch = service
+            .substringAfter("if (signal is ForegroundSignal.Home || signal is ForegroundSignal.SystemSurface) {")
             .substringBefore("\n        }")
         assertTrue(
             "the clock must stop only when the user actually went home",

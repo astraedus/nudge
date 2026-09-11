@@ -1,6 +1,8 @@
 package com.astraedus.nudge.service
 
 import android.view.accessibility.AccessibilityNodeInfo
+import com.astraedus.nudge.domain.events.A11yEventType
+import com.astraedus.nudge.domain.events.AccessibilityEventRecord
 import com.astraedus.nudge.domain.logging.NudgeLog
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -24,6 +26,14 @@ class InteractionHandlerTest {
      */
     private var goHomeCount = 0
 
+    /**
+     * The injected clock. Several claims here are about debounce windows, and reading the real
+     * clock made them depend on how fast the JVM happened to run — the classic flaky-by-design
+     * test. It starts well past the click debounce so the very first click of a test is not
+     * silently swallowed by `now - 0L < clickDebounceMs`.
+     */
+    private var now = 10_000L
+
     @Before
     fun setUp() {
         tracker = InteractionTracker()
@@ -32,6 +42,7 @@ class InteractionHandlerTest {
         timeRemainingHandler = FakeTimeRemainingHandler()
         counterCache = CounterCacheRefresher()
         goHomeCount = 0
+        now = 10_000L
 
         handler = InteractionHandler(
             interactionTracker = tracker,
@@ -46,7 +57,8 @@ class InteractionHandlerTest {
                 counterCache = counterCache,
                 logger = NudgeLog.NoOp,
                 goHome = { goHomeCount++ }
-            )
+            ),
+            clock = { now }
         )
     }
 
@@ -74,13 +86,52 @@ class InteractionHandlerTest {
         }
     }
 
-    // --- handleViewClicked tests ---
+    // --- Event builders ---------------------------------------------------------------------
+    //
+    // The handler now takes the whole AccessibilityEventRecord rather than a package name, because
+    // the counter's answer lives in fields the old signature threw away (windowId / className /
+    // fromIndex). These helpers keep that plumbing out of the individual tests.
+
+    private fun click(packageName: String) =
+        AccessibilityEventRecord(type = A11yEventType.VIEW_CLICKED, packageName = packageName)
+
+    private fun scroll(
+        packageName: String,
+        index: Int,
+        windowId: Int = 1,
+        className: String = "androidx.recyclerview.widget.RecyclerView"
+    ) = AccessibilityEventRecord(
+        type = A11yEventType.VIEW_SCROLLED,
+        packageName = packageName,
+        className = className,
+        windowId = windowId,
+        fromIndex = index
+    )
+
+    /**
+     * Feed the two events that make up ONE counted swipe.
+     *
+     * A scroll counts on a forward item-index TRANSITION, so the first event from any source is
+     * `source_first_seen` and counts zero by design — that is what stops opening a comments sheet
+     * from registering as content consumed. A test that wants a scroll to count therefore always
+     * feeds two records from the same (windowId, className).
+     */
+    private fun scrollOnce(
+        packageName: String,
+        windowId: Int = 1,
+        className: String = "androidx.recyclerview.widget.RecyclerView"
+    ) {
+        handler.handleInteraction(scroll(packageName, index = 0, windowId = windowId, className = className))
+        handler.handleInteraction(scroll(packageName, index = 1, windowId = windowId, className = className))
+    }
+
+    // --- click tests ---
 
     @Test
-    fun `handleViewClicked increments session count for non-supported packages`() {
+    fun `handleInteraction increments session count for non-supported packages`() {
         enablePackage("com.example.notes")
 
-        handler.handleViewClicked("com.example.notes")
+        handler.handleInteraction(click("com.example.notes"))
 
         assertEquals(1, tracker.getSessionCount("com.example.notes"))
         assertEquals(1, overlayManager.lastSessionCount)
@@ -88,160 +139,232 @@ class InteractionHandlerTest {
     }
 
     @Test
-    fun `handleViewClicked skips supported packages - Instagram`() {
+    fun `a click inside a supported package now counts - Instagram`() {
+        // INVERTED (issue #28 bug 2). This used to assert that a tap in a SUPPORTED_PACKAGES app
+        // counted NOTHING: `handleViewClicked` returned early for them. The result was backwards —
+        // a real tap in Instagram counted zero while a React Native re-render in Discord counted
+        // one. SUPPORTED_PACKAGES now means only "we can name this app's in-app feature", which
+        // supplies the counter's LABEL and never a veto on counting.
         enablePackage("com.instagram.android")
 
-        handler.handleViewClicked("com.instagram.android")
+        handler.handleInteraction(click("com.instagram.android"))
 
-        assertEquals(0, tracker.getSessionCount("com.instagram.android"))
-        assertNull(overlayManager.lastShowLabel)
+        assertEquals(1, tracker.getSessionCount("com.instagram.android"))
+        assertEquals("taps", overlayManager.lastShowLabel)
     }
 
     @Test
-    fun `handleViewClicked skips supported packages - YouTube`() {
+    fun `a click inside a supported package now counts - YouTube`() {
+        // INVERTED with the Instagram case above; same old early return, same fix.
         enablePackage("com.google.android.youtube")
 
-        handler.handleViewClicked("com.google.android.youtube")
+        handler.handleInteraction(click("com.google.android.youtube"))
 
-        assertEquals(0, tracker.getSessionCount("com.google.android.youtube"))
+        assertEquals(1, tracker.getSessionCount("com.google.android.youtube"))
     }
 
     @Test
-    fun `handleViewClicked skips supported packages - TikTok`() {
+    fun `a click inside a supported package now counts - TikTok`() {
+        // INVERTED with the Instagram case above; same old early return, same fix.
         enablePackage("com.zhiliaoapp.musically")
 
-        handler.handleViewClicked("com.zhiliaoapp.musically")
+        handler.handleInteraction(click("com.zhiliaoapp.musically"))
 
-        assertEquals(0, tracker.getSessionCount("com.zhiliaoapp.musically"))
+        assertEquals(1, tracker.getSessionCount("com.zhiliaoapp.musically"))
     }
 
     @Test
-    fun `handleViewClicked respects debounce - rapid clicks ignored`() {
+    fun `handleInteraction respects click debounce - rapid clicks ignored`() {
+        // The debounce survives, but only as a guard against the SAME tap being delivered twice —
+        // it is no longer the mechanism that decides what a tap is. Driven off the injected clock
+        // so "within the window" is a fact rather than a race.
         enablePackage("com.example.notes")
 
         // First click goes through
-        handler.handleViewClicked("com.example.notes")
-        // Second click immediately after (within 300ms debounce) -- ignored
-        handler.handleViewClicked("com.example.notes")
+        handler.handleInteraction(click("com.example.notes"))
+        // Second click immediately after (within the 300ms debounce) -- ignored
+        handler.handleInteraction(click("com.example.notes"))
 
         assertEquals(1, tracker.getSessionCount("com.example.notes"))
         assertEquals(1, overlayManager.lastSessionCount)
     }
 
     @Test
-    fun `handleViewClicked does nothing when package not in cache`() {
-        handler.handleViewClicked("com.example.notes")
+    fun `handleInteraction does nothing when package not in cache`() {
+        handler.handleInteraction(click("com.example.notes"))
 
         assertEquals(0, tracker.getSessionCount("com.example.notes"))
         assertNull(overlayManager.lastShowLabel)
     }
 
     @Test
-    fun `handleViewClicked shows overlay on first interaction`() {
+    fun `handleInteraction shows overlay on first interaction`() {
         enablePackage("com.example.notes")
 
-        handler.handleViewClicked("com.example.notes")
+        handler.handleInteraction(click("com.example.notes"))
 
         assertTrue(overlayManager.visible)
         assertEquals("taps", overlayManager.lastShowLabel)
     }
 
     @Test
-    fun `handleViewClicked calls timeRemainingHandler maybeUpdate`() {
+    fun `handleInteraction calls timeRemainingHandler maybeUpdate`() {
         enablePackage("com.example.notes")
 
-        handler.handleViewClicked("com.example.notes")
+        handler.handleInteraction(click("com.example.notes"))
 
         assertEquals("com.example.notes", timeRemainingHandler.lastMaybeUpdatePackage)
     }
 
-    // --- handleViewScrolled tests ---
+    // --- content-change tests ---
 
     @Test
-    fun `handleViewScrolled increments count for supported packages with detected feature`() {
+    fun `a content change is not an interaction and counts nothing`() {
+        // REPLACES the removed `handleContentChanged`, which counted one "tap" per second of
+        // TYPE_WINDOW_CONTENT_CHANGED for every package outside SUPPORTED_PACKAGES as a stand-in
+        // for taps in apps that do not fire TYPE_VIEW_CLICKED (React Native ones like Discord).
+        //
+        // It was removed rather than tightened because content changes are not input at all: the
+        // capture at `app/src/test/resources/a11y-captures/instagram-idle-no-input.jsonl` is an
+        // UNTOUCHED phone sitting on the Instagram feed, and the content changes keep arriving with
+        // zero user gestures. That path fed auto-kick, so the counter could eject a user for doing
+        // nothing. A package we cannot measure now reads zero, which is honest; the old number was
+        // fabricated and wearing the word "taps".
+        enablePackage("com.example.notes")
+
+        handler.handleInteraction(
+            AccessibilityEventRecord(
+                type = A11yEventType.WINDOW_CONTENT_CHANGED,
+                packageName = "com.example.notes"
+            )
+        )
+
+        assertEquals(0, tracker.getSessionCount("com.example.notes"))
+        assertFalse(overlayManager.visible)
+        assertNull(overlayManager.lastShowLabel)
+    }
+
+    // --- scroll tests ---
+
+    @Test
+    fun `handleInteraction increments count for supported packages with detected feature`() {
         enablePackage("com.instagram.android")
         // Pre-set activeReelLabel to skip AccessibilityNodeInfo detection in JVM tests
         handler.activeReelLabel = "reels"
 
-        handler.handleViewScrolled("com.instagram.android") { null }
+        scrollOnce("com.instagram.android")
 
         assertEquals(1, tracker.getSessionCount("com.instagram.android"))
         assertEquals("reels", overlayManager.lastShowLabel)
     }
 
     @Test
-    fun `handleViewScrolled skips non-supported packages`() {
+    fun `a scroll in an unsupported package now counts`() {
+        // INVERTED (issue #28 bug 2). This used to assert that a scroll outside SUPPORTED_PACKAGES
+        // counted NOTHING. That early return is exactly what made docs/BACKLOG.md's "counter
+        // doesn't increment on YouTube swipes" possible: any feed we could not name was silent.
+        // Counting is now gated on the item index moving, not on the package being on a list.
         enablePackage("com.example.notes")
 
-        handler.handleViewScrolled("com.example.notes") { null }
+        scrollOnce("com.example.notes")
 
-        assertEquals(0, tracker.getSessionCount("com.example.notes"))
-        assertNull(overlayManager.lastShowLabel)
+        assertEquals(1, tracker.getSessionCount("com.example.notes"))
+        assertEquals("scrolls", overlayManager.lastShowLabel)
     }
 
     @Test
-    fun `handleViewScrolled does nothing when no feature detected`() {
+    fun `a scroll with no detected feature now counts under a generic label`() {
+        // INVERTED (issue #28 bug 2). This used to assert that a scroll counted NOTHING unless
+        // InAppDetector recognised an in-app feature — detection held a veto. It now supplies only
+        // a NAME: an unresolved label is a cosmetic loss, a refused count is the feature not
+        // working. The "no feature detected means no label" half of the old claim survives below.
         enablePackage("com.instagram.android")
         inAppDetector.featureToReturn = null
 
-        handler.handleViewScrolled("com.instagram.android") { null }
+        handler.noteDetectedFeature(inAppDetector.featureToReturn)
+        scrollOnce("com.instagram.android")
 
-        assertEquals(0, tracker.getSessionCount("com.instagram.android"))
+        assertNull(handler.activeReelLabel)
+        assertEquals(1, tracker.getSessionCount("com.instagram.android"))
+        assertEquals("scrolls", overlayManager.lastShowLabel)
     }
 
     @Test
-    fun `handleViewScrolled returns early for EXPLORE feature`() {
+    fun `EXPLORE yields no label but no longer suppresses the count`() {
+        // INVERTED (issue #28 bug 2). This used to assert that an Instagram Explore scroll counted
+        // NOTHING, because the label lookup `return`ed out of the counting path for EXPLORE. The
+        // surviving half of that claim — EXPLORE is not a feature we put a name to — is asserted
+        // directly on noteDetectedFeature, where it now lives.
         enablePackage("com.instagram.android")
         inAppDetector.featureToReturn = InAppDetector.Feature.EXPLORE
 
-        handler.handleViewScrolled("com.instagram.android") { null }
+        handler.noteDetectedFeature(InAppDetector.Feature.EXPLORE)
+        scrollOnce("com.instagram.android")
 
-        assertEquals(0, tracker.getSessionCount("com.instagram.android"))
+        assertNull(handler.activeReelLabel)
+        assertEquals(1, tracker.getSessionCount("com.instagram.android"))
+        assertEquals("scrolls", overlayManager.lastShowLabel)
     }
 
     @Test
-    fun `handleViewScrolled detects YouTube Shorts via cached label`() {
+    fun `handleInteraction detects YouTube Shorts via cached label`() {
         enablePackage("com.google.android.youtube")
         handler.activeReelLabel = "shorts"
 
-        handler.handleViewScrolled("com.google.android.youtube") { null }
+        scrollOnce("com.google.android.youtube")
 
         assertEquals(1, tracker.getSessionCount("com.google.android.youtube"))
         assertEquals("shorts", overlayManager.lastShowLabel)
     }
 
     @Test
-    fun `handleViewScrolled detects TikTok feed via cached label`() {
+    fun `handleInteraction detects TikTok feed via cached label`() {
         enablePackage("com.zhiliaoapp.musically")
         handler.activeReelLabel = "videos"
 
-        handler.handleViewScrolled("com.zhiliaoapp.musically") { null }
+        scrollOnce("com.zhiliaoapp.musically")
 
         assertEquals(1, tracker.getSessionCount("com.zhiliaoapp.musically"))
         assertEquals("videos", overlayManager.lastShowLabel)
     }
 
     @Test
-    fun `activeReelLabel caches feature label and skips detection on subsequent scrolls`() {
+    fun `activeReelLabel caches feature label and the counting path never runs detection`() {
+        // Stronger than it was: detection used to happen inline in the scroll path and was skipped
+        // only because a label was already cached. The node-tree read is now a separate, explicitly
+        // optional call (resolveLabelIfUnknown), so the counter's correctness can never depend on a
+        // binder round trip fired from a burst of scroll events.
         enablePackage("com.instagram.android")
 
         // Simulate that feature was previously detected by setting the cache
         handler.activeReelLabel = "reels"
 
         // Scroll should use cached label without calling detectFeature
-        handler.handleViewScrolled("com.instagram.android") { null }
+        scrollOnce("com.instagram.android")
 
         assertEquals("reels", handler.activeReelLabel)
         assertEquals(1, tracker.getSessionCount("com.instagram.android"))
-        // Detector was never called (rootNodeProvider returns null but label was cached)
         assertEquals(0, inAppDetector.detectCallCount)
     }
 
     @Test
-    fun `handleViewScrolled does nothing when package not in cache`() {
-        handler.handleViewScrolled("com.instagram.android") { null }
+    fun `a scroll does nothing when package not in cache`() {
+        scrollOnce("com.instagram.android")
 
         assertEquals(0, tracker.getSessionCount("com.instagram.android"))
+    }
+
+    @Test
+    fun `the first event from a scroll source establishes position and counts nothing`() {
+        // The "source_first_seen" rule, pinned directly because every scroll test above depends on
+        // it. Counting the first sighting is how opening a comments sheet over a feed used to
+        // register as content consumed.
+        enablePackage("com.example.notes")
+
+        handler.handleInteraction(scroll("com.example.notes", index = 0))
+
+        assertEquals(0, tracker.getSessionCount("com.example.notes"))
+        assertFalse(overlayManager.visible)
     }
 
     // --- onAppChanged tests ---
@@ -249,7 +372,7 @@ class InteractionHandlerTest {
     @Test
     fun `onAppChanged resets interaction tracker state`() {
         enablePackage("com.example.notes")
-        handler.handleViewClicked("com.example.notes")
+        handler.handleInteraction(click("com.example.notes"))
         assertEquals(1, tracker.getSessionCount("com.example.notes"))
 
         handler.onAppChanged("com.example.other")
@@ -277,8 +400,9 @@ class InteractionHandlerTest {
 
         // Record some interactions first
         handler.onAppChanged("com.example.notes")
-        handler.handleViewClicked("com.example.notes")
-        handler.handleViewClicked("com.example.notes")
+        handler.handleInteraction(click("com.example.notes"))
+        now += 1_000L
+        handler.handleInteraction(click("com.example.notes"))
         assertTrue(overlayManager.visible)
 
         // Switch away (hide overlay), then come back
@@ -301,10 +425,14 @@ class InteractionHandlerTest {
         // counter". A time-based auto-kick puts a package in the cache with showCounter = false;
         // if the interaction paths keyed off cache membership, enabling "kick after 30 minutes"
         // would silently switch on a floating tap counter nobody asked for.
+        //
+        // Now fed through the single handleInteraction entry point: a click AND a scroll, since a
+        // scroll in an unsupported package is exactly the thing that started counting in this
+        // change and must still respect this gate.
         enablePackage("com.example.notes", showCounter = false, autoKickAfter = null)
 
-        handler.handleViewClicked("com.example.notes")
-        handler.handleContentChanged("com.example.notes")
+        handler.handleInteraction(click("com.example.notes"))
+        scrollOnce("com.example.notes")
 
         assertEquals(0, tracker.getSessionCount("com.example.notes"))
         assertFalse(overlayManager.visible)
@@ -335,7 +463,7 @@ class InteractionHandlerTest {
             autoKickCooldownSeconds = 90
         )
 
-        handler.handleViewClicked("com.example.notes")
+        handler.handleInteraction(click("com.example.notes"))
 
         assertEquals(1, goHomeCount)
         assertEquals(0, tracker.getSessionCount("com.example.notes"))
@@ -351,7 +479,7 @@ class InteractionHandlerTest {
             autoKickCooldownSeconds = 0
         )
 
-        handler.handleViewClicked("com.example.notes")
+        handler.handleInteraction(click("com.example.notes"))
 
         assertEquals(1, goHomeCount)
         assertFalse(tracker.isInCooldown("com.example.notes"))
@@ -361,7 +489,7 @@ class InteractionHandlerTest {
     fun `no auto-kick below the interaction threshold`() {
         enablePackage("com.example.notes", autoKickAfter = 5)
 
-        handler.handleViewClicked("com.example.notes")
+        handler.handleInteraction(click("com.example.notes"))
 
         assertEquals(0, goHomeCount)
         assertEquals(1, tracker.getSessionCount("com.example.notes"))
@@ -372,7 +500,7 @@ class InteractionHandlerTest {
     @Test
     fun `hideCounter hides overlay when visible`() {
         enablePackage("com.example.notes")
-        handler.handleViewClicked("com.example.notes")
+        handler.handleInteraction(click("com.example.notes"))
         assertTrue(overlayManager.visible)
 
         handler.hideCounter()
