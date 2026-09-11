@@ -170,6 +170,24 @@ import path, which is exactly what happened before the test was written.
   a widget with nothing to report.
 - **It fails OPEN.** The first call always runs, a rejected call never extends the window, and the failure
   direction of a debounce bug is "refreshed more often than needed", never "stopped refreshing".
+- **KNOWN LIMITATION: the debounce is LEADING-EDGE ONLY, so the last write of a burst can be dropped.**
+  `tryAcquire` runs the first call and returns `false` for anything inside the window, scheduling nothing. That
+  is exactly right for `logEvent`, where the point is to rate-limit a hot path and the next event will push
+  again shortly. It is wrong for a state change, where **the LAST write is the one that carries the truth**.
+  Device QA saw the consequence once: right after unlocking Strict Mode the widget rendered a combination
+  belonging to neither state (`Not blocking` in red, over the `Turn off in app` locked hint), and stayed that
+  way for about a minute. The unlock path writes several preferences in quick succession; the first push ran
+  against a mid-burst snapshot and every later push in that 10 s window was discarded with no trailing run, so
+  the widget kept the half-updated frame until some unrelated push came along. The 15-minute watchdog is far
+  too slow to have been the thing that corrected it.
+  It self-corrects and it fails toward a FALSE ALARM rather than a falsely-healthy widget, which is the safe
+  direction — but only just: `WidgetSnapshotMapper.protection` deliberately suppresses "degraded" over a
+  switched-off Nudge precisely so the user is never trained to ignore the one message that means their phone
+  killed us, and a spurious red dot works against that.
+  **The fix is a trailing edge**: on a rejected acquire, schedule exactly one run at `last + windowMs`,
+  single-flight so a burst of N produces one leading and one trailing update rather than N. Deliberately not
+  done in v1.17.0 — it touches the updater that sits on the accessibility hot path, and it wants its own device
+  pass to confirm a burst really does produce two updates and not a refresh storm. Filed in `docs/BACKLOG.md`.
 - **The steady-state path is silent; a failure is logged.** `Log.w` on a failed `updateAll`, because "the
   widgets are stale" and "the widgets had nothing new to show" must not look identical in logcat. It uses
   `android.util.Log` rather than the injected `NudgeLog` for a hard reason: `NudgeLogger` depends on

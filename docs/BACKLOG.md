@@ -126,6 +126,34 @@ it installs on Android 8.0/8.1/9, where calling a method the platform class does
   (`sdkmanager "system-images;android-26;google_apis;x86"`) to find out what else is broken down there, or
   a deliberate decision to raise `minSdk` and stop claiming support we have never verified.
 
+## [ ] The widget refresh debounce is leading-edge only, so a burst drops its final state (found 2026-09-12)
+
+`WidgetRefreshDebouncer.tryAcquire` runs the first call in a window and returns `false` for the rest,
+**scheduling nothing**. Correct for `UsageRepository.logEvent` (rate-limit a hot path; another event will push
+again soon), wrong for a state change, where the last write is the one that matters.
+
+Observed once in device QA of v1.17.0: immediately after unlocking Strict Mode the Protection widget rendered
+a state belonging to neither mode - "Not blocking" in red over the "Turn off in app" locked hint - and held it
+for roughly a minute. The unlock path writes several preferences in quick succession, so the leading push ran
+against a mid-burst snapshot and every later push inside the 10 s window was discarded. `ProtectionWatchdogWorker`
+is on a 15-minute period, so it was not what eventually corrected the widget; some unrelated later push was.
+
+- **Severity: low, but not zero.** It self-corrects, and it fails toward a false alarm rather than a falsely
+  healthy widget. The reason it still matters is that `WidgetSnapshotMapper.protection` goes out of its way to
+  suppress "degraded" over a deliberately switched-off Nudge, specifically so the user is never trained to
+  ignore the one message that means the OS killed the service. A spurious red dot spends that credibility.
+- **Fix shape**: on a rejected acquire, schedule ONE trailing run at `last + windowMs`, single-flight, so a
+  burst of N writes yields one leading and one trailing update rather than N or one. `WidgetRefreshDebouncer`
+  is pure and already JVM-tested, so the rule is cheap to test; the scheduling lives in `NudgeWidgetUpdater`,
+  which is not JVM-testable and is why this wants a device pass rather than a quick patch.
+- **Not bundled into v1.17.0 deliberately**: it modifies the updater reached from the accessibility hot path,
+  and the verification it needs (a burst produces exactly two updates, not a storm) is a device cycle this
+  change did not have left. Everything else in that release was device-verified.
+- **How to reproduce**: place the Protection widget, turn Strict Mode on, then unlock it, and watch the widget
+  across the following minute. A distinguishing check for anyone picking this up - log each `updateAll` and
+  confirm whether the burst produced exactly one push, which is the prediction above, or whether the stale
+  frame came from somewhere else entirely.
+
 ## Widget ideas not built (considered and cut for v1.17.0 — reasoning in `docs/architecture/widgets.md`)
 
 Three widgets shipped. These were the rest of the brainstorm, kept because the reasoning for the cut is
