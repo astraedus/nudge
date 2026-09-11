@@ -47,14 +47,7 @@ class EventClassifier(
     ): ForegroundSignal {
         val pkg = record.packageName
 
-        // Ahead of everything, including our own package: a PiP bubble fires events for an app the
-        // user is not looking at, and issue #19's whole lesson is that this gate must be general
-        // rather than attached to one branch.
-        if (pkg in pipOnlyPackages) return ForegroundSignal.PipOnly(pkg)
-
-        if (pkg == ownPackageName) return ForegroundSignal.OwnUi(pkg)
-
-        if (isTransient(pkg, currentImePackage)) return ForegroundSignal.Transient(pkg)
+        notOnScreen(pkg, currentImePackage, pipOnlyPackages)?.let { return it }
 
         // Only a window-bearing event makes any claim about what is in front. A content change, a
         // click or a scroll arrives from whatever is already there — treating one as a foreground
@@ -89,11 +82,32 @@ class EventClassifier(
         pipOnlyPackages: Set<String>
     ): ForegroundSignal {
         val pkg = record.packageName
-        if (pkg in pipOnlyPackages) return ForegroundSignal.PipOnly(pkg)
-        if (pkg == ownPackageName) return ForegroundSignal.OwnUi(pkg)
-        if (isTransient(pkg, currentImePackage)) return ForegroundSignal.Transient(pkg)
+        notOnScreen(pkg, currentImePackage, pipOnlyPackages)?.let { return it }
         if (pkg in systemPackages) return ForegroundSignal.SystemSurface(pkg)
         return ForegroundSignal.AppWindow(pkg)
+    }
+
+    /**
+     * The three answers that mean "this package is not the app the user is looking at", in the order
+     * they must be asked, or null when none of them applies.
+     *
+     * Shared by both entry points deliberately. They had the same three checks written out twice,
+     * and a divergence between them would be precisely the ordering bug this class exists to
+     * prevent: the picture-in-picture gate in particular has to come first EVERYWHERE (issue #19's
+     * lesson was that gating one branch rather than the pipeline missed the common case), and a copy
+     * that drifted would reintroduce it on whichever path was edited second.
+     */
+    private fun notOnScreen(
+        pkg: String,
+        currentImePackage: String?,
+        pipOnlyPackages: Set<String>
+    ): ForegroundSignal? = when {
+        // A PiP bubble fires events for an app the user is not looking at, so this outranks even
+        // our own package.
+        pkg in pipOnlyPackages -> ForegroundSignal.PipOnly(pkg)
+        pkg == ownPackageName -> ForegroundSignal.OwnUi(pkg)
+        isTransient(pkg, currentImePackage) -> ForegroundSignal.Transient(pkg)
+        else -> null
     }
 
     private fun isTransient(packageName: String, currentImePackage: String?): Boolean =
