@@ -9,8 +9,8 @@ import org.junit.Test
  * Source-level guard for the ORDERING inside `NudgeAccessibilityService.onAccessibilityEvent`.
  *
  * The bug was not in any value a unit test can inspect — it was in where an early return sat. The
- * `SYSTEM_PACKAGES` branch returns at ~line 690 while `PassthroughManager.clearIfAppChanged` lives
- * at ~line 884 inside `evaluateForegroundPackage`, so going Home never cleared a completed delay's
+ * `SYSTEM_PACKAGES` branch returned ~200 lines before the passthrough clear inside
+ * `evaluateForegroundPackage`, so going Home never cleared a completed delay's
  * passthrough and re-opening the app skipped the delay indefinitely. The service is not JVM-testable
  * (real `AccessibilityService`, Hilt entry point, live windows), so this pins the shape, exactly as
  * `BlockOverlayWalkAwayContractTest` and `ImportedSettingsWriteContractTest` already do elsewhere.
@@ -150,7 +150,7 @@ class HomeScreenPassthroughContractTest {
             "setSessionUsageBaseline"
         ).forEach { forbidden ->
             assertFalse(
-                "clearPassthroughForHome must not touch $forbidden",
+                "onWentHome must not touch $forbidden",
                 clearForHomeBody.contains(forbidden)
             )
         }

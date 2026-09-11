@@ -125,10 +125,6 @@ class InteractionTracker @Inject constructor() {
         return SessionCount(packageName, session, daily, mode)
     }
 
-    /** What this package's current session is counting. */
-    fun getSessionMode(packageName: String): CountMode =
-        sessionModes[packageName] ?: CountMode.TAPS
-
     fun getSessionCount(packageName: String): Int = sessionCounts[packageName] ?: 0
     fun getDailyTotal(packageName: String): Int = dailyTotals[packageName] ?: 0
 

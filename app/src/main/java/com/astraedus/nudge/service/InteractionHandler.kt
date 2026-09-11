@@ -280,9 +280,5 @@ class InteractionHandler(
          * per-event node read on this thread for the same reason.
          */
         const val SOURCE_RESOLVE_THROTTLE_MS = 500L
-
-        /** The event types this handler accepts; anything else is not an interaction. */
-        internal fun handles(type: A11yEventType): Boolean =
-            type == A11yEventType.VIEW_CLICKED || type == A11yEventType.VIEW_SCROLLED
     }
 }

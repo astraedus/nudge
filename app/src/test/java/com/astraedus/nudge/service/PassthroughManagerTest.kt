@@ -5,6 +5,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import com.astraedus.nudge.domain.events.ForegroundSignal
 import org.junit.Test
 
 class PassthroughManagerTest {
@@ -76,34 +77,52 @@ class PassthroughManagerTest {
         assertFalse(manager.shouldSkipFeatureEvaluation("com.example.alpha", "REELS"))
     }
 
+    /**
+     * These three replace the tests of `clearIfAppChanged`, which issue #28 deleted. The claims are
+     * unchanged -- a real app switch drops everything, staying put drops nothing, and clearing when
+     * there is nothing to clear is a no-op -- but the trigger moved from "a foreign package fired an
+     * event" to "another app held the foreground past the return window", which is the fix.
+     */
     @Test
-    fun `clearIfAppChanged clears when different package and returns true`() {
+    fun `another app held past the return window clears everything`() {
         manager.grant("com.example.alpha", "REELS")
 
-        val result = manager.clearIfAppChanged("com.example.beta")
+        manager.onForegroundSignal(ForegroundSignal.AppWindow("com.example.beta"), 0)
+        manager.onForegroundSignal(
+            ForegroundSignal.AppWindow("com.example.beta"),
+            InteractionTracker.SESSION_EXPIRY_MS
+        )
 
-        assertTrue(result)
         assertNull(manager.lastPackage)
         assertNull(manager.lastFeature)
         assertEquals(0L, manager.lastTime)
     }
 
     @Test
-    fun `clearIfAppChanged does not clear when same package and returns false`() {
+    fun `a brief excursion into another app clears nothing`() {
         manager.grant("com.example.alpha", "REELS")
 
-        val result = manager.clearIfAppChanged("com.example.alpha")
+        manager.onForegroundSignal(ForegroundSignal.AppWindow("com.example.beta"), 0)
+        manager.onForegroundSignal(ForegroundSignal.AppWindow("com.example.alpha"), 5_000)
 
-        assertFalse(result)
         assertEquals("com.example.alpha", manager.lastPackage)
         assertEquals("REELS", manager.lastFeature)
     }
 
     @Test
-    fun `clearIfAppChanged does nothing when no passthrough active and returns false`() {
-        val result = manager.clearIfAppChanged("com.example.beta")
+    fun `staying in the granted app clears nothing`() {
+        manager.grant("com.example.alpha", "REELS")
 
-        assertFalse(result)
+        manager.onForegroundSignal(ForegroundSignal.AppWindow("com.example.alpha"), 1_000)
+
+        assertEquals("com.example.alpha", manager.lastPackage)
+        assertEquals("REELS", manager.lastFeature)
+    }
+
+    @Test
+    fun `ending a sitting that granted nothing is a no-op`() {
+        manager.onForegroundSignal(ForegroundSignal.Home("com.launcher"), 0)
+
         assertNull(manager.lastPackage)
     }
 
@@ -161,7 +180,8 @@ class PassthroughManagerTest {
     fun `leaving the browser clears the domain with everything else`() {
         manager.grant("com.android.chrome", webDomain = "instagram.com")
 
-        assertTrue(manager.clearIfAppChanged("com.whatsapp"))
+        manager.onForegroundSignal(ForegroundSignal.Home("com.launcher"), 1_000)
+
         assertNull(manager.lastDomain)
         assertNull(manager.lastPackage)
     }

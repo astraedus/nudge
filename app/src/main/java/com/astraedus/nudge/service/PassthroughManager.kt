@@ -48,8 +48,6 @@ class PassthroughManager @Inject constructor() {
      */
     private val sitting = SittingTracker(returnWindowMs = InteractionTracker.SESSION_EXPIRY_MS)
 
-    /** The app whose sitting is currently live, for logging and diagnostics. */
-    val sittingPackage: String? get() = sitting.currentApp
     @Volatile var lastPackage: String? = null
         private set
     @Volatile var lastFeature: String? = null
@@ -125,19 +123,6 @@ class PassthroughManager @Inject constructor() {
      */
     fun clearWebGrant() {
         lastDomain = null
-    }
-
-    /**
-     * Drop the grant if it belongs to an app other than [packageName].
-     *
-     * **No longer the service's app-switch rule.** It used to be called for every foreign window
-     * event, which is exactly the defect issue #28 reports; [onForegroundSignal] owns that now. It
-     * survives as the primitive the Home path uses, where the semantics really are "the user left".
-     */
-    fun clearIfAppChanged(packageName: String): Boolean {
-        if (lastPackage == null || packageName == lastPackage) return false
-        clear()
-        return true
     }
 
     fun clear() {

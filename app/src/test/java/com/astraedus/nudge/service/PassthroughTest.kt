@@ -56,12 +56,21 @@ class PassthroughTest {
     }
 
     @Test
-    fun `passthrough clears on app switch`() {
+    fun `passthrough clears on a real app switch`() {
         manager.grant("com.example.alpha")
 
-        val cleared = manager.clearIfAppChanged("com.example.beta")
+        // Issue #28: a foreign app window no longer revokes on sight. It revokes once that app has
+        // held the foreground past the return window, which is what a real switch looks like.
+        manager.onForegroundSignal(ForegroundSignal.AppWindow("com.example.beta"), 0)
+        assertTrue(
+            "a brief excursion is a sub-flow, not a switch",
+            manager.isGranted("com.example.alpha")
+        )
+        manager.onForegroundSignal(
+            ForegroundSignal.AppWindow("com.example.beta"),
+            InteractionTracker.SESSION_EXPIRY_MS
+        )
 
-        assertTrue(cleared)
         assertNull(manager.lastPackage)
         assertNull(manager.lastFeature)
         assertFalse(manager.isGranted("com.example.alpha"))
