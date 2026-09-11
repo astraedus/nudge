@@ -207,6 +207,45 @@ class InsightsCalculator @Inject constructor() {
 
     // --------------------------------------------------------- interventions
 
+    /**
+     * Per-app intervention totals inside `[sinceMs, nowMs]`, strongest pull first.
+     *
+     * The ONE answer to "which apps pull hardest" in this app. The Interventions screen's
+     * leaderboard and the home dashboard's "Blocked most this week" card are the same
+     * question asked over two different windows, and the recurring defect class in this
+     * package is two computations of one number sitting on two screens, so there is one
+     * loop, and [interventions] delegates to it rather than keeping a copy.
+     *
+     * Counts only [EventKind.SHOWN]: the walk-away row is the SAME confrontation written a
+     * second time and would double every app's total. Both bounds are inclusive, so an event
+     * landing exactly on the window start counts; an event in the future (a clock that moved
+     * backwards) does not. [limit] is applied AFTER the full sort, so the top N is the top N
+     * of the window rather than of whatever happened to be accumulated first.
+     */
+    fun topBlockedApps(
+        events: List<UsageEvent>,
+        sinceMs: Long,
+        nowMs: Long,
+        limit: Int
+    ): List<AppInterventionStat> {
+        if (limit <= 0) return emptyList()
+        val perApp = LinkedHashMap<String, MutableMap<String, Int>>()
+        for (event in events) {
+            if (classify(event) != EventKind.SHOWN) continue
+            val ts = event.timestamp
+            if (ts > nowMs || ts < sinceMs) continue
+            val modes = perApp.getOrPut(event.packageName) { linkedMapOf() }
+            val mode = normalizeMode(event.blockMode)
+            modes[mode] = (modes[mode] ?: 0) + 1
+        }
+        val ranked = perApp.entries
+            .map { (pkg, modes) -> AppInterventionStat(pkg, modes.values.sum(), modes.toMap()) }
+            .sortedWith(
+                compareByDescending<AppInterventionStat> { it.total }.thenBy { it.packageName }
+            )
+        return if (limit >= ranked.size) ranked else ranked.take(limit)
+    }
+
     fun interventions(
         events: List<UsageEvent>,
         nowMs: Long,
@@ -227,7 +266,6 @@ class InsightsCalculator @Inject constructor() {
         val weekday = MutableList(DAYS_PER_WEEK) { 0 }
         val heatmap = List(DAYS_PER_WEEK) { MutableList(HOURS_PER_DAY) { 0 } }
         val daily = MutableList(SPARKLINE_DAYS) { 0 }
-        val perApp = LinkedHashMap<String, MutableMap<String, Int>>()
 
         for (event in events) {
             // Only the overlay-show event counts as an intervention; the walk-away row is
@@ -252,16 +290,9 @@ class InsightsCalculator @Inject constructor() {
             hourly[at.hour]++
             weekday[dayIndex]++
             heatmap[dayIndex][at.hour]++
-            val modes = perApp.getOrPut(event.packageName) { linkedMapOf() }
-            val mode = normalizeMode(event.blockMode)
-            modes[mode] = (modes[mode] ?: 0) + 1
         }
 
-        val apps = perApp.entries
-            .map { (pkg, modes) -> AppInterventionStat(pkg, modes.values.sum(), modes.toMap()) }
-            .sortedWith(
-                compareByDescending<AppInterventionStat> { it.total }.thenBy { it.packageName }
-            )
+        val apps = topBlockedApps(events, sinceMs = rangeStart, nowMs = nowMs, limit = NO_LIMIT)
 
         val dailySeries = daily.mapIndexed { index, count ->
             val date = today.minusDays((SPARKLINE_DAYS - 1 - index).toLong())
@@ -397,6 +428,9 @@ class InsightsCalculator @Inject constructor() {
         const val MAX_SESSION_MS = 30L * 60_000L
         const val WEB_PSEUDO_PACKAGE = "web"
         const val OTHER_MODE = "OTHER"
+
+        /** "every app in the window" for [InsightsCalculator.topBlockedApps]. */
+        const val NO_LIMIT = Int.MAX_VALUE
 
         private const val HOURS_PER_DAY = 24
         private const val DAYS_PER_WEEK = 7

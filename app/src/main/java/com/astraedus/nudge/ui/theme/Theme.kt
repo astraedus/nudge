@@ -14,7 +14,11 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 
-private val LightColors = lightColorScheme(
+/**
+ * `internal`, not private: `ui/widget/` builds its Glance color providers from these exact two
+ * schemes. A widget with its own palette would be a third source of truth for the app's colours.
+ */
+internal val LightColors = lightColorScheme(
     primary = Color(0xFF1B6B5A),
     onPrimary = Color.White,
     primaryContainer = Color(0xFFA7F2DC),
@@ -24,7 +28,7 @@ private val LightColors = lightColorScheme(
     surface = Color(0xFFFBFDF9),
 )
 
-private val DarkColors = darkColorScheme(
+internal val DarkColors = darkColorScheme(
     primary = Color(0xFF8BD6C1),
     onPrimary = Color(0xFF00382D),
     primaryContainer = Color(0xFF005143),
