@@ -22,7 +22,18 @@ data class CountResult(
      * Why, in one token, for the log. "Event rate" bugs are invisible without this: a counter that
      * says 6 and a counter that says 1 look identical in logcat unless it says WHY.
      */
-    val reason: String
+    val reason: String,
+    /**
+     * An opaque identity for the scroll source this count came from, or null when the count did not
+     * come from one (a tap) or no source is elected yet.
+     *
+     * Exposed so the caller can tell "the user consumed another item on the SAME surface" from "the
+     * user is now consuming a different surface". A caption detected on one surface is not valid on
+     * another -- YouTube's Shorts pager and its home feed are different sources, and a label
+     * detected on the first stayed stuck to the second (device QA, 2026-09-12). Opaque on purpose:
+     * callers may compare it, never parse it.
+     */
+    val primarySource: String? = null
 ) {
     val counted: Boolean get() = count > 0
 
@@ -119,7 +130,10 @@ class InteractionCounter(
      * read here per event. A null viewId keys separately from any non-null one: "we could not tell
      * which view this was" is its own source, never a wildcard that matches every other.
      */
-    private data class SourceKey(val windowId: Int, val className: String?, val viewId: String?)
+    private data class SourceKey(val windowId: Int, val className: String?, val viewId: String?) {
+        /** A stable, comparable identity for this source. Opaque to callers. */
+        val token: String get() = "$windowId|$className|$viewId"
+    }
 
     private class SourceState {
         var lastIndex: Int = UNSET_INDEX
@@ -219,7 +233,7 @@ class InteractionCounter(
         if (!claimPrimary(key, nowMs)) return CountResult.none("secondary_source")
 
         primaryLastTransitionMs = nowMs
-        return CountResult(counted, CountMode.ITEMS, reason)
+        return CountResult(counted, CountMode.ITEMS, reason, primarySource = key.token)
     }
 
     /**

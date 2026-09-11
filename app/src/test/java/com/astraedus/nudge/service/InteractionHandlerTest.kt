@@ -3,6 +3,7 @@ package com.astraedus.nudge.service
 import android.view.accessibility.AccessibilityNodeInfo
 import com.astraedus.nudge.domain.events.A11yEventType
 import com.astraedus.nudge.domain.events.AccessibilityEventRecord
+import com.astraedus.nudge.domain.interaction.InteractionCounter
 import com.astraedus.nudge.domain.logging.NudgeLog
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -606,6 +607,102 @@ class InteractionHandlerTest {
             kicksAfterInteractions,
             goHomeCount
         )
+    }
+
+    // --- a caption is only valid for the surface it was detected on (device QA 2026-09-12) ---
+
+    /**
+     * The reported bug. YouTube cold-launches into Shorts, detection sets "shorts"; the user moves
+     * to the Home tab, where detection returns null on every run; every subsequent item counted on
+     * the feed was still captioned "shorts", because a null detection returned silently and never
+     * invalidated anything.
+     */
+    @Test
+    fun `a null detection drops the caption at the next counted item`() {
+        enablePackage("com.google.android.youtube")
+        handler.noteDetectedFeature("com.google.android.youtube", InAppDetector.Feature.SHORTS)
+        scrollOnce("com.google.android.youtube")
+        assertEquals("shorts", overlayManager.visibleLabel)
+
+        // The user moves to the home feed: detection runs and recognises nothing.
+        handler.noteDetectedFeature("com.google.android.youtube", null)
+        // Past the primary-source handover window, which is what the real tab switch clears too --
+        // until it does, the new surface counts nothing at all, so there is no caption to be wrong.
+        now += InteractionCounter.DEFAULT_HANDOVER_MS + 1
+        scrollOnce("com.google.android.youtube", windowId = 2)
+
+        assertEquals(
+            "a caption detected on Shorts must not survive onto the feed",
+            "scrolls",
+            overlayManager.visibleLabel
+        )
+        assertNull(tracker.snapshot("com.google.android.youtube").label)
+    }
+
+    /**
+     * The reason the drop waits for a counted item rather than happening on the null itself.
+     * Detection is best-effort and returns null for transient reasons -- a tree read that lost a
+     * race, a player mid-transition -- and clearing eagerly would flicker the caption between
+     * "shorts" and "scrolls" while the user is still watching shorts.
+     */
+    @Test
+    fun `a transient null between detections does not disturb the caption`() {
+        enablePackage("com.google.android.youtube")
+        handler.noteDetectedFeature("com.google.android.youtube", InAppDetector.Feature.SHORTS)
+        scrollOnce("com.google.android.youtube")
+
+        handler.noteDetectedFeature("com.google.android.youtube", null)
+        handler.noteDetectedFeature("com.google.android.youtube", InAppDetector.Feature.SHORTS)
+        scrollOnce("com.google.android.youtube")
+
+        assertEquals("shorts", overlayManager.visibleLabel)
+        assertEquals("shorts", tracker.snapshot("com.google.android.youtube").label)
+    }
+
+    /** Moving to a genuinely different feature re-captions rather than dropping to generic. */
+    @Test
+    fun `detecting a different feature switches the caption`() {
+        enablePackage("com.google.android.youtube")
+        handler.noteDetectedFeature("com.google.android.youtube", InAppDetector.Feature.SHORTS)
+        scrollOnce("com.google.android.youtube")
+
+        handler.noteDetectedFeature("com.google.android.youtube", InAppDetector.Feature.REELS)
+        now += InteractionCounter.DEFAULT_HANDOVER_MS + 1
+        scrollOnce("com.google.android.youtube", windowId = 2)
+
+        assertEquals("reels", overlayManager.visibleLabel)
+    }
+
+    /**
+     * The half that needs no cooperation from `InAppDetector` at all: a counted item arriving from a
+     * DIFFERENT scroll source than the one the caption was bound to is by itself proof the caption
+     * describes the wrong thing. Shorts' pager and the feed's list are different sources, so this
+     * holds even on a surface detection never runs on.
+     */
+    @Test
+    fun `a counted item from a different scroll source drops the caption`() {
+        enablePackage("com.google.android.youtube")
+        handler.noteDetectedFeature("com.google.android.youtube", InAppDetector.Feature.SHORTS)
+        // Binds the caption to the Shorts pager.
+        scrollOnce("com.google.android.youtube", className = "com.google.android.youtube:reel_pager")
+
+        // The feed is a different source, and detection is never told anything.
+        now += InteractionCounter.DEFAULT_HANDOVER_MS + 1
+        scrollOnce("com.google.android.youtube", className = "androidx.recyclerview.widget.RecyclerView")
+
+        assertEquals("scrolls", overlayManager.visibleLabel)
+    }
+
+    /** ...and staying on the same source keeps it, or the caption would drop on every swipe. */
+    @Test
+    fun `more items on the same scroll source keep the caption`() {
+        enablePackage("com.google.android.youtube")
+        handler.noteDetectedFeature("com.google.android.youtube", InAppDetector.Feature.SHORTS)
+
+        repeat(4) { scrollOnce("com.google.android.youtube") }
+
+        assertEquals("shorts", overlayManager.visibleLabel)
+        assertEquals("shorts", tracker.snapshot("com.google.android.youtube").label)
     }
 
     private class FakeCounterOverlayManager : CounterOverlayManagerApi {

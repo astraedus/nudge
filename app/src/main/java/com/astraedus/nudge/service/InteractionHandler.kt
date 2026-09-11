@@ -87,6 +87,9 @@ class InteractionHandler(
             return
         }
 
+        // Before the caption is read back out of the session: is it still about this surface?
+        revalidateLabel(packageName, result.primarySource)
+
         val count = interactionTracker.recordInteractions(packageName, result.count, result.mode)
         if (count.mode != result.mode) {
             // A tap arriving in a session that is counting items. Dropped, not tallied elsewhere —
@@ -159,12 +162,58 @@ class InteractionHandler(
             InAppDetector.Feature.SHORTS -> "shorts"
             InAppDetector.Feature.REELS -> "reels"
             InAppDetector.Feature.TIKTOK_FEED -> "videos"
-            InAppDetector.Feature.EXPLORE, null -> return
+            InAppDetector.Feature.EXPLORE, null -> null
         }
+
+        if (label == null) {
+            // Detection ran and did not recognise this surface. That is evidence the caption no
+            // longer describes what is on screen -- but NOT evidence worth acting on yet, because a
+            // transient null mid-Shorts would flicker the caption. Remember it; the next counted
+            // item decides.
+            //
+            // Returning silently here is the bug device QA found on 2026-09-12: YouTube cold-launches
+            // into Shorts, the label is set, the user moves to the Home tab where detection returns
+            // null on every run, and every subsequent item on the feed was still captioned "shorts".
+            if (interactionTracker.snapshot(packageName).label != null) labelSurfaceLost = true
+            return
+        }
+
+        // A recognised surface answers the question outright, so any pending doubt is resolved: this
+        // is what makes SHORTS -> transient null -> SHORTS (with nothing counted in between) keep
+        // its caption instead of dropping to the generic word.
+        labelSurfaceLost = false
+        labelSource = null
         interactionTracker.setSessionLabel(packageName, label)
         // The overlay may already be up under the generic caption; correct it now rather than at the
         // next interaction, or the user watches "3 scrolls" sit there while they scroll reels.
         if (counterOverlayManager.isVisible()) refreshLabel(label)
+    }
+
+    /**
+     * Decide, at the moment a caption is about to be used, whether it still describes the surface
+     * being counted. Drops it if not.
+     *
+     * Both tests are needed and neither subsumes the other. [labelSurfaceLost] catches the surface
+     * we can still SEE but no longer recognise (the reported bug: detection runs on YouTube's feed
+     * and returns null). The source comparison catches the surface detection never ran on at all,
+     * and needs no cooperation from `InAppDetector`.
+     */
+    private fun revalidateLabel(packageName: String, primarySource: String?) {
+        if (interactionTracker.snapshot(packageName).label == null) {
+            labelSurfaceLost = false
+            labelSource = null
+            return
+        }
+        val movedSurface = labelSource != null && primarySource != null && primarySource != labelSource
+        if (labelSurfaceLost || movedSurface) {
+            interactionTracker.clearSessionLabel(packageName)
+            labelSurfaceLost = false
+            labelSource = null
+            return
+        }
+        // First counted item since the label was set: bind it to whatever source is consuming
+        // content now, so a later move away from that source is detectable.
+        if (labelSource == null) labelSource = primarySource
     }
 
     /**
@@ -203,6 +252,28 @@ class InteractionHandler(
 
     /** The caption currently on screen, so a no-op refresh costs nothing. */
     private var shownLabel: String? = null
+
+    /**
+     * Detection has run since the label was set and did NOT recognise the surface.
+     *
+     * Held rather than acted on immediately. Detection is best-effort and returns null for plenty of
+     * transient reasons -- a tree read that lost a race, a player mid-transition -- and clearing on
+     * the null itself would make the caption flicker between "shorts" and "scrolls" while the user
+     * is still watching shorts. The next COUNTED item is the moment that matters, because that is
+     * when the caption is about to describe something.
+     */
+    private var labelSurfaceLost = false
+
+    /**
+     * The scroll source the current label was bound to, or null while it is unbound.
+     *
+     * The second half of "a label is only valid for the surface it was detected on", and the half
+     * that works even when detection never runs on the new surface: YouTube's Shorts pager and its
+     * home feed are different scroll sources, so a counted item arriving from a different source
+     * than the one the label was bound to is by itself proof the caption is describing the wrong
+     * thing.
+     */
+    private var labelSource: String? = null
 
     private fun refreshLabel(label: String) {
         if (shownLabel == label) return
@@ -253,6 +324,8 @@ class InteractionHandler(
     fun onSittingChanged() {
         counter.reset()
         shownLabel = null
+        labelSurfaceLost = false
+        labelSource = null
     }
 
     fun isCounterVisible(): Boolean = counterOverlayManager.isVisible()

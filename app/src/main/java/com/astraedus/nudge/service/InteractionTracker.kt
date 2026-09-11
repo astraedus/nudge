@@ -173,6 +173,16 @@ class InteractionTracker @Inject constructor() {
     }
 
     /**
+     * Drop this session's caption, falling back to the generic word for whatever it is counting.
+     *
+     * Called when the surface the label was detected on is no longer the surface being counted --
+     * a caption is only ever valid for the thing it described.
+     */
+    fun clearSessionLabel(packageName: String) {
+        sessionLabels.remove(packageName)
+    }
+
+    /**
      * Record the in-app feature caption for this package's current session.
      *
      * Deliberately does NOT start a session or touch the count: detection can fire before the user
