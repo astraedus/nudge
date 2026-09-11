@@ -485,16 +485,36 @@ fun SettingsScreen(
                 // BuildConfig.DEBUG-guarded, and the guard is on the composable rather than inside
                 // the handler, so the row does not exist at all in a release build.
                 if (BuildConfig.DEBUG) {
-                    ListItem(
-                        headlineContent = { Text(stringResource(R.string.widget_pin_row_title)) },
-                        supportingContent = {
-                            Text(stringResource(R.string.widget_pin_row_subtitle))
-                        },
-                        leadingContent = {
-                            Icon(Icons.Outlined.Widgets, contentDescription = null)
-                        },
-                        modifier = Modifier.clickable { requestPinNudgeWidgets(context) }
-                    )
+                    // ONE ROW PER WIDGET, deliberately. The first version looped over all three
+                    // receivers in a single handler, which looks right and is not: the launcher
+                    // services one pin request at a time, so firing three synchronously left only
+                    // the last dialog standing and the other two were silently dropped. Device QA
+                    // reported "it only ever offers Protection" and had to fall back to dragging
+                    // the other two out of the widget picker by hand.
+                    //
+                    // Three named rows also give an automated tester a text anchor per widget,
+                    // which a cycling single row would not.
+                    PIN_TARGETS.forEach { target ->
+                        ListItem(
+                            headlineContent = {
+                                Text(
+                                    stringResource(
+                                        R.string.widget_pin_row_title,
+                                        stringResource(target.labelRes)
+                                    )
+                                )
+                            },
+                            supportingContent = {
+                                Text(stringResource(R.string.widget_pin_row_subtitle))
+                            },
+                            leadingContent = {
+                                Icon(Icons.Outlined.Widgets, contentDescription = null)
+                            },
+                            modifier = Modifier.clickable {
+                                requestPinNudgeWidget(context, target.receiver)
+                            }
+                        )
+                    }
                 }
             }
 
@@ -503,28 +523,34 @@ fun SettingsScreen(
     }
 }
 
+/** One debug row per widget: the label to name it by, and the receiver to pin. */
+private data class WidgetPinTarget(val labelRes: Int, val receiver: Class<*>)
+
+private val PIN_TARGETS = listOf(
+    WidgetPinTarget(R.string.widget_today_label, TodayWidgetReceiver::class.java),
+    WidgetPinTarget(R.string.widget_top_blocked_label, TopBlockedWidgetReceiver::class.java),
+    WidgetPinTarget(R.string.widget_protection_label, ProtectionWidgetReceiver::class.java)
+)
+
 /**
- * Asks the launcher to pin each Nudge widget, one dialog at a time.
+ * Asks the launcher to pin ONE Nudge widget.
  *
- * Debug-only (the single call site is `BuildConfig.DEBUG`-guarded) and best-effort: a launcher that
- * does not support pinning simply returns false, and the loop moves on rather than failing. Nothing
- * user-facing depends on it — it exists so device QA can get a widget onto the home screen without
- * a human dragging it out of the picker.
+ * Debug-only (every call site is `BuildConfig.DEBUG`-guarded) and best-effort: a launcher that does
+ * not support pinning simply says so, and nothing user-facing depends on it. It exists so device QA
+ * can get a widget onto the home screen without a human dragging it out of the picker.
+ *
+ * Strictly one widget per call. `requestPinAppWidget` raises a system dialog and the launcher
+ * services one such request at a time, so asking for several in a row does not queue them — the
+ * extras are dropped, silently.
  */
-private fun requestPinNudgeWidgets(context: Context) {
+private fun requestPinNudgeWidget(context: Context, receiver: Class<*>) {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
     val manager = context.getSystemService(AppWidgetManager::class.java) ?: return
     if (!manager.isRequestPinAppWidgetSupported) {
         Toast.makeText(context, "Launcher does not support pinning", Toast.LENGTH_SHORT).show()
         return
     }
-    listOf(
-        TodayWidgetReceiver::class.java,
-        TopBlockedWidgetReceiver::class.java,
-        ProtectionWidgetReceiver::class.java
-    ).forEach { receiver ->
-        manager.requestPinAppWidget(ComponentName(context, receiver), null, null)
-    }
+    manager.requestPinAppWidget(ComponentName(context, receiver), null, null)
 }
 
 /** A Strict-Mode-gated settings flip waiting on its typed unlock. */

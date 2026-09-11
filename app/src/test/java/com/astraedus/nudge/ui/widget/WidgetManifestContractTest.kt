@@ -203,4 +203,55 @@ class WidgetManifestContractTest {
         }
         assertEquals("Referenced strings that do not exist: $missing", emptyList<String>(), missing)
     }
+
+    /**
+     * Every widget has its own debug pin row, and each row pins exactly ONE widget.
+     *
+     * Found in device QA: the first version of the pin affordance was a single row whose handler
+     * looped over all three receivers calling `requestPinAppWidget` in sequence. That reads as
+     * obviously correct and is not — the launcher services one pin request at a time, so the two
+     * earlier dialogs were dropped in silence and QA could only ever place the LAST widget in the
+     * list. The tester had to fall back to dragging the other two out of the system picker, which
+     * is exactly the manual step this affordance exists to remove.
+     *
+     * Two assertions, because the bug had two halves. The count pins "one request per call"; the
+     * set-equality pins that a fourth widget cannot be added without a way to place it, which is
+     * how this affordance would quietly rot back to useless.
+     */
+    @Test
+    fun `each widget has its own debug pin row, pinning one widget per tap`() {
+        val settings = projectFile(
+            "src/main/java/com/astraedus/nudge/ui/screens/settings/SettingsScreen.kt"
+        ).readText()
+            .replace(Regex("""/\*[\s\S]*?\*/"""), "")
+            .lines()
+            .joinToString("\n") { it.substringBefore("//") }
+
+        // The decisive assertion. The buggy version also called requestPinAppWidget from exactly
+        // ONE place, so counting call sites would have passed on it - what made it wrong was that
+        // the one call sat inside a loop over receivers. So: find the function that makes the
+        // request, and assert it iterates nothing.
+        val pinFunction = Regex(
+            """private fun requestPinNudgeWidget\([\s\S]*?\n\}"""
+        ).find(settings)?.value
+            ?: error("requestPinNudgeWidget(context, receiver) not found in SettingsScreen.kt")
+
+        assertTrue(
+            "The widget-pinning function must request ONE widget and iterate nothing. " +
+                "The launcher services a single pin request at a time, so a loop here drops " +
+                "every dialog but the last, silently.\n$pinFunction",
+            !pinFunction.contains("forEach") &&
+                !pinFunction.contains("for (") &&
+                !pinFunction.contains("listOf(")
+        )
+
+        val pinned = Regex("""(\w+Receiver)::class\.java""").findAll(settings)
+            .map { it.groupValues[1] }
+            .toSortedSet()
+        assertEquals(
+            "Every Glance receiver needs a debug pin row, or device QA cannot place it.",
+            declaredReceiverClasses().toSortedSet(),
+            pinned
+        )
+    }
 }

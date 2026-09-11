@@ -47,9 +47,9 @@
     <string name="widget_top_blocked_empty">Nothing blocked in the last 7 days.</string>
     <string name="widget_protection_on">Blocking on</string>
     <string name="widget_protection_off">Blocking off</string>
-    <string name="widget_protection_degraded">Blocking has stopped</string>
+    <string name="widget_protection_degraded">Blocking stopped</string>
     <string name="widget_protection_locked">Turn off in app</string>
     <string name="widget_open_app">Open Nudge</string>
-    <string name="widget_pin_row_title">Add widgets to home screen</string>
-    <string name="widget_pin_row_subtitle">Debug builds only. Asks the launcher to pin each Nudge widget.</string>
+    <string name="widget_pin_row_title">Add widget: %1$s</string>
+    <string name="widget_pin_row_subtitle">Debug builds only. Asks the launcher to pin this one widget.</string>
 </resources>
