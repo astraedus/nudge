@@ -451,3 +451,37 @@ as the only candidate.
 
 The capture is committed WITH the three ruled-out hypotheses in its header. A fixture that records
 only what did happen invites the next person to re-derive the same three dead ends.
+
+## A defaulted collaborator turns "forgot to wire it" into a silent no-op (2026-09-12)
+
+`NudgePreferences` grew a `WidgetRefreshSignal` so the home-screen widgets could be pushed after a
+write. It was given a default — `WidgetRefreshSignal.NONE` — so the screens that build a
+`NudgePreferences` by hand would keep compiling. That default is what made the next three bugs
+possible, and all three shipped in the same change:
+
+- `recordProtectionCheck` and `setStrictModeEnabled` never pushed at all. The Protection widget is
+  `updatePeriodMillis="0"`, i.e. push-only, so **the one state it exists to announce — protection
+  has stopped — was the one state it could never receive.** A widget placed while healthy stayed
+  healthy-looking forever. Device QA found it; no test could have, because every value was correct.
+- `applyImportedSettings` had the same gap and nobody had even suspected it.
+- Then the fix to `setStrictModeEnabled` turned out to be **unreachable**: `SettingsScreen` owns the
+  Strict Mode toggle and built its own `NudgePreferences`, so the write went through an instance
+  carrying `NONE`. Correct code, tested code, on a path no user takes.
+
+- **A default argument on a collaborator converts a compile error into a silent runtime no-op.**
+  That is the entire trade, and it is worth making only when the no-op is genuinely harmless for
+  every caller. Here it was harmless for readers and silently wrong for exactly one writer.
+- **The comment predicted the bug and did not prevent it.** `NONE`'s own KDoc argued it was a named
+  constant "so that if a future caller ever writes a widget-visible value through a hand-built
+  instance, it shows up in the diff as a word rather than as nothing at all". The word was in the
+  diff the whole time. **A comment is not a gate.** If you can write down the rule, write the test.
+- **Enumerate the READERS, then check every WRITER.** The fix was wired to one writer because one
+  writer was the one being thought about. The right question is "what does this surface read, and
+  who writes each of those?" — which is a mechanical question, so `WidgetRefreshCoverageContractTest`
+  now asks it by discovery: it reads `WidgetReads.kt` for the consumed flows, resolves each to its
+  `Keys.*` constant, and requires every assigning function to push. Hand-listing the writers would
+  have pinned yesterday's bug and missed the import path, which is exactly what happened.
+- Corollary already known here and re-learned: **an alarm nobody can observe is not an alarm.** The
+  same shape as the watchdog lesson above — the safety signal existed, was correct, and could not
+  reach a human.
+
