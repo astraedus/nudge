@@ -362,6 +362,34 @@ when the block overlay backgrounds it, #19's PiP gate then swallows its events, 
 on the launcher instead. 5 of 8 launches landed wrong. `tools/qa/scroll-capture.sh` force-stops
 first; anything that relaunches an app for a capture should.
 
+## An unmeasured "perf" line item cost two whole screens their audience (2026-09-11)
+
+Commit 32b9348, "perf: eliminate recomposition waste and object allocation hotspots", is eleven
+bullets of real, measured work and one that was neither: *"Disable Material ripple globally
+(Theme.kt)"*. No benchmark, no jank report, no design note — a guess, bundled into a commit whose
+other items made it read as obviously correct, and reviewed as one unit.
+
+Four months later the owner reported: *"I had no idea I could click the Blocked and Walked Away
+tiles on Home and that they lead to two different screens with charts."* With `LocalRippleConfiguration
+provides null` at the theme root, **every `Modifier.clickable` in the entire app produced zero touch
+feedback**. Two insight screens (`WillpowerScreen`, `InterventionsScreen`) — correct, charted, 37
+calculator tests behind them — had effectively no users, because their only entry points were silent.
+
+- **A change with no measurement behind it is not a perf change, it is a behaviour change.** The tell
+  is the mismatch between scope and evidence: the other ten bullets each name the thing they fixed
+  ("was re-converting every recompose during scroll"); this one named nothing. If a bullet cannot say
+  what it measured, it does not belong in a commit whose neighbours can.
+- **Global switches deserve a written reason or they do not get flipped.** The right shape for
+  "ripple is expensive on this surface" is an override on *that* composable. App-wide is never the
+  cheap version of a local fix; it is a different, much larger change wearing the same diff size.
+- **A feature is not shipped when it is correct, it is shipped when someone can reach it.**
+  `docs/architecture/stats-and-charts.md` had documented "two sources of truth for one number" twice;
+  this is its mirror image — one source of truth, invisible. Neither is catchable by a value test,
+  so both are now pinned by source-level contract tests (`HomeTileAffordanceContractTest`,
+  `StatsInsightEntryContractTest`), including one asserting nobody reintroduces the global ripple kill.
+- Corollary for review: when a UI element's whole job is to be tapped, "does it look tappable" is
+  part of the acceptance criteria, not polish to be done later.
+
 ## A guard clause that returns before notifying a collaborator is a dropped message (2026-09-12)
 
 Issue #28 shipped a caption invalidation that could never fire. The handler had a correct, tested

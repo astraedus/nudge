@@ -96,9 +96,50 @@ Full audit with `file:line` evidence and a fix order lives outside this repo:
 - [ ] **Advanced data visualization** -- expand beyond current charts: per-app weekly breakdown, comparison vs previous week, export charts as image for sharing/accountability. **Partially shipped**: per-app weekly breakdown landed with App Detail's bars (v1.15.0) and the insight pages (v1.13.0) cover week-over-week trend; comparison-vs-previous-week and chart image export are still open.
 - [ ] Discord in-app detection: count server/channel switches as "taps" for counter + auto-kick. Discord uses React Native so TYPE_VIEW_CLICKED doesn't fire. Would need to detect server/channel navigation via accessibility tree changes. Low priority.
 - [ ] NFC tag unlock -- same concept as QR but tap phone to NFC tag. No extra permissions needed (hardware feature). User writes unlock token to a cheap NFC tag ($1), places it somewhere. Lower priority than QR since fewer people have NFC tags lying around.
-- [ ] Widgets (home screen quick stats, toggle rules)
+- [x] ~~Widgets (home screen quick stats, toggle rules)~~ — **SHIPPED in v1.17.0**: three Jetpack Glance widgets (Today at a glance, Blocked most this week, Protection toggle). The twelve ideas that were considered, and the reasoning behind each cut, are in `docs/architecture/widgets.md`; the ones worth revisiting are listed under "Widget ideas not built" below.
 - [ ] Contextual triggers (location-based, time-of-day auto-enable)
 - [x] Release signing key (v1.3.2 -- PKCS12 keystore, CI via GitHub secrets)
+
+## API-level crashes on Android 8-9 — FIXED in v1.17.0, with the gate that lets them ship still worth reading
+
+Found by running `./gradlew :app:lintDebug` during the v1.17.0 widget work (the widgets themselves were
+clean). **`NewApi`, error severity, four occurrences, all pre-existing.** Nudge declares `minSdk = 26`, so
+it installs on Android 8.0/8.1/9, where calling a method the platform class does not have is a
+`NoSuchMethodError` at the call site — not a no-op, not a wrong answer, a crash.
+
+| Site | Method | Added in | Consequence on those devices | Status |
+|---|---|---|---|---|
+| `service/AccessibilityEventRecordFactory.kt` | `AccessibilityEvent.getScrollDeltaX/Y()` | **28** | `toRecord()` runs for **every** accessibility event, so the service died on the first one. Blocking never worked at all. | Fixed on the #28 branch (`31282b8`) |
+| `data/repository/ScreenTimeProvider.kt` | `AppOpsManager.unsafeCheckOpNoThrow()` | **29** | the Home dashboard's screen-time read threw | Fixed v1.17.0 |
+| `ui/screens/settings/SettingsScreen.kt` | same, a byte-identical copy | **29** | Settings' usage-access row threw | Fixed v1.17.0 |
+
+- **The AppOps pair are now one `util/UsageAccess.kt`** behind one `SDK_INT >= Q` check, falling back to
+  `checkOpNoThrow` (deprecated, but present since API 19, identical semantics). The duplication is what
+  made it two bugs instead of one — that is the reusable lesson, not the API number.
+- **Why nobody noticed for so long**: CI ran `test`, `assembleRelease` and `bundleRelease` — **not `lint`**.
+  `NewApi` is precisely the defect class no JVM test can see (no Android runtime) and no device we own can
+  reproduce (the bench Pixel 3 is API 31), so the one check that catches it was the one not in the gate.
+  **`./gradlew lintDebug` is now a CI step** with `abortOnError = true`, and it was mutation-checked:
+  deleting the guard fails the build with the exact `NewApi` error. See `docs/TESTING.md`.
+- **[ ] Still owed — nothing has ever RUN this app on an API 26-27 device.** Lint proves we do not call a
+  missing method; it cannot prove the app is usable on Android 8. Worth one emulator pass
+  (`sdkmanager "system-images;android-26;google_apis;x86"`) to find out what else is broken down there, or
+  a deliberate decision to raise `minSdk` and stop claiming support we have never verified.
+
+## Widget ideas not built (considered and cut for v1.17.0 — reasoning in `docs/architecture/widgets.md`)
+
+Three widgets shipped. These were the rest of the brainstorm, kept because the reasoning for the cut is
+also the reasoning for what would have to be true to pick one up.
+
+- [ ] **Single-app "time left today"** — the most-requested shape of budget widget. Needs a configuration Activity so the user can pick which app, which is real work (`AppWidgetProviderInfo.configure`, a config flow, per-widget-id state) for low first-release value. Pick up when someone asks for it by name.
+- [ ] **Streak counter** — cheap: `StatsCalculator.calculateStreak` already exists. The honest version is a footer line on "Today at a glance" rather than a fourth widget competing for a home-screen cell.
+- [ ] **Walk-away rate ring** — needs a runtime-generated `Bitmap`, because **Glance has no `Canvas`**. "Today at a glance" already carries the number; the ring is presentation, not information.
+- [ ] **Weekly screen-time bar chart** — same constraint, same answer: feasible via `Image(ImageProvider(bitmap))` with a bitmap drawn at refresh time. Worth doing only once some widget genuinely needs the bitmap machinery, then both this and the ring get it at once.
+- [ ] **Hourly heatmap strip** — dense bitmap, illegible at 4x1. Would need a 4x2 minimum and would still read worse than the in-app heatmap.
+- [ ] **"Next scheduled block starts in…"** — needs schedule evaluation off the accessibility hot path (a pure "when does the next window open" function over `BlockRule` schedules). That function would be useful in the app too, which is the argument for building it eventually.
+- [ ] **Quick "start a focus block now"** — rejected for now because there is no such domain concept: Nudge blocks per-rule, not per-session. This is a product feature that would then get a widget, not a widget.
+- [ ] ~~Grayscale toggle shortcut~~ — **rejected, not deferred.** Grayscale needs `WRITE_SECURE_SETTINGS`, which is ADB-granted and absent on almost every install. A home-screen control that silently does nothing is worse than no control.
+- [ ] ~~Emergency-pass "burn one now"~~ — **rejected, not deferred.** A one-tap bypass on the home screen is a hole straight through the product's purpose, and it is the same class of mistake the Protection widget's Strict Mode branch exists to prevent.
 
 ## Noted 2026-08-31 (v1.15.1 QA): stay-awake devices legitimately show near-24h days
 Device QA of the screentime fix on the Pixel 3 (which has "stay awake while charging" on and lives on AC) showed ~17h "today" and several ~24h historical days. This is CORRECT: dumpsys usagestats confirmed the app genuinely was foreground with the screen on the whole time (no screen-off events ever fire on that device). Digital Wellbeing counts the same way. Do NOT "fix" this by distrusting long inherited sessions, that would under-count real long sessions (overnight video, navigation, charging docks). If it ever bothers users, the only defensible improvement is annotating, not clamping.
