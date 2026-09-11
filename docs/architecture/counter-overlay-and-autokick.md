@@ -1,6 +1,6 @@
 # Counter overlay, time-remaining overlay and auto-kick
 
-> **WHAT FEEDS THE COUNTER CHANGED IN v1.15.5 — read `accessibility-event-pipeline.md` for that
+> **WHAT FEEDS THE COUNTER CHANGED IN v1.16.0 — read `accessibility-event-pipeline.md` for that
 > half.** Issue [#28](https://github.com/astraedus/nudge/issues/28): the counter was counting EVENT
 > RATE (one per `TYPE_VIEW_SCROLLED` past a 500ms debounce, plus one per second of
 > `TYPE_WINDOW_CONTENT_CHANGED` for unsupported packages), so one slow drag scored 5-6 and an

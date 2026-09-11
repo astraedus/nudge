@@ -158,9 +158,17 @@ over, because at that point they really are consuming it.
 
 The source key is `(windowId, className, viewIdResourceName)`. The view id is needed because a sheet
 is commonly another `RecyclerView` in the same window as the feed, and without it the two share a key
-and their indices interleave into phantom counts. It costs a binder round trip, so
-`InteractionHandler` resolves it under a 500ms throttle rather than per event: a source does not
-change identity mid-scroll, and "first seen counts zero" caps the error at one count.
+and their indices interleave into phantom counts.
+
+It costs a binder round trip and is resolved **once per scroll event**, in every build including
+release. It was briefly cached under a 500ms throttle keyed on `(windowId, className)` -- which is
+self-defeating, since those are precisely the two fields that are identical for a sheet and the feed
+it opened over, so the sheet was handed the feed's id and counted as the feed. A cache keyed on the
+ambiguity it is disambiguating cannot work. The cost is ~10 IPC/second while the user is actively
+scrolling and nothing at rest, which is cheaper than the bounded 800-node tree walks this service
+already performs on a 1-second debounce, and `AccessibilityEventTrace` logs a periodic `COST` line
+during a capture so the number can be checked rather than argued about. While tracing, the factory
+has already put the id on the record and the handler reuses it rather than paying twice.
 
 **Known limits, measured rather than assumed** (see `docs/BACKLOG.md` for the follow-ups):
 

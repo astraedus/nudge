@@ -151,7 +151,9 @@ class InteractionCounter(
      * @param nowMs a clock the caller supplies so every branch is testable without sleeping.
      * @param sourceViewId the scrolling view's `viewIdResourceName`, or null when it was not read.
      *   Defaults to whatever the record already carries, which is what a captured fixture replays
-     *   with; in the service it is resolved under a throttle because it costs a binder call.
+     *   with. In the service it is resolved once per scroll event -- it costs a binder call, and it
+     *   deliberately is NOT cached, because the only key available to cache it under is the pair of
+     *   fields it exists to disambiguate. A null keys as its own source; it never wildcards.
      */
     fun onEvent(
         record: AccessibilityEventRecord,

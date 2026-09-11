@@ -90,7 +90,7 @@ class NudgeAccessibilityService : AccessibilityService() {
      * the events that get dropped are exactly the ones a bug report is usually about.
      */
     private val eventTrace by lazy {
-        AccessibilityEventTrace(enabled = { entryPoint.nudgeLogger().isDebugEnabled })
+        AccessibilityEventTrace(logger = entryPoint.nudgeLogger())
     }
 
     /**
@@ -978,6 +978,12 @@ class NudgeAccessibilityService : AccessibilityService() {
         // App Info → Force stop / Uninstall) BEFORE the system-surface early-return swallows
         // settings events. Only inspects window content on settings packages and only on window
         // change events; cheap pure checks gate the (more expensive) node-tree read.
+        // DELIBERATELY still a package-set membership test, and not the classifier's business.
+        // The classifier answers "is this the app the user is in"; this asks "is this one of the OS
+        // surfaces from which Nudge can be switched off", which is a different question with a
+        // different failure direction -- missing an OEM security-centre package costs a commitment
+        // lock, not a spurious re-block. Widening the classifier to carry it would put an
+        // enforcement concern inside the thing that decides what is on screen.
         if (packageName in StrictModeEscapeGuard.SETTINGS_PACKAGES && record.type.isWindowChange) {
             maybeGuardSettingsEscape(packageName)
             // fall through to the system-surface handling below (clears any stale counter overlays)

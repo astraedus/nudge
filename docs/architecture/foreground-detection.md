@@ -5,13 +5,15 @@ foreground app, and when a completed delay's passthrough grant is revoked: trans
 paste popups), the Home/launcher path, the content-change app-switch fallback, and picture-in-picture.
 **Read before touching the event dispatch in `NudgeAccessibilityService`, `PassthroughManager`, or anything that adds an early return to the hot path, the bugs in here were all ORDERING bugs, not logic bugs.**
 
-> **SUPERSEDED IN PART, v1.15.5 — read `accessibility-event-pipeline.md` first.**
+> **SUPERSEDED IN PART, v1.16.0 — read `accessibility-event-pipeline.md` first.**
 > Everything below is still the true history of how each rule got here, and the *reasons* are all
 > still binding. What changed is the MODEL underneath them. "The user left app X" is no longer
 > answered by "a package that is not X fired a window event, and is not in one of three hardcoded
 > sets" — that was the root cause of [#28](https://github.com/astraedus/nudge/issues/28), and it is
 > why each of those sets sprang in turn. A `SittingTracker` now owns the question, ending a sitting
-> only on Home, screen-off, or another app holding the foreground past a five-minute return window.
+> only on Home, screen-off, or another app holding the foreground past a two-minute return window
+> (`SittingTracker.PASSTHROUGH_RETURN_WINDOW_MS` -- deliberately NOT the interaction counter's
+> five-minute session expiry; the two answer different questions).
 > Where a section below describes `clearIfAppChanged` being called on the app-switch path, or
 > `SYSTEM_PACKAGES` deciding whether the user left, that mechanism is gone; the requirement it was
 > serving is not.
@@ -42,7 +44,7 @@ Root cause is an **ordering** one, not a logic one: `SYSTEM_PACKAGES` contains t
 - **`clearPassthroughForHome`** drops the app-level grant (`clearIfAppChanged`) **and** `lastBlockedDomain` — the web passthrough is only ever cleared inside `evaluateForegroundPackage`, which this return skips, so a completed web delay survived Home identically. Same "the user left the app" semantics, applied consistently.
 - **It touches NOTHING else, deliberately.** `InteractionTracker`'s 5-minute session expiry and the auto-kick cooldown treat a quick trip home as the SAME sitting on purpose (a tab-out-and-back must not refill a time budget). Leaving the app revokes permission to SKIP a delay; it does not end the session.
 - **Accepted behaviour change**: on Pixel the recents overview is hosted *by the launcher*, so opening Overview and returning to the same app now costs a fresh delay. This matches how issue #8 already treats the overlay ("Home, a recents switch or screen-off dismiss the overlay… the next entry gets a fresh FULL delay"), and friction on re-entry is the feature.
-- **`PassthroughManager` has no time-based expiry at all** — it records `lastTime` on `grant()` and *never reads it*; a grant lives until an app change or process death. Deliberately left alone here: a naive `now - lastTime > N` would re-block a user **mid-use**, still inside the app, which is the issue #5 failure class. A screen-off clear is the safer defence-in-depth candidate if this is ever revisited. **(v1.15.5: that candidate was taken.** The grant still has no timer — what expires is the SITTING, and only on evidence that the user stopped: Home, screen-off, or another app in front past the return window. Backlog F5 closed; see `accessibility-event-pipeline.md`.)
+- **`PassthroughManager` has no time-based expiry at all** — it records `lastTime` on `grant()` and *never reads it*; a grant lives until an app change or process death. Deliberately left alone here: a naive `now - lastTime > N` would re-block a user **mid-use**, still inside the app, which is the issue #5 failure class. A screen-off clear is the safer defence-in-depth candidate if this is ever revisited. **(v1.16.0: that candidate was taken.** The grant still has no timer — what expires is the SITTING, and only on evidence that the user stopped: Home, screen-off, or another app in front past the return window. Backlog F5 closed; see `accessibility-event-pipeline.md`.)
 - **Tests**: `HomeScreenPassthroughTest` (24 — launcher clears; shade / active-IME (FUTO) / hardcoded IME / `android` / own overlay / permission dialog / Settings do not; content-change, windows-changed and view-clicked from the launcher do not; an unresolved launcher set clears nothing; the `sanitizeLauncherPackages` exclusion matrix; and cooldown + session counts untouched by the clear) and `HomeScreenPassthroughContractTest` (7, source-level in the spirit of `BlockOverlayWalkAwayContractTest` — the bug was *where an early return sat*, which no value-level test can see: the home check must run inside the system-package branch before it returns, passthrough must never be cleared unconditionally there, the Strict-Mode escape guard must still precede that branch, the global-toggle gate must still follow it, and the launcher set must be PackageManager-resolved and refreshed). Verified to fail against the pre-fix wiring.
 
 
