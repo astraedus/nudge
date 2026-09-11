@@ -89,8 +89,14 @@ sealed interface SittingEvent {
  * Pure Kotlin, no Android imports: every branch below is JVM-tested, and the whole thing replays
  * against captured device event streams (`app/src/test/resources/a11y-captures/`).
  *
- * Not thread-safe by design — it is driven from the accessibility event thread and from the
- * screen-off receiver's main-thread callback, exactly like [com.astraedus.nudge.service.InteractionTracker].
+ * **Single-threaded by design, and every writer must stay on the MAIN thread.** There are exactly
+ * three, and today all three are main: `onAccessibilityEvent` (an accessibility service is
+ * dispatched on the main thread), the `ACTION_SCREEN_OFF` receiver (registered with no Handler, so
+ * it runs on main), and `BlockOverlayActivity.onTimerComplete` via
+ * [com.astraedus.nudge.service.PassthroughManager.grant] — the overlay is in the same process, with
+ * no `android:process` in the manifest. Anything calling in from the service's IO scope must hop to
+ * Main first, exactly as `onWebDomainForeground` already does for
+ * [com.astraedus.nudge.service.InteractionTracker], whose plain maps have the same constraint.
  */
 class SittingTracker(
     /**
