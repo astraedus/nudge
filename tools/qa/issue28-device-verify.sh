@@ -98,5 +98,19 @@ adb logcat -d > /tmp/nudge-verify-b.log
 
 nudge_lines /tmp/nudge-verify-b.log
 echo
-echo "B RESULT: blocks of YouTube = $(grep -c "handling block package=$YT" /tmp/nudge-verify-b.log || true)"
-echo "          PASS if 1, FAIL if 2+"
+BLOCKS=$(grep -c "handling block package=$YT" /tmp/nudge-verify-b.log || true)
+# A rebind that did not happen would give 1 block and a vacuous PASS. The service logs its own
+# connect, so require the evidence that the thing under test actually occurred.
+REBINDS=$(grep -c "accessibility service connected\|onServiceConnected" /tmp/nudge-verify-b.log || true)
+CONNECTS=$(grep -c "counter overlay service context set" /tmp/nudge-verify-b.log || true)
+
+echo "B RESULT: blocks of YouTube = $BLOCKS"
+echo "          service connects observed = $CONNECTS (the toggle must actually have rebound it)"
+if [ "$CONNECTS" -lt 2 ]; then
+  echo "          INCONCLUSIVE: fewer than two binds in this run, so the rebind under test may not"
+  echo "                        have happened -- a PASS here would be vacuous. Re-run."
+elif [ "$BLOCKS" -le 1 ]; then
+  echo "          PASS: the grant survived a real rebind ($BLOCKS block, $CONNECTS binds)"
+else
+  echo "          FAIL: $BLOCKS blocks -- the rebind re-blocked a user who never left"
+fi
