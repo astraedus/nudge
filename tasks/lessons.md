@@ -495,3 +495,36 @@ around the hand-built instance, and the contract test policing all of it were de
   covers the rendered set, which is the only part construction cannot guarantee on its own.
 - Same shape as the watchdog lesson above: **an alarm nobody can observe is not an alarm.**
 
+## On a surface you cannot observe, instrument FIRST - three device rounds proved it (2026-09-12)
+
+A widget showed a stale value. Three device rounds went into it, and the first two were spent arguing
+because there was nothing to read:
+
+1. **Round one** produced "it fails" and nothing else. I hypothesised the app process was being frozen
+   while backgrounded, which was plausible and wrong.
+2. **Round two** added one log line per refresh. That killed the freezer theory outright (`isFrozen=false`,
+   `curProcState=FOREGROUND_SERVICE`) and proved the refresh *did* fire, 138 ms after the tap. My fix had
+   addressed a cause that did not exist.
+3. **Round three** added a second line logging what each render actually READ. That located the failure
+   precisely: `updateAll` is called and `provideGlance` frequently never runs.
+
+The three candidate explanations - **the refresh never ran**, **it ran and read stale values**, **it ran,
+read correctly, and the render was lost** - are indistinguishable from outside a widget, and they have
+nothing in common as bugs. Two rounds of reasoning could not separate them. Two log lines did it in one.
+
+- **A subsystem with no screen to fail on earns permanent diagnostic logging**, at debug level, from the
+  day it is written. `docs/architecture/widgets.md` opens by saying every failure here is silent; the code
+  should have been written to answer "did it even try?" from the start.
+- **Log the VALUE the code acted on, not just that it acted.** "Refresh fired" narrowed nothing. "Refresh
+  fired, and it read `enabled=true`" is the whole finding.
+- **A confident mechanism with no instrument behind it is a guess wearing a lab coat.** Both of my wrong
+  hypotheses were coherent, specific, and consistent with everything I knew - which is exactly what makes
+  this failure mode expensive rather than obvious.
+- **Before reverting a change that "broke" something, check whether the old code passed the same test.**
+  The instinct was to drop the commit. Checking `28bedc7` showed the identical user-visible failure there,
+  for a different reason - so reverting would have kept the bug and thrown away four real fixes. "It fails
+  now" is not the same as "this change broke it", and the difference is one `git show` away.
+- **Stop when the remaining unknown is in someone else's code.** The last step is inside Glance's update
+  machinery. That is a source-reading task, not a fourth device round, and it is filed as such with the
+  logs attached rather than being half-chased at the end of a long session.
+
