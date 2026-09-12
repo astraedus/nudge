@@ -96,9 +96,158 @@ Full audit with `file:line` evidence and a fix order lives outside this repo:
 - [ ] **Advanced data visualization** -- expand beyond current charts: per-app weekly breakdown, comparison vs previous week, export charts as image for sharing/accountability. **Partially shipped**: per-app weekly breakdown landed with App Detail's bars (v1.15.0) and the insight pages (v1.13.0) cover week-over-week trend; comparison-vs-previous-week and chart image export are still open.
 - [ ] Discord in-app detection: count server/channel switches as "taps" for counter + auto-kick. Discord uses React Native so TYPE_VIEW_CLICKED doesn't fire. Would need to detect server/channel navigation via accessibility tree changes. Low priority.
 - [ ] NFC tag unlock -- same concept as QR but tap phone to NFC tag. No extra permissions needed (hardware feature). User writes unlock token to a cheap NFC tag ($1), places it somewhere. Lower priority than QR since fewer people have NFC tags lying around.
-- [ ] Widgets (home screen quick stats, toggle rules)
+- [x] ~~Widgets (home screen quick stats, toggle rules)~~ — **SHIPPED in v1.17.0**: three Jetpack Glance widgets (Today at a glance, Blocked most this week, Protection toggle). The twelve ideas that were considered, and the reasoning behind each cut, are in `docs/architecture/widgets.md`; the ones worth revisiting are listed under "Widget ideas not built" below.
 - [ ] Contextual triggers (location-based, time-of-day auto-enable)
 - [x] Release signing key (v1.3.2 -- PKCS12 keystore, CI via GitHub secrets)
+
+## API-level crashes on Android 8-9 — FIXED in v1.17.0, with the gate that lets them ship still worth reading
+
+Found by running `./gradlew :app:lintDebug` during the v1.17.0 widget work (the widgets themselves were
+clean). **`NewApi`, error severity, four occurrences, all pre-existing.** Nudge declares `minSdk = 26`, so
+it installs on Android 8.0/8.1/9, where calling a method the platform class does not have is a
+`NoSuchMethodError` at the call site — not a no-op, not a wrong answer, a crash.
+
+| Site | Method | Added in | Consequence on those devices | Status |
+|---|---|---|---|---|
+| `service/AccessibilityEventRecordFactory.kt` | `AccessibilityEvent.getScrollDeltaX/Y()` | **28** | `toRecord()` runs for **every** accessibility event, so the service died on the first one. Blocking never worked at all. | Fixed on the #28 branch (`31282b8`) |
+| `data/repository/ScreenTimeProvider.kt` | `AppOpsManager.unsafeCheckOpNoThrow()` | **29** | the Home dashboard's screen-time read threw | Fixed v1.17.0 |
+| `ui/screens/settings/SettingsScreen.kt` | same, a byte-identical copy | **29** | Settings' usage-access row threw | Fixed v1.17.0 |
+
+- **The AppOps pair are now one `util/UsageAccess.kt`** behind one `SDK_INT >= Q` check, falling back to
+  `checkOpNoThrow` (deprecated, but present since API 19, identical semantics). The duplication is what
+  made it two bugs instead of one — that is the reusable lesson, not the API number.
+- **Why nobody noticed for so long**: CI ran `test`, `assembleRelease` and `bundleRelease` — **not `lint`**.
+  `NewApi` is precisely the defect class no JVM test can see (no Android runtime) and no device we own can
+  reproduce (the bench Pixel 3 is API 31), so the one check that catches it was the one not in the gate.
+  **`./gradlew lintDebug` is now a CI step** with `abortOnError = true`, and it was mutation-checked:
+  deleting the guard fails the build with the exact `NewApi` error. See `docs/TESTING.md`.
+- **[ ] Still owed — nothing has ever RUN this app on an API 26-27 device.** Lint proves we do not call a
+  missing method; it cannot prove the app is usable on Android 8. Worth one emulator pass
+  (`sdkmanager "system-images;android-26;google_apis;x86"`) to find out what else is broken down there, or
+  a deliberate decision to raise `minSdk` and stop claiming support we have never verified.
+
+## [ ] The widget refresh debounce is leading-edge only, so a burst drops its final state (found 2026-09-12)
+
+`WidgetRefreshDebouncer.tryAcquire` runs the first call in a window and returns `false` for the rest,
+**scheduling nothing**. Correct for `UsageRepository.logEvent` (rate-limit a hot path; another event will push
+again soon), wrong for a state change, where the last write is the one that matters.
+
+Observed once in device QA of v1.17.0: immediately after unlocking Strict Mode the Protection widget rendered
+a state belonging to neither mode - "Not blocking" in red over the "Turn off in app" locked hint - and held it
+for roughly a minute. The unlock path writes several preferences in quick succession, so the leading push ran
+against a mid-burst snapshot and every later push inside the 10 s window was discarded. `ProtectionWatchdogWorker`
+is on a 15-minute period, so it was not what eventually corrected the widget; some unrelated later push was.
+
+- **Severity: low, but not zero.** It self-corrects, and it fails toward a false alarm rather than a falsely
+  healthy widget. The reason it still matters is that `WidgetSnapshotMapper.protection` goes out of its way to
+  suppress "degraded" over a deliberately switched-off Nudge, specifically so the user is never trained to
+  ignore the one message that means the OS killed the service. A spurious red dot spends that credibility.
+- **Fix shape**: on a rejected acquire, schedule ONE trailing run at `last + windowMs`, single-flight, so a
+  burst of N writes yields one leading and one trailing update rather than N or one. `WidgetRefreshDebouncer`
+  is pure and already JVM-tested, so the rule is cheap to test; the scheduling lives in `NudgeWidgetUpdater`,
+  which is not JVM-testable and is why this wants a device pass rather than a quick patch.
+- **Not bundled into v1.17.0 deliberately**: it modifies the updater reached from the accessibility hot path,
+  and the verification it needs (a burst produces exactly two updates, not a storm) is a device cycle this
+  change did not have left. Everything else in that release was device-verified.
+- **How to reproduce**: place the Protection widget, turn Strict Mode on, then unlock it, and watch the widget
+  across the following minute. A distinguishing check for anyone picking this up - log each `updateAll` and
+  confirm whether the burst produced exactly one push, which is the prediction above, or whether the stale
+  frame came from somewhere else entirely.
+
+## [ ] Widget deep links are hand-rolled; Navigation-Compose already does this (noted 2026-09-12)
+
+`WidgetDeepLink` + `EXTRA_ROUTE` + `MainActivity.onNewIntent` + a `LaunchedEffect` in the nav graph is a
+hand-built version of what Navigation-Compose provides as `navDeepLink` / `NavController.handleDeepLink`,
+which additionally survives **process-death restoration** - ours does not, because the route lives in a
+`mutableStateOf` plus an Intent extra we strip on consumption.
+
+The interim fix shipped in v1.17.0: consuming a deep link now removes the extra from the Intent, because
+`onCreate` re-reads it on every creation and a configuration change recreates the Activity with the same
+Intent - so a rotation used to throw the user back to the widget's target, repeatedly, for the life of the
+task. `WidgetObservationContractTest` pins that every extra `routeFrom` reads is also cleared on consumption,
+discovered from the reader so a third mechanism cannot be added with no matching removal.
+
+Worth replacing wholesale next time this area is open: register the routes as `navDeepLink`s and let the
+library own restoration. Not urgent - the shipped behaviour is correct for every path a user can currently
+take - and not free, since `EXTRA_OPEN_SETTINGS` has `PendingIntent`s already sitting inside protection
+alerts on real phones and has to keep working.
+
+## [ ] Three naming/duplication follow-ups from the v1.17.0 review round (2026-09-12)
+
+Each found while fixing something else, each deliberately left alone because the fix is wider than the
+change that surfaced it.
+
+- **`rememberAppIcon(icon, sizeDp)` is owed, and it is a visual change, not a cleanup.** The
+  drawable-to-bitmap conversion is hand-rolled at five composable sites, and **every one passes a literal
+  pixel size that does not match its own dp box**: `AppListItem` 48px into 40dp, `WillpowerScreen` 32px/32dp,
+  `InterventionsScreen` 64px/32dp, `ActiveRulesScreen` 48px/40dp. A shared helper rasterising at real device
+  density would make all four sharper (on a Pixel 3, 40dp is 110px against today's 48px) and cost roughly 5x
+  the bitmap bytes per icon. That is probably an improvement and it changes rendering on four screens, so it
+  wants its own device-QA'd task. `WidgetReads` is NOT in scope - Glance needs a raw `Bitmap`, which is a
+  different thing.
+- **`widget_top_blocked_title` / `_open` / `_range` are now read from a non-widget screen.** The dashboard
+  card reuses them so the card and the widget cannot drift apart in wording, which is right, but the prefix
+  now under-describes them. Rename to `top_blocked_*` next time `ui/widget/` is open. Purely cosmetic; the
+  reuse is the part that matters.
+- **"Last 7 days" has a third definition.** `StatsDateLabels.range` produces the phrase in Kotlin, alongside
+  the `widget_top_blocked_range` string resource. Not a live bug - they agree today - but it is the same
+  shape as every "two spellings of one fact" defect in `docs/architecture/stats-and-charts.md`, and the
+  Kotlin one is the odd man out because it is the only one a translator cannot reach.
+- **Contract-test scaffolding is copy-pasted across three files.** `source()` / `mainSources()` now exists in
+  `HomeTileAffordanceContractTest`, `InterventionsDelegationContractTest`, `WidgetObservationContractTest`,
+  `WidgetStrictModeContractTest` and `ProportionalBarTest`, each with its own comment-stripping regex. They
+  agree today. One shared test helper would be better, and would also stop the next author re-deriving the
+  two parsing traps that cost a cycle each this round.
+
+## [x] ~~`updateAll` can return without `provideGlance` running~~ - ROOT-CAUSED AND FIXED in v1.17.0
+
+Kept because the mechanism is not obvious, it is easy to reintroduce, and it applies to any Glance widget
+anyone writes here later.
+
+**It was never a delivery bug.** `AppWidgetSession.processEvent` (glance-appwidget 1.2.0) handles
+`UpdateGlanceState` by refreshing an internal `MutableState` from the widget's `GlanceStateDefinition` and
+letting Compose recompose. It never calls `GlanceAppWidget.provideGlance`. So **`provideGlance` runs once per
+SESSION, not once per update**, and all three widgets captured their data above `provideContent`:
+
+```kotlin
+val snapshot = runCatching { WidgetReads.protection(deps) }.getOrElse { EMPTY }  // frozen for the session
+provideContent { ProtectionContent(snapshot) }
+```
+
+Sessions live `initialTimeout = 45s` with `idleTimeout = 5s` (`TimeoutOptions` defaults), which is why the bug
+was intermittent and took three device rounds: a refresh far enough after the last one gets a fresh session
+and looks correct. The captured log matched the windows exactly - stale at a 4.5s gap, correct at 93s, stale
+again 30s after a session started.
+
+**Fixed** by reading the snapshot inside the composition from `WidgetSnapshotStore` (`mutableStateOf`, so a
+write schedules recomposition), with `NudgeWidgetUpdater.publishSnapshots()` republishing before every
+`updateAll`. Pinned by `WidgetObservationContractTest`, which fails if any widget binds a `WidgetReads` result
+above `provideContent` - mutation-checked by restoring the old pattern.
+
+**What was wrongly blamed along the way**, recorded because each cost a round: the process being frozen or
+cached (it never was - `isFrozen=false`, `curProcState=FOREGROUND_SERVICE`), and the refresh being deferred or
+dropped by rate-limiting (it fired 138ms after the tap). The instrumentation that settled it - one log line
+per refresh naming its reason, and one logging the values each render actually READ - should stay.
+
+**Two things were kept even though neither turned out to be the fix**, and neither is described as one: the
+`Mutex` serialising `pushAll` (two `updateAll` calls for one widget id overlapping is worth preventing on its
+own merits) and the Protection widget's 30-minute platform backstop (a widget whose job is announcing that
+protection died should not depend on one delivery mechanism being perfect).
+
+## Widget ideas not built (considered and cut for v1.17.0 — reasoning in `docs/architecture/widgets.md`)
+
+Three widgets shipped. These were the rest of the brainstorm, kept because the reasoning for the cut is
+also the reasoning for what would have to be true to pick one up.
+
+- [ ] **Single-app "time left today"** — the most-requested shape of budget widget. Needs a configuration Activity so the user can pick which app, which is real work (`AppWidgetProviderInfo.configure`, a config flow, per-widget-id state) for low first-release value. Pick up when someone asks for it by name.
+- [ ] **Streak counter** — cheap: `StatsCalculator.calculateStreak` already exists. The honest version is a footer line on "Today at a glance" rather than a fourth widget competing for a home-screen cell.
+- [ ] **Walk-away rate ring** — needs a runtime-generated `Bitmap`, because **Glance has no `Canvas`**. "Today at a glance" already carries the number; the ring is presentation, not information.
+- [ ] **Weekly screen-time bar chart** — same constraint, same answer: feasible via `Image(ImageProvider(bitmap))` with a bitmap drawn at refresh time. Worth doing only once some widget genuinely needs the bitmap machinery, then both this and the ring get it at once.
+- [ ] **Hourly heatmap strip** — dense bitmap, illegible at 4x1. Would need a 4x2 minimum and would still read worse than the in-app heatmap.
+- [ ] **"Next scheduled block starts in…"** — needs schedule evaluation off the accessibility hot path (a pure "when does the next window open" function over `BlockRule` schedules). That function would be useful in the app too, which is the argument for building it eventually.
+- [ ] **Quick "start a focus block now"** — rejected for now because there is no such domain concept: Nudge blocks per-rule, not per-session. This is a product feature that would then get a widget, not a widget.
+- [ ] ~~Grayscale toggle shortcut~~ — **rejected, not deferred.** Grayscale needs `WRITE_SECURE_SETTINGS`, which is ADB-granted and absent on almost every install. A home-screen control that silently does nothing is worse than no control.
+- [ ] ~~Emergency-pass "burn one now"~~ — **rejected, not deferred.** A one-tap bypass on the home screen is a hole straight through the product's purpose, and it is the same class of mistake the Protection widget's Strict Mode branch exists to prevent.
 
 ## Noted 2026-08-31 (v1.15.1 QA): stay-awake devices legitimately show near-24h days
 Device QA of the screentime fix on the Pixel 3 (which has "stay awake while charging" on and lives on AC) showed ~17h "today" and several ~24h historical days. This is CORRECT: dumpsys usagestats confirmed the app genuinely was foreground with the screen on the whole time (no screen-off events ever fire on that device). Digital Wellbeing counts the same way. Do NOT "fix" this by distrusting long inherited sessions, that would under-count real long sessions (overnight video, navigation, charging docks). If it ever bothers users, the only defensible improvement is annotating, not clamping.

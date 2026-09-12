@@ -13,6 +13,7 @@ import com.astraedus.nudge.domain.usage.WeeklyUsage
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
+import com.astraedus.nudge.util.hasUsageAccess
 
 /**
  * Provides screen time data from Android's UsageStatsManager.
@@ -48,17 +49,13 @@ class ScreenTimeProvider @Inject constructor(
         context.getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
     }
 
-    /** Check if Usage Access permission is granted. */
-    fun hasPermission(): Boolean {
-        val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as? AppOpsManager
-            ?: return false
-        val mode = appOps.unsafeCheckOpNoThrow(
-            AppOpsManager.OPSTR_GET_USAGE_STATS,
-            Process.myUid(),
-            context.packageName
-        )
-        return mode == AppOpsManager.MODE_ALLOWED
-    }
+    /**
+     * Check if Usage Access permission is granted.
+     *
+     * Delegates to the one shared [hasUsageAccess]: this used to be a byte-identical copy of
+     * the check in `SettingsScreen`, and both called an API 29 method on a `minSdk 26` app.
+     */
+    fun hasPermission(): Boolean = hasUsageAccess(context)
 
     /**
      * Per-app foreground time AND the number of foreground sessions that produced it, for
@@ -244,9 +241,11 @@ class ScreenTimeProvider @Inject constructor(
 
     companion object {
         /**
-         * Days in a weekly window. Must match `StatsDaySelection.WINDOW_DAYS` — the screens index
+         * Days in a weekly window. Aliases the domain's one definition so a trailing week means
+         * the same span here, on the dashboard and in the widgets. Must match
+         * `StatsDaySelection.WINDOW_DAYS` — the screens index
          * into [WeeklyUsage] by the bar the user tapped. Pinned by `WeeklyUsageTest`.
          */
-        const val WEEK_DAYS = 7
+        const val WEEK_DAYS = TimeTracker.WEEK_DAYS
     }
 }

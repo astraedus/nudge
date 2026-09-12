@@ -13,9 +13,12 @@ export ANDROID_HOME=$HOME/Android/Sdk
 ./gradlew assembleDebug                    # Build debug APK
 ./gradlew assembleRelease                  # Build release APK (needs keystore.properties)
 ./gradlew test                             # Unit tests (JVM)
+./gradlew lintDebug                        # Android Lint -- CI gate, see below
 ./gradlew connectedAndroidTest             # Instrumented tests (needs device)
 adb install -r app/build/outputs/apk/debug/app-debug.apk  # Install on device
 ```
+
+**`lintDebug` is a CI gate (v1.17.0) and the ONLY check that can see an API-level mistake.** `minSdk = 26`, so a call to an API 28/29 method compiles, passes every JVM test, works on the bench Pixel 3 (API 31) and throws `NoSuchMethodError` on a real Android 8/9 phone. Any `android.*` API above 26 goes behind a `Build.VERSION.SDK_INT` check, and behind ONE shared helper if it has two callers (`util/UsageAccess.kt` is the worked example). Never add a `lint-baseline.xml` for errors. Why, and what shipped before the gate existed: `docs/TESTING.md`.
 
 Test device: Pixel 3 on ADB at `192.168.1.68:5555` (Android 12, API 31).
 
@@ -166,7 +169,8 @@ one that matches what you are about to edit. Nothing here is optional reading if
 | `docs/architecture/web-domain-blocking.md` | Per-rule website blocking, multi-browser URL-bar reads, independent `webBlockMode` (#21) | editing `WebDomainMatcher`, `WebDomainDetector`, `WebBlockMode`, or the browser paths |
 | `docs/architecture/content-filter.md` | Bundled blocklist + keyword layer, the curation policy, the 274k-blob incident | touching `content_filter_domains.txt`, `ContentFilterRepository`, `ContentFilterMatcher`, or the keyword lists |
 | `docs/architecture/export-import.md` | Backup format (rules/groups/history/settings), per-entry failure policy, the import Strict-Mode gate, the DB 8→9 recreate | editing `data/export/`, `ImportRulesUseCase`, `applyImportedSettings`, `MIGRATION_8_9` |
-| `docs/architecture/stats-and-charts.md` | Dashboard tiles + mini charts, stats screen, day selection, the one screen-time source, insight pages | editing `ui/screens/stats/`, `HomeChartsBuilder`, `InsightsCalculator`, `ScreenTimeProvider`, chart geometry |
+| `docs/architecture/stats-and-charts.md` | Dashboard tiles + mini charts, stats screen, day selection, the one screen-time source, insight pages, and the discoverability rules that keep a tappable tile legible | editing `ui/screens/stats/`, `ui/screens/home/`, `HomeChartsBuilder`, `InsightsCalculator`, `ScreenTimeProvider`, chart geometry, or any dashboard tile |
+| `docs/architecture/widgets.md` | Home-screen widgets (Jetpack Glance): the three widgets, the one-shot read model, update triggers off the accessibility hot path, deep links, and why the Protection widget can never weaken Strict Mode | editing `ui/widget/`, `MainActivity`'s deep-link handling, `NudgeNavGraph`'s signature, or the widget receivers in `AndroidManifest.xml` |
 | `docs/TESTING.md` | Testing philosophy, principles, coverage targets | deciding what a change owes in tests |
 | `docs/play-store.md` | Play a11y prominent-disclosure policy, store listing assets | touching onboarding, the Settings permission flow, or the listing |
 | `docs/BACKLOG.md` | Known issues, in-progress work, future ideas | picking up work, or after finding a new defect |

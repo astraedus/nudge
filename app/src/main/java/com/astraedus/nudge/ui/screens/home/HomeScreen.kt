@@ -4,6 +4,7 @@ import android.content.Intent
 import android.provider.Settings
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -35,12 +36,15 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.astraedus.nudge.ui.components.StrictModeChallengeHost
@@ -56,7 +60,8 @@ fun HomeScreen(
     onNavigateToSettings: () -> Unit,
     onNavigateToActiveRules: () -> Unit = {},
     onNavigateToWillpower: () -> Unit = {},
-    onNavigateToInterventions: () -> Unit = {}
+    onNavigateToInterventions: () -> Unit = {},
+    onNavigateToAppDetail: (String) -> Unit = {}
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val challenge by viewModel.challenge.collectAsStateWithLifecycle()
@@ -108,26 +113,28 @@ fun HomeScreen(
                     icon = Icons.Outlined.Schedule,
                     label = "Screen Time",
                     value = if (state.hasUsagePermission) state.todayTotalUsageFormatted else "--",
-                    subtitle = if (!state.hasUsagePermission) "Tap to enable" else null,
                     modifier = Modifier.weight(1f),
-                    // Granted, this card used to be inert — the one tile showing a number the
-                    // stats screen exists to explain, and tapping it did nothing.
-                    onClick = if (!state.hasUsagePermission) {
-                        {
+                    // Granted, this card used to be inert - the one tile showing a number the
+                    // stats screen exists to explain, and tapping it did nothing. Ungranted, the
+                    // label IS the call to action, which is why it is not also a subtitle.
+                    action = if (state.hasUsagePermission) {
+                        TileAction("See breakdown", onNavigateToStats)
+                    } else {
+                        TileAction("Tap to enable") {
                             context.startActivity(
                                 Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS).apply {
                                     flags = Intent.FLAG_ACTIVITY_NEW_TASK
                                 }
                             )
                         }
-                    } else onNavigateToStats
+                    }
                 )
                 StatCard(
                     icon = Icons.Outlined.Shield,
                     label = "Active Apps",
                     value = state.activeRuleCount.toString(),
                     modifier = Modifier.weight(1f),
-                    onClick = onNavigateToActiveRules
+                    action = TileAction("Manage", onNavigateToActiveRules)
                 )
             }
 
@@ -138,11 +145,17 @@ fun HomeScreen(
                 onClick = onNavigateToStats
             )
 
-            Text(
-                "Today",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Medium,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+            TopBlockedCard(
+                apps = state.topBlocked,
+                onNavigateToInterventions = onNavigateToInterventions,
+                onNavigateToAppDetail = onNavigateToAppDetail
+            )
+
+            SectionHeader(
+                title = "Today",
+                // Said once, on the first section only. Repeating it over "All Time" reads as
+                // noise, and by then the chevrons have already taught the pattern.
+                hint = "Tap a tile for charts"
             )
 
             Row(
@@ -154,23 +167,18 @@ fun HomeScreen(
                     label = "Blocked",
                     value = state.blockedCountToday.toString(),
                     modifier = Modifier.weight(1f),
-                    onClick = onNavigateToInterventions
+                    action = TileAction("Temptation patterns", onNavigateToInterventions)
                 )
                 StatCard(
                     icon = Icons.Outlined.ThumbUp,
                     label = "Walked Away",
                     value = state.changedMindCountToday.toString(),
                     modifier = Modifier.weight(1f),
-                    onClick = onNavigateToWillpower
+                    action = TileAction("Your willpower", onNavigateToWillpower)
                 )
             }
 
-            Text(
-                "All Time",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Medium,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-            )
+            SectionHeader(title = "All Time")
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -181,14 +189,14 @@ fun HomeScreen(
                     label = "Blocked",
                     value = state.allTimeBlockedCount.toString(),
                     modifier = Modifier.weight(1f),
-                    onClick = onNavigateToInterventions
+                    action = TileAction("Temptation patterns", onNavigateToInterventions)
                 )
                 StatCard(
                     icon = Icons.Outlined.ThumbUp,
                     label = "Walked Away",
                     value = state.allTimeChangedMindCount.toString(),
                     modifier = Modifier.weight(1f),
-                    onClick = onNavigateToWillpower
+                    action = TileAction("Your willpower", onNavigateToWillpower)
                 )
             }
 
@@ -317,49 +325,125 @@ private fun WeekAtAGlanceCard(
     }
 }
 
+/**
+ * Where a dashboard tile goes, and what to call it.
+ *
+ * One value rather than two independently-nullable parameters, so "navigates but says nothing" is
+ * not a state anyone can write. That combination was the entire bug: two insight screens with one
+ * silent entry point each, undiscovered for five versions. It used to be held together by a
+ * source-scanning test asserting every call site passed both; the type does it now, at compile time
+ * and for free.
+ */
+@Immutable
+private data class TileAction(val label: String, val onClick: () -> Unit)
+
+/**
+ * A dashboard tile.
+ *
+ * With an [action] the tile carries a REAL affordance: a chevron, the action's label naming where
+ * it goes, and - since the app-wide ripple override was removed in this same change - visible touch
+ * feedback. This answers a usability report that cost two whole screens their audience: "I had no
+ * idea I could click the Blocked and Walked Away tiles." The one card the owner DID discover was
+ * the one card with a chevron, so a chevron is what every navigating tile now gets.
+ *
+ * Without an [action] the tile renders none of it, so a non-interactive tile stays honest. The
+ * label doubles as the `onClickLabel`, which is what TalkBack announces.
+ */
 @Composable
 private fun StatCard(
     icon: ImageVector,
     label: String,
     value: String,
     modifier: Modifier = Modifier,
-    subtitle: String? = null,
-    onClick: (() -> Unit)? = null
+    action: TileAction? = null
 ) {
     Card(
-        modifier = if (onClick != null) modifier.clickable(onClick = onClick) else modifier,
+        modifier = if (action != null) {
+            modifier.clickable(onClick = action.onClick, onClickLabel = action.label)
+        } else {
+            modifier
+        },
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.primaryContainer
         )
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Icon(
-                icon,
-                contentDescription = null,
-                modifier = Modifier.size(24.dp),
-                tint = MaterialTheme.colorScheme.onPrimaryContainer
-            )
-            Spacer(Modifier.height(8.dp))
-            Text(
-                value,
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onPrimaryContainer
-            )
-            if (subtitle != null) {
+        Box(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Icon(
+                    icon,
+                    contentDescription = null,
+                    modifier = Modifier.size(24.dp),
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+                Spacer(Modifier.height(8.dp))
                 Text(
-                    subtitle,
+                    value,
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+                Text(
+                    label,
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                )
+                if (action != null) {
+                    Text(
+                        action.label,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.Center
+                    )
+                }
+            }
+
+            if (action != null) {
+                Icon(
+                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                    contentDescription = null,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(6.dp)
+                        .size(16.dp),
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.55f)
                 )
             }
+        }
+    }
+}
+
+/**
+ * A section heading, optionally with a one-line hint about what the tiles under it do.
+ *
+ * The hint exists because a chevron says "this goes somewhere" but not "there are charts
+ * behind it", and the report this change answers was about charts nobody knew existed.
+ */
+@Composable
+private fun SectionHeader(title: String, hint: String? = null) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.Bottom
+    ) {
+        Text(
+            title,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+            modifier = Modifier.weight(1f)
+        )
+        if (hint != null) {
             Text(
-                label,
+                hint,
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
     }

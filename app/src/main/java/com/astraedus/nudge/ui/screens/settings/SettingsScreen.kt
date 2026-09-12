@@ -1,13 +1,15 @@
 package com.astraedus.nudge.ui.screens.settings
 
 import android.app.AppOpsManager
+import android.appwidget.AppWidgetManager
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.database.ContentObserver
 import android.net.Uri
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
-import android.os.Process
 import android.provider.Settings
 import android.widget.Toast
 import androidx.compose.foundation.clickable
@@ -32,6 +34,7 @@ import androidx.compose.material.icons.outlined.QueryStats
 import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material.icons.outlined.Timer
+import androidx.compose.material.icons.outlined.Widgets
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -63,7 +66,9 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.compose.ui.res.stringResource
 import com.astraedus.nudge.BuildConfig
+import com.astraedus.nudge.R
 import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.domain.lock.LockedToggle
 import com.astraedus.nudge.domain.lock.SettingsWeakening
@@ -73,9 +78,13 @@ import com.astraedus.nudge.service.ProtectionStatus
 import com.astraedus.nudge.ui.components.AccessibilityDisclosureDialog
 import com.astraedus.nudge.ui.components.ChallengeDialog
 import com.astraedus.nudge.ui.hasGrayscalePermission
+import com.astraedus.nudge.ui.widget.ProtectionWidgetReceiver
+import com.astraedus.nudge.ui.widget.TodayWidgetReceiver
+import com.astraedus.nudge.ui.widget.TopBlockedWidgetReceiver
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import kotlinx.coroutines.launch
+import com.astraedus.nudge.util.hasUsageAccess
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -465,11 +474,81 @@ fun SettingsScreen(
                         }
                     }
                 )
+
+                // A widget cannot be placed on the launcher from adb: there is no `cmd appwidget
+                // add`, and `appwidget grantbind` only grants a permission Pixel Launcher already
+                // holds. Without this row, every widget QA pass needs a human to drag one out of
+                // the picker. `requestPinAppWidget` still raises a system dialog that needs a tap,
+                // but a tap is something the device-tester agent can find by text and perform.
+                //
+                // BuildConfig.DEBUG-guarded, and the guard is on the composable rather than inside
+                // the handler, so the row does not exist at all in a release build.
+                if (BuildConfig.DEBUG) {
+                    // ONE ROW PER WIDGET, deliberately. The first version looped over all three
+                    // receivers in a single handler, which looks right and is not: the launcher
+                    // services one pin request at a time, so firing three synchronously left only
+                    // the last dialog standing and the other two were silently dropped. Device QA
+                    // reported "it only ever offers Protection" and had to fall back to dragging
+                    // the other two out of the widget picker by hand.
+                    //
+                    // Three named rows also give an automated tester a text anchor per widget,
+                    // which a cycling single row would not.
+                    PIN_TARGETS.forEach { target ->
+                        ListItem(
+                            headlineContent = {
+                                Text(
+                                    stringResource(
+                                        R.string.widget_pin_row_title,
+                                        stringResource(target.labelRes)
+                                    )
+                                )
+                            },
+                            supportingContent = {
+                                Text(stringResource(R.string.widget_pin_row_subtitle))
+                            },
+                            leadingContent = {
+                                Icon(Icons.Outlined.Widgets, contentDescription = null)
+                            },
+                            modifier = Modifier.clickable {
+                                requestPinNudgeWidget(context, target.receiver)
+                            }
+                        )
+                    }
+                }
             }
 
             Spacer(Modifier.height(16.dp))
         }
     }
+}
+
+/** One debug row per widget: the label to name it by, and the receiver to pin. */
+private data class WidgetPinTarget(val labelRes: Int, val receiver: Class<*>)
+
+private val PIN_TARGETS = listOf(
+    WidgetPinTarget(R.string.widget_today_label, TodayWidgetReceiver::class.java),
+    WidgetPinTarget(R.string.widget_top_blocked_label, TopBlockedWidgetReceiver::class.java),
+    WidgetPinTarget(R.string.widget_protection_label, ProtectionWidgetReceiver::class.java)
+)
+
+/**
+ * Asks the launcher to pin ONE Nudge widget.
+ *
+ * Debug-only (every call site is `BuildConfig.DEBUG`-guarded) and best-effort: a launcher that does
+ * not support pinning simply says so, and nothing user-facing depends on it. It exists so device QA
+ * can get a widget onto the home screen without a human dragging it out of the picker.
+ *
+ * Strictly one widget per call. `requestPinAppWidget` raises a system dialog and the launcher
+ * services one such request at a time, so asking for several in a row does not queue them — the
+ * extras are dropped, silently.
+ */
+private fun requestPinNudgeWidget(context: Context, receiver: Class<*>) {
+    val manager = context.getSystemService(AppWidgetManager::class.java) ?: return
+    if (!manager.isRequestPinAppWidgetSupported) {
+        Toast.makeText(context, "Launcher does not support pinning", Toast.LENGTH_SHORT).show()
+        return
+    }
+    manager.requestPinAppWidget(ComponentName(context, receiver), null, null)
 }
 
 /** A Strict-Mode-gated settings flip waiting on its typed unlock. */
@@ -547,7 +626,7 @@ private fun readPermissionStates(context: Context): PermissionStates {
         accessibility = accessibility.working,
         accessibilityCrashed = accessibility.crashed,
         overlay = Settings.canDrawOverlays(context),
-        usageStats = hasUsageStatsPermission(context)
+        usageStats = hasUsageAccess(context)
     )
 }
 
@@ -648,14 +727,5 @@ private fun rememberPermissionStates(context: Context): PermissionStates {
     return state
 }
 
-private fun hasUsageStatsPermission(context: Context): Boolean {
-    val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
-    val mode = appOps.unsafeCheckOpNoThrow(
-        AppOpsManager.OPSTR_GET_USAGE_STATS,
-        Process.myUid(),
-        context.packageName
-    )
-    return mode == AppOpsManager.MODE_ALLOWED
-}
 
 // hasGrayscalePermission is now in com.astraedus.nudge.ui.PermissionUtils

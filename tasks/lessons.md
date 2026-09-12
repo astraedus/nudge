@@ -362,6 +362,34 @@ when the block overlay backgrounds it, #19's PiP gate then swallows its events, 
 on the launcher instead. 5 of 8 launches landed wrong. `tools/qa/scroll-capture.sh` force-stops
 first; anything that relaunches an app for a capture should.
 
+## An unmeasured "perf" line item cost two whole screens their audience (2026-09-11)
+
+Commit 32b9348, "perf: eliminate recomposition waste and object allocation hotspots", is eleven
+bullets of real, measured work and one that was neither: *"Disable Material ripple globally
+(Theme.kt)"*. No benchmark, no jank report, no design note — a guess, bundled into a commit whose
+other items made it read as obviously correct, and reviewed as one unit.
+
+Four months later the owner reported: *"I had no idea I could click the Blocked and Walked Away
+tiles on Home and that they lead to two different screens with charts."* With `LocalRippleConfiguration
+provides null` at the theme root, **every `Modifier.clickable` in the entire app produced zero touch
+feedback**. Two insight screens (`WillpowerScreen`, `InterventionsScreen`) — correct, charted, 37
+calculator tests behind them — had effectively no users, because their only entry points were silent.
+
+- **A change with no measurement behind it is not a perf change, it is a behaviour change.** The tell
+  is the mismatch between scope and evidence: the other ten bullets each name the thing they fixed
+  ("was re-converting every recompose during scroll"); this one named nothing. If a bullet cannot say
+  what it measured, it does not belong in a commit whose neighbours can.
+- **Global switches deserve a written reason or they do not get flipped.** The right shape for
+  "ripple is expensive on this surface" is an override on *that* composable. App-wide is never the
+  cheap version of a local fix; it is a different, much larger change wearing the same diff size.
+- **A feature is not shipped when it is correct, it is shipped when someone can reach it.**
+  `docs/architecture/stats-and-charts.md` had documented "two sources of truth for one number" twice;
+  this is its mirror image — one source of truth, invisible. Neither is catchable by a value test,
+  so both are now pinned by source-level contract tests (`HomeTileAffordanceContractTest`,
+  `StatsInsightEntryContractTest`), including one asserting nobody reintroduces the global ripple kill.
+- Corollary for review: when a UI element's whole job is to be tapped, "does it look tappable" is
+  part of the acceptance criteria, not polish to be done later.
+
 ## A guard clause that returns before notifying a collaborator is a dropped message (2026-09-12)
 
 Issue #28 shipped a caption invalidation that could never fire. The handler had a correct, tested
@@ -423,3 +451,91 @@ as the only candidate.
 
 The capture is committed WITH the three ruled-out hypotheses in its header. A fixture that records
 only what did happen invites the next person to re-derive the same three dead ends.
+
+## If you are writing a test to police a rule, the design is wrong (2026-09-12)
+
+The home-screen widgets needed refreshing when the data they display changed. The first design added a
+`WidgetRefreshSignal` to `NudgePreferences` and `UsageRepository` and expected every writer to call
+`requestRefresh()`. It was defaulted to a no-op constant so the screens that construct those classes by
+hand kept compiling. Four bugs came out of that one decision, and every value in the app was correct
+throughout:
+
+- `recordProtectionCheck` and `setStrictModeEnabled` never called it. The Protection widget is
+  `updatePeriodMillis="0"`, push-only, so **"protection has stopped" - the one state that widget exists to
+  announce - was the one state it could never receive.** A widget placed while healthy stayed
+  healthy-looking indefinitely. Only device QA could see it.
+- `applyImportedSettings` had the same gap and had not even been suspected.
+- The fix to `setStrictModeEnabled` was then **unreachable**: `SettingsScreen` owns the Strict Mode toggle
+  and built its own `NudgePreferences`, so the write went through an instance carrying the no-op. Correct
+  code, tested code, on the one path every user takes.
+
+Then came the mistake worth naming. The response was a source-scanning contract test that discovered which
+preferences the widgets read, resolved each to its storage key, and required every assigning function to
+push - a regex parser simulating what a compiler should be guaranteeing. It was good of its kind and it
+caught the import path. It was also a signal that the design was wrong, and that signal was ignored for a
+round.
+
+**The actual fix was to delete the rule.** `NudgeWidgetUpdater` now COLLECTS the sources of truth - the
+preference flows the widgets read, and a `MAX(id)` change signal over `usage_events`. Any write, through any
+instance, from any layer, by any future caller, propagates, because it is the same DataStore and the same
+Room table. The signal interface, its no-op constant, the `@Binds` module, the entry point added to route
+around the hand-built instance, and the contract test policing all of it were deleted together.
+
+- **A default argument on a collaborator with invisible side effects converts a compile error into a silent
+  runtime no-op.** Take that trade only when the no-op is harmless for *every* caller, not just the ones you
+  had in mind.
+- **A comment is not a gate.** The no-op constant's own KDoc predicted this bug almost word for word - "if a
+  future caller writes a widget-visible value through a hand-built instance, it shows up in the diff as a
+  word rather than as nothing at all". It did. Nobody looked.
+- **A test that enumerates the callers of a rule is a design smell, not a safety net.** Ask what the
+  consumer actually depends on and subscribe to *that*. Correctness by construction needs no enumeration, and
+  the enumeration is what rots: it can only ever pin the writers that exist today.
+- **Deleting a test whose defect has become unwritable is the goal.** Deleting one because it is inconvenient
+  is not. Four assertions went when the rule did; the one that survived pins that the observed set still
+  covers the rendered set, which is the only part construction cannot guarantee on its own.
+- Same shape as the watchdog lesson above: **an alarm nobody can observe is not an alarm.**
+
+## On a surface you cannot observe, instrument FIRST - three device rounds proved it (2026-09-12)
+
+A widget showed a stale value. Three device rounds went into it, and the first two were spent arguing
+because there was nothing to read:
+
+1. **Round one** produced "it fails" and nothing else. I hypothesised the app process was being frozen
+   while backgrounded, which was plausible and wrong.
+2. **Round two** added one log line per refresh. That killed the freezer theory outright (`isFrozen=false`,
+   `curProcState=FOREGROUND_SERVICE`) and proved the refresh *did* fire, 138 ms after the tap. My fix had
+   addressed a cause that did not exist.
+3. **Round three** added a second line logging what each render actually READ. That located the failure
+   precisely: `updateAll` is called and `provideGlance` frequently never runs.
+
+The three candidate explanations - **the refresh never ran**, **it ran and read stale values**, **it ran,
+read correctly, and the render was lost** - are indistinguishable from outside a widget, and they have
+nothing in common as bugs. Two rounds of reasoning could not separate them. Two log lines did it in one.
+
+- **A subsystem with no screen to fail on earns permanent diagnostic logging**, at debug level, from the
+  day it is written. `docs/architecture/widgets.md` opens by saying every failure here is silent; the code
+  should have been written to answer "did it even try?" from the start.
+- **Log the VALUE the code acted on, not just that it acted.** "Refresh fired" narrowed nothing. "Refresh
+  fired, and it read `enabled=true`" is the whole finding.
+- **A confident mechanism with no instrument behind it is a guess wearing a lab coat.** Both of my wrong
+  hypotheses were coherent, specific, and consistent with everything I knew - which is exactly what makes
+  this failure mode expensive rather than obvious.
+- **Before reverting a change that "broke" something, check whether the old code passed the same test.**
+  The instinct was to drop the commit. Checking `28bedc7` showed the identical user-visible failure there,
+  for a different reason - so reverting would have kept the bug and thrown away four real fixes. "It fails
+  now" is not the same as "this change broke it", and the difference is one `git show` away.
+- **When the remaining unknown is in a dependency, READ THE DEPENDENCY.** I originally wrote this bullet as
+  "stop and file it", and that was half right: stopping the *device rounds* was correct, but the conclusion
+  should have been to decompile the library, not to hand the bug over. `javap -c` on the Glance AAR found the
+  mechanism in about ten minutes, after three device rounds had failed to. A third-party jar is not a black
+  box; it is source you have not read yet. Behaviour that makes no sense against your own code is the
+  strongest possible signal that the library is doing something you assumed it did not.
+
+  What it turned out to be, and it is worth knowing for any Glance widget: **`provideGlance` runs once per
+  SESSION, not once per update.** `AppWidgetSession.processEvent` handles `UpdateGlanceState` by refreshing a
+  `MutableState` from the `GlanceStateDefinition` and recomposing; it never calls `provideGlance`. Sessions
+  live 45s (`initialTimeout`, with `idleTimeout` 5s). So `val snapshot = read()` above `provideContent` is
+  frozen for the session, and every refresh inside that window re-renders it - running, logging, throwing
+  nothing, changing nothing. The timeouts are what made it intermittent, and intermittent is what made three
+  rounds of black-box testing useless.
+

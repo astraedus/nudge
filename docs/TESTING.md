@@ -35,6 +35,33 @@ Two things this module cannot JVM-test, so nobody re-discovers them:
   `InAppDetector.detectFeature`) has no JVM coverage. It affects the counter's LABEL only, never its
   number, which is the reason that split is drawn where it is.
 
+**JVM tests cannot see API-level errors; lint can.** This is the third thing the module cannot test,
+and unlike the two above it is not a documented limitation, it is a gate. `minSdk` is 26, so a call to
+a method added in API 28 or 29 compiles cleanly, passes every unit test (there is no Android runtime
+to object), and works perfectly on the bench Pixel 3 — which is API 31. On a real Android 8 or 9 phone
+it is a `NoSuchMethodError` at the call site.
+
+Three of them reached `main` before anyone looked, found only by running `./gradlew lintDebug` by hand
+during unrelated work:
+
+| Call | Added in | What it did on API 26-28 |
+|---|---|---|
+| `AccessibilityEvent.getScrollDeltaX/Y()` | 28 | inside `toRecord()`, which runs for **every** accessibility event — the service died on the first one, so blocking never worked at all |
+| `AppOpsManager.unsafeCheckOpNoThrow()` ×2 | 29 | the Home dashboard's screen-time read, and Settings' usage-access row |
+
+The AppOps pair were byte-identical copies of each other, which is the second lesson: the duplication
+is what made it two bugs instead of one. They are now one `util/UsageAccess.kt` behind one SDK check.
+
+So `lintDebug` runs in CI (`.github/workflows/release.yml`, gating both the tag release and the rolling
+`main-latest` build) with `lint { abortOnError = true; warningsAsErrors = false }` — `NewApi` fails the
+build, an unrelated deprecation warning does not. **No `lint-baseline.xml` for errors**: a baseline for
+correctness errors is a list of bugs nobody will read again. The gate was mutation-checked when it was
+added — deleting the `SDK_INT` guard in `UsageAccess.kt` fails the build with the exact `NewApi` error,
+so it is a gate and not a green tick.
+
+What is still NOT covered: nothing has ever run this app on an API 26-27 device. Lint proves we do not
+*call* a missing method; it cannot prove the app is usable on Android 8. That wants an emulator run.
+
 **Source-level contract tests** (`*ContractTest`) read a `.kt` file as text and assert on the SHAPE
 of the code — where an early return sits, that a call happens before a branch. They exist because
 this repo's worst bugs have been ordering bugs, which no value-level test can see. Two rules for

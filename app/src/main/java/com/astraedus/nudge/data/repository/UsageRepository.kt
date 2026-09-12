@@ -24,6 +24,15 @@ class UsageRepository @Inject constructor(
 
     suspend fun logEvent(event: UsageEvent) = usageEventDao.insert(event)
 
+    /**
+     * A change signal for the widgets: emits whenever a row is written to `usage_events`.
+     *
+     * The widgets observe this rather than being told by each writer. "Refresh when the data
+     * changes" is then true by construction instead of being a rule every future writer has to
+     * remember, which is exactly the rule three writers had already failed to follow.
+     */
+    fun observeLatestEventId(): Flow<Long?> = usageEventDao.observeLatestEventId()
+
     /** Every event, oldest first — the corpus an export carries. */
     suspend fun getAllEventsForExport(): List<UsageEvent> = usageEventDao.getAllForExport()
 

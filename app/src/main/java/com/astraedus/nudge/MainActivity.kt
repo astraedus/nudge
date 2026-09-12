@@ -1,6 +1,7 @@
 package com.astraedus.nudge
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -8,6 +9,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
@@ -16,6 +20,7 @@ import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.service.NudgeMonitorService
 import com.astraedus.nudge.ui.theme.NudgeTheme
 import com.astraedus.nudge.ui.navigation.NudgeNavGraph
+import com.astraedus.nudge.ui.widget.WidgetDeepLink
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -31,22 +36,78 @@ class MainActivity : ComponentActivity() {
     private val requestNotificationPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* no-op */ }
 
+    /**
+     * The route a notification or a home-screen widget asked us to open, until the nav graph has
+     * consumed it.
+     *
+     * State rather than a value read once in [onCreate], because this Activity is `singleTop`: a
+     * widget tapped while the app is already running delivers through [onNewIntent] with no new
+     * composition to read the intent. Cleared on consumption so tapping the SAME widget again, after
+     * navigating away, navigates again rather than being swallowed as an unchanged key.
+     */
+    private var deepLinkRoute by mutableStateOf<String?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         keepMonitorServiceInSync()
         requestNotificationPermissionIfNeeded()
 
-        val openSettings = intent?.getBooleanExtra(EXTRA_OPEN_SETTINGS, false) == true
+        deepLinkRoute = routeFrom(intent)
 
         setContent {
             NudgeTheme {
                 NudgeNavGraph(
                     nudgePreferences = nudgePreferences,
-                    openSettingsOnLaunch = openSettings
+                    deepLinkRoute = deepLinkRoute,
+                    onDeepLinkConsumed = { consumeDeepLink() }
                 )
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        // setIntent so getIntent() and this state cannot disagree about which intent is current.
+        setIntent(intent)
+        deepLinkRoute = routeFrom(intent)
+    }
+
+    /**
+     * Forgets the pending route, AND strips it from the Intent that carried it.
+     *
+     * Clearing only the state was a bug: `onCreate` re-reads `intent` on every creation, and a
+     * configuration change (rotation, theme switch, font-size change) destroys and recreates the
+     * Activity with the SAME Intent. So after tapping a widget and navigating on to somewhere else,
+     * a rotation silently threw the user back to the widget's target - repeatedly, for the life of
+     * that task. The Intent is the thing that survives recreation, so the Intent is the thing that
+     * has to be emptied.
+     *
+     * Every extra [routeFrom] reads must be cleared here or the bug comes straight back for that
+     * one mechanism; `DeepLinkConsumptionContractTest` pins that the two lists stay in step.
+     */
+    private fun consumeDeepLink() {
+        deepLinkRoute = null
+        intent?.let { current ->
+            current.removeExtra(WidgetDeepLink.EXTRA_ROUTE)
+            current.removeExtra(EXTRA_OPEN_SETTINGS)
+            // setIntent so a later getIntent() cannot hand back the un-stripped original.
+            setIntent(current)
+        }
+    }
+
+    /**
+     * ONE reader for both deep-link mechanisms.
+     *
+     * [EXTRA_OPEN_SETTINGS] is translated into a route rather than kept as a parallel path. Its
+     * `PendingIntent` is already sitting inside protection alerts posted on real phones, so the
+     * constant has to keep working, but it does not have to keep being a second mechanism, and
+     * `WidgetDeepLink.routeFor` refusing an unknown route protects both.
+     */
+    private fun routeFrom(intent: Intent?): String? {
+        if (intent == null) return null
+        if (intent.getBooleanExtra(EXTRA_OPEN_SETTINGS, false)) return WidgetDeepLink.ROUTE_SETTINGS
+        return WidgetDeepLink.routeFor(intent.getStringExtra(WidgetDeepLink.EXTRA_ROUTE))
     }
 
     /**

@@ -2,19 +2,20 @@ package com.astraedus.nudge.ui.theme
 
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.LocalRippleConfiguration
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 
-private val LightColors = lightColorScheme(
+/**
+ * `internal`, not private: `ui/widget/` builds its Glance color providers from these exact two
+ * schemes. A widget with its own palette would be a third source of truth for the app's colours.
+ */
+internal val LightColors = lightColorScheme(
     primary = Color(0xFF1B6B5A),
     onPrimary = Color.White,
     primaryContainer = Color(0xFFA7F2DC),
@@ -24,7 +25,7 @@ private val LightColors = lightColorScheme(
     surface = Color(0xFFFBFDF9),
 )
 
-private val DarkColors = darkColorScheme(
+internal val DarkColors = darkColorScheme(
     primary = Color(0xFF8BD6C1),
     onPrimary = Color(0xFF00382D),
     primaryContainer = Color(0xFF005143),
@@ -49,11 +50,14 @@ fun NudgeTheme(
         else -> LightColors
     }
 
-    @OptIn(ExperimentalMaterial3Api::class)
-    CompositionLocalProvider(LocalRippleConfiguration provides null) {
-        MaterialTheme(
-            colorScheme = colorScheme,
-            content = content
-        )
-    }
+    // Ripple is deliberately NOT disabled here. It was, app-wide, from commit 32b9348, one
+    // line inside a bulk "eliminate recomposition waste" pass, with no measurement and no
+    // design rationale recorded. The cost only surfaced months later as a usability report:
+    // with zero touch feedback, nothing on the dashboard looked tappable, and two whole
+    // insight screens went undiscovered because their only entry points were silent tiles.
+    // If a specific surface ever measurably janks, scope the override to THAT composable.
+    MaterialTheme(
+        colorScheme = colorScheme,
+        content = content
+    )
 }

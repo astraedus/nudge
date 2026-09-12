@@ -2,6 +2,22 @@
 
 All notable changes to Nudge are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.17.0] - 2026-09-12
+
+### Added
+- **Home-screen widgets.** Three of them, added the usual way from your launcher's widget picker. **Today at a glance** shows your screen time with the number blocked and the number you walked away from, at two sizes. **Blocked most this week** is the leaderboard on your home screen, and tapping a row opens that app. **Protection** is a status dot and a switch, so you can see at a glance that Nudge is still on — and turn it back on from the home screen if it is not. Every widget updates within seconds of a real block rather than waiting for Android's half-hourly tick, and tapping one opens the matching screen in the app instead of dropping you on the dashboard.
+- **The Protection widget tells you when blocking has actually stopped.** Android can kill Nudge's accessibility service on its own, and when that happens the app looks switched on while enforcing nothing. The widget turns red and says so on your home screen, without you opening anything. It updates in place within seconds, including right after a block.
+- **Strict Mode holds on the Protection widget too.** Switching protection ON from the widget is free, as it always has been. Switching it OFF while Strict Mode is on does not happen on the home screen: the widget opens Nudge and asks you for the phrase, exactly like the switch inside the app. A one-tap way around the commitment lock would have been a hole straight through the point of it.
+- **The apps that pulled hardest, on the dashboard.** The five apps that pulled hardest over the last seven days — icon, name, and how many times Nudge stepped in — sitting under the chart that covers the same week. Tap a row to open that app's detail screen, or the header to see the full picture.
+
+### Fixed
+- **Nudge no longer crashes on Android 8 and 9.** Three places in the app called Android features that only exist on Android 9 and 10, which is fine on a newer phone and an instant crash on an older one. The worst of them ran on every single screen change, so on those devices blocking did not work at all. All three are now version-checked, and the build will refuse to ship if a fourth ever appears.
+
+### Changed
+- **Things you can tap now look like things you can tap.** Every button and card in Nudge had been silently stripped of its touch feedback, so nothing on screen gave any sign it was interactive. That is fixed everywhere in the app at once.
+- **The dashboard tiles now say where they go.** The Blocked and Walked Away tiles have always opened two whole screens of charts — when Nudge gets blocked most, which apps pull hardest, how often you turn around and at what times of day you are strongest — and nothing on the tile said so, so most people never found them. Each tile that goes somewhere now carries an arrow and a line naming the destination, and screen readers announce it.
+- **Usage Stats links to both insight screens directly**, near the top, with a line each explaining what is behind them. They were previously reachable only from a home-screen tile, which meant that if you did not happen to tap the right tile, they did not exist as far as you were concerned.
+
 ## [1.16.0] - 2026-09-11
 
 ### Fixed

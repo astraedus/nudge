@@ -6,6 +6,12 @@ import javax.inject.Inject
 
 class TimeTracker @Inject constructor() {
 
+    companion object {
+        /** Days in a trailing-week window. Matches `ScreenTimeProvider.WEEK_DAYS` by construction. */
+        const val WEEK_DAYS = 7
+    }
+
+
     /** Returns epoch millis for midnight today in the default timezone. */
     fun startOfToday(): Long {
         val cal = Calendar.getInstance(TimeZone.getDefault())
@@ -28,6 +34,20 @@ class TimeTracker @Inject constructor() {
         cal.add(Calendar.DAY_OF_YEAR, -days)
         return cal.timeInMillis
     }
+
+    /**
+     * Local midnight that starts the trailing week ending on the day at [dayStartMs].
+     *
+     * The ONE definition of "a week ago" for every trailing-week read in the app: the home
+     * dashboard's events query and its "Blocked most this week" card, and the Top-blocked widget.
+     * All three answer the same question on two different surfaces, and this package's recurring
+     * defect is two spellings of one boundary drifting apart, so there is one spelling.
+     *
+     * `WEEK_DAYS - 1` because a 7-day window means today plus the six days before it, not the last
+     * 168 hours, and the calendar arithmetic above is what keeps a DST day 23 or 25 hours wide.
+     */
+    fun startOfTrailingWeek(dayStartMs: Long): Long =
+        startOfDayDaysBefore(dayStartMs, WEEK_DAYS - 1)
 
     /** Returns true if usage exceeds the given limit. */
     fun hasExceededLimit(usageMs: Long, limitMinutes: Int): Boolean {
