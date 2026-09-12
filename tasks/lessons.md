@@ -452,36 +452,46 @@ as the only candidate.
 The capture is committed WITH the three ruled-out hypotheses in its header. A fixture that records
 only what did happen invites the next person to re-derive the same three dead ends.
 
-## A defaulted collaborator turns "forgot to wire it" into a silent no-op (2026-09-12)
+## If you are writing a test to police a rule, the design is wrong (2026-09-12)
 
-`NudgePreferences` grew a `WidgetRefreshSignal` so the home-screen widgets could be pushed after a
-write. It was given a default — `WidgetRefreshSignal.NONE` — so the screens that build a
-`NudgePreferences` by hand would keep compiling. That default is what made the next three bugs
-possible, and all three shipped in the same change:
+The home-screen widgets needed refreshing when the data they display changed. The first design added a
+`WidgetRefreshSignal` to `NudgePreferences` and `UsageRepository` and expected every writer to call
+`requestRefresh()`. It was defaulted to a no-op constant so the screens that construct those classes by
+hand kept compiling. Four bugs came out of that one decision, and every value in the app was correct
+throughout:
 
-- `recordProtectionCheck` and `setStrictModeEnabled` never pushed at all. The Protection widget is
-  `updatePeriodMillis="0"`, i.e. push-only, so **the one state it exists to announce — protection
-  has stopped — was the one state it could never receive.** A widget placed while healthy stayed
-  healthy-looking forever. Device QA found it; no test could have, because every value was correct.
-- `applyImportedSettings` had the same gap and nobody had even suspected it.
-- Then the fix to `setStrictModeEnabled` turned out to be **unreachable**: `SettingsScreen` owns the
-  Strict Mode toggle and built its own `NudgePreferences`, so the write went through an instance
-  carrying `NONE`. Correct code, tested code, on a path no user takes.
+- `recordProtectionCheck` and `setStrictModeEnabled` never called it. The Protection widget is
+  `updatePeriodMillis="0"`, push-only, so **"protection has stopped" - the one state that widget exists to
+  announce - was the one state it could never receive.** A widget placed while healthy stayed
+  healthy-looking indefinitely. Only device QA could see it.
+- `applyImportedSettings` had the same gap and had not even been suspected.
+- The fix to `setStrictModeEnabled` was then **unreachable**: `SettingsScreen` owns the Strict Mode toggle
+  and built its own `NudgePreferences`, so the write went through an instance carrying the no-op. Correct
+  code, tested code, on the one path every user takes.
 
-- **A default argument on a collaborator converts a compile error into a silent runtime no-op.**
-  That is the entire trade, and it is worth making only when the no-op is genuinely harmless for
-  every caller. Here it was harmless for readers and silently wrong for exactly one writer.
-- **The comment predicted the bug and did not prevent it.** `NONE`'s own KDoc argued it was a named
-  constant "so that if a future caller ever writes a widget-visible value through a hand-built
-  instance, it shows up in the diff as a word rather than as nothing at all". The word was in the
-  diff the whole time. **A comment is not a gate.** If you can write down the rule, write the test.
-- **Enumerate the READERS, then check every WRITER.** The fix was wired to one writer because one
-  writer was the one being thought about. The right question is "what does this surface read, and
-  who writes each of those?" — which is a mechanical question, so `WidgetRefreshCoverageContractTest`
-  now asks it by discovery: it reads `WidgetReads.kt` for the consumed flows, resolves each to its
-  `Keys.*` constant, and requires every assigning function to push. Hand-listing the writers would
-  have pinned yesterday's bug and missed the import path, which is exactly what happened.
-- Corollary already known here and re-learned: **an alarm nobody can observe is not an alarm.** The
-  same shape as the watchdog lesson above — the safety signal existed, was correct, and could not
-  reach a human.
+Then came the mistake worth naming. The response was a source-scanning contract test that discovered which
+preferences the widgets read, resolved each to its storage key, and required every assigning function to
+push - a regex parser simulating what a compiler should be guaranteeing. It was good of its kind and it
+caught the import path. It was also a signal that the design was wrong, and that signal was ignored for a
+round.
+
+**The actual fix was to delete the rule.** `NudgeWidgetUpdater` now COLLECTS the sources of truth - the
+preference flows the widgets read, and a `MAX(id)` change signal over `usage_events`. Any write, through any
+instance, from any layer, by any future caller, propagates, because it is the same DataStore and the same
+Room table. The signal interface, its no-op constant, the `@Binds` module, the entry point added to route
+around the hand-built instance, and the contract test policing all of it were deleted together.
+
+- **A default argument on a collaborator with invisible side effects converts a compile error into a silent
+  runtime no-op.** Take that trade only when the no-op is harmless for *every* caller, not just the ones you
+  had in mind.
+- **A comment is not a gate.** The no-op constant's own KDoc predicted this bug almost word for word - "if a
+  future caller writes a widget-visible value through a hand-built instance, it shows up in the diff as a
+  word rather than as nothing at all". It did. Nobody looked.
+- **A test that enumerates the callers of a rule is a design smell, not a safety net.** Ask what the
+  consumer actually depends on and subscribe to *that*. Correctness by construction needs no enumeration, and
+  the enumeration is what rots: it can only ever pin the writers that exist today.
+- **Deleting a test whose defect has become unwritable is the goal.** Deleting one because it is inconvenient
+  is not. Four assertions went when the rule did; the one that survived pins that the observed set still
+  covers the rendered set, which is the only part construction cannot guarantee on its own.
+- Same shape as the watchdog lesson above: **an alarm nobody can observe is not an alarm.**
 

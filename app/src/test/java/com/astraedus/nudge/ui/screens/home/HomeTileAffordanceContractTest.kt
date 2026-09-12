@@ -75,61 +75,46 @@ class HomeTileAffordanceContractTest {
         assertEquals(6, statCardCallSites().size)
     }
 
-    /** Cause 2: a tile that goes somewhere must have a label saying where. */
+    /**
+     * Cause 2 - "a tile that navigates says nothing" - is now unrepresentable, not merely tested.
+     *
+     * `StatCard` takes a single `TileAction(label, onClick)`, so a tile cannot navigate without a
+     * label and cannot carry a label without navigating. The assertions that used to grep every
+     * call site for `onClick =` AND `actionLabel =` are deleted: the compiler enforces that pairing
+     * now, and a test simulating a type is a test that will drift away from it. What remains here
+     * is only what the type genuinely cannot say.
+     */
     @Test
-    fun `every tile that navigates passes an action label`() {
-        statCardCallSites().forEachIndexed { index, args ->
-            assertTrue(
-                "StatCard call #$index navigates but passes no actionLabel; a tile with no " +
-                    "affordance is the bug this test exists for.\n$args",
-                args.contains("onClick =") && args.contains("actionLabel =")
-            )
-        }
-    }
-
-    /** No inert tiles: every tile on this dashboard is a way into something. */
-    @Test
-    fun `no tile is left without an onClick`() {
-        assertTrue(statCardCallSites().all { it.contains("onClick =") })
+    fun `the affordance is one value, so a navigating tile cannot be unlabelled`() {
+        assertTrue(
+            "StatCard must take a single TileAction rather than two nullable parameters; " +
+                "separate actionLabel/onClick parameters make the original bug writable again.",
+            homeScreen.contains("action: TileAction? = null") &&
+                homeScreen.contains("data class TileAction(val label: String, val onClick: () -> Unit)")
+        )
+        assertFalse(
+            "actionLabel is gone; the label lives on TileAction.",
+            homeScreen.contains("actionLabel")
+        )
     }
 
     /**
-     * Cause 3. Four of the six tiles point at only two destinations. That duplication is
-     * fine — what is not fine is the same destination being described two different ways,
-     * which is how a user concludes the two tiles do different things.
+     * Cause 3. Four of the six tiles point at only two destinations. That duplication is fine -
+     * what is not fine is one destination described two different ways, which is how a user
+     * concludes the two tiles do different things. The type cannot check this; only a scan can.
      */
     @Test
     fun `tiles sharing a destination share the same action label`() {
-        // Scanned over the WHOLE argument list rather than by matching `onClick = <identifier>`:
-        // the Screen Time tile's onClick and actionLabel are both conditional expressions, so an
-        // identifier-anchored regex silently drops that call site and the test would quietly be
-        // checking five of six tiles while claiming to check all of them.
-        val pairs = statCardCallSites().map { args ->
-            val destinations = Regex("""\bonNavigateTo\w+""").findAll(args).map { it.value }
-                .distinct().toList()
-            val labels = Regex("""actionLabel = ([^\n]*)""").find(args)
-                ?.groupValues?.get(1)
-                ?.let { expr -> Regex(""""([^"]+)"""").findAll(expr).map { it.groupValues[1] }.toList() }
-                .orEmpty()
-            args to (destinations to labels)
-        }
-
-        pairs.forEachIndexed { index, (args, pair) ->
-            val (destinations, labels) = pair
-            assertTrue(
-                "StatCard call #$index names no navigation destination, so this test cannot " +
-                    "check it. Route tiles through an onNavigateTo* callback.\n$args",
-                destinations.isNotEmpty()
-            )
-            assertTrue(
-                "StatCard call #$index passes no literal actionLabel.\n$args",
-                labels.isNotEmpty()
-            )
-        }
-
-        val labelsByDestination = pairs
-            .flatMap { (_, pair) -> pair.first.flatMap { dest -> pair.second.map { dest to it } } }
+        val labelsByDestination = Regex("""TileAction\(\s*"([^"]+)"\s*,\s*(\w+)\s*\)""")
+            .findAll(homeScreen)
+            .map { it.groupValues[2] to it.groupValues[1] }
             .groupBy({ it.first }, { it.second })
+
+        assertTrue(
+            "Found no TileAction(label, destination) pairs; the scan has drifted from the code " +
+                "and every assertion below it would pass vacuously.",
+            labelsByDestination.isNotEmpty()
+        )
 
         labelsByDestination.forEach { (destination, labels) ->
             assertEquals(
@@ -140,8 +125,6 @@ class HomeTileAffordanceContractTest {
             )
         }
 
-        // And the two insight screens must actually be among the destinations named, or the
-        // report is unaddressed no matter how pretty the tiles are.
         assertTrue(
             "The Interventions and Willpower tiles must both carry a label.",
             labelsByDestination.containsKey("onNavigateToInterventions") &&
@@ -153,8 +136,8 @@ class HomeTileAffordanceContractTest {
     @Test
     fun `the tile click carries an onClickLabel for TalkBack`() {
         assertTrue(
-            "StatCard must pass actionLabel through as clickable(onClickLabel = ...).",
-            homeScreen.contains("clickable(onClick = onClick, onClickLabel = actionLabel)")
+            "StatCard must pass the action's label through as clickable(onClickLabel = ...).",
+            homeScreen.contains("clickable(onClick = action.onClick, onClickLabel = action.label)")
         )
     }
 

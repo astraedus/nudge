@@ -2,7 +2,6 @@ package com.astraedus.nudge.ui.widget
 
 import android.graphics.Bitmap
 import androidx.core.graphics.drawable.toBitmap
-import com.astraedus.nudge.data.repository.ScreenTimeProvider
 import com.astraedus.nudge.ui.screens.stats.StatsViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -61,7 +60,7 @@ object WidgetReads {
      * The week's leaderboard, plus the app icons for the rows we are about to draw.
      *
      * The window is the SAME trailing-week boundary the dashboard's "Last 7 days" card subscribes
-     * with (`startOfDayDaysBefore(today, WEEK_DAYS - 1)`), so the widget and that card cannot
+     * with (`startOfTrailingWeek(today)`), so the widget and that card cannot
      * disagree about which week they mean.
      */
     suspend fun topBlocked(
@@ -73,7 +72,7 @@ object WidgetReads {
         val apps = deps.installedAppsRepository()
 
         val dayStart = timeTracker.startOfToday()
-        val sinceMs = timeTracker.startOfDayDaysBefore(dayStart, ScreenTimeProvider.WEEK_DAYS - 1)
+        val sinceMs = timeTracker.startOfTrailingWeek(dayStart)
         val events = deps.usageRepository().getEventsSince(sinceMs).first()
 
         // The ONE per-app aggregation in the app. Never a second loop here: "which apps pull
@@ -101,7 +100,7 @@ object WidgetReads {
         }.toMap()
 
         TopBlockedRead(
-            snapshot = WidgetSnapshotMapper.topBlocked(stats, labels, limit),
+            snapshot = WidgetSnapshotMapper.topBlocked(stats, labels),
             icons = icons
         )
     }

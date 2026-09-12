@@ -36,6 +36,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -112,28 +113,28 @@ fun HomeScreen(
                     icon = Icons.Outlined.Schedule,
                     label = "Screen Time",
                     value = if (state.hasUsagePermission) state.todayTotalUsageFormatted else "--",
-                    subtitle = if (!state.hasUsagePermission) "Tap to enable" else null,
-                    actionLabel = if (state.hasUsagePermission) "See breakdown" else null,
                     modifier = Modifier.weight(1f),
-                    // Granted, this card used to be inert — the one tile showing a number the
-                    // stats screen exists to explain, and tapping it did nothing.
-                    onClick = if (!state.hasUsagePermission) {
-                        {
+                    // Granted, this card used to be inert - the one tile showing a number the
+                    // stats screen exists to explain, and tapping it did nothing. Ungranted, the
+                    // label IS the call to action, which is why it is not also a subtitle.
+                    action = if (state.hasUsagePermission) {
+                        TileAction("See breakdown", onNavigateToStats)
+                    } else {
+                        TileAction("Tap to enable") {
                             context.startActivity(
                                 Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS).apply {
                                     flags = Intent.FLAG_ACTIVITY_NEW_TASK
                                 }
                             )
                         }
-                    } else onNavigateToStats
+                    }
                 )
                 StatCard(
                     icon = Icons.Outlined.Shield,
                     label = "Active Apps",
                     value = state.activeRuleCount.toString(),
-                    actionLabel = "Manage",
                     modifier = Modifier.weight(1f),
-                    onClick = onNavigateToActiveRules
+                    action = TileAction("Manage", onNavigateToActiveRules)
                 )
             }
 
@@ -165,17 +166,15 @@ fun HomeScreen(
                     icon = Icons.Outlined.Block,
                     label = "Blocked",
                     value = state.blockedCountToday.toString(),
-                    actionLabel = "Temptation patterns",
                     modifier = Modifier.weight(1f),
-                    onClick = onNavigateToInterventions
+                    action = TileAction("Temptation patterns", onNavigateToInterventions)
                 )
                 StatCard(
                     icon = Icons.Outlined.ThumbUp,
                     label = "Walked Away",
                     value = state.changedMindCountToday.toString(),
-                    actionLabel = "Your willpower",
                     modifier = Modifier.weight(1f),
-                    onClick = onNavigateToWillpower
+                    action = TileAction("Your willpower", onNavigateToWillpower)
                 )
             }
 
@@ -189,17 +188,15 @@ fun HomeScreen(
                     icon = Icons.Outlined.Block,
                     label = "Blocked",
                     value = state.allTimeBlockedCount.toString(),
-                    actionLabel = "Temptation patterns",
                     modifier = Modifier.weight(1f),
-                    onClick = onNavigateToInterventions
+                    action = TileAction("Temptation patterns", onNavigateToInterventions)
                 )
                 StatCard(
                     icon = Icons.Outlined.ThumbUp,
                     label = "Walked Away",
                     value = state.allTimeChangedMindCount.toString(),
-                    actionLabel = "Your willpower",
                     modifier = Modifier.weight(1f),
-                    onClick = onNavigateToWillpower
+                    action = TileAction("Your willpower", onNavigateToWillpower)
                 )
             }
 
@@ -329,17 +326,28 @@ private fun WeekAtAGlanceCard(
 }
 
 /**
+ * Where a dashboard tile goes, and what to call it.
+ *
+ * One value rather than two independently-nullable parameters, so "navigates but says nothing" is
+ * not a state anyone can write. That combination was the entire bug: two insight screens with one
+ * silent entry point each, undiscovered for five versions. It used to be held together by a
+ * source-scanning test asserting every call site passed both; the type does it now, at compile time
+ * and for free.
+ */
+@Immutable
+private data class TileAction(val label: String, val onClick: () -> Unit)
+
+/**
  * A dashboard tile.
  *
- * When [onClick] is non-null the tile carries a REAL affordance: a chevron, an [actionLabel]
- * naming the destination, and (since the app-wide ripple override was removed in this same
- * change) visible touch feedback. This is the fix for a usability report that cost two whole
- * screens their audience: "I had no idea I could click the Blocked and Walked Away tiles."
- * The one card the owner DID discover was the one card with a chevron, so a chevron is what
- * every navigating tile now gets.
+ * With an [action] the tile carries a REAL affordance: a chevron, the action's label naming where
+ * it goes, and - since the app-wide ripple override was removed in this same change - visible touch
+ * feedback. This answers a usability report that cost two whole screens their audience: "I had no
+ * idea I could click the Blocked and Walked Away tiles." The one card the owner DID discover was
+ * the one card with a chevron, so a chevron is what every navigating tile now gets.
  *
- * The affordance renders only when the tile actually navigates, so a non-interactive tile
- * stays honest. [actionLabel] doubles as the `onClickLabel`, which is what TalkBack announces.
+ * Without an [action] the tile renders none of it, so a non-interactive tile stays honest. The
+ * label doubles as the `onClickLabel`, which is what TalkBack announces.
  */
 @Composable
 private fun StatCard(
@@ -347,14 +355,11 @@ private fun StatCard(
     label: String,
     value: String,
     modifier: Modifier = Modifier,
-    subtitle: String? = null,
-    /** Shown under the label when the tile navigates, e.g. "See details". */
-    actionLabel: String? = null,
-    onClick: (() -> Unit)? = null
+    action: TileAction? = null
 ) {
     Card(
-        modifier = if (onClick != null) {
-            modifier.clickable(onClick = onClick, onClickLabel = actionLabel)
+        modifier = if (action != null) {
+            modifier.clickable(onClick = action.onClick, onClickLabel = action.label)
         } else {
             modifier
         },
@@ -382,21 +387,14 @@ private fun StatCard(
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onPrimaryContainer
                 )
-                if (subtitle != null) {
-                    Text(
-                        subtitle,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
-                }
                 Text(
                     label,
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
                 )
-                if (onClick != null && actionLabel != null) {
+                if (action != null) {
                     Text(
-                        actionLabel,
+                        action.label,
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Medium,
                         color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f),
@@ -407,7 +405,7 @@ private fun StatCard(
                 }
             }
 
-            if (onClick != null) {
+            if (action != null) {
                 Icon(
                     Icons.AutoMirrored.Filled.KeyboardArrowRight,
                     contentDescription = null,

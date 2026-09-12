@@ -47,6 +47,17 @@ interface UsageEventDao {
     @Query("SELECT * FROM usage_events WHERE timestamp >= :since")
     fun getEventsSince(since: Long): Flow<List<UsageEvent>>
 
+    /**
+     * The newest row id, or null when the table is empty.
+     *
+     * Exists purely as a CHANGE SIGNAL for the home-screen widgets: Room invalidates on any write
+     * to `usage_events`, and `MAX(id)` over the primary key is the cheapest question we can ask
+     * that re-emits when a block decision lands. The widgets re-read their real data themselves;
+     * this only tells them there is something new to read.
+     */
+    @Query("SELECT MAX(id) FROM usage_events")
+    fun observeLatestEventId(): Flow<Long?>
+
     @Query("SELECT COUNT(*) FROM usage_events WHERE wasBlocked = 1")
     fun getAllTimeBlockedCount(): Flow<Int>
 

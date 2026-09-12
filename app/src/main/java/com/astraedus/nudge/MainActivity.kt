@@ -60,7 +60,7 @@ class MainActivity : ComponentActivity() {
                 NudgeNavGraph(
                     nudgePreferences = nudgePreferences,
                     deepLinkRoute = deepLinkRoute,
-                    onDeepLinkConsumed = { deepLinkRoute = null }
+                    onDeepLinkConsumed = { consumeDeepLink() }
                 )
             }
         }
@@ -71,6 +71,29 @@ class MainActivity : ComponentActivity() {
         // setIntent so getIntent() and this state cannot disagree about which intent is current.
         setIntent(intent)
         deepLinkRoute = routeFrom(intent)
+    }
+
+    /**
+     * Forgets the pending route, AND strips it from the Intent that carried it.
+     *
+     * Clearing only the state was a bug: `onCreate` re-reads `intent` on every creation, and a
+     * configuration change (rotation, theme switch, font-size change) destroys and recreates the
+     * Activity with the SAME Intent. So after tapping a widget and navigating on to somewhere else,
+     * a rotation silently threw the user back to the widget's target - repeatedly, for the life of
+     * that task. The Intent is the thing that survives recreation, so the Intent is the thing that
+     * has to be emptied.
+     *
+     * Every extra [routeFrom] reads must be cleared here or the bug comes straight back for that
+     * one mechanism; `DeepLinkConsumptionContractTest` pins that the two lists stay in step.
+     */
+    private fun consumeDeepLink() {
+        deepLinkRoute = null
+        intent?.let { current ->
+            current.removeExtra(WidgetDeepLink.EXTRA_ROUTE)
+            current.removeExtra(EXTRA_OPEN_SETTINGS)
+            // setIntent so a later getIntent() cannot hand back the un-stripped original.
+            setIntent(current)
+        }
     }
 
     /**

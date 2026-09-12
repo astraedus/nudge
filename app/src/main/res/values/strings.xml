@@ -52,4 +52,12 @@
     <string name="widget_open_app">Open Nudge</string>
     <string name="widget_pin_row_title">Add widget: %1$s</string>
     <string name="widget_pin_row_subtitle">Debug builds only. Asks the launcher to pin this one widget.</string>
+    <!-- The dashboard card reuses widget_top_blocked_title/_range/_open verbatim: the card
+         and the TopBlocked widget are one feature shown in two places, so the phrasing has
+         one definition. Only copy a widget has no room for lives here. -->
+    <!-- The card can afford a second sentence the widget cannot, and an empty card that
+         only says "nothing" teaches nothing. -->
+    <string name="home_top_blocked_empty">Nothing blocked in the last 7 days. Rules you add will show up here.</string>
+    <!-- TalkBack action label for a row that opens one app's detail screen. -->
+    <string name="home_top_blocked_row_open">Open %1$s details</string>
 </resources>

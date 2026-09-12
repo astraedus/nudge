@@ -10,7 +10,6 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.astraedus.nudge.data.export.ExportedSettings
-import com.astraedus.nudge.domain.widget.WidgetRefreshSignal
 import com.astraedus.nudge.service.GlobalEnabledProvider
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
@@ -23,16 +22,7 @@ private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(na
 
 @Singleton
 class NudgePreferences @Inject constructor(
-    @ApplicationContext private val context: Context,
-    /**
-     * Pushes the Protection widget when the master toggle moves.
-     *
-     * Defaulted to the no-op because two screens build a `NudgePreferences` by hand to READ
-     * preferences (Settings and the messages editor) and neither writes the master toggle. The real
-     * Hilt binding in `RepositoryModule` passes the live pusher, and that is the instance every
-     * writer (`HomeViewModel`, the widget's own callback) gets.
-     */
-    private val widgetRefreshSignal: WidgetRefreshSignal = WidgetRefreshSignal.NONE
+    @ApplicationContext private val context: Context
 ) : GlobalEnabledProvider {
 
     private object Keys {
@@ -61,10 +51,6 @@ class NudgePreferences @Inject constructor(
         context.dataStore.edit { prefs ->
             prefs[Keys.GLOBAL_ENABLED] = enabled
         }
-        // After the write, so the widget's next read sees the new value. The Protection widget's
-        // whole job is telling the user whether blocking is on; a 30-minute platform tick is not an
-        // acceptable lag for a state the user just changed.
-        widgetRefreshSignal.requestRefresh()
     }
 
     val isOnboardingComplete: Flow<Boolean> = context.dataStore.data
@@ -162,11 +148,6 @@ class NudgePreferences @Inject constructor(
         context.dataStore.edit { prefs ->
             prefs[Keys.STRICT_MODE_ENABLED] = enabled
         }
-        // The Protection widget chooses between a TOGGLE and an OPEN-THE-APP affordance from this
-        // value at compose time, so a stale widget offers a toggle the callback will then refuse.
-        // Device QA saw exactly that: the first tap after enabling Strict Mode appeared to do
-        // nothing (the guard correctly refused the write) and only the second tap opened the app.
-        widgetRefreshSignal.requestRefresh()
     }
 
     /**
@@ -276,13 +257,6 @@ class NudgePreferences @Inject constructor(
             prefs[Keys.PROTECTION_DEGRADED] = degraded
             alertShownAtMs?.let { prefs[Keys.PROTECTION_ALERT_SHOWN_AT] = it }
         }
-        // THE push that matters most, and the one that was missing. "Blocking has stopped" is the
-        // Protection widget's whole reason to exist, the widget is push-only
-        // (updatePeriodMillis="0"), and nothing here told it — so the single state it was built to
-        // surface was the one state it could never receive. Found by device QA: a widget placed
-        // while healthy stayed healthy-looking forever, and only a freshly-placed instance showed
-        // the truth. An alarm nobody can observe is not an alarm.
-        widgetRefreshSignal.requestRefresh()
     }
 
     // --- Backup: the settings an export file carries (see [ExportedSettings]) ---------------
@@ -337,8 +311,5 @@ class NudgePreferences @Inject constructor(
             settings.customDelaySubtitles?.let { prefs[Keys.CUSTOM_DELAY_SUBTITLES] = it }
             settings.customHardBlockMessages?.let { prefs[Keys.CUSTOM_HARD_BLOCK_MESSAGES] = it }
         }
-        // An import can flip Strict Mode, which decides which affordance the Protection widget
-        // draws. Restoring a backup is exactly when a placed widget is most likely to be stale.
-        widgetRefreshSignal.requestRefresh()
     }
 }

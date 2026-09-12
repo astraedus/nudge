@@ -139,23 +139,22 @@ object WidgetSnapshotMapper {
     /**
      * The leaderboard rows for the Top-blocked widget.
      *
-     * [stats] comes from `InsightsCalculator.topBlockedApps` — the ONE per-app aggregation in the
-     * app — already sorted and already truncated to the caller's limit; [limit] here only trims to
-     * the size variant actually on screen, so a 4x3 widget and a 4x2 widget cannot be looking at
-     * two different reads of the week.
+     * [stats] comes from `InsightsCalculator.topBlockedApps` - the ONE per-app aggregation in
+     * the app - already sorted and already truncated by its caller, and the widget trims again per
+     * size variant when it lays the rows out. A third `limit` here was dead: it never once received
+     * a list it could shorten.
      *
      * [labels] is what `InstalledAppsRepository` resolved. A package missing from the map is not an
-     * error: the app may have been uninstalled since the event was written, and the leaderboard is
+     * error - the app may have been uninstalled since the event was written, and the leaderboard is
      * exactly where that shows up. Falling back to the raw package keeps the row rather than
      * dropping a real block from the count.
      */
     fun topBlocked(
         stats: List<AppInterventionStat>,
-        labels: Map<String, String>,
-        limit: Int
+        labels: Map<String, String>
     ): WidgetSnapshot.TopBlocked {
-        if (limit <= 0 || stats.isEmpty()) return WidgetSnapshot.TopBlocked.EMPTY
-        val visible = stats.take(limit)
+        if (stats.isEmpty()) return WidgetSnapshot.TopBlocked.EMPTY
+        val visible = stats
         // Relative to the visible list's own top, not the window's: the bars have to fill the
         // widget they are drawn in. The list arrives sorted, but `maxOf` rather than `first()`
         // means a future unsorted caller gets short bars, not bars longer than the track.

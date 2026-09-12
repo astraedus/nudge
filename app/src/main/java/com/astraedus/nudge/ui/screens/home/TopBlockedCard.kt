@@ -1,7 +1,6 @@
 package com.astraedus.nudge.ui.screens.home
 
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -14,7 +13,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.Block
@@ -24,26 +22,29 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.core.graphics.drawable.toBitmap
+import com.astraedus.nudge.R
+import com.astraedus.nudge.ui.components.ProportionalBar
 
 /**
- * "Blocked most this week" — the apps that pulled hardest, on the dashboard.
+ * "Blocked most" — the apps that pulled hardest, on the dashboard.
  *
  * Deliberately sits directly under the "Last 7 days" card: it is a week-scoped number and it
- * reads the same window that card charts (see `HomeViewModel.topBlocked`), so the two are one
- * story rather than two that can disagree. The header opens the Interventions insight screen —
- * one of the two screens the owner never found because nothing on this dashboard said they
- * existed — and each row opens that app's own detail screen.
+ * reads the same window that card charts (see `HomeViewModel.topBlockedFlow`), so the two are
+ * one story rather than two that can disagree. The header opens the Interventions insight
+ * screen — one of the two screens the owner never found because nothing on this dashboard said
+ * they existed — and each row opens that app's own detail screen.
+ *
+ * The header, the range line and the action label are the SAME string resources the
+ * `TopBlocked` home-screen widget renders. That card and that widget are one feature shown in
+ * two places; giving them two copies of the phrase is how a translation, or an edit, ends up
+ * applied to only one of them.
  */
 @Composable
 fun TopBlockedCard(
@@ -63,18 +64,18 @@ fun TopBlockedCard(
                     .fillMaxWidth()
                     .clickable(
                         onClick = onNavigateToInterventions,
-                        onClickLabel = "Open temptation patterns"
+                        onClickLabel = stringResource(R.string.widget_top_blocked_open)
                     ),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    "Blocked most this week",
+                    stringResource(R.string.widget_top_blocked_title),
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Medium,
                     modifier = Modifier.weight(1f)
                 )
                 Text(
-                    "Last 7 days",
+                    stringResource(R.string.widget_top_blocked_range),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -92,7 +93,7 @@ fun TopBlockedCard(
                 // The card stays put rather than vanishing: a card that disappears teaches
                 // nothing, and "nothing was blocked" is itself a reading of the week.
                 Text(
-                    "Nothing blocked in the last 7 days. Rules you add will show up here.",
+                    stringResource(R.string.home_top_blocked_empty),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 8.dp)
@@ -124,7 +125,10 @@ private fun TopBlockedRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick, onClickLabel = "Open ${app.label} details")
+            .clickable(
+                onClick = onClick,
+                onClickLabel = stringResource(R.string.home_top_blocked_row_open, app.label)
+            )
             .defaultMinSize(minHeight = ROW_MIN_HEIGHT)
             .padding(vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -132,15 +136,12 @@ private fun TopBlockedRow(
     ) {
         val icon = app.icon
         if (icon != null) {
-            // Rasterise at the DEVICE's pixel size for a 24.dp box, not at a literal 24 px.
-            // A 24 px bitmap stretched into 66 px of xxhdpi is visibly soft, and this card sits
-            // at the top of the dashboard where every app icon is recognised by its shape.
-            val iconPx = with(LocalDensity.current) { ICON_SIZE.roundToPx() }
-            val bitmap = remember(icon, iconPx) { icon.toBitmap(iconPx, iconPx).asImageBitmap() }
+            // Already rasterised at this box's pixel size, off the main thread, by
+            // `HomeViewModel.resolveRows`. Nothing to decode, cache or remember here.
             Image(
-                bitmap = bitmap,
+                bitmap = icon,
                 contentDescription = null,
-                modifier = Modifier.size(ICON_SIZE)
+                modifier = Modifier.size(TOP_BLOCKED_ICON_SIZE)
             )
         } else {
             // Uninstalled, or an icon PackageManager would not give us. A generic block glyph,
@@ -148,7 +149,7 @@ private fun TopBlockedRow(
             Icon(
                 Icons.Outlined.Block,
                 contentDescription = null,
-                modifier = Modifier.size(ICON_SIZE),
+                modifier = Modifier.size(TOP_BLOCKED_ICON_SIZE),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
@@ -162,21 +163,7 @@ private fun TopBlockedRow(
             modifier = Modifier.width(LABEL_WIDTH)
         )
 
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .height(6.dp)
-                .clip(RoundedCornerShape(3.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant)
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth(fraction)
-                    .height(6.dp)
-                    .clip(RoundedCornerShape(3.dp))
-                    .background(MaterialTheme.colorScheme.primary)
-            )
-        }
+        ProportionalBar(fraction = fraction, modifier = Modifier.weight(1f))
 
         // Fixed width so the column of numbers lines up down the card rather than
         // jittering with each value's digit count.
@@ -192,7 +179,15 @@ private fun TopBlockedRow(
     }
 }
 
-private val ICON_SIZE = 24.dp
+/**
+ * The icon box on a top-blocked row.
+ *
+ * Not private, and not a bare `24` in two places: `HomeViewModel` rasterises each icon at the
+ * device's pixel size for THIS box, so the size the bitmap is decoded at and the size it is
+ * drawn at have to be one number. A 24 px bitmap stretched into 66 px of xxhdpi is visibly
+ * soft, and this card sits at the top of the dashboard where an app is recognised by its icon.
+ */
+internal val TOP_BLOCKED_ICON_SIZE = 24.dp
 
 /** Minimum comfortable tap target for a row that navigates. */
 private val ROW_MIN_HEIGHT = 48.dp

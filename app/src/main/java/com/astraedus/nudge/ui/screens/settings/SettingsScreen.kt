@@ -10,7 +10,6 @@ import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
-import android.os.Process
 import android.provider.Settings
 import android.widget.Toast
 import androidx.compose.foundation.clickable
@@ -70,7 +69,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.res.stringResource
 import com.astraedus.nudge.BuildConfig
 import com.astraedus.nudge.R
-import com.astraedus.nudge.di.PreferencesEntryPoint
+import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.domain.lock.LockedToggle
 import com.astraedus.nudge.domain.lock.SettingsWeakening
 import com.astraedus.nudge.domain.lock.StrictModeChallenge
@@ -102,11 +101,7 @@ fun SettingsScreen(
     val accessibilityEnabled = permissionStates.accessibility
     val overlayEnabled = permissionStates.overlay
     val usageStatsEnabled = permissionStates.usageStats
-    // The Hilt singleton, NOT a hand-built instance. This screen WRITES Strict Mode, which the
-    // Protection widget renders, and a hand-built NudgePreferences carries WidgetRefreshSignal.NONE
-    // - so it would write correctly and push nothing, leaving the widget offering a toggle the
-    // commitment lock has already taken away.
-    val preferences = remember { PreferencesEntryPoint.preferences(context) }
+    val preferences = remember { NudgePreferences(context.applicationContext) }
     val debugLoggingEnabled by preferences.isDebugLoggingEnabled.collectAsStateWithLifecycle(initialValue = false)
     val contentFilterEnabled by preferences.contentFilterEnabled.collectAsStateWithLifecycle(initialValue = false)
     val contentFilterStrictKeywords by preferences.contentFilterStrictKeywords.collectAsStateWithLifecycle(initialValue = false)
@@ -548,7 +543,6 @@ private val PIN_TARGETS = listOf(
  * extras are dropped, silently.
  */
 private fun requestPinNudgeWidget(context: Context, receiver: Class<*>) {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
     val manager = context.getSystemService(AppWidgetManager::class.java) ?: return
     if (!manager.isRequestPinAppWidgetSupported) {
         Toast.makeText(context, "Launcher does not support pinning", Toast.LENGTH_SHORT).show()

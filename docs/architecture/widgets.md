@@ -115,97 +115,80 @@ The app uses Material You dynamic colour on API 31+ and the widgets deliberately
 resolved per-configuration, not per-composition, and these are read against the launcher's wallpaper scrim,
 which a stable brand colour survives better than one extracted from that same wallpaper.
 
-## Staying fresh: the platform clamp, the chokepoint push, and the debounce
+## Staying fresh: OBSERVE the data, never ask writers to announce themselves
 
-`updatePeriodMillis` is clamped to 30 minutes by the platform. That is a fine backstop for a screen-time number
-and useless for "I just walked away from Instagram" — which is the moment the widget is worth having. So:
+`updatePeriodMillis` is clamped to 30 minutes by the platform. That is a fine backstop for a
+screen-time number and useless for "I just walked away from Instagram", which is the moment the widget is
+worth having. The Protection widget goes further and sets `updatePeriodMillis="0"` on purpose - polling a
+toggle every half hour is worse than useless - which makes the push its **entire** update mechanism.
 
-- **One chokepoint: `UsageRepository.logEvent`.** Every block decision and every walk-away already passes
-  through it (`RecordWalkAwayUseCase`, and both write sites in `NudgeAccessibilityService`). **No WorkManager
-  job** — the 15-minute `ProtectionWatchdogWorker`, the 30-minute platform tick and these pushes already cover
-  every case, and a fourth scheduler would be a fourth thing to keep alive.
+### The design that failed, because it is worth knowing why
 
-### The Protection widget is push-ONLY, so a missed push is a frozen widget
+The first version exposed a `requestRefresh()` and expected every writer of widget-visible data to call it.
+Three of the four writers never did. The consequences, all found on a device and none catchable by any test
+of any value:
 
-`protection_widget_info.xml` sets `updatePeriodMillis="0"` on purpose: polling a toggle every half hour is
-worse than useless. That makes the push the **entire** update mechanism for this widget, and it turns a
-forgotten push from a latency problem into a correctness one.
+- `recordProtectionCheck` wrote the degraded flag and pushed nothing, so **"protection has stopped" - the
+  single state the Protection widget exists to announce - was the one state it could never receive.** A
+  widget placed while healthy stayed healthy-looking indefinitely.
+- `setStrictModeEnabled` pushed nothing, so the widget kept drawing the unlocked TOGGLE affordance after the
+  lock went on. The tap was then correctly refused by the guard in `ToggleProtectionAction`, which read as
+  "the first tap does nothing".
+- `applyImportedSettings` had the same gap and nobody had suspected it.
+- And when the second of those was fixed, the fix was **unreachable**: `SettingsScreen` built its own
+  `NudgePreferences`, whose signal parameter defaulted to a no-op. Correct code on the one path every user
+  takes.
 
-Device QA found exactly that, twice over, and it is worth stating plainly because the bug was invisible in
-every other way: **the single state the Protection widget exists to announce — "protection has stopped" — was
-the one state it could never receive.** `recordProtectionCheck` wrote the degraded flag and pushed nothing, so
-a widget placed while healthy stayed healthy-looking indefinitely; only a *freshly placed* instance ever showed
-the truth. An alarm nobody can observe is not an alarm. `setStrictModeEnabled` had the same gap, so after
-enabling Strict Mode the widget kept drawing the unlocked TOGGLE affordance; the tap was then correctly refused
-by the guard in `ToggleProtectionAction`, which read to the tester as "the first tap does nothing".
+A source-scanning test was then written to police the rule. That is a regex parser standing in for something
+the compiler should be guaranteeing, and it was the tell that the design was wrong.
 
-So the rule is not "push from `setGlobalEnabled`", it is:
+### What it does now
 
-> **Every preference a widget renders pushes a refresh on every write path, after the write lands.**
+`NudgeWidgetUpdater` collects the **sources of truth** and nothing tells it anything:
 
-Four writers qualify today: `setGlobalEnabled`, `setStrictModeEnabled`, `recordProtectionCheck`, and
-`applyImportedSettings` (restoring a backup can flip Strict Mode, and a restore is precisely when a placed
-widget is most likely to be stale).
+- the preference flows the widgets read (`isGlobalEnabled`, `protectionDegraded`, `isStrictModeEnabled`),
+  combined and `distinctUntilChanged` - DataStore re-emits the whole preferences object on any write, so
+  without that every unrelated setting would refresh the widgets;
+- `UsageRepository.observeLatestEventId()`, a `SELECT MAX(id) FROM usage_events` flow. Room invalidates on
+  any write to that table, and `MAX(id)` over the primary key is the cheapest question that re-emits. It is a
+  change *signal*: the widgets re-read their real data themselves.
 
-`WidgetRefreshCoverageContractTest` enforces it by **discovery, not by a list**: it reads `WidgetReads.kt` to
-find which preference flows the widget layer actually consumes, resolves each to its `Keys.*` constant, finds
-every function that assigns that key, and requires each one to push — and to push *after* its own
-`dataStore.edit`, since a refresh that runs first reads the value it is replacing and renders one state behind,
-which looks identical to no push at all. A fifth write path, or a fourth widget-visible preference, fails the
-test until it is wired. Hand-listing the three known writers would have pinned yesterday's bug and missed the
-import path, which is exactly what happened before the test was written.
-- **`logEvent` is on the accessibility hot path, so the push must cost nothing there.**
-  `WidgetRefreshSignal.requestRefresh()` is **not** suspending, does one atomic compare-and-set on the caller's
-  thread, and hands off to an application-scoped `SupervisorJob` coroutine. A user hitting a wall of blocks
-  produces several events a second, and each `updateAll` is a real `RemoteViews` build plus a binder call into
-  the launcher. Adding that to an event dispatch would mean the thing deciding whether to block someone waits on
-  a home screen nobody is looking at.
-- **`WidgetRefreshDebouncer` coalesces to one run per 10 s**, and is a separate pure class rather than an inline
-  `if` because the updater itself cannot be JVM-tested (it needs a real `Context` and AppWidgetManager) while
-  the rule that decides whether it runs can be, exactly. This repo has been burned by a silent early return in a
-  loop with no test and no log; that is the shape being avoided.
-- **The clock is `SystemClock.elapsedRealtime()`, monotonic.** A wall-clock reading can jump backwards — a
-  timezone change, an NTP correction, the user setting the date — and a backwards jump would lock refreshes out
-  for however far it went, with the symptom being a widget that quietly stops updating, which looks exactly like
-  a widget with nothing to report.
-- **It fails OPEN.** The first call always runs, a rejected call never extends the window, and the failure
-  direction of a debounce bug is "refreshed more often than needed", never "stopped refreshing".
-- **KNOWN LIMITATION: the debounce is LEADING-EDGE ONLY, so the last write of a burst can be dropped.**
-  `tryAcquire` runs the first call and returns `false` for anything inside the window, scheduling nothing. That
-  is exactly right for `logEvent`, where the point is to rate-limit a hot path and the next event will push
-  again shortly. It is wrong for a state change, where **the LAST write is the one that carries the truth**.
-  Device QA saw the consequence once: right after unlocking Strict Mode the widget rendered a combination
-  belonging to neither state (`Not blocking` in red, over the `Turn off in app` locked hint), and stayed that
-  way for about a minute. The unlock path writes several preferences in quick succession; the first push ran
-  against a mid-burst snapshot and every later push in that 10 s window was discarded with no trailing run, so
-  the widget kept the half-updated frame until some unrelated push came along. The 15-minute watchdog is far
-  too slow to have been the thing that corrected it.
-  It self-corrects and it fails toward a FALSE ALARM rather than a falsely-healthy widget, which is the safe
-  direction — but only just: `WidgetSnapshotMapper.protection` deliberately suppresses "degraded" over a
-  switched-off Nudge precisely so the user is never trained to ignore the one message that means their phone
-  killed us, and a spurious red dot works against that.
-  **The fix is a trailing edge**: on a rejected acquire, schedule exactly one run at `last + windowMs`,
-  single-flight so a burst of N produces one leading and one trailing update rather than N. Deliberately not
-  done in v1.17.0 — it touches the updater that sits on the accessibility hot path, and it wants its own device
-  pass to confirm a burst really does produce two updates and not a refresh storm. Filed in `docs/BACKLOG.md`.
-- **The steady-state path is silent; a failure is logged.** `Log.w` on a failed `updateAll`, because "the
-  widgets are stale" and "the widgets had nothing new to show" must not look identical in logcat. It uses
-  `android.util.Log` rather than the injected `NudgeLog` for a hard reason: `NudgeLogger` depends on
-  `NudgePreferences`, which now depends on this class, so injecting the logger would be a Dagger cycle.
+Any write, through any instance, from any layer, by any future caller, propagates - because it is the same
+DataStore and the same Room table. Freshness is a property of the wiring rather than of everyone's
+discipline, and `NudgePreferences` and `UsageRepository` went back to knowing nothing about widgets at all.
+`WidgetRefreshSignal`, its `NONE` constant, the `@Binds` module, `PreferencesEntryPoint` and the contract
+test policing the rule are all deleted.
 
-### Layering: why `WidgetRefreshSignal` lives in `domain`
+**It is started from `NudgeApp.onCreate`**, the one callback that runs on every process start, for the same
+reason the watchdog is armed there. Somebody has to hold those collectors open and a widget's own process is
+far too short-lived to be that somebody.
 
-`UsageRepository` and `NudgePreferences` are `data`, and the dependency rule in this module is
-`ui -> domain <- data`, so neither may import a Glance class. `domain/widget/WidgetRefreshSignal.kt` is a pure
-`fun interface` with one non-suspending method; `ui.widget.NudgeWidgetUpdater` implements it and a `@Binds`
-module inside `ui/widget/` wires them. This is the same pattern as `service.UsageProvider` and
-`service.GlobalEnabledProvider` — the consumer names the capability, the implementing layer supplies it.
+### Coalescing: the LAST change must never be the one that is lost
 
-Both constructor parameters default to **`WidgetRefreshSignal.NONE`**, a named constant rather than an empty
-lambda. Two screens (`SettingsScreen`, `MessagesEditorScreen`) build a `NudgePreferences` by hand to *read*
-preferences, and neither writes the master toggle; the Hilt binding in `di/RepositoryModule` passes the live
-pusher to every writer. The constant is named so that if a future caller ever writes a widget-visible value
-through a hand-built instance, it shows up in the diff as a word rather than as nothing at all.
+`WidgetRefreshCoalescer` is a **conflated channel** consumed by one loop that refreshes and then waits out a
+10-second cooldown. A burst of N changes produces two refreshes: one immediately, because latency matters most
+for the change the user just caused, and one carrying the final state.
+
+This replaced a leading-edge debounce, which got the rate limit right and the correctness wrong: a request
+inside the window returned `false` and scheduled *nothing*. Since the window is usually opened by a block
+event on the accessibility hot path, a state change landing inside it was simply discarded - and for a
+push-only widget there is no later tick to recover. It is a conflated channel and not a
+`MutableSharedFlow(replay = 0)` because the latter buffers nothing until a subscriber exists, so a request
+racing the loop's start would vanish; a channel removes that race rather than making it unlikely.
+
+`request()` is non-suspending, so an observer can call it from anywhere.
+
+### Per-widget isolation
+
+`pushAll` launches each widget's `updateAll` as **its own child coroutine with its own `runCatching`**, so
+they are concurrent and one widget's failure cannot starve the others. The previous version ran all three
+sequentially inside a single `runCatching` while its KDoc claimed the opposite, citing `SupervisorJob` -
+which isolates across coroutines and does nothing whatsoever for three calls in a row inside one of them.
+Failures are logged with the widget's NAME so they are attributable; the steady-state path is silent, because
+"the widgets are stale" and "the widgets had nothing new to show" must never look the same in logcat.
+
+`android.util.Log` rather than the injected `NudgeLog`: `NudgeLogger` depends on `NudgePreferences`, which
+this class already depends on, so injecting it would be a Dagger cycle. Same precedent as `GrayscaleManager`.
 
 ## Strict Mode: the Protection widget must not be a one-tap bypass
 
@@ -300,7 +283,7 @@ where a missing resource is an exception rather than a blank.
 
 ## What the tests pin
 
-50 tests across six JVM classes. The source-scanning classes use the `source()` helper that **strips
+52 tests across six JVM classes. The source-scanning classes use the `source()` helper that **strips
 comments before scanning**, the same technique as `ScreenTimeSourceContractTest` — the widget files deliberately
 document in prose the very calls they must not make, and scanning raw text would make writing that explanation
 fail the test that protects it.
@@ -313,9 +296,12 @@ fail the test that protects it.
   database-sourced counts still pass through; bar percentages including the unsorted-input bound; label fallback
   for an uninstalled app; and one exhaustive table over all eight `protection(...)` inputs asserting `state` and
   `togglesInWidget`. This is the value-level half of the Strict Mode contract.
-- **`NudgeWidgetUpdaterTest`** (8) — the debouncer: first call always runs, burst coalescing, the window
-  restarting from the last *successful* acquire, a rejected call not extending the window, backwards-clock
-  behaviour, and 200 threads racing one `nowMs` with exactly one winner.
+- **`WidgetRefreshCoalescerTest`** (7) - the coalescing policy on a `TestScope`'s virtual clock: the first
+  request refreshes immediately, a burst of twenty inside one cooldown yields **exactly two** refreshes rather
+  than one or twenty, a request arriving mid-refresh is served with the FINAL state, requests spaced beyond the
+  cooldown each refresh, a request made *before* the loop starts is still served (which is why it is a conflated
+  channel and not a `MutableSharedFlow(replay = 0)`), and a quiet period costs nothing. Every case is really
+  asking the same question: can the last request ever be lost?
 - **`WidgetStrictModeContractTest`** (8) — the source-level half, and the decisive one. Every
   `setGlobalEnabled(false)` in `ui/widget/` sits on a line also carrying `!strictModeEnabled`, and there is
   **exactly one** such write (more means the decision was duplicated; zero would make the test pass vacuously);
@@ -329,23 +315,25 @@ fail the test that protects it.
   half-wired; exported + intent-filter + provider meta-data on each; every referenced `@xml` provider and its
   `initialLayout` exists; `MainActivity` is `singleTop`; every `@string` the widget XML names is defined; and each widget has its OWN debug pin row, with the requesting function iterating nothing (the launcher services one pin request at a time, so a loop drops every dialog but the last).
 
-- **`WidgetRefreshCoverageContractTest`** (4) — added after device QA, and the only one here that **discovers
-  its own inputs**. It reads `WidgetReads.kt` for the preference flows the widget layer consumes, resolves each
-  to its `Keys.*` constant, finds every function that ASSIGNS that key, and requires each to push a refresh —
-  after its own `dataStore.edit`, and never from a file that hand-builds a `NudgePreferences`. A fourth
-  assertion fails if the discovery finds nothing, so a refactor that breaks the resolver fails loudly instead
-  of passing vacuously. Hand-listing the writers would have pinned the two bugs QA had already found and missed
-  the settings-import path entirely — which is exactly what happened before this test existed.
-
-  Two parsing traps are worth knowing if you extend it: splitting the file on the `suspend fun` keyword
-  misattributes a write to the function declared *above* the real one, and the marker `prefs[Keys.X]` matches
-  the READ inside each `Flow` declaration as well as the write. Hence backward search plus brace matching, and
-  the `] =` in the marker. A contract test that cries wolf gets deleted.
+- **`WidgetObservationContractTest`** (6) - what is left to pin now that freshness is structural. It reads
+  `WidgetReads.kt` to DISCOVER which preference flows the widgets render, then asserts `NudgeWidgetUpdater`
+  collects every one of them, that it also observes `usage_events`, and that no data-layer file mentions
+  `requestRefresh` or `WidgetRefreshSignal` any more - if the enumerate-every-writer design creeps back, so does
+  the bug it produced. It also asserts each widget refreshes in its own child coroutine with its own
+  `runCatching`, and that **every Intent extra `routeFrom` reads is removed on consumption**, both sets
+  discovered from the code rather than listed, so a third deep-link mechanism cannot be added with no matching
+  removal. A first case fails if the discovery finds nothing, so a refactor that breaks the regex fails loudly
+  instead of passing vacuously.
 
 **Mutation-checked.** Removing the `!strictModeEnabled` guard, flipping one receiver to `exported="false"`,
-deleting `launchMode="singleTop"`, reintroducing the pin-row loop, deleting the degraded-state push, and
-restoring the hand-built `NudgePreferences` in `SettingsScreen` each fail their specific test. A source-scanning
-test that passes on broken code is worse than no test, so every one of these was run rather than assumed.
+deleting `launchMode="singleTop"` and reintroducing the pin-row loop each fail their specific test. A
+source-scanning test that passes on broken code is worse than no test, so every one of these was run rather
+than assumed.
+
+Two earlier mutation checks are gone along with the code they guarded - the missing degraded-state push and the
+hand-built `NudgePreferences` in `SettingsScreen`. Both were checks on a rule that no longer exists, because
+the updater observes the data instead of trusting writers to announce themselves. Deleting a test whose defect
+has become unwritable is the point; deleting one because it is inconvenient is not.
 
 ## Deliberately not built (v1)
 

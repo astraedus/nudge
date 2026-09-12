@@ -219,13 +219,22 @@ class WidgetStrictModeContractTest {
      */
     @Test
     fun `widget reads are one-shot, never a long-lived collection`() {
-        widgetSources().forEach { file ->
+        // NudgeWidgetUpdater is exempt, and is the ONLY exemption: it is the long-lived observer
+        // that exists so no widget has to subscribe to anything. It lives in the application
+        // process, started from NudgeApp.onCreate. Everything else here composes inside a
+        // short-lived widget session, where a subscription has nothing to outlive.
+        val composingSources = widgetSources().filterNot { it.name == "NudgeWidgetUpdater.kt" }
+        assertTrue(
+            "Found no widget sources to scan; the exemption cannot be the whole package.",
+            composingSources.size >= 3
+        )
+        composingSources.forEach { file ->
             val text = source(file.path.substringAfter("src/"))
             listOf(".collect {", ".collectLatest", "collectAsState", "stateIn(").forEach { banned ->
                 assertFalse(
                     "${file.name} must not use `$banned`: a widget composes in a short-lived " +
                         "session with nothing for a subscription to outlive. Read once with " +
-                        "`.first()` before provideContent and push updates via NudgeWidgetUpdater.",
+                        "`.first()` before provideContent; NudgeWidgetUpdater does the observing.",
                     text.contains(banned)
                 )
             }
@@ -233,45 +242,37 @@ class WidgetStrictModeContractTest {
     }
 
     /**
-     * `logEvent` is on the accessibility hot path — every block decision and every walk-away goes
-     * through it. The widget push must be fire-and-forget: non-suspending, and coalesced, or a user
-     * hitting a wall of blocks pays a RemoteViews build plus a binder call to the launcher per
-     * event, in the middle of deciding whether to block them.
+     * Refreshes are coalesced, and asking for one never blocks the asker.
+     *
+     * This used to assert that `UsageRepository.logEvent` pushed the widgets by hand on the
+     * accessibility hot path. That mechanism is gone: the updater OBSERVES the preference flows and
+     * the events table, so no writer announces anything and there is no hot-path call left to keep
+     * cheap. What survives is the part that still matters - a burst of blocks must not cost one
+     * RemoteViews build plus a binder call to the launcher per event, and requesting a refresh must
+     * never apply backpressure to the Room or DataStore collector that asked for it.
      */
     @Test
-    fun `the hot-path refresh is non-suspending and debounced`() {
-        val signal = source("main/java/com/astraedus/nudge/domain/widget/WidgetRefreshSignal.kt")
+    fun `refresh requests are coalesced and never block the caller`() {
+        val coalescer = source("main/java/com/astraedus/nudge/ui/widget/WidgetRefreshCoalescer.kt")
         assertTrue(
-            "WidgetRefreshSignal.requestRefresh must not be suspend: it is called from " +
-                "UsageRepository.logEvent, on the accessibility hot path",
-            Regex("""fun requestRefresh\(\)""").containsMatchIn(signal)
+            "WidgetRefreshCoalescer.request() must not suspend.",
+            Regex("""\n    fun request\(\)""").containsMatchIn(coalescer)
         )
-        assertFalse(
-            "WidgetRefreshSignal must declare no suspending member",
-            signal.contains("suspend fun")
+        assertTrue(
+            "Coalescing must be a CONFLATED channel: capacity one, newest wins, so a burst " +
+                "collapses to a single pending refresh and the LAST state is never the one lost.",
+            coalescer.contains("Channel.CONFLATED")
         )
 
         val updater = source("main/java/com/astraedus/nudge/ui/widget/NudgeWidgetUpdater.kt")
         assertTrue(
-            "NudgeWidgetUpdater must coalesce through WidgetRefreshDebouncer rather than pushing " +
-                "on every event",
-            updater.contains("WidgetRefreshDebouncer") && updater.contains("tryAcquire(")
-        )
-        assertTrue(
-            "NudgeWidgetUpdater must use a monotonic clock — a wall-clock jump backwards would " +
-                "lock refreshes out for however far it jumped, and silently",
-            updater.contains("SystemClock.elapsedRealtime()")
-        )
-
-        val repository = source("main/java/com/astraedus/nudge/data/repository/UsageRepository.kt")
-        assertTrue(
-            "UsageRepository.logEvent must be the single chokepoint that pushes the widgets",
-            repository.contains("widgetRefreshSignal.requestRefresh()")
+            "NudgeWidgetUpdater must push through the coalescer rather than refreshing per change.",
+            updater.contains("WidgetRefreshCoalescer(")
         )
         assertFalse(
             "The widget refresh must not be scheduled through WorkManager: the platform tick, the " +
-                "existing 15-minute watchdog and these pushes already cover every case",
-            repository.contains("WorkManager") || updater.contains("WorkManager")
+                "15-minute watchdog and these observers already cover every case.",
+            updater.contains("WorkManager") || updater.contains("WorkRequest")
         )
     }
 }

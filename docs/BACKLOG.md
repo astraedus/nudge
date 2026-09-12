@@ -154,6 +154,51 @@ is on a 15-minute period, so it was not what eventually corrected the widget; so
   confirm whether the burst produced exactly one push, which is the prediction above, or whether the stale
   frame came from somewhere else entirely.
 
+## [ ] Widget deep links are hand-rolled; Navigation-Compose already does this (noted 2026-09-12)
+
+`WidgetDeepLink` + `EXTRA_ROUTE` + `MainActivity.onNewIntent` + a `LaunchedEffect` in the nav graph is a
+hand-built version of what Navigation-Compose provides as `navDeepLink` / `NavController.handleDeepLink`,
+which additionally survives **process-death restoration** - ours does not, because the route lives in a
+`mutableStateOf` plus an Intent extra we strip on consumption.
+
+The interim fix shipped in v1.17.0: consuming a deep link now removes the extra from the Intent, because
+`onCreate` re-reads it on every creation and a configuration change recreates the Activity with the same
+Intent - so a rotation used to throw the user back to the widget's target, repeatedly, for the life of the
+task. `WidgetObservationContractTest` pins that every extra `routeFrom` reads is also cleared on consumption,
+discovered from the reader so a third mechanism cannot be added with no matching removal.
+
+Worth replacing wholesale next time this area is open: register the routes as `navDeepLink`s and let the
+library own restoration. Not urgent - the shipped behaviour is correct for every path a user can currently
+take - and not free, since `EXTRA_OPEN_SETTINGS` has `PendingIntent`s already sitting inside protection
+alerts on real phones and has to keep working.
+
+## [ ] Three naming/duplication follow-ups from the v1.17.0 review round (2026-09-12)
+
+Each found while fixing something else, each deliberately left alone because the fix is wider than the
+change that surfaced it.
+
+- **`rememberAppIcon(icon, sizeDp)` is owed, and it is a visual change, not a cleanup.** The
+  drawable-to-bitmap conversion is hand-rolled at five composable sites, and **every one passes a literal
+  pixel size that does not match its own dp box**: `AppListItem` 48px into 40dp, `WillpowerScreen` 32px/32dp,
+  `InterventionsScreen` 64px/32dp, `ActiveRulesScreen` 48px/40dp. A shared helper rasterising at real device
+  density would make all four sharper (on a Pixel 3, 40dp is 110px against today's 48px) and cost roughly 5x
+  the bitmap bytes per icon. That is probably an improvement and it changes rendering on four screens, so it
+  wants its own device-QA'd task. `WidgetReads` is NOT in scope - Glance needs a raw `Bitmap`, which is a
+  different thing.
+- **`widget_top_blocked_title` / `_open` / `_range` are now read from a non-widget screen.** The dashboard
+  card reuses them so the card and the widget cannot drift apart in wording, which is right, but the prefix
+  now under-describes them. Rename to `top_blocked_*` next time `ui/widget/` is open. Purely cosmetic; the
+  reuse is the part that matters.
+- **"Last 7 days" has a third definition.** `StatsDateLabels.range` produces the phrase in Kotlin, alongside
+  the `widget_top_blocked_range` string resource. Not a live bug - they agree today - but it is the same
+  shape as every "two spellings of one fact" defect in `docs/architecture/stats-and-charts.md`, and the
+  Kotlin one is the odd man out because it is the only one a translator cannot reach.
+- **Contract-test scaffolding is copy-pasted across three files.** `source()` / `mainSources()` now exists in
+  `HomeTileAffordanceContractTest`, `InterventionsDelegationContractTest`, `WidgetObservationContractTest`,
+  `WidgetStrictModeContractTest` and `ProportionalBarTest`, each with its own comment-stripping regex. They
+  agree today. One shared test helper would be better, and would also stop the next author re-deriving the
+  two parsing traps that cost a cycle each this round.
+
 ## Widget ideas not built (considered and cut for v1.17.0 — reasoning in `docs/architecture/widgets.md`)
 
 Three widgets shipped. These were the rest of the brainstorm, kept because the reasoning for the cut is

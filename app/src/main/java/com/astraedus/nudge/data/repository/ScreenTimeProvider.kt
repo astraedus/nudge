@@ -241,9 +241,11 @@ class ScreenTimeProvider @Inject constructor(
 
     companion object {
         /**
-         * Days in a weekly window. Must match `StatsDaySelection.WINDOW_DAYS` — the screens index
+         * Days in a weekly window. Aliases the domain's one definition so a trailing week means
+         * the same span here, on the dashboard and in the widgets. Must match
+         * `StatsDaySelection.WINDOW_DAYS` — the screens index
          * into [WeeklyUsage] by the bar the user tapped. Pinned by `WeeklyUsageTest`.
          */
-        const val WEEK_DAYS = 7
+        const val WEEK_DAYS = TimeTracker.WEEK_DAYS
     }
 }

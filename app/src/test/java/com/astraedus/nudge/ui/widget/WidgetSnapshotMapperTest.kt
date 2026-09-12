@@ -77,27 +77,27 @@ class WidgetSnapshotMapperTest {
     // ------------------------------------------------------------------------ topBlocked
 
     @Test
-    fun `topBlocked truncates to the limit preserving incoming order`() {
+    fun `topBlocked preserves the incoming order it was handed`() {
+        // Trimming is NOT this function's job: the list arrives already ranked and truncated by
+        // InsightsCalculator.topBlockedApps, and the widget trims again per size variant when it
+        // lays the rows out. A third limit here was dead - it never received a list it could
+        // shorten - so what is left to pin is that the order it is given is the order it keeps.
         val stats = listOf(
             stat("app.a", total = 10),
             stat("app.b", total = 8),
             stat("app.c", total = 5)
         )
 
-        val result = WidgetSnapshotMapper.topBlocked(stats, labels = emptyMap(), limit = 2)
+        val result = WidgetSnapshotMapper.topBlocked(stats, labels = emptyMap())
 
-        assertEquals(listOf("app.a", "app.b"), result.apps.map { it.packageName })
+        assertEquals(listOf("app.a", "app.b", "app.c"), result.apps.map { it.packageName })
     }
 
     @Test
-    fun `topBlocked yields EMPTY for a zero limit, a negative limit, or an empty stats list`() {
-        val stats = listOf(stat("app.a", total = 10))
-
-        assertEquals(WidgetSnapshot.TopBlocked.EMPTY, WidgetSnapshotMapper.topBlocked(stats, emptyMap(), limit = 0))
-        assertEquals(WidgetSnapshot.TopBlocked.EMPTY, WidgetSnapshotMapper.topBlocked(stats, emptyMap(), limit = -1))
+    fun `topBlocked yields EMPTY for an empty stats list`() {
         assertEquals(
             WidgetSnapshot.TopBlocked.EMPTY,
-            WidgetSnapshotMapper.topBlocked(emptyList(), emptyMap(), limit = 5)
+            WidgetSnapshotMapper.topBlocked(emptyList(), emptyMap())
         )
     }
 
@@ -108,7 +108,7 @@ class WidgetSnapshotMapperTest {
             stat("app.half", total = 50)
         )
 
-        val result = WidgetSnapshotMapper.topBlocked(stats, emptyMap(), limit = 2)
+        val result = WidgetSnapshotMapper.topBlocked(stats, emptyMap())
 
         assertEquals(100, result.apps.first { it.packageName == "app.top" }.barPercent)
         assertEquals(50, result.apps.first { it.packageName == "app.half" }.barPercent)
@@ -124,7 +124,7 @@ class WidgetSnapshotMapperTest {
             stat("app.big", total = 100)
         )
 
-        val result = WidgetSnapshotMapper.topBlocked(stats, emptyMap(), limit = 2)
+        val result = WidgetSnapshotMapper.topBlocked(stats, emptyMap())
 
         result.apps.forEach { app ->
             assertTrue("barPercent for ${app.packageName} was ${app.barPercent}", app.barPercent in 0..100)
@@ -136,7 +136,7 @@ class WidgetSnapshotMapperTest {
     fun `topBlocked falls back to the raw package name when it is absent from labels`() {
         val stats = listOf(stat("com.uninstalled.app", total = 4))
 
-        val result = WidgetSnapshotMapper.topBlocked(stats, labels = emptyMap(), limit = 1)
+        val result = WidgetSnapshotMapper.topBlocked(stats, labels = emptyMap())
 
         assertEquals("com.uninstalled.app", result.apps.single().label)
     }
@@ -146,7 +146,7 @@ class WidgetSnapshotMapperTest {
         val stats = listOf(stat("com.blank.label", total = 4))
         val labels = mapOf("com.blank.label" to "   ")
 
-        val result = WidgetSnapshotMapper.topBlocked(stats, labels, limit = 1)
+        val result = WidgetSnapshotMapper.topBlocked(stats, labels)
 
         assertEquals("com.blank.label", result.apps.single().label)
     }
@@ -156,7 +156,7 @@ class WidgetSnapshotMapperTest {
         val stats = listOf(stat("com.instagram.android", total = 4))
         val labels = mapOf("com.instagram.android" to "Instagram")
 
-        val result = WidgetSnapshotMapper.topBlocked(stats, labels, limit = 1)
+        val result = WidgetSnapshotMapper.topBlocked(stats, labels)
 
         assertEquals("Instagram", result.apps.single().label)
     }

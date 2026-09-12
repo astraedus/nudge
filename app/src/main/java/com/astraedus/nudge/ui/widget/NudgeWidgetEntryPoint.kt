@@ -7,13 +7,10 @@ import com.astraedus.nudge.data.repository.ScreenTimeProvider
 import com.astraedus.nudge.data.repository.UsageRepository
 import com.astraedus.nudge.domain.engine.TimeTracker
 import com.astraedus.nudge.ui.screens.stats.InsightsCalculator
-import dagger.Binds
-import dagger.Module
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
 import dagger.hilt.components.SingletonComponent
-import com.astraedus.nudge.domain.widget.WidgetRefreshSignal
 import javax.inject.Singleton
 
 /**
@@ -43,19 +40,4 @@ interface NudgeWidgetEntryPoint {
             NudgeWidgetEntryPoint::class.java
         )
     }
-}
-
-/**
- * Binds the widget layer's pusher to the domain-level capability the data layer asks for.
- *
- * Lives here rather than in `di/` because the implementation is a Glance detail: nothing outside
- * this package should have to know that "refresh the widgets" means `GlanceAppWidget.updateAll`.
- */
-@Module
-@InstallIn(SingletonComponent::class)
-abstract class WidgetRefreshModule {
-
-    @Binds
-    @Singleton
-    abstract fun bindWidgetRefreshSignal(updater: NudgeWidgetUpdater): WidgetRefreshSignal
 }

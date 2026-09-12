@@ -8,7 +8,6 @@ import com.astraedus.nudge.data.db.entity.UsageEvent
 import com.astraedus.nudge.data.db.entity.UsageEventKey
 import com.astraedus.nudge.data.export.HistoryMerge
 import com.astraedus.nudge.domain.engine.TimeTracker
-import com.astraedus.nudge.domain.widget.WidgetRefreshSignal
 import com.astraedus.nudge.service.UsageProvider
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
@@ -20,29 +19,19 @@ class UsageRepository @Inject constructor(
     @ApplicationContext private val context: Context,
     private val usageEventDao: UsageEventDao,
     private val timeTracker: TimeTracker,
-    private val screenTimeProvider: ScreenTimeProvider,
-    /**
-     * Defaulted to the no-op so the two hand-built instances (a unit test, and any screen that
-     * constructs this directly) keep compiling. The real Hilt binding in `RepositoryModule` passes
-     * the live pusher — see `WidgetRefreshSignal` for why the default is a named constant.
-     */
-    private val widgetRefreshSignal: WidgetRefreshSignal = WidgetRefreshSignal.NONE
+    private val screenTimeProvider: ScreenTimeProvider
 ) : UsageProvider {
 
+    suspend fun logEvent(event: UsageEvent) = usageEventDao.insert(event)
+
     /**
-     * The one chokepoint every block decision and every walk-away already passes through
-     * (`RecordWalkAwayUseCase`, and both write sites in `NudgeAccessibilityService`), which is why
-     * the home-screen widgets are refreshed from here rather than from a fourth scheduler.
+     * A change signal for the widgets: emits whenever a row is written to `usage_events`.
      *
-     * The refresh call is FIRE-AND-FORGET and DEBOUNCED, and it comes after the insert. This is the
-     * accessibility hot path: a user hitting a wall of blocks produces several of these a second,
-     * and the widget push must not add an IPC round-trip's latency to an event dispatch. All it
-     * costs here is one atomic compare-and-set (see `WidgetRefreshDebouncer`).
+     * The widgets observe this rather than being told by each writer. "Refresh when the data
+     * changes" is then true by construction instead of being a rule every future writer has to
+     * remember, which is exactly the rule three writers had already failed to follow.
      */
-    suspend fun logEvent(event: UsageEvent) {
-        usageEventDao.insert(event)
-        widgetRefreshSignal.requestRefresh()
-    }
+    fun observeLatestEventId(): Flow<Long?> = usageEventDao.observeLatestEventId()
 
     /** Every event, oldest first — the corpus an export carries. */
     suspend fun getAllEventsForExport(): List<UsageEvent> = usageEventDao.getAllForExport()

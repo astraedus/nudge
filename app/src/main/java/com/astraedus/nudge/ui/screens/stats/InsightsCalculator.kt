@@ -217,7 +217,13 @@ class InsightsCalculator @Inject constructor() {
      * loop, and [interventions] delegates to it rather than keeping a copy.
      *
      * Counts only [EventKind.SHOWN]: the walk-away row is the SAME confrontation written a
-     * second time and would double every app's total. Both bounds are inclusive, so an event
+     * second time and would double every app's total.
+     *
+     * [interventions] calls this, which means it walks its window TWICE - once for its own hourly
+     * and weekday buckets, once here. That is deliberate. The alternative is inlining a second
+     * per-app loop back into [interventions], which is precisely the duplication this function was
+     * extracted to remove, and the cost is one extra pass over a list already in memory. Do not
+     * "optimise" it back into two rankings that can disagree. Both bounds are inclusive, so an event
      * landing exactly on the window start counts; an event in the future (a clock that moved
      * backwards) does not. [limit] is applied AFTER the full sort, so the top N is the top N
      * of the window rather than of whatever happened to be accumulated first.
@@ -243,7 +249,7 @@ class InsightsCalculator @Inject constructor() {
             .sortedWith(
                 compareByDescending<AppInterventionStat> { it.total }.thenBy { it.packageName }
             )
-        return if (limit >= ranked.size) ranked else ranked.take(limit)
+        return ranked.take(limit)
     }
 
     fun interventions(
