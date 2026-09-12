@@ -119,10 +119,10 @@ which a stable brand colour survives better than one extracted from that same wa
 
 `updatePeriodMillis` is clamped to 30 minutes by the platform. That is a fine backstop for a
 screen-time number and useless for "I just walked away from Instagram", which is the moment the widget is
-worth having. The Protection widget used to set `updatePeriodMillis="0"`, on the reasoning that polling a toggle
-every half hour is worse than useless. That assumed the push always lands. It does not - see the known
-bug below - so it now takes the same 30-minute backstop as the others. A backstop is not a fix; it is the
-difference between wrong-for-half-an-hour and wrong-indefinitely.
+worth having. The Protection widget used to set `updatePeriodMillis="0"`, on the reasoning that polling a toggle every
+half hour is worse than useless. It now takes the same 30-minute backstop as the others - kept even after the
+session bug below was fixed, because a widget whose entire job is announcing that protection died should not
+depend on a single delivery mechanism being perfect. It is a safety net, not the fix.
 
 ### The design that failed, because it is worth knowing why
 
@@ -195,51 +195,57 @@ Every refresh logs one `Log.d` line naming its reason (`protection` or `events`)
 are all silent earns that: it costs nothing in normal use, and it is the difference between "the collector
 never fired" and "it fired and the widget is still wrong", which are completely different bugs.
 
-### KNOWN BUG: a protection change shortly after a block event may not reach the widget
+### `provideGlance` runs once per SESSION, so nothing may be captured outside the composition
 
-**Reproduced on a Pixel 3, not fixed, and not a regression** - it fails the same way before the refresh
-rewrite, for a different reason. Documented here with its evidence so the next person starts where this
-stopped rather than re-deriving it.
+This is the single most important thing to know before touching a widget here, it cost three device
+rounds, and it is a fact about `glance-appwidget` 1.2.0 rather than a style preference. It was confirmed
+by reading the library, not inferred from behaviour.
 
-**Symptom.** Toggle the master switch within ~10 s of a block event, with the Protection widget on the
-launcher: the widget goes on showing the pre-toggle state. Observed still wrong at 63 s. An isolated toggle
-(no recent block) works correctly, and the event-driven Today / Top-blocked path works from the launcher
-with the app never opened.
+`AppWidgetSession.processEvent` handles the `UpdateGlanceState` event by reading the widget's
+`GlanceStateDefinition` through `configManager` and assigning it to an internal `MutableState` inside a
+Compose snapshot. **It never calls `GlanceAppWidget.provideGlance`.** So `update`/`updateAll` on a widget
+whose session is still alive *recomposes the existing content lambda* and does not re-run the suspend
+prelude that produced it.
 
-**The captured log is the finding:**
+Session lifetimes come from `TimeoutOptions`, whose 1.2.0 defaults are `initialTimeout = 45s`,
+`additionalTime = 5s`, `idleTimeout = 5s`.
 
+All three widgets originally did this:
+
+```kotlin
+val snapshot = runCatching { WidgetReads.protection(deps) }.getOrElse { EMPTY }  // WRONG
+provideContent { ProtectionContent(snapshot) }
 ```
-11:07:37.669  refreshing widgets (events)
-11:07:38.136  protection read: enabled=true degraded=false strict=false
-11:07:42.212  refreshing widgets (protection)     <- the OFF toggle. NO read follows.
-11:07:47.768  refreshing widgets (events)         <- NO read follows.
-11:09:20.816  refreshing widgets (protection)
-11:09:21.259  protection read: enabled=true ...   <- this one DID read
+
+`snapshot` is then a constant for the life of the session. A refresh arriving inside the window recomposed
+the stale capture: **it ran, it logged, it threw nothing, and nothing on screen changed.** The timeouts are
+what made it so hard to pin — a refresh far enough after the last one gets a fresh session and looks
+perfectly correct, so the bug is intermittent by construction. The captured device log matched the windows
+exactly: a refresh 4.5s after another rendered stale, one 93s later was correct, and one 30s after a session
+started was stale again (still inside the 45s initial timeout).
+
+**The rule: a widget composable reads its data DURING composition.**
+
+```kotlin
+provideGlance:  if (store.protection == null) store.publishProtection(read())   // seed a cold session
+provideContent { val snapshot = store.protection ?: EMPTY; ProtectionContent(snapshot) }
 ```
 
-A refresh is dispatched and `updateAll` is called, but `provideGlance` frequently never runs, so the widget
-keeps rendering its last composition. **What that rules out**, each with evidence rather than argument:
+`WidgetSnapshotStore` holds each widget's latest snapshot as `mutableStateOf`. The composable reads it, so
+Compose records the read and a write schedules recomposition; `NudgeWidgetUpdater.publishSnapshots()` writes
+fresh values *before* every `updateAll`, so whatever a recomposition finds is current. The store is a cache,
+never the source of truth — a cold session with an empty store reads through to `WidgetReads` itself, which
+is what happens after process death or when the launcher first adds a widget.
 
-- *The process being frozen or cached.* `dumpsys` during the failing window: `isFrozen=false`,
-  `cached=false`, `curProcState=FOREGROUND_SERVICE`, `oom adj=100`. The foreground service and the bound
-  accessibility service keep it fully alive.
-- *The refresh never being requested.* It fires 138 ms after the toggle tap.
-- *A stale preference read.* Every read that DOES happen reports correct values; the failure is the absence
-  of a read, not a wrong one.
-- *An exception being swallowed.* `updateAll` is wrapped in `runCatching` with a `Log.w` on failure, and no
-  failure line appears.
-- *A missed tap.* The true app state was confirmed `checked="false"` by UI dump each time.
+The idiomatic alternative is to write each snapshot into `PreferencesGlanceStateDefinition` and compose from
+`currentState`, which is exactly what `UpdateGlanceState` refreshes. That is the better shape for scalar data
+and the wrong one here: the Top-blocked widget carries app-icon `Bitmap`s, which do not belong in a
+`Preferences` store. A `mutableStateOf` read inside composition gets the same property without pretending
+bitmaps are preferences.
 
-**Where to pick it up.** The remaining unknown is inside Glance's own update machinery, so it wants the
-1.2.0 source rather than another device round. Concretely: log at the very top of `provideGlance`, before
-the read, to separate "never invoked" from "invoked but did not reach the read"; check what
-`GlanceAppWidgetManager.getGlanceIds` returns for the receiver at that moment; and check whether a session
-already in flight for the same id causes a later `updateAll` to be dropped rather than queued.
-
-**Mitigations already in place**, neither of which is a fix: `pushAll` is serialised behind a mutex so two
-`updateAll` calls for one widget id cannot overlap (defensible on its own merits, but its effect on this bug
-was NOT demonstrated), and the Protection widget now carries the 30-minute platform backstop so the
-staleness is bounded rather than open-ended.
+`WidgetObservationContractTest` pins it by scanning for the defect's shape — a `WidgetReads` result bound
+above `provideContent`, and the updater publishing before it updates. No value-level test can see this: the
+code is correct the first time it runs and wrong only on the second update inside the window.
 
 ### Per-widget isolation
 

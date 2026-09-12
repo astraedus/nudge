@@ -59,12 +59,24 @@ class ProtectionWidget : GlanceAppWidget() {
     override val sizeMode = SizeMode.Single
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
-        // On failure, WidgetSnapshot.Protection.EMPTY reads as "on, and locked" — a failed read
-        // must never render an inviting one-tap OFF affordance.
-        val snapshot = runCatching { WidgetReads.protection(NudgeWidgetEntryPoint.from(context)) }
-            .getOrElse { WidgetSnapshot.Protection.EMPTY }
+        // The store is a CACHE, not the source of truth: seed it when this is a cold session (a
+        // fresh process, or the launcher adding the widget) so the first frame has real data.
+        val deps = NudgeWidgetEntryPoint.from(context)
+        val store = deps.widgetSnapshotStore()
+        if (store.protection == null) {
+            // On failure, WidgetSnapshot.Protection.EMPTY reads as "on, and locked" - a failed
+            // read must never render an inviting one-tap OFF affordance.
+            store.publishProtection(
+                runCatching { WidgetReads.protection(deps) }
+                    .getOrElse { WidgetSnapshot.Protection.EMPTY }
+            )
+        }
 
         provideContent {
+            // READ INSIDE THE COMPOSITION. This is the widget the bug was found on: an update
+            // arriving while the session is alive recomposes this lambda without re-running
+            // provideGlance, so a captured snapshot would keep rendering the pre-toggle state.
+            val snapshot = store.protection ?: WidgetSnapshot.Protection.EMPTY
             NudgeGlanceTheme { ProtectionContent(snapshot) }
         }
     }

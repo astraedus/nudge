@@ -138,7 +138,34 @@ class NudgeWidgetUpdater @Inject constructor(
      */
     private val refreshLock = Mutex()
 
-    private suspend fun pushAll(reason: String) = refreshLock.withLock { pushAllLocked(reason) }
+    private suspend fun pushAll(reason: String) = refreshLock.withLock {
+        publishSnapshots()
+        pushAllLocked(reason)
+    }
+
+    /**
+     * Re-read every widget's data and publish it, BEFORE asking Glance to update.
+     *
+     * This is the half that actually fixes stale widgets, and it only works because the
+     * composables read the store during composition. `provideGlance` runs once per Glance SESSION,
+     * not once per update - an `updateAll` on a live session recomposes the existing content lambda
+     * and never re-runs the suspend prelude (verified in `glance-appwidget` 1.2.0; see
+     * [WidgetSnapshotStore]). Publishing here is therefore what a recomposition finds, and writing
+     * the state is itself enough to schedule one.
+     *
+     * Each read is independently `runCatching`-wrapped: one widget's data failing must not cost the
+     * other two their refresh, which is the same reason each `updateAll` gets its own child below.
+     */
+    private suspend fun publishSnapshots() {
+        val deps = NudgeWidgetEntryPoint.from(context)
+        val store = deps.widgetSnapshotStore()
+        runCatching { store.publishToday(WidgetReads.today(deps)) }
+            .onFailure { Log.w(TAG, "today read failed", it) }
+        runCatching { store.publishTopBlocked(WidgetReads.topBlocked(deps, TopBlockedWidget.MAX_ROWS)) }
+            .onFailure { Log.w(TAG, "top-blocked read failed", it) }
+        runCatching { store.publishProtection(WidgetReads.protection(deps)) }
+            .onFailure { Log.w(TAG, "protection read failed", it) }
+    }
 
     private suspend fun pushAllLocked(reason: String) = coroutineScope {
         // A subsystem whose failures are ALL silent earns one line per refresh. Debug level, so it

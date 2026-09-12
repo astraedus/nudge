@@ -524,7 +524,18 @@ nothing in common as bugs. Two rounds of reasoning could not separate them. Two 
   The instinct was to drop the commit. Checking `28bedc7` showed the identical user-visible failure there,
   for a different reason - so reverting would have kept the bug and thrown away four real fixes. "It fails
   now" is not the same as "this change broke it", and the difference is one `git show` away.
-- **Stop when the remaining unknown is in someone else's code.** The last step is inside Glance's update
-  machinery. That is a source-reading task, not a fourth device round, and it is filed as such with the
-  logs attached rather than being half-chased at the end of a long session.
+- **When the remaining unknown is in a dependency, READ THE DEPENDENCY.** I originally wrote this bullet as
+  "stop and file it", and that was half right: stopping the *device rounds* was correct, but the conclusion
+  should have been to decompile the library, not to hand the bug over. `javap -c` on the Glance AAR found the
+  mechanism in about ten minutes, after three device rounds had failed to. A third-party jar is not a black
+  box; it is source you have not read yet. Behaviour that makes no sense against your own code is the
+  strongest possible signal that the library is doing something you assumed it did not.
+
+  What it turned out to be, and it is worth knowing for any Glance widget: **`provideGlance` runs once per
+  SESSION, not once per update.** `AppWidgetSession.processEvent` handles `UpdateGlanceState` by refreshing a
+  `MutableState` from the `GlanceStateDefinition` and recomposing; it never calls `provideGlance`. Sessions
+  live 45s (`initialTimeout`, with `idleTimeout` 5s). So `val snapshot = read()` above `provideContent` is
+  frozen for the session, and every refresh inside that window re-renders it - running, logging, throwing
+  nothing, changing nothing. The timeouts are what made it intermittent, and intermittent is what made three
+  rounds of black-box testing useless.
 

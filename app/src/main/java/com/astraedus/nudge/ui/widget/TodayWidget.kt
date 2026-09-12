@@ -48,13 +48,24 @@ class TodayWidget : GlanceAppWidget() {
     )
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
-        // ONE suspending read, before composition. See WidgetReads for why a Flow subscription
-        // would be a lie here. `runCatching` because a widget must never crash its host: a thrown
-        // exception in a launcher's process is the user's home screen misbehaving, not ours.
-        val snapshot = runCatching { WidgetReads.today(NudgeWidgetEntryPoint.from(context)) }
-            .getOrElse { WidgetSnapshot.Today.EMPTY }
+        // The store is a CACHE, not the source of truth: seed it when this is a cold session (a
+        // fresh process, or the launcher adding the widget) so the first frame has real data.
+        val deps = NudgeWidgetEntryPoint.from(context)
+        val store = deps.widgetSnapshotStore()
+        if (store.today == null) {
+            // `runCatching` because a widget must never crash its host: a thrown exception in a
+            // launcher's process is the user's home screen misbehaving, not ours.
+            store.publishToday(
+                runCatching { WidgetReads.today(deps) }.getOrElse { WidgetSnapshot.Today.EMPTY }
+            )
+        }
 
         provideContent {
+            // READ INSIDE THE COMPOSITION. `provideGlance` runs once per SESSION, not once per
+            // update - an update on a live session only recomposes this lambda (see
+            // WidgetSnapshotStore) - so a value captured above would be frozen for the session's
+            // lifetime and every later refresh would re-render it unchanged.
+            val snapshot = store.today ?: WidgetSnapshot.Today.EMPTY
             NudgeGlanceTheme { TodayContent(snapshot) }
         }
     }

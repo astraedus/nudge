@@ -55,18 +55,26 @@ class TopBlockedWidget : GlanceAppWidget() {
     )
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
-        // Read the TALLER variant's worth of rows once and let the composable trim. Reading per
-        // size would mean two reads of one week, i.e. two chances for the 4x2 and the 4x3 to
-        // disagree about what "blocked most" means.
-        val read = runCatching { WidgetReads.topBlocked(NudgeWidgetEntryPoint.from(context), MAX_ROWS) }
-            .getOrElse { WidgetReads.TopBlockedRead.EMPTY }
+        // The store is a CACHE, not the source of truth: seed it when this is a cold session (a
+        // fresh process, or the launcher adding the widget) so the first frame has real data.
+        val deps = NudgeWidgetEntryPoint.from(context)
+        val store = deps.widgetSnapshotStore()
+        if (store.topBlocked == null) {
+            store.publishTopBlocked(
+                runCatching { WidgetReads.topBlocked(deps, MAX_ROWS) }
+                    .getOrElse { WidgetReads.TopBlockedRead.EMPTY }
+            )
+        }
 
         provideContent {
+            // READ INSIDE THE COMPOSITION - see WidgetSnapshotStore. A value captured before
+            // provideContent is frozen for the whole Glance session.
+            val read = store.topBlocked ?: WidgetReads.TopBlockedRead.EMPTY
             NudgeGlanceTheme { TopBlockedContent(read) }
         }
     }
 
-    private companion object {
+    internal companion object {
         /** Rows the tall variant shows. The short variant takes the first [SHORT_ROWS] of these. */
         const val MAX_ROWS = 5
     }

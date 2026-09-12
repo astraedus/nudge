@@ -33,6 +33,7 @@ interface NudgeWidgetEntryPoint {
     fun insightsCalculator(): InsightsCalculator
     fun timeTracker(): TimeTracker
     fun nudgePreferences(): NudgePreferences
+    fun widgetSnapshotStore(): WidgetSnapshotStore
 
     companion object {
         fun from(context: Context): NudgeWidgetEntryPoint = EntryPointAccessors.fromApplication(

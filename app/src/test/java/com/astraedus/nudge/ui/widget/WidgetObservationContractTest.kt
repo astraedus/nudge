@@ -196,4 +196,77 @@ class WidgetObservationContractTest {
             eventCollector.contains("request()")
         )
     }
+
+    /**
+     * A widget must never render a value captured OUTSIDE its composition.
+     *
+     * The decisive one, and it is a fact about `glance-appwidget` 1.2.0 rather than a preference.
+     * `AppWidgetSession.processEvent` handles `UpdateGlanceState` by refreshing an internal
+     * `MutableState` from the widget's `GlanceStateDefinition` and letting Compose recompose. It
+     * never calls `GlanceAppWidget.provideGlance`. So `provideGlance` runs **once per session**,
+     * not once per update, and anything computed before `provideContent` is frozen for that
+     * session's lifetime - `initialTimeout = 45s`, `idleTimeout = 5s` by default.
+     *
+     * All three widgets shipped with `val snapshot = WidgetReads...` above `provideContent`. Every
+     * refresh landing inside a live session recomposed the stale capture: the refresh ran, logged,
+     * threw nothing, and changed nothing on screen. It cost three device rounds precisely because
+     * the session timeouts make it intermittent - a refresh far enough after the last one gets a
+     * fresh session and looks perfectly correct.
+     *
+     * Scanned as shape because no value-level test can see it: the code is *correct* at the moment
+     * it runs, and wrong only on the second update within the window.
+     */
+    @Test
+    fun `no widget renders a value captured outside its composition`() {
+        val widgetFiles = listOf("TodayWidget.kt", "TopBlockedWidget.kt", "ProtectionWidget.kt")
+
+        widgetFiles.forEach { name ->
+            val text = source("main/java/com/astraedus/nudge/ui/widget/$name")
+            val start = text.indexOf("override suspend fun provideGlance")
+            assertTrue("$name has no provideGlance", start >= 0)
+            val contentAt = text.indexOf("provideContent {", start)
+            assertTrue("$name never calls provideContent", contentAt > start)
+
+            val prelude = text.substring(start, contentAt)
+            val body = text.substring(contentAt)
+
+            // A read whose RESULT is bound above provideContent is a capture: the session freezes
+            // it. Seeding the store is fine - that is a write, and the composable re-reads it.
+            val captured = Regex("""\bval\s+(\w+)\s*=\s*runCatching\s*\{\s*WidgetReads\.""")
+                .findAll(prelude).map { it.groupValues[1] }.toList()
+            assertTrue(
+                "$name binds a WidgetReads result above provideContent ($captured). " +
+                    "provideGlance runs once per SESSION, so that value is frozen and every later " +
+                    "refresh re-renders it. Publish into WidgetSnapshotStore and read it inside " +
+                    "provideContent instead.",
+                captured.isEmpty()
+            )
+
+            assertTrue(
+                "$name must read its snapshot from the store INSIDE provideContent, so a " +
+                    "recomposition picks up the newest value.",
+                Regex("""provideContent \{[\s\S]{0,600}?\bstore\.""").containsMatchIn(body)
+            )
+        }
+    }
+
+    /** The updater must publish fresh data BEFORE asking Glance to update, or the recomposition finds the old value. */
+    @Test
+    fun `the updater republishes snapshots before every update`() {
+        val publishAt = updater.indexOf("publishSnapshots()")
+        val updateAt = updater.indexOf("updateAll(context)")
+
+        assertTrue("NudgeWidgetUpdater must republish snapshots on every refresh", publishAt >= 0)
+        assertTrue(
+            "publishSnapshots() must run BEFORE updateAll - an update on a live session only " +
+                "recomposes, so whatever is published at that moment is what appears.",
+            publishAt < updateAt
+        )
+        listOf("publishToday", "publishTopBlocked", "publishProtection").forEach { call ->
+            assertTrue(
+                "Every widget's data must be republished, or that widget keeps a stale frame: $call",
+                updater.contains(call)
+            )
+        }
+    }
 }
