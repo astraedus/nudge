@@ -58,7 +58,10 @@ class NudgeWidgetUpdater @Inject constructor(
      */
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
-    private val coalescer = WidgetRefreshCoalescer(COOLDOWN_MS) { pushAll() }
+    /**
+     * Coalescing applies to the EVENT stream only. See [start] for why preferences bypass it.
+     */
+    private val eventRefreshes = WidgetRefreshCoalescer(COOLDOWN_MS) { pushAll("events") }
 
     /** Idempotent: a second call is a no-op rather than a second set of collectors. */
     private var started = false
@@ -68,20 +71,33 @@ class NudgeWidgetUpdater @Inject constructor(
         if (started) return
         started = true
 
-        // The loop first, so a request emitted by a source's initial value has somewhere to land.
-        scope.launch { coalescer.run() }
+        scope.launch { eventRefreshes.run() }
 
-        // The Protection widget's three inputs. distinctUntilChanged on the TRIPLE, not per-flow:
-        // DataStore re-emits the whole preferences object on any write, so without this every
-        // unrelated setting change would refresh the widgets.
+        // PROTECTION STATE REFRESHES IMMEDIATELY, never through the coalescer.
+        //
+        // Rate-limiting was applied uniformly at first, and device QA showed why that is wrong.
+        // A refresh deferred by the cooldown runs *later*, and "later" is usually after the user
+        // has left the app - by which point the process can be cached or frozen and the refresh
+        // may never run at all. The observed failure: the master toggle switched off ~5 s after a
+        // block event, so it landed inside the cooldown that event had opened, and the widget went
+        // on claiming "Blocking on" indefinitely.
+        //
+        // The two sources are not alike, and only one of them justified a rate limit:
+        //  - `usage_events` BURSTS. A user hitting a wall of blocks writes several rows a second,
+        //    and those numbers are a nice-to-have. Coalesce them.
+        //  - Preferences do NOT burst. Flipping the master toggle or Strict Mode is human-paced,
+        //    one write at a time, and it is the safety-critical state this widget exists to show.
+        //    There is nothing to absorb, so there is nothing to buy by waiting.
         scope.launch {
             combine(
                 preferences.isGlobalEnabled,
                 preferences.protectionDegraded,
                 preferences.isStrictModeEnabled
             ) { enabled, degraded, strict -> Triple(enabled, degraded, strict) }
+                // DataStore re-emits the whole preferences object on any write, so without this
+                // every unrelated setting would refresh the widgets.
                 .distinctUntilChanged()
-                .collect { coalescer.request() }
+                .collect { pushAll("protection") }
         }
 
         // Today + Top-blocked. MAX(id) over the primary key is the cheapest question that re-emits
@@ -89,7 +105,7 @@ class NudgeWidgetUpdater @Inject constructor(
         scope.launch {
             usageRepository.observeLatestEventId()
                 .distinctUntilChanged()
-                .collect { coalescer.request() }
+                .collect { eventRefreshes.request() }
         }
     }
 
@@ -101,7 +117,10 @@ class NudgeWidgetUpdater @Inject constructor(
      * two - and its KDoc claimed the opposite, citing `SupervisorJob`, which isolates across
      * coroutines and does nothing for three calls in a row inside one of them.
      */
-    private suspend fun pushAll() = coroutineScope {
+    private suspend fun pushAll(reason: String) = coroutineScope {
+        // A subsystem whose failures are ALL silent earns one line per refresh. Debug level, so it
+        // costs nothing in normal use and is there the moment anyone asks "did it even try?".
+        Log.d(TAG, "refreshing widgets ($reason)")
         WIDGETS.forEach { (name, widget) ->
             launch {
                 runCatching { widget().updateAll(context) }.onFailure { error ->

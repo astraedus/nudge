@@ -61,4 +61,9 @@ class WidgetRefreshCoalescer(
             delay(cooldownMs)
         }
     }
+
+    // NOTE ON SCOPE: this coalesces the usage_events stream ONLY. Protection state bypasses it and
+    // refreshes immediately - see NudgeWidgetUpdater.start(). Deferring a refresh means running it
+    // after the user has likely left the app, and a deferral is only ever worth it for a source
+    // that actually bursts.
 }

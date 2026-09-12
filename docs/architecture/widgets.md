@@ -163,20 +163,35 @@ test policing the rule are all deleted.
 reason the watchdog is armed there. Somebody has to hold those collectors open and a widget's own process is
 far too short-lived to be that somebody.
 
-### Coalescing: the LAST change must never be the one that is lost
+### Two sources, two policies: coalesce what bursts, never defer what matters
 
-`WidgetRefreshCoalescer` is a **conflated channel** consumed by one loop that refreshes and then waits out a
-10-second cooldown. A burst of N changes produces two refreshes: one immediately, because latency matters most
-for the change the user just caused, and one carrying the final state.
+`WidgetRefreshCoalescer` wraps a **conflated channel** consumed by one loop that refreshes and then waits
+out a 10-second cooldown, so a burst of N changes produces two refreshes: one immediately and one carrying
+the final state. It replaced a leading-edge debounce that got the rate limit right and correctness wrong -
+a request inside the window returned `false` and scheduled *nothing*, so a change landing there was simply
+discarded. It is a conflated channel rather than a `MutableSharedFlow(replay = 0)` because the latter
+buffers nothing until a subscriber exists, so a request racing the loop's start would vanish.
 
-This replaced a leading-edge debounce, which got the rate limit right and the correctness wrong: a request
-inside the window returned `false` and scheduled *nothing*. Since the window is usually opened by a block
-event on the accessibility hot path, a state change landing inside it was simply discarded - and for a
-push-only widget there is no later tick to recover. It is a conflated channel and not a
-`MutableSharedFlow(replay = 0)` because the latter buffers nothing until a subscriber exists, so a request
-racing the loop's start would vanish; a channel removes that race rather than making it unlikely.
+**It is applied to the `usage_events` stream ONLY, and that distinction is the whole lesson.** Rate-limiting
+was applied uniformly at first, and device QA showed why that is wrong: a deferred refresh runs *later*, and
+later is usually after the user has left the app. The observed failure was the master toggle switched off
+about five seconds after a block event - so it landed inside the cooldown that event had opened, and the
+widget went on claiming "Blocking on".
 
-`request()` is non-suspending, so an observer can call it from anywhere.
+The two sources are not alike, and only one of them ever justified a rate limit:
+
+| Source | Bursts? | What it carries | Policy |
+|---|---|---|---|
+| `usage_events` | Yes - a user hitting a wall of blocks writes several rows a second | Counts and a leaderboard. Nice to have fresh. | Coalesced, 10s cooldown |
+| Preferences | No - flipping the master toggle or Strict Mode is human-paced, one write | **Whether protection is on.** The safety-critical state this widget exists to show. | Refresh immediately, no window |
+
+Generalising: **a deferral only ever buys something against a source that actually bursts, and it always
+costs the chance that the refresh never happens at all.** For anything safety-relevant, that trade is never
+worth making. `request()` is non-suspending either way, so no observer is ever blocked.
+
+Every refresh logs one `Log.d` line naming its reason (`protection` or `events`). A subsystem whose failures
+are all silent earns that: it costs nothing in normal use, and it is the difference between "the collector
+never fired" and "it fired and the widget is still wrong", which are completely different bugs.
 
 ### Per-widget isolation
 

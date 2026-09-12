@@ -149,4 +149,51 @@ class WidgetObservationContractTest {
             extrasCleared
         )
     }
+
+    /**
+     * Protection state refreshes IMMEDIATELY; only the event stream is coalesced.
+     *
+     * Rate-limiting was applied to both at first, and device QA found what that costs: a deferred
+     * refresh runs later, and later is usually after the user has left the app. The master toggle
+     * was switched off about five seconds after a block event, landed inside the cooldown that
+     * event had opened, and the widget went on claiming "Blocking on".
+     *
+     * The rule that came out of it generalises past this class: **a deferral only buys something
+     * against a source that actually bursts, and it always costs the chance the refresh never
+     * happens at all.** `usage_events` bursts and carries counts; preferences do not burst and
+     * carry whether protection is on. Only one of those is worth waiting on.
+     *
+     * Pinned by SHAPE because there is no value to assert: both paths end in the same `pushAll`,
+     * and the only difference is which one goes through the coalescer.
+     */
+    @Test
+    fun `protection state bypasses the coalescer and refreshes immediately`() {
+        val preferenceCollector = Regex(
+            """preferences\.isGlobalEnabled[\s\S]{0,900}?\.collect \{([^}]*)\}"""
+        ).find(updater)?.groupValues?.get(1)
+            ?: error("Could not find the preference collector in NudgeWidgetUpdater")
+
+        assertTrue(
+            "The preference collector must refresh directly. Sending it through the coalescer " +
+                "defers the one state this widget exists to show, past the moment the user " +
+                "leaves the app.\nFound: $preferenceCollector",
+            preferenceCollector.contains("pushAll(")
+        )
+        assertFalse(
+            "Protection state must NOT be coalesced - it does not burst, so a window buys " +
+                "nothing and risks the refresh never running.\nFound: $preferenceCollector",
+            preferenceCollector.contains("request()")
+        )
+
+        val eventCollector = Regex(
+            """observeLatestEventId\(\)[\s\S]{0,400}?\.collect \{([^}]*)\}"""
+        ).find(updater)?.groupValues?.get(1)
+            ?: error("Could not find the usage-events collector in NudgeWidgetUpdater")
+
+        assertTrue(
+            "The events stream DOES burst - a user hitting a wall of blocks writes several rows " +
+                "a second - so it must go through the coalescer.\nFound: $eventCollector",
+            eventCollector.contains("request()")
+        )
+    }
 }
