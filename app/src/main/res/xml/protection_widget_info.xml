@@ -1,7 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Declared by .ui.widget.ProtectionWidgetReceiver -->
-<!-- updatePeriodMillis is 0 on purpose: this widget is pushed on state change,
-     not polled on a timer. -->
+<!-- updatePeriodMillis is the platform's 30-minute floor, NOT 0.
+
+     It was 0, with the reasoning that this widget is pushed on state change so polling a
+     toggle every half hour is worse than useless. That reasoning assumed the push always
+     lands. Device QA proved it does not: `updateAll` can return without `provideGlance`
+     ever running, and with no timer there is no second chance - the widget can misreport
+     protection state indefinitely. See docs/BACKLOG.md.
+
+     A backstop does not fix that bug and is not pretending to. It bounds it: wrong for at
+     most half an hour instead of wrong until something unrelated happens. For the one
+     widget whose job is telling the user their blocking has died, that trade is obviously
+     worth a redraw every 30 minutes - which is exactly what the other two widgets already
+     cost. -->
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
     android:initialLayout="@layout/widget_loading"
     android:previewLayout="@layout/widget_loading"
@@ -13,5 +24,5 @@
     android:targetCellHeight="1"
     android:resizeMode="horizontal"
     android:widgetCategory="home_screen"
-    android:updatePeriodMillis="0"
+    android:updatePeriodMillis="1800000"
     android:description="@string/widget_protection_description" />

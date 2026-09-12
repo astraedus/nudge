@@ -73,7 +73,7 @@ provideContent { NudgeGlanceTheme { TodayContent(snapshot) } }
 | Provider XML | `today_widget_info.xml` | `top_blocked_widget_info.xml` | `protection_widget_info.xml` |
 | Reads | `getWeeklyUsage(dayStart).totalOn(dayStart)`, plus the day's blocked / walked-away counts | `InsightsCalculator.topBlockedApps` over the trailing week, plus `resolveAppName` / `resolveIcon` | `isGlobalEnabled`, `protectionDegraded`, `isStrictModeEnabled` |
 | Tap | whole surface opens Stats | header opens Interventions; a row opens that app's AppDetail | see "Strict Mode" |
-| `updatePeriodMillis` | `1800000` | `1800000` | `0` — pushed, never polled |
+| `updatePeriodMillis` | `1800000` | `1800000` | `1800000` — was `0`; see the known bug below |
 
 - **Today is the widget that exists because everything on it is already on the dashboard**, and the dashboard is
   two taps away on a phone whose whole problem is that two taps is too many. 2x2 leads with screen time and puts
@@ -119,8 +119,10 @@ which a stable brand colour survives better than one extracted from that same wa
 
 `updatePeriodMillis` is clamped to 30 minutes by the platform. That is a fine backstop for a
 screen-time number and useless for "I just walked away from Instagram", which is the moment the widget is
-worth having. The Protection widget goes further and sets `updatePeriodMillis="0"` on purpose - polling a
-toggle every half hour is worse than useless - which makes the push its **entire** update mechanism.
+worth having. The Protection widget used to set `updatePeriodMillis="0"`, on the reasoning that polling a toggle
+every half hour is worse than useless. That assumed the push always lands. It does not - see the known
+bug below - so it now takes the same 30-minute backstop as the others. A backstop is not a fix; it is the
+difference between wrong-for-half-an-hour and wrong-indefinitely.
 
 ### The design that failed, because it is worth knowing why
 
@@ -192,6 +194,52 @@ worth making. `request()` is non-suspending either way, so no observer is ever b
 Every refresh logs one `Log.d` line naming its reason (`protection` or `events`). A subsystem whose failures
 are all silent earns that: it costs nothing in normal use, and it is the difference between "the collector
 never fired" and "it fired and the widget is still wrong", which are completely different bugs.
+
+### KNOWN BUG: a protection change shortly after a block event may not reach the widget
+
+**Reproduced on a Pixel 3, not fixed, and not a regression** - it fails the same way before the refresh
+rewrite, for a different reason. Documented here with its evidence so the next person starts where this
+stopped rather than re-deriving it.
+
+**Symptom.** Toggle the master switch within ~10 s of a block event, with the Protection widget on the
+launcher: the widget goes on showing the pre-toggle state. Observed still wrong at 63 s. An isolated toggle
+(no recent block) works correctly, and the event-driven Today / Top-blocked path works from the launcher
+with the app never opened.
+
+**The captured log is the finding:**
+
+```
+11:07:37.669  refreshing widgets (events)
+11:07:38.136  protection read: enabled=true degraded=false strict=false
+11:07:42.212  refreshing widgets (protection)     <- the OFF toggle. NO read follows.
+11:07:47.768  refreshing widgets (events)         <- NO read follows.
+11:09:20.816  refreshing widgets (protection)
+11:09:21.259  protection read: enabled=true ...   <- this one DID read
+```
+
+A refresh is dispatched and `updateAll` is called, but `provideGlance` frequently never runs, so the widget
+keeps rendering its last composition. **What that rules out**, each with evidence rather than argument:
+
+- *The process being frozen or cached.* `dumpsys` during the failing window: `isFrozen=false`,
+  `cached=false`, `curProcState=FOREGROUND_SERVICE`, `oom adj=100`. The foreground service and the bound
+  accessibility service keep it fully alive.
+- *The refresh never being requested.* It fires 138 ms after the toggle tap.
+- *A stale preference read.* Every read that DOES happen reports correct values; the failure is the absence
+  of a read, not a wrong one.
+- *An exception being swallowed.* `updateAll` is wrapped in `runCatching` with a `Log.w` on failure, and no
+  failure line appears.
+- *A missed tap.* The true app state was confirmed `checked="false"` by UI dump each time.
+
+**Where to pick it up.** The remaining unknown is inside Glance's own update machinery, so it wants the
+1.2.0 source rather than another device round. Concretely: log at the very top of `provideGlance`, before
+the read, to separate "never invoked" from "invoked but did not reach the read"; check what
+`GlanceAppWidgetManager.getGlanceIds` returns for the receiver at that moment; and check whether a session
+already in flight for the same id causes a later `updateAll` to be dropped rather than queued.
+
+**Mitigations already in place**, neither of which is a fix: `pushAll` is serialised behind a mutex so two
+`updateAll` calls for one widget id cannot overlap (defensible on its own merits, but its effect on this bug
+was NOT demonstrated), and the Protection widget now carries the 30-minute platform backstop so the
+staleness is bounded rather than open-ended.
 
 ### Per-widget isolation
 

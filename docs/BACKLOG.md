@@ -199,6 +199,61 @@ change that surfaced it.
   agree today. One shared test helper would be better, and would also stop the next author re-deriving the
   two parsing traps that cost a cycle each this round.
 
+## [ ] OPEN: `updateAll` can return without `provideGlance` running, so a widget keeps a stale frame (2026-09-12)
+
+Reproduced twice on the Pixel 3, root cause NOT found, **not a regression** - the same user-visible failure
+exists before the v1.17.0 refresh rewrite, for a different reason (there the refresh was dropped outright by
+a leading-edge debounce; now it is dispatched and the render does not happen). Written up in full so the next
+person starts where this stopped.
+
+**Symptom.** Toggle the master switch within ~10 s of a block event, with the Protection widget on the
+launcher: the widget keeps showing the pre-toggle state. Still wrong at 63 s. An isolated toggle works, and
+the event-driven Today / Top-blocked path works from the launcher with the app never opened.
+
+**The log is the finding** (`adb logcat -s NudgeWidgetUpdater:V`):
+
+```
+11:07:37.669  refreshing widgets (events)
+11:07:38.136  protection read: enabled=true degraded=false strict=false
+11:07:42.212  refreshing widgets (protection)     <- the OFF toggle. NO read follows.
+11:07:47.768  refreshing widgets (events)         <- NO read follows.
+11:09:20.816  refreshing widgets (protection)
+11:09:21.259  protection read: enabled=true ...   <- this one DID read
+```
+
+A refresh is dispatched and `updateAll` is called, but `provideGlance` frequently never runs.
+
+**Ruled out, each with evidence rather than argument:**
+
+| Hypothesis | Evidence against |
+|---|---|
+| Process frozen or cached while backgrounded | `dumpsys`: `isFrozen=false`, `cached=false`, `curProcState=FOREGROUND_SERVICE`, `oom adj=100` |
+| The refresh is never requested | fires 138 ms after the toggle tap |
+| A stale preference read | every read that DOES happen reports correct values; the failure is an ABSENT read |
+| An exception being swallowed | `updateAll` is in `runCatching` with a `Log.w` on failure; no failure line appears |
+| A missed tap | true app state confirmed `checked="false"` by UI dump each time |
+
+**Where to pick it up.** The remaining unknown is inside Glance's own update machinery, so it wants the
+1.2.0 source, not another device round. Concretely: log at the very top of `provideGlance`, before the read,
+to separate "never invoked" from "invoked but did not reach the read"; check what
+`GlanceAppWidgetManager.getGlanceIds` returns for the receiver at that moment; and check whether a session
+already in flight for the same id causes a later `updateAll` to be dropped rather than queued. The
+`protection read:` log line exists for exactly this and should stay until the bug is closed.
+
+**Mitigations in place, neither of which is a fix:**
+- `pushAll` is serialised behind a `Mutex` so two `updateAll` calls for one widget id cannot overlap. That is
+  defensible on its own merits, but **its effect on this bug was not demonstrated** and it should not be
+  described as the fix.
+- The Protection widget now carries the 30-minute platform backstop (`updatePeriodMillis`) instead of `0`.
+  The original `0` assumed the push always lands; it does not, and with no timer there was no second chance.
+  This bounds the staleness rather than removing it - wrong for at most half an hour instead of wrong
+  indefinitely - which for the one widget whose job is announcing that blocking died is worth a redraw every
+  30 minutes.
+
+**User-visible impact, stated plainly:** a protection-state change made within ~10 s of a block event may not
+appear on the widget for up to 30 minutes. It never shows the *wrong direction* on its own; it shows the
+*previous* state. The in-app state is always correct, and Strict Mode enforcement is unaffected.
+
 ## Widget ideas not built (considered and cut for v1.17.0 — reasoning in `docs/architecture/widgets.md`)
 
 Three widgets shipped. These were the rest of the brainstorm, kept because the reasoning for the cut is
