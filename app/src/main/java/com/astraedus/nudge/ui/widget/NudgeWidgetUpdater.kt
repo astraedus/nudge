@@ -10,6 +10,8 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -117,7 +119,28 @@ class NudgeWidgetUpdater @Inject constructor(
      * two - and its KDoc claimed the opposite, citing `SupervisorJob`, which isolates across
      * coroutines and does nothing for three calls in a row inside one of them.
      */
-    private suspend fun pushAll(reason: String) = coroutineScope {
+    /**
+     * One refresh at a time, process-wide.
+     *
+     * `updateAll` is not instant - it opens a Glance session, recomposes, and writes RemoteViews
+     * through a binder call, which on a Pixel 3 takes long enough to be observable. Two refreshes
+     * for the SAME widget id can therefore be in flight together, and then the one that finishes
+     * last wins regardless of which read fresher state.
+     *
+     * That is exactly the failure device QA captured: a `protection` refresh fired 138 ms after the
+     * master toggle, an `events` refresh landed 3.9 s later while it was still in flight, and the
+     * widget went on showing the pre-toggle value for over a minute. The refresh ran; the render
+     * lost a race.
+     *
+     * Serialising costs nothing real - refreshes are seconds apart and each one is short - and it
+     * makes "the newest read is the one on screen" true by construction. The three widgets inside a
+     * single pass stay concurrent: they are different ids and cannot race each other.
+     */
+    private val refreshLock = Mutex()
+
+    private suspend fun pushAll(reason: String) = refreshLock.withLock { pushAllLocked(reason) }
+
+    private suspend fun pushAllLocked(reason: String) = coroutineScope {
         // A subsystem whose failures are ALL silent earns one line per refresh. Debug level, so it
         // costs nothing in normal use and is there the moment anyone asks "did it even try?".
         Log.d(TAG, "refreshing widgets ($reason)")

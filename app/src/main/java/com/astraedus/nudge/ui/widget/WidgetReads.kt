@@ -1,6 +1,7 @@
 package com.astraedus.nudge.ui.widget
 
 import android.graphics.Bitmap
+import android.util.Log
 import androidx.core.graphics.drawable.toBitmap
 import com.astraedus.nudge.ui.screens.stats.StatsViewModel
 import kotlinx.coroutines.Dispatchers
@@ -108,10 +109,17 @@ object WidgetReads {
     suspend fun protection(deps: NudgeWidgetEntryPoint): WidgetSnapshot.Protection =
         withContext(Dispatchers.IO) {
             val prefs = deps.nudgePreferences()
+            val enabled = prefs.isGlobalEnabled.first()
+            val degraded = prefs.protectionDegraded.first()
+            val strict = prefs.isStrictModeEnabled.first()
+            // What this render actually SAW. The difference between "the refresh never ran", "it
+            // ran and read stale values" and "it ran, read correctly, and lost the render" is three
+            // completely different bugs, and without this line they look identical from outside.
+            Log.d("NudgeWidgetUpdater", "protection read: enabled=$enabled degraded=$degraded strict=$strict")
             WidgetSnapshotMapper.protection(
-                enabled = prefs.isGlobalEnabled.first(),
-                degraded = prefs.protectionDegraded.first(),
-                strictModeEnabled = prefs.isStrictModeEnabled.first()
+                enabled = enabled,
+                degraded = degraded,
+                strictModeEnabled = strict
             )
         }
 

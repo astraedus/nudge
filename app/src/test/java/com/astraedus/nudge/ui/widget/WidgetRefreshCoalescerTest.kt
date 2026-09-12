@@ -4,10 +4,13 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -141,6 +144,92 @@ class WidgetRefreshCoalescerTest {
         advanceTimeBy(cooldown * 100)
 
         assertEquals("no request means no refresh", 0, refreshes)
+        loop.cancel()
+    }
+
+    /**
+     * A pass arriving while another is IN FLIGHT must be QUEUED, never swallowed.
+     *
+     * `pushAll` is serialised so two `updateAll` calls for one widget id cannot overlap - device
+     * QA showed the later one losing the race and putting a stale frame back on screen. But
+     * serialising is only safe if a pass that shows up mid-flight waits its turn. A gate that
+     * *skipped* instead would re-create the exact bug the mutex was added to fix, one layer down.
+     *
+     * The protection path is what makes this sharp, and it is why the first version of this test
+     * was worthless. Event refreshes go through the conflated channel, which re-delivers on its
+     * own - so a swallowing gate still LOOKS fine through that path, and the test passed when the
+     * gate was mutated to swallow. Protection refreshes call `pushAll` directly, with no channel
+     * behind them to try again. If the gate drops one, nothing ever retries it, and the widget is
+     * wrong until something unrelated happens to refresh it.
+     *
+     * So this asserts on the protection pass specifically.
+     */
+    @Test
+    fun `a protection pass arriving mid-flight is queued, not swallowed`() = runTest {
+        val lock = Mutex()
+        var state = 0
+        val reads = mutableListOf<Pair<String, Int>>()
+
+        suspend fun pass(source: String) {
+            lock.withLock {
+                reads += source to state
+                delay(2_000)
+            }
+        }
+
+        val coalescer = WidgetRefreshCoalescer(cooldown) { pass("events") }
+        val loop = launch { coalescer.run() }
+
+        state = 1
+        coalescer.request()
+        advanceTimeBy(500) // an events pass is in flight, holding the lock, having read 1
+
+        // The master toggle flips while that pass is still rendering. This is the real sequence
+        // from the device: a block event opened the pass, the toggle landed inside it.
+        state = 2
+        val protectionPass = launch { pass("protection") }
+        advanceUntilIdle()
+
+        val protectionReads = reads.filter { it.first == "protection" }
+        assertEquals(
+            "the protection pass must run exactly once - swallowed means the widget keeps a " +
+                "stale frame with nothing left to retry it: $reads",
+            1,
+            protectionReads.size
+        )
+        assertEquals(
+            "and it must read the state as of when it RAN, not when it was queued: $reads",
+            2,
+            protectionReads.single().second
+        )
+        assertEquals("the in-flight pass read the old state", "events" to 1, reads.first())
+
+        protectionPass.cancel()
+        loop.cancel()
+    }
+
+    /** A mid-pass EVENT burst still collapses to one further pass rather than storming. */
+    @Test
+    fun `mid-pass event requests coalesce to a single further pass`() = runTest {
+        val lock = Mutex()
+        var passes = 0
+
+        suspend fun pass() {
+            lock.withLock {
+                passes++
+                delay(2_000)
+            }
+        }
+
+        val coalescer = WidgetRefreshCoalescer(cooldown) { pass() }
+        val loop = launch { coalescer.run() }
+
+        coalescer.request()
+        advanceTimeBy(500)
+        repeat(10) { coalescer.request() } // all arrive while the first pass is rendering
+        advanceUntilIdle()
+
+        assertEquals("one leading pass plus one trailing pass, never eleven", 2, passes)
         loop.cancel()
     }
 }
