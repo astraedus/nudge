@@ -720,6 +720,12 @@ class NudgeAccessibilityService : AccessibilityService() {
         // an unresolved launcher set, with the same failure direction: miss a revoke rather than
         // interrupt someone mid-use.
         entryPoint.passthroughManager().onObservationResumed()
+        // The launch guard's claim about what is in front was made BEFORE a gap we did not observe,
+        // so it is not a claim any more. Dropping it is not the same call as the sitting's above:
+        // "no evidence" here means the gate never suppresses, which is the fail-toward-enforcement
+        // direction, whereas dropping the sitting would revoke a grant and re-block someone who
+        // never left. Same gap, opposite safe answers.
+        entryPoint.blockLaunchGuard().reset()
         entryPoint.passthroughManager().setSittingReaction(::onSittingEvent)
 
         entryPoint.counterOverlayManager().setServiceContext(this)
@@ -1609,6 +1615,10 @@ class NudgeAccessibilityService : AccessibilityService() {
             // them — the exact hop `onWebDomainForeground` already makes for `InteractionTracker`,
             // and which that class's own doc requires.
             entryPoint.passthroughManager().resetSitting()
+            // Same reason, and the same direction: whatever the guard believed is in front was
+            // observed under a Nudge that is now off, and a stale claim could suppress the FIRST
+            // block after the user switches back on. "No claim" never suppresses anything.
+            entryPoint.blockLaunchGuard().reset()
             hideAllOverlays()
         }
     }
