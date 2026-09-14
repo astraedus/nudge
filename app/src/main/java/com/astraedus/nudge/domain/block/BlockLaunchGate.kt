@@ -31,7 +31,7 @@ import com.astraedus.nudge.domain.events.ForegroundSignal
  * for a real foreground app, and re-arms the block the user just declined. Three reporters saw it
  * every time; the bench Pixel 3 never did, because the answer is device and launcher timing.
  *
- * So the foreground check alone cannot fix #26, at the moment the phantom decision lands, the
+ * So the foreground check alone cannot fix #26: at the moment the phantom decision lands, the
  * blocked app really IS in front. What is missing is that the service does not know a departure is
  * in flight. Both issues are therefore one question asked at one place: **is this decision still
  * about where the user is going to be?**
@@ -47,7 +47,7 @@ object BlockLaunchGate {
      * This is a FAIL-SAFE, not the mechanism. In the normal case the window is closed by evidence,
      * not by the clock: [walkAwayAfter] drops it the moment the launcher (or any other app) is
      * observed in front, which on any device is the transition the user is watching. The timeout
-     * only covers the case where that evidence never arrives, `GLOBAL_ACTION_HOME` was accepted and
+     * only covers the case where that evidence never arrives: `GLOBAL_ACTION_HOME` was accepted and
      * did nothing, or the launcher set could not be resolved so a real Home event was classified as
      * something else.
      *
@@ -122,7 +122,7 @@ object BlockLaunchGate {
      *
      * [ForegroundSignal.OwnUi] deliberately DOES move it, and it is the case issue #31's reporter
      * cares about most: an overlay landing on top of Nudge's own screens is the most visible form of
-     * the bug. Our own block overlay is also `OwnUi`, which is correct rather than unfortunate, a
+     * the bug. Our own block overlay is also `OwnUi`, which is correct rather than unfortunate: a
      * second decision arriving while an overlay is already up has nothing to add, and if the user
      * bypasses that overlay back into the app, the bypass itself is an `AppWindow` that moves the
      * foreground back before the re-evaluation runs.
