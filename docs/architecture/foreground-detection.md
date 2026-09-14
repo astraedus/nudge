@@ -126,3 +126,109 @@ same extra, for the same reason: `isPassActive` is checked against the foregroun
 Going Home also ends the web foreground-time session (`endWebSession()`), which stops the clock but
 deliberately does NOT reset the session, `InteractionTracker`'s 5-minute expiry still owns that, so
 a quick trip home does not refill a website's time budget either. Same scope discipline as above.
+
+## Late decisions land on the wrong screen: the block-launch gate ([#31](https://github.com/astraedus/nudge/issues/31))
+
+Every launch of `BlockOverlayActivity` used to carry one assumption nothing checked: *the app a
+decision is about is still the app in front by the time the decision is ready to show*. A block
+decision is computed on the service's IO scope, a rule lookup, a usage read, sometimes a URL-bar
+read, while foreground changes keep arriving on the main thread the whole time. The assumption is
+false whenever the user leaves faster than the database answers, and nothing sat between the answer
+coming back and `startActivity` to notice. The overlay could land on the launcher, on another app
+entirely, or on Nudge's own screens, the most visible form of the report.
+
+This is the same shape as [#19](https://github.com/astraedus/nudge/issues/19) one layer up. There, a
+package had a *window* on screen while the user was somewhere else, and every evaluation path read
+"P has a window" as "P is the foreground app". Here, a package genuinely *was* the foreground app
+when the evaluation started and is not any more by the time it finishes. Both are the same silent
+premise about staleness, so both get the same treatment: one gate ahead of the whole pipeline, not a
+check bolted onto whichever branch happened to get reported.
+
+### One launch site, not four
+
+Four places in this service used to build a `BlockOverlayActivity` intent by hand and call
+`startActivity` directly: the rule block in `handleDecision`, the auto-kick cooldown in
+`evaluateForegroundPackage`, the web auto-kick cooldown in `enforceWebCooldown`, and the daily-limit
+`HARD_BLOCK`, which lived in `TimeRemainingHandler` and owned its own `Context` to start the activity
+itself, outside the service and therefore outside any gate at all, and the launch most likely to
+land late, since it fires from a 30-second clock tick rather than from a foreground event.
+`TimeRemainingHandler` now reports the limit through its `onTimeLimitExceeded` callback, wired in
+`NudgeAccessibilityService.onServiceConnected`, and no longer holds a `Context` or references
+`BlockOverlayActivity` at all.
+
+All four now go through one private `launchBlockOverlay(targetPackage, attributedPackage, extras)`.
+Four copies of "build an intent, mark the flag, start the activity" was four places to remember a
+gate, and remembering it in three of four is exactly how #19's first fix shipped: it guarded the
+branch that had been reported and missed the common case. `markOverlayActive` is asserted from
+inside this one helper and nowhere else in the service, for the matching reason: a launch that starts
+the activity without marking leaves `isOverlayActive` false under a live overlay, and a mark without a
+launch swallows every subsequent event for an overlay that never appears.
+
+### Why the target is the passthrough package, not the attributed package
+
+`launchBlockOverlay` takes two package parameters and they answer different questions.
+`attributedPackage` is what the block is recorded against: the overlay's app label, the
+`UsageEvent`, the picture-in-picture session record. `targetPackage` is who the gate compares
+against the foreground, and it is the app the user is actually **sitting in**. For a web block those
+are different apps: the block is attributed to Instagram (its label, its stats) while the user is
+sitting in Chrome. Gating on the attributed package would compare Instagram against the foreground
+and find Instagram is never there, because instagram.com blocked inside a browser never puts the
+Instagram app in front, and that would drop every web block this app has ever shown. `BlockLaunchGateTest`'s
+web-block case pins this directly: the same target launches when it equals the browser and is
+refused when it is swapped for the rule's app.
+
+### The gate runs before the row
+
+`handleDecision`'s call into `launchBlockOverlay` sits ahead of the grayscale enable and ahead of the
+`UsageEvent` write, and `handleDecision` returns immediately when the launch is refused. Recording a
+block nobody saw is exactly the stat inflation [#19](https://github.com/astraedus/nudge/issues/19)
+measured, +11 to the all-time Blocked count in five minutes from an orphaned PiP bubble. A block
+refused here now writes nothing: no grayscale, no row. `BlockOverlayLaunchContractTest` pins the
+ordering at source level, because it is invisible to any value-level test: the decision object, the
+package and the rule are all correct either way, and what is wrong is that the code got there.
+
+### Which signals may move the target, and why the rest cannot
+
+`BlockLaunchGuard` holds one field, the last package genuinely observed in front, fed from
+`BlockLaunchGate.foregroundAfter` at the same single classification point that feeds the sitting
+model, inside `applyForegroundSignal`. Only three of the seven `ForegroundSignal` cases move it:
+`AppWindow`, `Home`, and `OwnUi`. The other four, `SystemSurface`, `Transient`, `PipOnly`, and
+`NotForeground`, make no claim about which app is in front, and reading any of them as evidence the
+user left would drop legitimate blocks whenever the notification shade, a keyboard, a permission
+dialog, or a floating PiP bubble happened to land inside the few milliseconds a rule lookup takes.
+That is `SYSTEM_PACKAGES` answering a question it cannot answer, the same grouped-constant trap this
+document already records springing on the passthrough grant, the foreground-time clock, and the
+sitting itself. `OwnUi` deliberately DOES move it: an overlay landing on top of Nudge's own screens is
+the case the #31 reporter cared about most, and our own block overlay is also classified `OwnUi`,
+which is correct rather than awkward, since a second decision arriving while an overlay is already up
+has nothing to add.
+
+A fresh `BlockLaunchGuard` starts with `foregroundPackage = null`, and `null` never suppresses a
+launch. "We have observed nothing yet" is not evidence the user is elsewhere; the gate may only ever
+WEAKEN enforcement on a positive claim, the same failure direction the launcher-package resolution
+and the URL-bar read already take.
+
+### The accepted false-drop
+
+A genuine foreign app window landing in the gap between evaluation start and evaluation finish does
+drop the pending block: the overlay would have covered that app's window anyway, and the user's
+return to the originally-blocked app fires its own window event and evaluates fresh.
+`BlockLaunchGuardReplayTest`'s sub-flow case pins this deliberately: a photo picker moves the target
+and the decision is dropped, but the sitting itself is untouched, which is issue #28's own fix one
+layer down, so no time budget or passthrough grant is disturbed by a drop here. The failure direction
+is "miss a block, self-correcting on the next window event", never "show the block on the wrong
+app": the same direction every fix in this document already chooses.
+
+### Tests
+
+`BlockLaunchGateTest` covers `decide`, `foregroundAfter` and `walkAwayAfter` in isolation, every
+branch and the combinations where the two conditions disagree. `BlockLaunchGuardReplayTest` replays
+both reported sequences through the real `EventClassifier` and `SittingTracker`, the same objects the
+service uses, plus a false-positive suite for the shade, the active keyboard, the framework package
+and a permission dialog, and a counterfactual on every #31 case proving the pre-fix rule really would
+have launched. `BlockOverlayLaunchContractTest` is the source-level guard: exactly one
+`BlockOverlayActivity` construction in the whole service, the daily-limit handler holding neither a
+`Context` nor a reference to the activity, the gate preceding both the launch and the `UsageEvent`,
+and the guard fed from exactly one place.
+
+Device QA for this fix is pending.
