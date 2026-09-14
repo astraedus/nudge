@@ -67,6 +67,8 @@ STATUS=inProgress ROLLOUT=0.2 scripts/publish-to-play.sh 1.7.0
 STATUS=draft scripts/publish-to-play.sh 1.7.0
 ```
 
+**Previous release still IN_REVIEW?** Do not stack a second production release on it. Arm the poller instead (added 2026-09-14): `systemd-run --user --unit=nudge-play-<new> ~/bin/astra-play-when-published.sh <new> <prev>` polls the track every 30 min and runs `publish-to-play.sh <new>` at 100% the moment `<prev>` reads PUBLISHED (7-day cap, Telegram either way, log `~/ops/runtime/nudge-play.log`). The unit does not survive a reboot; re-arm it.
+
 **Full rollout is the default (Anti, 2026-07-30: "for google play it's just easier that way").** A staged rollout is a second owed step days later, and the promotion can't be done by this script — so twice running (v1.9.4, v1.10.0) the tail step was forgotten or cost time, for ~no signal at our install base. Stage only when a release is genuinely risky, and file the promote as a dated task when you do.
 
 **Promoting a staged/draft release later** — `publish-to-play.sh` CANNOT do it (`gplay release` re-uploads the AAB; Play rejects an existing versionCode), and **`gplay rollout complete` is also broken** — it sets `status=completed` but leaves `userFraction`, which Play rejects with `COMPLETED release must not have fraction`. Use the edit cycle:
