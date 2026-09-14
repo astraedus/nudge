@@ -39,10 +39,22 @@ class BlockOverlayActivity : ComponentActivity() {
     private val mainHandler = Handler(Looper.getMainLooper())
 
     /**
-     * Set the first time this activity terminates as a walk-away, so [navigateHome] logs exactly
-     * one event per attempt no matter how many times it is reached (button + back button, or a
-     * double tap). Not reset by [render]: a re-delivered block is a NEW attempt, but it also
-     * arrives on an activity that has not walked away yet — once we have, we are finishing.
+     * Set when this DELIVERY terminates as a walk-away, so [navigateHome] logs exactly one event
+     * per attempt no matter how many times it is reached (button + back button, or a double tap).
+     *
+     * **Per delivery, and reset by [render], exactly like [renderToken].** It used to be set once
+     * for the life of the activity, on the reasoning that a re-delivered block always arrives on an
+     * activity that has not walked away yet, because [navigateHome] finished immediately. Deferring
+     * that finish (see [WALK_AWAY_FINISH_FAILSAFE_MS]) made that false: this activity now stays
+     * RESUMED for up to 1200ms after a walk-away, and a block for a DIFFERENT package delivered
+     * through [onNewIntent] inside that window would have rendered on top of a latched flag, leaving
+     * both "I changed my mind" and the back button dead. On a `HARD_BLOCK`, which has no completion
+     * path, that is not a missed stat, it is a user with no way out at all.
+     *
+     * Resetting cannot let one attempt log two rows: the only delivery that could be the SAME
+     * attempt is one for the same package, and `BlockLaunchGate.WALK_AWAY_TRANSITION_MS` (1500ms)
+     * refuses those for longer than the 1200ms this activity can survive a walk-away. The two
+     * constants are load-bearing in that direction too.
      */
     private val walkedAway = AtomicBoolean(false)
 
@@ -153,6 +165,16 @@ class BlockOverlayActivity : ComponentActivity() {
     }
 
     private fun render(intent: Intent) {
+        // A NEW delivery is a NEW attempt, and it gets its own walk-away budget and its own timers.
+        // Both of these matter only on the [onNewIntent] path, and only because [navigateHome] no
+        // longer finishes immediately: without them a block delivered during a walk-away's
+        // transition would render over a latched [walkedAway] with a dead button and a dead back
+        // gesture, and under a stale fail-safe belonging to the previous attempt. The fail-safe is
+        // already inert by its [renderToken] guard; cancelling it here means nobody has to know
+        // that to reason about this method.
+        walkedAway.set(false)
+        mainHandler.removeCallbacksAndMessages(null)
+
         val modeName = intent.getStringExtra(EXTRA_BLOCK_MODE) ?: BlockMode.HARD_BLOCK.name
         val mode = try {
             BlockMode.valueOf(modeName)
@@ -373,8 +395,10 @@ class BlockOverlayActivity : ComponentActivity() {
      *
      * Three properties this path owes, each of which used to be missing:
      *
-     *  - **Exactly one event.** [walkedAway] gates the whole body, so a double tap, or a tap racing
-     *     the back button, cannot log two walk-aways for one attempt. (The countdown cannot also
+     *  - **Exactly one event per delivery.** [walkedAway] gates the whole body, so a double tap, or
+     *     a tap racing the back button, cannot log two walk-aways for one attempt. [render] resets
+     *     it, because a re-delivered block is a new attempt and must not inherit a spent flag; see
+     *     [walkedAway] for why that cannot double-count the same attempt. (The countdown cannot also
      *     fire: [onTimerComplete] is the only other terminal path and it `finish()`es, while the
      *     ticker is cancelled below RESUMED.)
      *  - **A write that survives us.** [RecordWalkAwayUseCase] is a process-lifetime singleton, so

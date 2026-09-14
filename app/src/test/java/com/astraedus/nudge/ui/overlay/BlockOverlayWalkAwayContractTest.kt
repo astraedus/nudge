@@ -32,6 +32,16 @@ class BlockOverlayWalkAwayContractTest {
     }
 
     /**
+     * Comments stripped before matching, because this file's comments necessarily quote the code
+     * they explain. A contract test that greps raw source reads its own explanation as code, and
+     * then passes because a comment mentions the thing the code no longer does.
+     */
+    private fun stripComments(text: String): String = text
+        .replace(Regex("""/\*[\s\S]*?\*/"""), " ")
+        .lines()
+        .joinToString("\n") { line -> line.substringBefore("//") }
+
+    /**
      * The whole reason the walk-away could go missing: the write was owned by nothing. A
      * process-lifetime `RecordWalkAwayUseCase` replaces it, so the row does not depend on the
      * activity still being alive when the insert runs.
@@ -76,6 +86,45 @@ class BlockOverlayWalkAwayContractTest {
         assertTrue(
             "navigateHome must claim a once-only flag before recording",
             source.contains("walkedAway.compareAndSet(false, true)")
+        )
+    }
+
+    /**
+     * The once-only gate is per DELIVERY, not per activity, and that distinction only became
+     * load-bearing when `navigateHome` stopped calling `finish()` itself.
+     *
+     * The activity is singleInstance and now stays RESUMED for up to `WALK_AWAY_FINISH_FAILSAFE_MS`
+     * after a walk-away while it waits for the go-home to land. A block for a different package
+     * delivered through `onNewIntent` inside that window renders on this same instance. If
+     * `walkedAway` were still latched from the previous attempt, the new block's "I changed my mind"
+     * AND its back gesture would both be no-ops and no row would be written. On a `HARD_BLOCK`,
+     * which has no completion path at all, that leaves the user with no way off the screen.
+     *
+     * Unreachable before the deferred finish, which is exactly why a source-level guard is the right
+     * shape here: the defect is in the interaction between two lifecycle decisions in one file, and
+     * no value-level test on an untestable activity can see it.
+     */
+    @Test
+    fun `a re-delivered block gets a fresh walk-away budget and fresh timers`() {
+        val render = source.indexOf("private fun render(intent: Intent)")
+        val navigateHome = source.indexOf("private fun navigateHome()")
+        assertTrue("render must exist", render >= 0)
+        assertTrue("navigateHome must follow render", navigateHome > render)
+
+        val body = stripComments(source.substring(render, navigateHome))
+        assertTrue(
+            "render must reset the once-only walk-away flag, or a block delivered during a " +
+                "walk-away transition renders with a dead button and a dead back gesture",
+            body.contains("walkedAway.set(false)")
+        )
+        assertTrue(
+            "and must drop the previous attempt's pending fail-safe finish",
+            body.contains("mainHandler.removeCallbacksAndMessages(null)")
+        )
+        assertTrue(
+            "render is reached from onNewIntent, which is what makes the reset reach a re-delivery",
+            stripComments(source.substringAfter("override fun onNewIntent").substringBefore("\n    }"))
+                .contains("render(newIntent)")
         )
     }
 
