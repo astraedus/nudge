@@ -539,3 +539,36 @@ nothing in common as bugs. Two rounds of reasoning could not separate them. Two 
   nothing, changing nothing. The timeouts are what made it intermittent, and intermittent is what made three
   rounds of black-box testing useless.
 
+
+## A walk-away writes TWO `wasBlocked` rows, so a DB-count QA assertion is easy to get wrong (2026-09-14)
+
+Device QA for #26 was briefed to expect `wasBlocked` to rise by exactly 10 across 10 "I changed my mind"
+attempts. That brief was wrong, and the wrong number turned a passing run into a reported FAIL that cost a
+round of investigation.
+
+One walk-away writes **two** rows carrying `wasBlocked = true`: the block itself from `handleDecision`, and
+the walk-away row from `RecordWalkAwayUseCase`, which sets `wasBlocked = true` **and** `userChangedMind =
+true` so it is counted by both the "Blocked" and "Walked Away" tiles. That deliberate double-count is what
+`InsightsCalculator.overlaysFromAllTimeCounts` subtracts back out, and it is documented on the use case
+itself. So the correct expectation for N walk-aways is `wasBlocked` **+2N**, `userChangedMind` **+N**.
+
+The run in question measured +25 over 10 attempts. Against the wrong baseline of 10 that looks like a 2.5x
+inflation; against the real baseline of 20 it is 20 by design plus 5 genuine duplicates, which is what it
+turned out to be. **Before writing a DB-delta assertion into a QA brief, read the writers of that column,
+not just the one you are testing.** Here that is two files, and `grep -rn "wasBlocked = true" app/src/main`
+finds both in one command.
+
+## `shouldClearForOwnPackageEvent` can never return true in production (2026-09-14)
+
+`NudgeAccessibilityService.shouldClearForOwnPackageEvent` tests `className?.startsWith(ownPackageName)`. The
+applicationId is `dev.astraedus.nudge`; the classes are `com.astraedus.nudge.*`. The prefix never matches, so
+`isOwnAppWindowEvent` is always false and the `clearOverlays(packageName, "own_app_window")` branch inside the
+`ForegroundSignal.OwnUi` handler is unreachable. Its unit tests pass because they pass a matching
+`ownPackageName` that production never supplies (`PassthroughTest` uses `OWN_PACKAGE = "com.astraedus.nudge"`).
+
+Found while looking for a way to detect "our overlay's window is on screen" from the event stream; that need
+was solved instead by having `BlockOverlayActivity.onResume` report itself (see
+`docs/architecture/foreground-detection.md`, "A second overlay for one entry"). The defect above is NOT fixed
+and wants its own ticket. **The general trap: a test that supplies its own value for a production constant
+cannot see that the production value breaks the predicate.** Where a test hardcodes an identity like a
+package name, it is worth one assertion tying it to the real `applicationId`.

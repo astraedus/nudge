@@ -1,6 +1,7 @@
 package com.astraedus.nudge.service
 
 import android.view.accessibility.AccessibilityEvent
+import com.astraedus.nudge.domain.block.BlockLaunchGate
 import com.astraedus.nudge.domain.events.A11yEventType
 import com.astraedus.nudge.domain.events.AccessibilityEventRecord
 import com.astraedus.nudge.domain.events.EventClassifier
@@ -155,9 +156,11 @@ class PassthroughTest {
         // The user tabbed out and re-opened the blocked app; its task comes forward directly,
         // orphaning the overlay. A real foreground switch must clear the stale flag so we re-block.
         assertTrue(
-            NudgeAccessibilityService.isOverlayBypassedByForeground(
+            BlockLaunchGate.isGenuineBypass(
                 eventType = A11yEventType.WINDOW_STATE_CHANGED,
-                signal = signalFor("com.instagram.android", A11yEventType.WINDOW_STATE_CHANGED)
+                signal = signalFor("com.instagram.android", A11yEventType.WINDOW_STATE_CHANGED),
+                pending = null,
+                nowMs = 0L
             )
         )
     }
@@ -168,9 +171,11 @@ class PassthroughTest {
         // now lives in the classifier (OwnUi, not AppWindow) rather than in an ownPackageName
         // comparison inside the gate, so this asserts the whole path, not a local `if`.
         assertFalse(
-            NudgeAccessibilityService.isOverlayBypassedByForeground(
+            BlockLaunchGate.isGenuineBypass(
                 eventType = A11yEventType.WINDOW_STATE_CHANGED,
-                signal = signalFor(OWN_PACKAGE, A11yEventType.WINDOW_STATE_CHANGED)
+                signal = signalFor(OWN_PACKAGE, A11yEventType.WINDOW_STATE_CHANGED),
+                pending = null,
+                nowMs = 0L
             )
         )
     }
@@ -179,9 +184,11 @@ class PassthroughTest {
     fun `system window while overlay up does not count as overlay bypass`() {
         // Launcher / systemui surfacing over the overlay is not the user re-entering the app.
         assertFalse(
-            NudgeAccessibilityService.isOverlayBypassedByForeground(
+            BlockLaunchGate.isGenuineBypass(
                 eventType = A11yEventType.WINDOW_STATE_CHANGED,
-                signal = signalFor("com.android.systemui", A11yEventType.WINDOW_STATE_CHANGED)
+                signal = signalFor("com.android.systemui", A11yEventType.WINDOW_STATE_CHANGED),
+                pending = null,
+                nowMs = 0L
             )
         )
     }
@@ -191,9 +198,11 @@ class PassthroughTest {
         // The blocked app animating/loading underneath a genuinely-live overlay must NOT clear the
         // flag — only a real foreground switch (WINDOW_STATE_CHANGED) does.
         assertFalse(
-            NudgeAccessibilityService.isOverlayBypassedByForeground(
+            BlockLaunchGate.isGenuineBypass(
                 eventType = A11yEventType.WINDOW_CONTENT_CHANGED,
-                signal = signalFor("com.instagram.android", A11yEventType.WINDOW_CONTENT_CHANGED)
+                signal = signalFor("com.instagram.android", A11yEventType.WINDOW_CONTENT_CHANGED),
+                pending = null,
+                nowMs = 0L
             )
         )
     }

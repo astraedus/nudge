@@ -1,8 +1,5 @@
 package com.astraedus.nudge.service
 
-import android.content.Context
-import android.content.Intent
-import com.astraedus.nudge.ui.overlay.BlockOverlayActivity
 import com.astraedus.nudge.domain.logging.NudgeLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -18,44 +15,19 @@ class TimeRemainingHandler(
     private val passthroughManager: PassthroughManager,
     private val logger: NudgeLog,
     private val serviceScope: CoroutineScope,
+    /**
+     * Show the daily-limit hard block for (package, limit minutes).
+     *
+     * A callback rather than an intent this class builds itself. It used to own a `Context` and
+     * start `BlockOverlayActivity` directly, which made it the one block-overlay launch that lived
+     * outside `NudgeAccessibilityService`, and therefore outside the launch gate that stops a late
+     * decision landing on top of whatever the user moved to (issue #31). This one is the most
+     * exposed of the four: it fires from a 30-second clock tick, not from a foreground event.
+     */
     private val onTimeLimitExceeded: (String, Int) -> Unit = { _, _ -> }
 ) : TimeRemainingHandlerApi {
     private var lastUpdateMs: Long = 0L
     private val updateIntervalMs = 30_000L
-
-    /**
-     * Secondary constructor preserving the original call-site API (Context-based).
-     * Creates the onTimeLimitExceeded lambda from a Context + BlockOverlayActivity intent.
-     */
-    constructor(
-        timeRemainingOverlayManager: TimeRemainingOverlayManagerApi,
-        usageRepository: UsageProvider,
-        preferences: GlobalEnabledProvider,
-        counterCache: CounterCacheRefresher,
-        passthroughManager: PassthroughManager,
-        logger: NudgeLog,
-        context: Context,
-        serviceScope: CoroutineScope
-    ) : this(
-        timeRemainingOverlayManager = timeRemainingOverlayManager,
-        usageRepository = usageRepository,
-        preferences = preferences,
-        counterCache = counterCache,
-        passthroughManager = passthroughManager,
-        logger = logger,
-        serviceScope = serviceScope,
-        onTimeLimitExceeded = { packageName, dailyLimitMinutes ->
-            val intent = Intent(context, BlockOverlayActivity::class.java).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                putExtra(BlockOverlayActivity.EXTRA_BLOCK_MODE, "HARD_BLOCK")
-                putExtra(BlockOverlayActivity.EXTRA_PACKAGE_NAME, packageName)
-                putExtra(BlockOverlayActivity.EXTRA_RULE_NAME, "Daily limit reached")
-                putExtra(BlockOverlayActivity.EXTRA_DAILY_TIME_REMAINING_MS, 0L)
-                putExtra(BlockOverlayActivity.EXTRA_DAILY_LIMIT_MINUTES, dailyLimitMinutes)
-            }
-            context.startActivity(intent)
-        }
-    )
 
     fun showIfNeeded(packageName: String) {
         val entry = counterCache.getEntry(packageName) ?: return

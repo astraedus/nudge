@@ -1,5 +1,6 @@
 package com.astraedus.nudge.service
 
+import com.astraedus.nudge.domain.block.BlockLaunchGate
 import com.astraedus.nudge.domain.events.A11yEventType
 import com.astraedus.nudge.domain.events.AccessibilityEventRecord
 import com.astraedus.nudge.domain.events.EventClassifier
@@ -108,9 +109,11 @@ class TransientWindowTest {
     @Test
     fun `active keyboard while overlay up is not an overlay bypass`() {
         assertFalse(
-            NudgeAccessibilityService.isOverlayBypassedByForeground(
+            BlockLaunchGate.isGenuineBypass(
                 eventType = A11yEventType.WINDOW_STATE_CHANGED,
-                signal = signalFor(futo, A11yEventType.WINDOW_STATE_CHANGED, currentImePackage = futo)
+                signal = signalFor(futo, A11yEventType.WINDOW_STATE_CHANGED, currentImePackage = futo),
+                pending = null,
+                nowMs = 0L
             )
         )
     }
@@ -118,13 +121,15 @@ class TransientWindowTest {
     @Test
     fun `android popup while overlay up is not an overlay bypass`() {
         assertFalse(
-            NudgeAccessibilityService.isOverlayBypassedByForeground(
+            BlockLaunchGate.isGenuineBypass(
                 eventType = A11yEventType.WINDOW_STATE_CHANGED,
                 signal = signalFor(
                     NudgeAccessibilityService.FRAMEWORK_PACKAGE,
                     A11yEventType.WINDOW_STATE_CHANGED,
                     currentImePackage = futo
-                )
+                ),
+                pending = null,
+                nowMs = 0L
             )
         )
     }
@@ -133,13 +138,15 @@ class TransientWindowTest {
     fun `a real app returning to foreground is still a bypass (regression guard)`() {
         // The transient exclusions must not weaken the genuine tab-out-and-back-in re-block path.
         assertTrue(
-            NudgeAccessibilityService.isOverlayBypassedByForeground(
+            BlockLaunchGate.isGenuineBypass(
                 eventType = A11yEventType.WINDOW_STATE_CHANGED,
                 signal = signalFor(
                     instagram,
                     A11yEventType.WINDOW_STATE_CHANGED,
                     currentImePackage = futo
-                )
+                ),
+                pending = null,
+                nowMs = 0L
             )
         )
     }
