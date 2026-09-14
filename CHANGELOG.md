@@ -2,6 +2,13 @@
 
 All notable changes to Nudge are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.17.1] - 2026-09-14
+
+### Fixed
+- **"I changed my mind" works on the first tap.** Tapping it could bounce you straight back into the nudge screen instead of the home screen, so you had to tap it twice ([#26](https://github.com/astraedus/nudge/issues/26)). Nudge asked Android to go home and then closed itself in the same breath, and on a lot of phones closing won that race: the app you had just walked away from came back to the front for a moment, Nudge saw it there and blocked it again. Nudge now waits for the home screen to actually arrive before closing, and it knows for the length of that transition that you are on your way out, so the app resurfacing behind it cannot restart the block. Turning around a few seconds later, on purpose, still costs you a fresh delay.
+- **The nudge screen no longer appears over the wrong app, or over Nudge itself.** Deciding whether to block takes a moment (Nudge has to look up your rules, and for a website read the address bar), and if you left in that moment the screen appeared anyway, on top of whatever you had moved to ([#31](https://github.com/astraedus/nudge/issues/31)). Every block now checks that you are still in the app it is for, right before it shows anything, and says so in the log when it decides not to. Pulling down the notification shade, opening the keyboard or answering a permission prompt do not count as leaving, so nothing that used to be blocked stops being blocked.
+- **A block that is not shown is no longer counted.** In the case above, the block was recorded in your stats even though you never saw it, which quietly inflated the Blocked number on the dashboard.
+
 ## [1.17.0] - 2026-09-12
 
 ### Added
