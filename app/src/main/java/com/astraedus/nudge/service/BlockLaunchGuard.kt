@@ -44,7 +44,7 @@ class BlockLaunchGuard @Inject constructor() {
     /**
      * Apply the ONE classification the service made for this event.
      *
-     * Called from the same place, and only from the same place, that feeds the sitting model — so
+     * Called from the same place, and only from the same place, that feeds the sitting model, so
      * "what is in front" cannot fall out of step with "is the user still in this sitting", and no
      * future early return can skip one but not the other. Pinned by
      * `EventDispatchOrderContractTest`.
@@ -58,7 +58,7 @@ class BlockLaunchGuard @Inject constructor() {
      * The user tapped "I changed my mind" (or pressed back) on the block overlay for [packageName],
      * and a "go home" has been dispatched.
      *
-     * [packageName] is the package the user is sitting IN — the browser for a web block — because
+     * [packageName] is the package the user is sitting IN, the browser for a web block, because
      * that is whose window is about to resurface underneath the finishing overlay, and whose
      * re-entry must not be read as a fresh arrival.
      */

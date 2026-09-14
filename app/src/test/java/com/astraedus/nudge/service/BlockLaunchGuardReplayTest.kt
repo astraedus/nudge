@@ -17,14 +17,14 @@ import org.junit.Test
  * signal, exactly as `NudgeAccessibilityService.applyForegroundSignal` does.
  *
  * `BlockLaunchGateTest` proves the gate's function is right. This proves the STREAM produces the
- * state that function needs — which is the gap every bug in
+ * state that function needs, which is the gap every bug in
  * `docs/architecture/foreground-detection.md` fell into, because each of those functions was also
  * individually correct.
  *
  * Both sequences are SYNTHESISED rather than device-captured, and deliberately not committed to
  * `app/src/test/resources/a11y-captures/`: that directory is real Pixel 3 streams, and a
  * hand-written file sitting among them would be read as device evidence by the next person. What
- * makes these honest instead of hopeful is the COUNTERFACTUAL on each one — the assertion that the
+ * makes these honest instead of hopeful is the COUNTERFACTUAL on each one, the assertion that the
  * pre-fix rule (launch unconditionally) really does launch on this exact sequence. A fixture that
  * quietly stopped reproducing its defect would otherwise leave a green test asserting nothing, the
  * same trap `A11yCaptureReplayTest`'s counterfactuals exist to close.
@@ -94,7 +94,7 @@ class BlockLaunchGuardReplayTest {
      * The reported sequence, in the order a device that reproduces it delivers them.
      *
      * The user opens a blocked app, the overlay goes up, they tap "I changed my mind".
-     * `navigateHome` dispatches `GLOBAL_ACTION_HOME` — and on these devices the blocked app's task
+     * `navigateHome` dispatches `GLOBAL_ACTION_HOME`, and on these devices the blocked app's task
      * surfaces underneath the finishing overlay BEFORE the launcher lands. That is a real window
      * event, from a real app, genuinely in front, with no overlay up: every gate in the service says
      * "evaluate this", the one-second debounce is long past because the user was sitting on the
@@ -128,7 +128,7 @@ class BlockLaunchGuardReplayTest {
             guard.decide(blocked)
         )
         assertEquals(
-            "counterfactual — the pre-fix code launched here, which is the reported bug",
+            "counterfactual, the pre-fix code launched here, which is the reported bug",
             preFixDecision(),
             BlockLaunchGate.decide(
                 target = blocked,
@@ -166,7 +166,7 @@ class BlockLaunchGuardReplayTest {
             sittingEnds
         )
 
-        // The user changes their mind about changing their mind, 200ms later — well inside the
+        // The user changes their mind about changing their mind, 200ms later, well inside the
         // 1500ms fail-safe, which must no longer be in force.
         tick(200)
         window(blocked)
@@ -180,8 +180,8 @@ class BlockLaunchGuardReplayTest {
     /**
      * The fail-safe path: `GLOBAL_ACTION_HOME` was accepted and nothing happened, so no Home event
      * ever arrives to close the window. It closes on the clock instead, and the number is chosen so
-     * that `BlockOverlayActivity`'s own 1200ms fail-safe `finish()` — the thing that would pop the
-     * blocked app forward in this scenario — lands while the window is still open.
+     * that `BlockOverlayActivity`'s own 1200ms fail-safe `finish()`, the thing that would pop the
+     * blocked app forward in this scenario, lands while the window is still open.
      */
     @Test
     fun `a go-home that never lands still expires the window, after the overlay's own fail-safe`() {
@@ -226,7 +226,7 @@ class BlockLaunchGuardReplayTest {
             guard.decide(blocked)
         )
         assertEquals(
-            "counterfactual — the pre-fix code launched here",
+            "counterfactual, the pre-fix code launched here",
             preFixDecision(),
             BlockLaunchGate.decide(blocked, foreground = null, walkAway = null, nowMs = clock)
         )
@@ -258,7 +258,7 @@ class BlockLaunchGuardReplayTest {
      * Each of these lands routinely inside the few milliseconds a rule lookup takes, and each of
      * them carries a package that is not the app the user is in. Reading any one as "the user left"
      * would silently stop blocking whenever the shade was open, a keyboard was up, a permission
-     * dialog was showing or something was playing in a bubble — a far worse bug than the one being
+     * dialog was showing or something was playing in a bubble, a far worse bug than the one being
      * fixed, and the exact shape of issue #5.
      */
     @Test
@@ -291,7 +291,7 @@ class BlockLaunchGuardReplayTest {
     }
 
     /**
-     * A scroll or a content change inside the blocked app is not a foreground claim either — and
+     * A scroll or a content change inside the blocked app is not a foreground claim either, and
      * this is the one that would break the in-app feature blocks (Reels, Shorts, TikTok), which are
      * driven entirely by content changes.
      */
@@ -320,7 +320,7 @@ class BlockLaunchGuardReplayTest {
         window("com.google.android.providers.media.module")
 
         assertEquals(BlockLaunchGate.Decision.DROP_FOREGROUND_MOVED, guard.decide(blocked))
-        assertEquals("a picker is not the user leaving — issue #28", emptyList<SittingEndCause>(), sittingEnds)
+        assertEquals("a picker is not the user leaving, issue #28", emptyList<SittingEndCause>(), sittingEnds)
 
         tick(5_000)
         window(blocked)

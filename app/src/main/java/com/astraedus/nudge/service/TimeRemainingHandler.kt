@@ -20,7 +20,7 @@ class TimeRemainingHandler(
      *
      * A callback rather than an intent this class builds itself. It used to own a `Context` and
      * start `BlockOverlayActivity` directly, which made it the one block-overlay launch that lived
-     * outside `NudgeAccessibilityService` — and therefore outside the launch gate that stops a late
+     * outside `NudgeAccessibilityService`, and therefore outside the launch gate that stops a late
      * decision landing on top of whatever the user moved to (issue #31). This one is the most
      * exposed of the four: it fires from a 30-second clock tick, not from a foreground event.
      */

@@ -8,8 +8,8 @@ import com.astraedus.nudge.domain.events.ForegroundSignal
  * ## The assumption this deletes
  *
  * Every launch of `BlockOverlayActivity` used to assume *the app this decision is for is still the
- * app in front*. Nothing checked it. A decision is computed on the service's IO scope — a rule
- * lookup, a usage read, sometimes a URL-bar read — while foreground changes keep arriving on the
+ * app in front*. Nothing checked it. A decision is computed on the service's IO scope, a rule
+ * lookup, a usage read, sometimes a URL-bar read, while foreground changes keep arriving on the
  * main thread, so the assumption is false whenever the user leaves faster than the database
  * answers. That is [#31](https://github.com/astraedus/nudge/issues/31) verbatim: *"a block/delay
  * decision can finish after the user has already left the target app, and the overlay is shown over
@@ -23,15 +23,15 @@ import com.astraedus.nudge.domain.events.ForegroundSignal
  *
  * ## The second condition, and why it lives in the SAME gate
  *
- * [#26](https://github.com/astraedus/nudge/issues/26): *"I changed my mind — have to click twice."*
+ * [#26](https://github.com/astraedus/nudge/issues/26): *"I changed my mind - have to click twice"*
  * `BlockOverlayActivity.navigateHome` dispatches `GLOBAL_ACTION_HOME` and finishes. The activity is
  * singleInstance in its own task with an empty taskAffinity, so finishing pops back to the task
- * underneath — the blocked app. On a device where that pop wins the race, the blocked app's window
+ * underneath, the blocked app. On a device where that pop wins the race, the blocked app's window
  * genuinely resumes, fires a real `TYPE_WINDOW_STATE_CHANGED`, is a real [ForegroundSignal.AppWindow]
  * for a real foreground app, and re-arms the block the user just declined. Three reporters saw it
  * every time; the bench Pixel 3 never did, because the answer is device and launcher timing.
  *
- * So the foreground check alone cannot fix #26 — at the moment the phantom decision lands, the
+ * So the foreground check alone cannot fix #26, at the moment the phantom decision lands, the
  * blocked app really IS in front. What is missing is that the service does not know a departure is
  * in flight. Both issues are therefore one question asked at one place: **is this decision still
  * about where the user is going to be?**
@@ -47,7 +47,7 @@ object BlockLaunchGate {
      * This is a FAIL-SAFE, not the mechanism. In the normal case the window is closed by evidence,
      * not by the clock: [walkAwayAfter] drops it the moment the launcher (or any other app) is
      * observed in front, which on any device is the transition the user is watching. The timeout
-     * only covers the case where that evidence never arrives — `GLOBAL_ACTION_HOME` was accepted and
+     * only covers the case where that evidence never arrives, `GLOBAL_ACTION_HOME` was accepted and
      * did nothing, or the launcher set could not be resolved so a real Home event was classified as
      * something else.
      *
@@ -56,7 +56,7 @@ object BlockLaunchGate {
      * are the evidence that a sub-second assumption is wrong). Too long and a *deliberate* re-open
      * inside the window opens the app with no delay, which is a bypass. Since the evidence path
      * closes the window on the very first foreground event after the transition, the timeout is only
-     * ever reached when nothing moved at all — and a user who walks away, sees no transition happen,
+     * ever reached when nothing moved at all, and a user who walks away, sees no transition happen,
      * and re-opens the app within 1.5 seconds is indistinguishable from the bug we are fixing.
      * Missing one block there, once, self-corrects on the next window event; showing the overlay
      * they just dismissed does not.
@@ -79,7 +79,7 @@ object BlockLaunchGate {
     }
 
     /**
-     * @param target the package a launch would block **re-entry to** — the app the user is sitting
+     * @param target the package a launch would block **re-entry to**, the app the user is sitting
      *   in, which for a web block is the BROWSER and not the rule's app. That distinction already
      *   exists as `EXTRA_PASSTHROUGH_PACKAGE` vs `EXTRA_PACKAGE_NAME`: the rule's app is what the
      *   block is attributed to (its label, its `UsageEvent`), and comparing THAT against the
@@ -114,7 +114,7 @@ object BlockLaunchGate {
      * Only three signals move it, and the four that do not are the whole reason this is a function
      * rather than an assignment at the event site. A system surface, a keyboard, a framework popup,
      * a picture-in-picture bubble and a non-window event all carry a package that is NOT the app the
-     * user is in — reading any of them as a foreground change would drop legitimate blocks whenever
+     * user is in, reading any of them as a foreground change would drop legitimate blocks whenever
      * the notification shade, a permission dialog or the volume panel happened to land inside the
      * few milliseconds a rule lookup takes. That is `SYSTEM_PACKAGES` answering a question it cannot
      * answer, the grouped-constant trap `docs/architecture/foreground-detection.md` records three
@@ -122,7 +122,7 @@ object BlockLaunchGate {
      *
      * [ForegroundSignal.OwnUi] deliberately DOES move it, and it is the case issue #31's reporter
      * cares about most: an overlay landing on top of Nudge's own screens is the most visible form of
-     * the bug. Our own block overlay is also `OwnUi`, which is correct rather than unfortunate — a
+     * the bug. Our own block overlay is also `OwnUi`, which is correct rather than unfortunate, a
      * second decision arriving while an overlay is already up has nothing to add, and if the user
      * bypasses that overlay back into the app, the bypass itself is an `AppWindow` that moves the
      * foreground back before the re-evaluation runs.
@@ -143,7 +143,7 @@ object BlockLaunchGate {
      *
      * The window closes on EVIDENCE. Anything in front that is not the app being left is proof the
      * transition completed, which is what keeps this from being a blanket "ignore this app for 1.5
-     * seconds" — a genuine re-entry after the launcher has appeared blocks normally, immediately,
+     * seconds", a genuine re-entry after the launcher has appeared blocks normally, immediately,
      * because by then there is no window left to be inside.
      *
      * A signal that carries no claim about what is in front (a system surface, a keyboard, a scroll)
@@ -160,7 +160,7 @@ object BlockLaunchGate {
             is ForegroundSignal.AppWindow ->
                 if (signal.packageName == pending.packageName) pending else null
 
-            // Nudge's own UI in front is not the blocked app, so the departure did happen — but the
+            // Nudge's own UI in front is not the blocked app, so the departure did happen, but the
             // walk-away path itself is Nudge UI on its way out, so this must NOT close the window,
             // or the overlay's own dying window event would close it before the transition starts.
             is ForegroundSignal.OwnUi,

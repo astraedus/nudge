@@ -1075,7 +1075,7 @@ class NudgeAccessibilityService : AccessibilityService() {
      *  - [PassthroughManager] owns *is the user still in a sitting with app X* (issue #28).
      *    Everything it does is inside that class deliberately: the grant and the sitting that owns
      *    it cannot be updated out of step, because there is one call that does both. What is left
-     *    here is the *reaction* — the log, the counter's per-source state, and the web clock.
+     *    here is the *reaction*, the log, the counter's per-source state, and the web clock.
      *  - [BlockLaunchGuard] owns *what is in front right now, and is a departure in flight*
      *    (issues #31 and #26). It is fed here, from the same signal, rather than at the branches
      *    that happen to care: a branch-local update is precisely the shape that produced #5, #7,
@@ -1785,7 +1785,7 @@ class NudgeAccessibilityService : AccessibilityService() {
      * themselves: a rule block, the auto-kick cooldown, the web auto-kick cooldown and the
      * daily-limit hard block. Four copies of a launch means four places to remember a gate, and
      * remembering it in three of four is how [#19](https://github.com/astraedus/nudge/issues/19)
-     * shipped — its first fix guarded the branch that had been reported and missed the common case.
+     * shipped, its first fix guarded the branch that had been reported and missed the common case.
      *
      * @param targetPackage the package a launch would block RE-ENTRY to: the app the user is
      *   sitting in. For a web block that is the browser, not the rule's app. This is what the gate
@@ -1795,7 +1795,7 @@ class NudgeAccessibilityService : AccessibilityService() {
      *   `UsageEvent`, the picture-in-picture session record.
      * @param extras fills in the intent. Called only when the launch is going to happen.
      * @return false when the gate refused, in which case the caller must not record the block
-     *   either — a `UsageEvent` for an overlay nobody saw is the stat inflation issue #19 measured.
+     *   either, a `UsageEvent` for an overlay nobody saw is the stat inflation issue #19 measured.
      */
     private fun launchBlockOverlay(
         targetPackage: String,
@@ -1807,7 +1807,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         if (decision != BlockLaunchGate.Decision.LAUNCH) {
             // Logged unconditionally and with BOTH the target and what is actually in front,
             // because "the block was dropped" and "the block never happened" are indistinguishable
-            // from a device otherwise — the ambiguity that cost the v1.12.0 release cycle.
+            // from a device otherwise, the ambiguity that cost the v1.12.0 release cycle.
             entryPoint.nudgeLogger().i(
                 "block overlay launch dropped target=$targetPackage " +
                     "attributed=$attributedPackage reason=${decision.name} " +
@@ -1855,7 +1855,7 @@ class NudgeAccessibilityService : AccessibilityService() {
                 // This function is the far side of a coroutine: `evaluateForegroundPackage` decided
                 // the user was in this app, then handed off to the IO scope for a rule lookup, a
                 // usage read and sometimes a URL-bar read, while foreground changes kept arriving on
-                // the main thread. By the time we get here the premise may be false — the reporter's
+                // the main thread. By the time we get here the premise may be false, the reporter's
                 // words are "a race between asynchronous rule evaluation and foreground changes".
                 //
                 // Recording the block and then refusing to show it would be worse than either

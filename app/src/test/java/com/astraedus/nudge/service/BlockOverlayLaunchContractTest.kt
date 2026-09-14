@@ -20,7 +20,7 @@ import org.junit.Test
  *
  * The structural fix is that four hand-rolled launches became one `launchBlockOverlay`, and every
  * gate lives in it. The failure this pins is the obvious next one: someone adds a fifth launch site
- * — a new block mode, a new trigger — and builds the intent inline the way all four used to. It
+ * (a new block mode, a new trigger) and builds the intent inline the way all four used to. It
  * would work, it would pass every value-level test, and it would be ungated.
  */
 class BlockOverlayLaunchContractTest {
@@ -65,7 +65,7 @@ class BlockOverlayLaunchContractTest {
     /**
      * ONE launch site. Four copies of "build an intent, set the flag, startActivity" is four places
      * to remember a gate, and remembering it in three of four is exactly how issue #19's first fix
-     * shipped — it guarded the branch that had been reported and missed the common case.
+     * shipped, it guarded the branch that had been reported and missed the common case.
      */
     @Test
     fun `the block overlay is constructed in exactly one place`() {
@@ -73,7 +73,7 @@ class BlockOverlayLaunchContractTest {
             .findAll(stripComments(service))
             .count()
         assertEquals(
-            "every block overlay launch must go through launchBlockOverlay — a new trigger that " +
+            "every block overlay launch must go through launchBlockOverlay, a new trigger that " +
                 "builds its own intent is a launch nothing gates",
             1,
             constructions
@@ -86,7 +86,7 @@ class BlockOverlayLaunchContractTest {
 
     /**
      * The daily-limit hard block used to own a `Context` and start the activity itself, which put a
-     * launch outside the service entirely. It is the launch most likely to land late — a 30-second
+     * launch outside the service entirely. It is the launch most likely to land late, a 30-second
      * clock tick, not a foreground event.
      */
     @Test
@@ -116,7 +116,7 @@ class BlockOverlayLaunchContractTest {
             launchHelper.contains("return false")
         )
         assertTrue(
-            "and it must say why, with what was actually in front — 'dropped' and 'never " +
+            "and it must say why, with what was actually in front, 'dropped' and 'never " +
                 "happened' being indistinguishable from a device is what cost the v1.12.0 cycle",
             launchHelper.contains("block overlay launch dropped") &&
                 launchHelper.contains("foreground=")
@@ -147,7 +147,7 @@ class BlockOverlayLaunchContractTest {
      * ISSUE #31'S ORDERING, and the part that is easy to get subtly wrong.
      *
      * Gating the launch but not the `UsageEvent` would leave the all-time Blocked count climbing for
-     * overlays nobody ever saw — the stat inflation issue #19 measured at +11 in a single incident.
+     * overlays nobody ever saw, the stat inflation issue #19 measured at +11 in a single incident.
      * The gate must therefore come first, and the row must be conditional on it.
      */
     @Test
@@ -201,7 +201,7 @@ class BlockOverlayLaunchContractTest {
         val goHome = index(body, "goHome()")
         assertTrue("the window must be armed before the go-home is dispatched", arm < goHome)
         assertFalse(
-            "finishing inline is the pop that reveals the blocked app — issue #26. onStop finishes " +
+            "finishing inline is the pop that reveals the blocked app, issue #26. onStop finishes " +
                 "us once the launcher lands, and the fail-safe covers a go-home that never does",
             Regex("""(^|\W)finish\(\)""").containsMatchIn(body)
         )

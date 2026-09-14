@@ -64,7 +64,7 @@ class BlockLaunchGateTest {
 
     /**
      * "We have observed nothing" is not "the user is elsewhere". The gate may only ever WEAKEN
-     * enforcement on positive evidence — the same failure direction the launcher set, the active
+     * enforcement on positive evidence, the same failure direction the launcher set, the active
      * window read and the URL-bar read all already take.
      */
     @Test
@@ -97,8 +97,8 @@ class BlockLaunchGateTest {
     // --- the walk-away condition (issue #26) ----------------------------------------------------
 
     /**
-     * THE ISSUE #26 CASE, in one assertion. The blocked app is in front — its window really did
-     * resurface under the finishing overlay — so the foreground condition says launch. It must not.
+     * THE ISSUE #26 CASE, in one assertion. The blocked app is in front, its window really did
+     * resurface under the finishing overlay, so the foreground condition says launch. It must not.
      */
     @Test
     fun `the blocked app resurfacing during a walk-away does not re-arm the block`() {
@@ -129,7 +129,7 @@ class BlockLaunchGateTest {
             BlockLaunchGate.decide(blocked, blocked, walkAway, nowMs = justInside)
         )
         assertEquals(
-            "the window is exclusive at its upper bound — a re-entry after it blocks",
+            "the window is exclusive at its upper bound, a re-entry after it blocks",
             Decision.LAUNCH,
             BlockLaunchGate.decide(blocked, blocked, walkAway, nowMs = atTheBoundary)
         )
@@ -172,7 +172,7 @@ class BlockLaunchGateTest {
     /**
      * The four that must NOT move it. Each one of these being read as a foreground change would
      * drop legitimate blocks whenever the shade, a permission dialog, a keyboard or a
-     * picture-in-picture bubble happened to land inside the milliseconds a rule lookup takes — the
+     * picture-in-picture bubble happened to land inside the milliseconds a rule lookup takes, the
      * `SYSTEM_PACKAGES`-answers-two-questions trap, for the fourth time.
      */
     @Test
@@ -221,7 +221,7 @@ class BlockLaunchGateTest {
 
     /**
      * Our own UI must NOT close it. The overlay that armed the window is itself Nudge UI on its way
-     * out, and its dying window event arrives before the transition it is waiting for — closing on
+     * out, and its dying window event arrives before the transition it is waiting for, closing on
      * it would make the window last approximately zero milliseconds and quietly restore issue #26.
      */
     @Test
