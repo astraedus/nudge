@@ -15,6 +15,7 @@ import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.data.repository.BlockRuleRepository
 import com.astraedus.nudge.data.repository.UsageRepository
 import com.astraedus.nudge.domain.WebDomainMatcher
+import com.astraedus.nudge.domain.block.BlockLaunchGate
 import com.astraedus.nudge.domain.block.CooldownGate
 import com.astraedus.nudge.domain.events.A11yEventType
 import com.astraedus.nudge.domain.events.AccessibilityEventRecord
@@ -68,6 +69,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         fun webDomainDetector(): WebDomainDetector
         fun strictModeEscapeManager(): StrictModeEscapeManager
         fun emergencyPassManager(): EmergencyPassManager
+        fun blockLaunchGuard(): BlockLaunchGuard
     }
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -676,7 +678,7 @@ class NudgeAccessibilityService : AccessibilityService() {
      *
      * **Both passthrough axes are already gone by the time this runs.** `ForegroundSignal.Home` is
      * one of only two signals [com.astraedus.nudge.domain.sitting.SittingTracker] allows to end a
-     * sitting, and the single `applySitting` call at the top of [onAccessibilityEvent] revokes the
+     * sitting, and the single `applyForegroundSignal` call at the top of [onAccessibilityEvent] revokes the
      * grant — app axis and web axis together — when it does. Clearing again here would be the "a
      * second piece of state means a second thing to remember to clear" trap that
      * `docs/architecture/foreground-detection.md` documents, and which left the web grant alive
@@ -733,8 +735,26 @@ class NudgeAccessibilityService : AccessibilityService() {
             counterCache = counterCache,
             passthroughManager = passthrough,
             logger = entryPoint.nudgeLogger(),
-            context = applicationContext,
-            serviceScope = serviceScope
+            serviceScope = serviceScope,
+            // The daily-limit hard block is the fourth block-overlay launch site, and the one most
+            // likely to land late: it fires from a 30-second clock tick rather than from a
+            // foreground event, so the user can easily be elsewhere by the time the usage read comes
+            // back. It used to own a Context and build its own intent, which put a launch outside
+            // this service and therefore outside any gate. It goes through [launchBlockOverlay] now,
+            // like the other three.
+            onTimeLimitExceeded = { limitedPackage, dailyLimitMinutes ->
+                launchBlockOverlay(
+                    targetPackage = limitedPackage,
+                    attributedPackage = limitedPackage
+                ) {
+                    putExtra(BlockOverlayActivity.EXTRA_BLOCK_MODE, "HARD_BLOCK")
+                    putExtra(BlockOverlayActivity.EXTRA_PACKAGE_NAME, limitedPackage)
+                    putExtra(BlockOverlayActivity.EXTRA_RULE_NAME, "Daily limit reached")
+                    putExtra(BlockOverlayActivity.EXTRA_DAILY_TIME_REMAINING_MS, 0L)
+                    putExtra(BlockOverlayActivity.EXTRA_DAILY_LIMIT_MINUTES, dailyLimitMinutes)
+                }
+                Unit
+            }
         )
 
         // ONE kick path, shared by both auto-kick triggers (interaction count and session time).
@@ -932,7 +952,7 @@ class NudgeAccessibilityService : AccessibilityService() {
             launcherPackages = launcherPackagesCached,
             pipOnlyPackages = pipOnlyPackagesCached
         )
-        applySitting(signal)
+        applyForegroundSignal(signal)
 
         if (signal is ForegroundSignal.PipOnly) {
             return
@@ -1041,13 +1061,26 @@ class NudgeAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * Feed the classified signal to the sitting model, once per event, above every early return.
+     * Feed the ONE classification to everything that consumes it, once per event, above every early
+     * return.
      *
-     * Everything this does is inside [PassthroughManager], deliberately: the grant and the sitting
-     * that owns it cannot be updated out of step, because there is one call that does both. What is
-     * left here is the *reaction* — the log, the counter's per-source state, and the web clock.
+     * There are exactly two consumers and they must never disagree:
+     *
+     *  - [PassthroughManager] owns *is the user still in a sitting with app X* (issue #28).
+     *    Everything it does is inside that class deliberately: the grant and the sitting that owns
+     *    it cannot be updated out of step, because there is one call that does both. What is left
+     *    here is the *reaction* — the log, the counter's per-source state, and the web clock.
+     *  - [BlockLaunchGuard] owns *what is in front right now, and is a departure in flight*
+     *    (issues #31 and #26). It is fed here, from the same signal, rather than at the branches
+     *    that happen to care: a branch-local update is precisely the shape that produced #5, #7,
+     *    #19 and #28, each of which was a path that returned before something that had to happen.
+     *
+     * This method used to be called `applySitting`, which was accurate when the sitting was the only
+     * consumer. A name that describes one of two consumers is how the next person adds the third
+     * one somewhere else.
      */
-    private fun applySitting(signal: ForegroundSignal) {
+    private fun applyForegroundSignal(signal: ForegroundSignal) {
+        entryPoint.blockLaunchGuard().onForegroundSignal(signal)
         entryPoint.passthroughManager().onForegroundSignal(signal, sittingClock())
     }
 
@@ -1242,18 +1275,12 @@ class NudgeAccessibilityService : AccessibilityService() {
             entryPoint.nudgeLogger().i(
                 "cooldown enforced package=$packageName remaining=${remainingSeconds}s"
             )
-            val overlayIntent = Intent(applicationContext, BlockOverlayActivity::class.java).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            launchBlockOverlay(targetPackage = packageName, attributedPackage = packageName) {
                 putExtra(BlockOverlayActivity.EXTRA_BLOCK_MODE, "DELAY")
                 putExtra(BlockOverlayActivity.EXTRA_DELAY_SECONDS, remainingSeconds)
                 putExtra(BlockOverlayActivity.EXTRA_PACKAGE_NAME, packageName)
                 putExtra(BlockOverlayActivity.EXTRA_RULE_NAME, "Auto-kick cooldown")
             }
-            // Mark the overlay active synchronously (before any further event) so the flag is
-            // authoritative even if the singleInstance activity is re-delivered via onNewIntent
-            // (which never re-runs onCreate).
-            markOverlayActive(packageName)
-            applicationContext.startActivity(overlayIntent)
             return
         }
 
@@ -1274,7 +1301,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         // A photo picker, a share sheet, the Pixel's `com.google.android.permissioncontroller`
         // dialog and an OEM volume panel are all ordinary app packages, so all of them re-blocked
         // the user on return, and no list would ever have contained them all. Revocation now belongs
-        // to the sitting (see `applySitting`), which a sub-flow cannot end. Nothing replaces it here
+        // to the sitting (see `applyForegroundSignal`), which a sub-flow cannot end. Nothing replaces it here
         // — a stale grant still cannot let the wrong app through, because
         // `shouldSkipForegroundEvaluation` compares against the granted package.
 
@@ -1440,8 +1467,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         entryPoint.nudgeLogger().i(
             "web cooldown enforced domain=$domain remaining=${remainingSeconds}s"
         )
-        val overlayIntent = Intent(applicationContext, BlockOverlayActivity::class.java).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        launchBlockOverlay(targetPackage = browserPackage, attributedPackage = browserPackage) {
             putExtra(BlockOverlayActivity.EXTRA_BLOCK_MODE, "DELAY")
             putExtra(BlockOverlayActivity.EXTRA_DELAY_SECONDS, remainingSeconds)
             putExtra(BlockOverlayActivity.EXTRA_PACKAGE_NAME, browserPackage)
@@ -1452,8 +1478,9 @@ class NudgeAccessibilityService : AccessibilityService() {
             // its own would not tell the user which site they were just removed from.
             putExtra(BlockOverlayActivity.EXTRA_RULE_NAME, "Auto-kick cooldown — $domain")
         }
-        markOverlayActive(browserPackage)
-        applicationContext.startActivity(overlayIntent)
+        // True regardless of whether the overlay was actually shown: the cooldown IS in force, so
+        // evaluation must stop either way. Falling through to a rule lookup because the gate
+        // refused would evaluate a site the user has already navigated away from.
         return true
     }
 
@@ -1727,7 +1754,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         // Without this the away clock never starts for an app entered via a notification tap
         // (exactly the case issue #7 exists for), and the user could switch away for half an hour,
         // come back, and still skip the delay.
-        applySitting(signal)
+        applyForegroundSignal(signal)
         evaluateForegroundPackage(packageName)
     }
 
@@ -1739,6 +1766,56 @@ class NudgeAccessibilityService : AccessibilityService() {
         rootInActiveWindow?.packageName?.toString()
     } catch (_: Exception) {
         null
+    }
+
+    /**
+     * THE ONE PLACE THIS APP PUTS A BLOCK OVERLAY ON SCREEN.
+     *
+     * Four paths used to build their own intent, set the overlay flag and call `startActivity`
+     * themselves: a rule block, the auto-kick cooldown, the web auto-kick cooldown and the
+     * daily-limit hard block. Four copies of a launch means four places to remember a gate, and
+     * remembering it in three of four is how [#19](https://github.com/astraedus/nudge/issues/19)
+     * shipped — its first fix guarded the branch that had been reported and missed the common case.
+     *
+     * @param targetPackage the package a launch would block RE-ENTRY to: the app the user is
+     *   sitting in. For a web block that is the browser, not the rule's app. This is what the gate
+     *   compares against the foreground; see [BlockLaunchGate.decide] for why using the attributed
+     *   package here would drop every web block ever written.
+     * @param attributedPackage what the block is recorded against: the overlay's label, the
+     *   `UsageEvent`, the picture-in-picture session record.
+     * @param extras fills in the intent. Called only when the launch is going to happen.
+     * @return false when the gate refused, in which case the caller must not record the block
+     *   either — a `UsageEvent` for an overlay nobody saw is the stat inflation issue #19 measured.
+     */
+    private fun launchBlockOverlay(
+        targetPackage: String,
+        attributedPackage: String,
+        extras: Intent.() -> Unit
+    ): Boolean {
+        val guard = entryPoint.blockLaunchGuard()
+        val decision = guard.decide(targetPackage)
+        if (decision != BlockLaunchGate.Decision.LAUNCH) {
+            // Logged unconditionally and with BOTH the target and what is actually in front,
+            // because "the block was dropped" and "the block never happened" are indistinguishable
+            // from a device otherwise — the ambiguity that cost the v1.12.0 release cycle.
+            entryPoint.nudgeLogger().i(
+                "block overlay launch dropped target=$targetPackage " +
+                    "attributed=$attributedPackage reason=${decision.name} " +
+                    "foreground=${guard.foregroundPackage}"
+            )
+            return false
+        }
+
+        val overlayIntent = Intent(applicationContext, BlockOverlayActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            extras()
+        }
+        // Mark the overlay active synchronously (before any further event) so the flag is
+        // authoritative even if the singleInstance activity is re-delivered via onNewIntent
+        // (which never re-runs onCreate).
+        markOverlayActive(attributedPackage)
+        applicationContext.startActivity(overlayIntent)
+        return true
     }
 
     /**
@@ -1762,21 +1839,23 @@ class NudgeAccessibilityService : AccessibilityService() {
                     "handling block package=$packageName mode=${decision.mode} " +
                         "delaySeconds=${decision.delaySeconds} grayscale=${decision.grayscale}"
                 )
-                if (decision.grayscale) {
-                    entryPoint.grayscaleManager().enableGrayscale()
-                    grayscaleActiveForPackage = packageName
-                }
 
-                entryPoint.usageRepository().logEvent(
-                    UsageEvent(
-                        packageName = packageName,
-                        wasBlocked = true,
-                        blockMode = decision.mode.name
-                    )
-                )
-
-                val overlayIntent = Intent(applicationContext, BlockOverlayActivity::class.java).apply {
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                // THE GATE, AND IT IS AHEAD OF THE `UsageEvent` DELIBERATELY (issue #31).
+                //
+                // This function is the far side of a coroutine: `evaluateForegroundPackage` decided
+                // the user was in this app, then handed off to the IO scope for a rule lookup, a
+                // usage read and sometimes a URL-bar read, while foreground changes kept arriving on
+                // the main thread. By the time we get here the premise may be false — the reporter's
+                // words are "a race between asynchronous rule evaluation and foreground changes".
+                //
+                // Recording the block and then refusing to show it would be worse than either
+                // outcome: the all-time Blocked count would climb for overlays nobody ever saw,
+                // which is exactly the stat inflation issue #19 measured (+11 in one incident).
+                // So the gate runs before grayscale, before the row, before everything.
+                val launched = launchBlockOverlay(
+                    targetPackage = web?.browserPackage ?: packageName,
+                    attributedPackage = packageName
+                ) {
                     putExtra(BlockOverlayActivity.EXTRA_BLOCK_MODE, decision.mode.name)
                     putExtra(BlockOverlayActivity.EXTRA_DELAY_SECONDS, decision.delaySeconds)
                     putExtra(BlockOverlayActivity.EXTRA_PACKAGE_NAME, packageName)
@@ -1793,11 +1872,20 @@ class NudgeAccessibilityService : AccessibilityService() {
                         putExtra(BlockOverlayActivity.EXTRA_DAILY_LIMIT_MINUTES, it)
                     }
                 }
-                // Mark the overlay active synchronously (before any further event) so the flag is
-                // authoritative even if the singleInstance activity is re-delivered via onNewIntent
-                // (which never re-runs onCreate).
-                markOverlayActive(packageName)
-                applicationContext.startActivity(overlayIntent)
+                if (!launched) return
+
+                if (decision.grayscale) {
+                    entryPoint.grayscaleManager().enableGrayscale()
+                    grayscaleActiveForPackage = packageName
+                }
+
+                entryPoint.usageRepository().logEvent(
+                    UsageEvent(
+                        packageName = packageName,
+                        wasBlocked = true,
+                        blockMode = decision.mode.name
+                    )
+                )
             }
 
             is BlockDecision.Allow -> {

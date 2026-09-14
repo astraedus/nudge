@@ -2,6 +2,8 @@ package com.astraedus.nudge.ui.overlay
 
 import android.content.Intent
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
@@ -12,6 +14,7 @@ import com.astraedus.nudge.domain.emergency.EmergencyPass
 import com.astraedus.nudge.domain.logging.NudgeLog
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.domain.usecase.RecordWalkAwayUseCase
+import com.astraedus.nudge.service.BlockLaunchGuard
 import com.astraedus.nudge.service.EmergencyPassManager
 import com.astraedus.nudge.service.NudgeAccessibilityService
 import com.astraedus.nudge.service.PassthroughManager
@@ -30,6 +33,10 @@ class BlockOverlayActivity : ComponentActivity() {
     @Inject lateinit var emergencyPassManager: EmergencyPassManager
     @Inject lateinit var recordWalkAway: RecordWalkAwayUseCase
     @Inject lateinit var nudgeLogger: NudgeLog
+    @Inject lateinit var blockLaunchGuard: BlockLaunchGuard
+
+    /** Posts the walk-away fail-safe finish. Cleared in [onDestroy]. */
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     /**
      * Set the first time this activity terminates as a walk-away, so [navigateHome] logs exactly
@@ -74,6 +81,25 @@ class BlockOverlayActivity : ComponentActivity() {
          * through.
          */
         const val EXTRA_WEB_DOMAIN = "web_domain"
+
+        /**
+         * How long the walk-away path waits for the dispatched "go home" to stop us, before
+         * finishing anyway.
+         *
+         * The normal path is not this timer: `GLOBAL_ACTION_HOME` brings the launcher forward, this
+         * activity is stopped, and [onStop] finishes it — from the BACKGROUND, where finishing pops
+         * nothing forward. That is the whole point of not calling `finish()` inline (see
+         * [navigateHome]). This exists only so that a `go home` the platform accepted and never
+         * honoured cannot strand the user on an overlay whose buttons are already spent.
+         *
+         * Deliberately SHORTER than [com.astraedus.nudge.domain.block.BlockLaunchGate
+         * .WALK_AWAY_TRANSITION_MS] (1500ms). The two numbers are one mechanism: if this fail-safe
+         * ever does fire, the finish pops back to the blocked app's task — exactly the resurfacing
+         * that issue #26 is about — and it must land while the service's walk-away window is still
+         * open to suppress the block it would otherwise re-arm. Raising this above that constant
+         * re-opens #26 for the failure case.
+         */
+        private const val WALK_AWAY_FINISH_FAILSAFE_MS = 1_200L
     }
 
     /**
@@ -346,6 +372,24 @@ class BlockOverlayActivity : ComponentActivity() {
      *     activity-start restrictions; it is already the way [EmergencyPassManager],
      *     `AutoKickExecutor` and `StrictModeGuardActivity` go home. The HOME intent stays as the
      *     fallback for when the service is not connected.
+     *  - **Not handing the foreground back on the way out** — issue
+     *     [#26](https://github.com/astraedus/nudge/issues/26), *"I changed my mind — have to click
+     *     twice"*, three reporters, every time, never once on the bench Pixel 3. `GLOBAL_ACTION_HOME`
+     *     removed the race over where the user ENDS UP, but not the one over what happens in
+     *     between: it is dispatched asynchronously, and the `finish()` that used to run on the very
+     *     next line pops this task immediately, revealing the blocked app underneath. On a device
+     *     where that pop wins, the blocked app genuinely resumes and fires a real window event, the
+     *     service sees a real foreground app with no overlay up, re-evaluates it (the debounce is
+     *     long past — the user has been sitting on the overlay), and re-blocks. The second tap
+     *     "works" only because by then the launcher is where the pop lands.
+     *
+     *     So the walk-away no longer finishes itself. `GLOBAL_ACTION_HOME` stops us, [onStop]
+     *     finishes us, and a finish from the background pops nothing forward — the departure is
+     *     ordered by the platform instead of raced against it. [WALK_AWAY_FINISH_FAILSAFE_MS] covers
+     *     a go-home that is accepted and never honoured, and the service-side
+     *     [com.astraedus.nudge.domain.block.BlockLaunchGate] window covers what that fail-safe would
+     *     then expose. Belt and braces, because the failure mode here is the user being shown the
+     *     screen they just dismissed.
      */
     private fun navigateHome() {
         if (!walkedAway.compareAndSet(false, true)) return
@@ -358,8 +402,32 @@ class BlockOverlayActivity : ComponentActivity() {
         // left a window in which the service still believed an overlay was up. onTimerComplete
         // already clears it here rather than relying on onDestroy, and so should this path.
         NudgeAccessibilityService.markOverlayInactive()
+
+        // Armed BEFORE the go-home is dispatched, never after: the whole point is to be in place
+        // when the blocked app's window resurfaces, and that can happen on the very next frame.
+        // Scoped to the package the user is sitting IN (the browser, for a web block) — that is
+        // whose window is underneath us, and whose re-entry must not be read as a fresh arrival.
+        blockLaunchGuard.onWalkAwayStarted(passthroughPackage(intent))
+
         goHome()
-        finish()
+        scheduleWalkAwayFinish()
+    }
+
+    /**
+     * Finish anyway if the dispatched go-home never stops us. See [WALK_AWAY_FINISH_FAILSAFE_MS].
+     *
+     * Guarded on [renderToken] so a NEW block delivered through [onNewIntent] during the transition
+     * is not killed by the previous attempt's timer — that block belongs to a different app or a
+     * different rule and the user has not walked away from it.
+     */
+    private fun scheduleWalkAwayFinish() {
+        val tokenAtWalkAway = renderToken
+        mainHandler.postDelayed({
+            if (!isFinishing && !isDestroyed && renderToken == tokenAtWalkAway) {
+                nudgeLogger.w("walk-away go-home did not land — finishing overlay on the fail-safe")
+                finish()
+            }
+        }, WALK_AWAY_FINISH_FAILSAFE_MS)
     }
 
     /**
@@ -383,6 +451,7 @@ class BlockOverlayActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        mainHandler.removeCallbacksAndMessages(null)
         NudgeAccessibilityService.markOverlayInactive()
     }
 }

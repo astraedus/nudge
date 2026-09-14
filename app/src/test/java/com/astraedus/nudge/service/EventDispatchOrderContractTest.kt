@@ -45,8 +45,8 @@ class EventDispatchOrderContractTest {
     private val dispatchBody: String by lazy {
         val start = source.indexOf("override fun onAccessibilityEvent(")
         assertTrue("onAccessibilityEvent must exist", start >= 0)
-        val end = source.indexOf("\n    /**\n     * Feed the classified signal", start)
-        assertTrue("the dispatch body must be followed by applySitting's doc", end > start)
+        val end = source.indexOf("\n    /**\n     * Feed the ONE classification", start)
+        assertTrue("the dispatch body must be followed by applyForegroundSignal's doc", end > start)
         source.substring(start, end)
     }
 
@@ -80,10 +80,10 @@ class EventDispatchOrderContractTest {
     @Test
     fun `the event is classified and the sitting updated before any early return`() {
         val classify = indexIn(dispatchCode, "eventClassifier.classify(")
-        val applySitting = indexIn(dispatchCode, "applySitting(signal)")
-        assertTrue("the sitting must be updated from the classification", applySitting > classify)
+        val applyForegroundSignal = indexIn(dispatchCode, "applyForegroundSignal(signal)")
+        assertTrue("the sitting must be updated from the classification", applyForegroundSignal > classify)
 
-        val preamble = dispatchCode.substring(0, dispatchCode.indexOf("applySitting(signal)"))
+        val preamble = dispatchCode.substring(0, dispatchCode.indexOf("applyForegroundSignal(signal)"))
         // The only returns allowed above the sitting update are the "there is nothing to classify"
         // ones. Anything else is a branch that can skip the sitting, which is this whole bug family.
         val allowedPreambleReturns = listOf(
@@ -94,7 +94,7 @@ class EventDispatchOrderContractTest {
         )
         val returns = Regex("""\breturn\b""").findAll(preamble).count()
         assertTrue(
-            "every return above applySitting must be one of the allowed 'nothing to classify' " +
+            "every return above applyForegroundSignal must be one of the allowed 'nothing to classify' " +
                 "returns; found $returns returns and ${allowedPreambleReturns.size} allowed forms",
             returns <= allowedPreambleReturns.size
         )
@@ -116,7 +116,7 @@ class EventDispatchOrderContractTest {
         )
         assertTrue(
             "onAccessibilityEvent must apply the sitting exactly once",
-            Regex("""applySitting\(""").findAll(dispatchCode).count() == 1
+            Regex("""applyForegroundSignal\(""").findAll(dispatchCode).count() == 1
         )
     }
 
@@ -202,14 +202,14 @@ class EventDispatchOrderContractTest {
         val end = source.indexOf("\n    private fun ", start + 1)
         val body = stripComments(source.substring(start, if (end > start) end else source.length))
 
-        val applySitting = body.indexOf("applySitting(")
+        val applyForegroundSignal = body.indexOf("applyForegroundSignal(")
         val evaluate = body.indexOf("evaluateForegroundPackage(")
-        assertTrue("the fallback must apply the sitting", applySitting >= 0)
+        assertTrue("the fallback must apply the sitting", applyForegroundSignal >= 0)
         assertTrue("the fallback must evaluate", evaluate >= 0)
         assertTrue(
             "the sitting must be updated BEFORE evaluation, or a notification re-entry never " +
                 "starts the away clock and the delay is skipped forever",
-            applySitting < evaluate
+            applyForegroundSignal < evaluate
         )
         assertTrue(
             "a verified content change must be promoted to a real foreground signal, not " +

@@ -56,7 +56,7 @@ class HomeScreenPassthroughContractTest {
      * every other system surface INSIDE this branch, before it returns.
      *
      * What changed is where the REVOCATION happens. It is no longer inside this branch at all — the
-     * single `applySitting(signal)` call at the top of `onAccessibilityEvent` performs it, because
+     * single `applyForegroundSignal(signal)` call at the top of `onAccessibilityEvent` performs it, because
      * `ForegroundSignal.Home` is one of only two signals `SittingTracker` allows to end a sitting.
      * That is strictly stronger than the old arrangement: the old one relied on this branch
      * remembering to call the clear, and an early return added above it would have re-broken it.
@@ -70,13 +70,13 @@ class HomeScreenPassthroughContractTest {
             systemPackageBranch.contains("signal is ForegroundSignal.Home") &&
                 systemPackageBranch.contains("onWentHome(")
         )
-        val applySitting = source.indexOf("applySitting(signal)")
+        val applyForegroundSignal = source.indexOf("applyForegroundSignal(signal)")
         val branch = source.indexOf(
             "if (signal is ForegroundSignal.Home || signal is ForegroundSignal.SystemSurface) {"
         )
         assertTrue(
             "the sitting (and therefore the revocation) must be applied before this branch returns",
-            applySitting in 0 until branch
+            applyForegroundSignal in 0 until branch
         )
     }
 
