@@ -1,6 +1,7 @@
 package com.astraedus.nudge.service
 
 import com.astraedus.nudge.domain.block.BlockLaunchGate
+import com.astraedus.nudge.domain.events.A11yCapture
 import com.astraedus.nudge.domain.events.A11yEventType
 import com.astraedus.nudge.domain.events.AccessibilityEventRecord
 import com.astraedus.nudge.domain.events.EventClassifier
@@ -21,17 +22,23 @@ import org.junit.Test
  * `docs/architecture/foreground-detection.md` fell into, because each of those functions was also
  * individually correct.
  *
- * Both sequences are SYNTHESISED rather than device-captured, and deliberately not committed to
- * `app/src/test/resources/a11y-captures/`: that directory is real Pixel 3 streams, and a
- * hand-written file sitting among them would be read as device evidence by the next person. What
- * makes these honest instead of hopeful is the COUNTERFACTUAL on each one, the assertion that the
- * pre-fix rule (launch unconditionally) really does launch on this exact sequence. A fixture that
- * quietly stopped reproducing its defect would otherwise leave a green test asserting nothing, the
- * same trap `A11yCaptureReplayTest`'s counterfactuals exist to close.
+ * Two kinds of sequence live here, and the difference is worth stating.
  *
- * The one thing these cannot prove is the platform ordering that decides whether the phantom window
- * event happens at all. Three reporters see it every time and the bench Pixel 3 never does; that is
- * device and launcher timing, and it is why the reproduction lives here rather than on a device.
+ * The DUPLICATE-BLOCK case replays a real Pixel 3 stream,
+ * `app/src/test/resources/a11y-captures/picker-subflow-keeps-sitting.jsonl`, committed since
+ * v1.16.0 and already carrying the defect. Nothing was captured for it; the timings were there all
+ * along and nobody had looked at them in this light.
+ *
+ * The #26 and #31 sequences are SYNTHESISED, and deliberately NOT committed to that directory:
+ * it holds real device streams, and a hand-written file sitting among them would be read as device
+ * evidence by the next person. What makes them honest instead of hopeful is the COUNTERFACTUAL on
+ * each one, the assertion that the pre-fix rule really does launch on this exact sequence. A
+ * fixture that quietly stopped reproducing its defect would otherwise leave a green test asserting
+ * nothing, the same trap `A11yCaptureReplayTest`'s counterfactuals exist to close.
+ *
+ * The one thing the synthesised ones cannot prove is the platform ordering that decides whether the
+ * phantom window event happens at all. Three reporters see it every time and the bench Pixel 3
+ * never does; that is device and launcher timing, and it is why the reproduction lives here.
  */
 class BlockLaunchGuardReplayTest {
 
@@ -77,6 +84,13 @@ class BlockLaunchGuardReplayTest {
             SittingEvent.Unchanged -> Unit
         }
     }
+
+    private fun classify(record: AccessibilityEventRecord) = classifier.classify(
+        record = record,
+        currentImePackage = ime,
+        launcherPackages = setOf(launcher),
+        pipOnlyPackages = emptySet()
+    )
 
     private fun window(packageName: String, className: String? = null) =
         event(A11yEventType.WINDOW_STATE_CHANGED, packageName, className)
@@ -329,6 +343,147 @@ class BlockLaunchGuardReplayTest {
             BlockLaunchGate.Decision.LAUNCH,
             guard.decide(blocked)
         )
+    }
+
+    // --- the duplicate block, replayed from a real device capture -------------------------------
+
+    /**
+     * THE DUPLICATE-LAUNCH REGRESSION, driven by a Pixel 3 stream committed since v1.16.0.
+     *
+     * Device QA on v1.17.1 measured `wasBlocked` rising by 25 across 10 walk-away attempts, with
+     * `handling block package=com.google.android.keep` logged twice in 5 of them. The cause is not
+     * in the walk-away path at all, and it predates every change on this branch:
+     * `picker-subflow-keeps-sitting.jsonl` times a single clean launch of Keep under a DELAY rule as
+     *
+     * ```
+     *  1252ms  keep   android.widget.FrameLayout            <- evaluate, launch the overlay
+     *  1445ms  nudge  android.widget.FrameLayout            <- the overlay TASK's first window
+     *  1736ms  keep   ...keep.ui.activities.BrowseActivity  <- keep STILL starting up
+     *  2056ms  nudge  ...overlay.BlockOverlayActivity       <- the overlay reaches the screen
+     * ```
+     *
+     * and the event at 1736ms is a `WINDOW_STATE_CHANGED` for a real `AppWindow`, 320ms before the
+     * overlay arrives. The old rule called that a bypass, cleared the flag and re-evaluated.
+     *
+     * This test replays those four events and asserts the old rule fires a bypass on the third
+     * (the counterfactual, so the fixture provably still contains the defect) while the new one
+     * does not, and that a bypass AFTER the overlay is on screen still works, because that is the
+     * case the rule exists for.
+     */
+    @Test
+    fun `the blocked app still starting up under a launching overlay is not a bypass`() {
+        val keep = "com.google.android.keep"
+        val capture = A11yCapture.load("picker-subflow-keeps-sitting")
+
+        // The four window events of the first block, in the order the device delivered them.
+        val windows = capture.filter { it.type == A11yEventType.WINDOW_STATE_CHANGED }
+        val firstKeep = windows.first { it.packageName == keep }
+        val overlayTaskWindow = windows.first { it.packageName == nudge }
+        val keepStillStarting = windows.first {
+            it.packageName == keep && it.eventTimeMs > overlayTaskWindow.eventTimeMs
+        }
+        val overlayOnScreen = windows.first {
+            it.packageName == nudge && it.className?.contains("BlockOverlayActivity") == true
+        }
+        assertEquals(
+            "the capture must still show keep's own window arriving BEFORE the overlay's, or this " +
+                "fixture has stopped reproducing the defect it was chosen for",
+            true,
+            keepStillStarting.eventTimeMs < overlayOnScreen.eventTimeMs
+        )
+
+        clock = firstKeep.eventTimeMs
+        window(keep, firstKeep.className)
+        guard.onOverlayLaunched(keep)
+
+        clock = overlayTaskWindow.eventTimeMs
+        window(nudge, overlayTaskWindow.className)
+
+        // The event that used to cost a second block.
+        clock = keepStillStarting.eventTimeMs
+        val signal = classify(keepStillStarting)
+        guard.onForegroundSignal(signal)
+
+        assertEquals(
+            "counterfactual: the pre-fix rule really does read this as a bypass",
+            true,
+            BlockLaunchGate.isGenuineBypass(
+                eventType = keepStillStarting.type,
+                signal = signal,
+                pending = null,
+                nowMs = clock
+            )
+        )
+        assertEquals(
+            "the app is still starting up under an overlay that has not arrived; not a bypass",
+            false,
+            guard.isGenuineBypass(keepStillStarting.type, signal)
+        )
+        assertEquals(
+            "and a second launch for the same app while the first is still pending is refused, so " +
+                "one entry can only ever write one row",
+            BlockLaunchGate.Decision.DROP_ALREADY_PENDING,
+            guard.decide(keep)
+        )
+
+        // The overlay reaches the screen, which in production is BlockOverlayActivity.onResume.
+        clock = overlayOnScreen.eventTimeMs
+        window(nudge, overlayOnScreen.className)
+        guard.onOverlayShown()
+
+        // NOW a real app window for the blocked app means the user got past the overlay.
+        clock += 4_000
+        val backIn = classify(
+            AccessibilityEventRecord(A11yEventType.WINDOW_STATE_CHANGED, keep, eventTimeMs = clock)
+        )
+        guard.onForegroundSignal(backIn)
+        assertEquals(
+            "tabbing back into the blocked app past a live overlay must still re-block",
+            true,
+            guard.isGenuineBypass(A11yEventType.WINDOW_STATE_CHANGED, backIn)
+        )
+    }
+
+    /**
+     * The other half of the same rule: a DIFFERENT app coming forward while our overlay is still on
+     * its way is a real foreground change and must not be suppressed. Suppressing it would swallow a
+     * genuine switch for up to the settle window.
+     */
+    @Test
+    fun `a different app coming forward while the overlay launches is still a bypass`() {
+        window(blocked)
+        guard.onOverlayLaunched(blocked)
+        tick(100)
+        val other = "com.google.android.keep"
+        val signal = classify(
+            AccessibilityEventRecord(A11yEventType.WINDOW_STATE_CHANGED, other, eventTimeMs = clock)
+        )
+        guard.onForegroundSignal(signal)
+        assertEquals(true, guard.isGenuineBypass(A11yEventType.WINDOW_STATE_CHANGED, signal))
+    }
+
+    /**
+     * The fail-safe. If the overlay never reports itself on screen at all, a `startActivity` the
+     * platform dropped, the service must not be left permanently unable to recognise a bypass.
+     */
+    @Test
+    fun `an overlay that never appears stops suppressing once the settle window passes`() {
+        window(blocked)
+        guard.onOverlayLaunched(blocked)
+
+        tick(BlockLaunchGate.OVERLAY_SETTLE_MS - 1)
+        var signal = classify(
+            AccessibilityEventRecord(A11yEventType.WINDOW_STATE_CHANGED, blocked, eventTimeMs = clock)
+        )
+        guard.onForegroundSignal(signal)
+        assertEquals(false, guard.isGenuineBypass(A11yEventType.WINDOW_STATE_CHANGED, signal))
+
+        tick(2)
+        signal = classify(
+            AccessibilityEventRecord(A11yEventType.WINDOW_STATE_CHANGED, blocked, eventTimeMs = clock)
+        )
+        guard.onForegroundSignal(signal)
+        assertEquals(true, guard.isGenuineBypass(A11yEventType.WINDOW_STATE_CHANGED, signal))
     }
 
     // --- the guard's own lifecycle --------------------------------------------------------------

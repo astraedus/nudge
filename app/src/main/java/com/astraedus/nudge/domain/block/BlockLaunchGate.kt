@@ -1,5 +1,6 @@
 package com.astraedus.nudge.domain.block
 
+import com.astraedus.nudge.domain.events.A11yEventType
 import com.astraedus.nudge.domain.events.ForegroundSignal
 
 /**
@@ -66,6 +67,36 @@ object BlockLaunchGate {
     /** A "go home" dispatched by the walk-away path that the platform has not yet honoured. */
     data class WalkAway(val packageName: String, val armedAtMs: Long)
 
+    /**
+     * A block overlay we have started but have not yet seen reach the screen.
+     *
+     * `NudgeAccessibilityService.isOverlayActive` is set synchronously at `startActivity`, which is
+     * the right moment for "stop evaluating" but the WRONG moment for "the overlay is covering the
+     * app". Between those two moments the blocked app is still starting up underneath, and it goes
+     * on firing `TYPE_WINDOW_STATE_CHANGED` for its own windows. See [isGenuineBypass].
+     */
+    data class PendingOverlay(
+        val packageName: String,
+        val launchedAtMs: Long,
+        val windowShown: Boolean
+    )
+
+    /**
+     * Fail-safe only: how long an overlay may stay "pending" before its target's window events are
+     * allowed to mean a bypass again.
+     *
+     * The real end of pending is evidence, `BlockOverlayActivity.onResume` reporting that it is on
+     * screen. This covers the case where that never happens at all, a `startActivity` the platform
+     * dropped, which would otherwise leave the service permanently unable to recognise a bypass.
+     *
+     * Measured on the Pixel 3 from `picker-subflow-keeps-sitting.jsonl`: the blocked app's first
+     * window event to the overlay's own window is 804ms. Three seconds is comfortably clear of that
+     * on a colder or slower device, and being generous here is the safe direction: a missed bypass
+     * self-corrects (the overlay's own `onStop` finishes it and clears the flag), while a bypass
+     * recognised too eagerly is the duplicate-launch bug this constant exists to end.
+     */
+    const val OVERLAY_SETTLE_MS = 3_000L
+
     /** Why a launch was allowed or refused. Named so logcat can say which condition fired. */
     enum class Decision {
         /** The decision is still about the app in front. Show it. */
@@ -75,7 +106,13 @@ object BlockLaunchGate {
         DROP_FOREGROUND_MOVED,
 
         /** A walk-away is mid-transition; this app's window is leaving, not arriving. */
-        DROP_WALK_AWAY_IN_FLIGHT
+        DROP_WALK_AWAY_IN_FLIGHT,
+
+        /**
+         * An overlay for this same app is already launched and still on its way to the screen.
+         * Showing a second one would log a second block for a single entry.
+         */
+        DROP_ALREADY_PENDING
     }
 
     /**
@@ -95,8 +132,17 @@ object BlockLaunchGate {
         foreground: String?,
         walkAway: WalkAway?,
         nowMs: Long,
-        transitionMs: Long = WALK_AWAY_TRANSITION_MS
+        transitionMs: Long = WALK_AWAY_TRANSITION_MS,
+        pendingOverlay: PendingOverlay? = null
     ): Decision = when {
+        // Asked before anything else because it is about THIS launch being redundant rather than
+        // about where the user is. Two overlays for one entry into an app write two `UsageEvent`
+        // rows and inflate the count the home screen shows.
+        pendingOverlay != null &&
+            !pendingOverlay.windowShown &&
+            pendingOverlay.packageName == target &&
+            nowMs - pendingOverlay.launchedAtMs < OVERLAY_SETTLE_MS -> Decision.DROP_ALREADY_PENDING
+
         // Asked FIRST because it is the more specific answer, and because in the #26 case the
         // foreground check cannot help: the blocked app really is in front at that instant.
         walkAway != null &&
@@ -149,6 +195,66 @@ object BlockLaunchGate {
      * A signal that carries no claim about what is in front (a system surface, a keyboard, a scroll)
      * leaves the window exactly as it was, for the same reason it leaves the foreground alone.
      */
+    /**
+     * Is this event really the user getting BACK INTO the blocked app past a live overlay, or is it
+     * the blocked app still settling underneath an overlay that has not arrived yet?
+     *
+     * ## The duplicate block, measured
+     *
+     * `NudgeAccessibilityService` treats "a real app window came forward while an overlay is up" as
+     * proof the overlay was bypassed: the user tapped the app's icon or picked it out of Recents,
+     * orphaning the overlay in its own task. It clears the flag and re-evaluates, which is right for
+     * that case and wrong for the far more common one.
+     *
+     * `picker-subflow-keeps-sitting.jsonl`, a Pixel 3 capture committed since v1.16.0, times a
+     * single clean launch of Google Keep under a DELAY rule:
+     *
+     * ```
+     *  1252ms  keep   android.widget.FrameLayout                     <- evaluate, launch the overlay
+     *  1445ms  nudge  android.widget.FrameLayout                     <- the overlay TASK's first window
+     *  1736ms  keep   ...keep.ui.activities.BrowseActivity           <- keep STILL starting up
+     *  2056ms  nudge  ...overlay.BlockOverlayActivity                <- the overlay actually on screen
+     * ```
+     *
+     * The event at 1736ms is Keep's own second window, 320ms before the overlay reaches the screen.
+     * It is a `WINDOW_STATE_CHANGED` for a real `AppWindow`, so the old rule called it a bypass,
+     * cleared the flag and re-evaluated. The 1000ms debounce did not absorb it either, because the
+     * overlay's task window at 1445ms had already moved `lastPackage` to Nudge's own package. Result:
+     * a second decision, a second `UsageEvent`, a second `startActivity`, for one entry into one app.
+     * Device QA measured `wasBlocked` rising by 25 across 10 launches.
+     *
+     * The fix is not a longer debounce. It is that an overlay we have STARTED is not yet an overlay
+     * the user can be past. Until it reports itself on screen, its target's own window events are the
+     * app being covered, and nothing else. A different app coming forward in that gap is still a real
+     * foreground change and still counts.
+     *
+     * @param pending the overlay we have launched and not yet seen, or null when none is in flight.
+     */
+    fun isGenuineBypass(
+        eventType: A11yEventType,
+        signal: ForegroundSignal,
+        pending: PendingOverlay?,
+        nowMs: Long,
+        settleMs: Long = OVERLAY_SETTLE_MS
+    ): Boolean {
+        // Unchanged from the rule this replaces: only a new activity in front can be a bypass, and
+        // only a real application window. Our own overlay, the launcher, a keyboard and a
+        // picture-in-picture bubble are excluded by construction rather than by package set.
+        if (eventType != A11yEventType.WINDOW_STATE_CHANGED) return false
+        if (signal !is ForegroundSignal.AppWindow) return false
+
+        if (pending == null) return true
+        if (pending.windowShown) return true
+        // Some OTHER app really did come forward. That is a foreground change whatever our overlay
+        // is doing, and suppressing it would swallow a genuine switch.
+        if (signal.packageName != pending.packageName) return true
+        return nowMs - pending.launchedAtMs >= settleMs
+    }
+
+    /** The pending overlay after [signal], which only the overlay reporting itself can resolve. */
+    fun pendingOverlayAfter(pending: PendingOverlay?, overlayShown: Boolean): PendingOverlay? =
+        if (pending != null && overlayShown) pending.copy(windowShown = true) else pending
+
     fun walkAwayAfter(signal: ForegroundSignal, pending: WalkAway?): WalkAway? {
         if (pending == null) return null
         return when (signal) {

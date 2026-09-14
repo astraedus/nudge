@@ -395,36 +395,13 @@ class NudgeAccessibilityService : AccessibilityService() {
                 className?.startsWith(ownPackageName) == true
         }
 
-        /**
-         * True when a foreground event means the block overlay has been BYPASSED and the flag is
-         * stale. The overlay lives in its own task ([BlockOverlayActivity] is singleInstance with an
-         * empty taskAffinity), so the user can bring the blocked app's task back to the foreground
-         * directly — e.g. tapping the app icon or Recents after leaving the block screen — which
-         * orphans the overlay in a background task while [isOverlayActive] is still true. When that
-         * happens a real (non-own, non-system) app fires a genuine foreground switch
-         * (TYPE_WINDOW_STATE_CHANGED). We must treat the overlay as gone and re-evaluate so the block
-         * re-asserts, instead of swallowing the event as "overlay is handling it".
-         *
-         * Restricted to TYPE_WINDOW_STATE_CHANGED (a true foreground change): content-change churn
-         * from the app underneath a genuinely-live overlay must NOT clear the flag. Everything that
-         * is not a real application window is excluded by taking the already-computed
-         * [ForegroundSignal] rather than re-deriving the answer from package sets — our own overlay,
-         * the launcher, systemui, a keyboard and a picture-in-picture bubble are all excluded by
-         * construction, and cannot drift from how the rest of this file classifies them.
-         *
-         * Known limitation, unchanged by this refactor and tracked as backlog F6: a re-entry that
-         * delivers ONLY a content change under a stale flag still takes the `else` branch. Fixing it
-         * means hoisting the issue-#7 active-window verification above this gate, which changes the
-         * cost profile of the hottest path while an overlay is up.
-         */
-        internal fun isOverlayBypassedByForeground(
-            eventType: A11yEventType,
-            signal: ForegroundSignal
-        ): Boolean {
-            return eventType == A11yEventType.WINDOW_STATE_CHANGED &&
-                signal is ForegroundSignal.AppWindow
-        }
-
+        // The overlay-bypass rule used to live here as `isOverlayBypassedByForeground`, and it is
+        // now `BlockLaunchGate.isGenuineBypass`, which needs state this companion cannot hold: it
+        // has to know whether the overlay we launched has actually reached the screen yet. Keeping
+        // a second copy of the rule here, even an unused one, is the "two answers to one question"
+        // shape that produced #5, #7, #19 and #28. `PassthroughTest` and `TransientWindowTest` pin
+        // the surviving one; with no pending overlay it reduces to exactly the old rule, so every
+        // case those suites cover still reads the same.
     }
 
     /** Cached once: our own user-visible app label, used to anchor escape-screen detection. */
@@ -971,10 +948,16 @@ class NudgeAccessibilityService : AccessibilityService() {
             // (Same-package trailing events within DEBOUNCE_MS are still absorbed downstream, so a
             // genuinely-live overlay doesn't re-fire.) Everything else — the overlay's own window,
             // system windows, content-change churn under a live overlay — is swallowed as before.
-            if (isOverlayBypassedByForeground(record.type, signal)) {
+            // ...but only once the overlay is genuinely ON SCREEN. Between `startActivity` and the
+            // overlay's own `onResume` the blocked app is still starting up underneath and keeps
+            // firing window events of its own; reading one of those as a bypass re-evaluated the
+            // app and launched a SECOND overlay, writing a second `wasBlocked` row for one entry.
+            // Device QA measured `wasBlocked` +25 across 10 launches. See
+            // [BlockLaunchGate.isGenuineBypass] for the captured timings.
+            if (entryPoint.blockLaunchGuard().isGenuineBypass(record.type, signal)) {
                 markOverlayInactive()
                 entryPoint.nudgeLogger().i(
-                    "block overlay bypassed by foreground switch — re-evaluating package=$packageName"
+                    "block overlay bypassed by foreground switch, re-evaluating package=$packageName"
                 )
             } else {
                 clearOverlays(applicationContext.packageName, "block_overlay_active")
@@ -1824,6 +1807,11 @@ class NudgeAccessibilityService : AccessibilityService() {
         // authoritative even if the singleInstance activity is re-delivered via onNewIntent
         // (which never re-runs onCreate).
         markOverlayActive(attributedPackage)
+        // ...and record that it is only STARTED, not yet on screen. Those are different facts and
+        // conflating them is what produced two blocks for one app entry: see
+        // [BlockLaunchGate.isGenuineBypass]. Keyed on the TARGET, because that is the package whose
+        // trailing window events must not be mistaken for the user getting past the overlay.
+        guard.onOverlayLaunched(targetPackage)
         applicationContext.startActivity(overlayIntent)
         return true
     }

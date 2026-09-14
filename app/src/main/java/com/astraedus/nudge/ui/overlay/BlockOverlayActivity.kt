@@ -323,6 +323,22 @@ class BlockOverlayActivity : ComponentActivity() {
      * [isFinishing] guard: [onTimerComplete] / [navigateHome] / the emergency pass already finished us.
      * [isChangingConfigurations] guard: a rotation must NOT dismiss a live block.
      */
+    /**
+     * The overlay is now genuinely ON SCREEN, which is a different fact from "we started it".
+     *
+     * The service sets `isOverlayActive` at `startActivity`, hundreds of milliseconds before this
+     * runs, and in that gap the blocked app is still starting up and still firing window events of
+     * its own. Those were being read as the user getting PAST the block, which re-evaluated the app
+     * and launched a second overlay, writing a second `wasBlocked` row for one entry. Reporting from
+     * here is the only reliable evidence of when the gap closes: the accessibility stream cannot
+     * supply it, because the overlay task's first window arrives ~600ms early carrying a framework
+     * class name. See [com.astraedus.nudge.domain.block.BlockLaunchGate.isGenuineBypass].
+     */
+    override fun onResume() {
+        super.onResume()
+        blockLaunchGuard.onOverlayShown()
+    }
+
     override fun onStop() {
         super.onStop()
         if (!isFinishing && !isChangingConfigurations) {
@@ -453,5 +469,8 @@ class BlockOverlayActivity : ComponentActivity() {
         super.onDestroy()
         mainHandler.removeCallbacksAndMessages(null)
         NudgeAccessibilityService.markOverlayInactive()
+        // Nothing is pending once we are gone. Leaving a stale pending overlay behind would let it
+        // suppress a genuine bypass for the rest of its settle window.
+        blockLaunchGuard.onOverlayDismissed()
     }
 }

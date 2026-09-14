@@ -2,6 +2,7 @@ package com.astraedus.nudge.service
 
 import android.os.SystemClock
 import com.astraedus.nudge.domain.block.BlockLaunchGate
+import com.astraedus.nudge.domain.events.A11yEventType
 import com.astraedus.nudge.domain.events.ForegroundSignal
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -42,6 +43,20 @@ class BlockLaunchGuard @Inject constructor() {
     private var walkAway: BlockLaunchGate.WalkAway? = null
 
     /**
+     * The overlay we have started and not yet seen on screen.
+     *
+     * Resolved by evidence from the overlay itself ([onOverlayShown], called from its `onResume`)
+     * rather than by watching for a Nudge window in the accessibility stream. The stream cannot tell
+     * us: the overlay TASK's first window arrives ~600ms before the overlay does and carries a
+     * framework class name, and `className.startsWith(ownPackageName)` cannot separate them either,
+     * because this app's applicationId (`dev.astraedus.nudge`) is not the prefix of its class names
+     * (`com.astraedus.nudge.*`). The activity knows when it is on screen; asking it is both simpler
+     * and correct.
+     */
+    @Volatile
+    private var pendingOverlay: BlockLaunchGate.PendingOverlay? = null
+
+    /**
      * Apply the ONE classification the service made for this event.
      *
      * Called from the same place, and only from the same place, that feeds the sitting model, so
@@ -67,13 +82,50 @@ class BlockLaunchGuard @Inject constructor() {
         walkAway = BlockLaunchGate.WalkAway(packageName, nowMs())
     }
 
+    /** A block overlay for [packageName] has been started, and has not reached the screen yet. */
+    fun onOverlayLaunched(packageName: String) {
+        pendingOverlay = BlockLaunchGate.PendingOverlay(
+            packageName = packageName,
+            launchedAtMs = nowMs(),
+            windowShown = false
+        )
+    }
+
+    /**
+     * The block overlay is on screen (reported from `BlockOverlayActivity.onResume`).
+     *
+     * Only from here on can a window event for the blocked app mean the user got PAST the overlay;
+     * before it, the app is simply still starting up underneath one that has not arrived.
+     */
+    fun onOverlayShown() {
+        pendingOverlay = BlockLaunchGate.pendingOverlayAfter(pendingOverlay, overlayShown = true)
+    }
+
+    /** The overlay is gone; there is nothing pending to protect. */
+    fun onOverlayDismissed() {
+        pendingOverlay = null
+    }
+
+    /**
+     * Is this event the user getting back past a live overlay, or the blocked app still settling
+     * under one that has not appeared? See [BlockLaunchGate.isGenuineBypass].
+     */
+    fun isGenuineBypass(eventType: A11yEventType, signal: ForegroundSignal): Boolean =
+        BlockLaunchGate.isGenuineBypass(
+            eventType = eventType,
+            signal = signal,
+            pending = pendingOverlay,
+            nowMs = nowMs()
+        )
+
     /** Whether a block overlay for [targetPackage] may still be shown. */
     fun decide(targetPackage: String): BlockLaunchGate.Decision =
         BlockLaunchGate.decide(
             target = targetPackage,
             foreground = foregroundPackage,
             walkAway = walkAway,
-            nowMs = nowMs()
+            nowMs = nowMs(),
+            pendingOverlay = pendingOverlay
         )
 
     /**
@@ -93,5 +145,6 @@ class BlockLaunchGuard @Inject constructor() {
     fun reset() {
         foregroundPackage = null
         walkAway = null
+        pendingOverlay = null
     }
 }

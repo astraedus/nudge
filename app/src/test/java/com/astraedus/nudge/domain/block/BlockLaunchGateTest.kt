@@ -2,8 +2,11 @@ package com.astraedus.nudge.domain.block
 
 import com.astraedus.nudge.domain.block.BlockLaunchGate.Decision
 import com.astraedus.nudge.domain.block.BlockLaunchGate.WalkAway
+import com.astraedus.nudge.domain.events.A11yEventType
 import com.astraedus.nudge.domain.events.ForegroundSignal
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Test
@@ -157,6 +160,116 @@ class BlockLaunchGateTest {
             Decision.DROP_WALK_AWAY_IN_FLIGHT,
             BlockLaunchGate.decide(blocked, foreground = launcher, walkAway = walkAway, nowMs = 1_100)
         )
+    }
+
+    // --- the pending-overlay condition (the duplicate block) ------------------------------------
+
+    private fun pending(pkg: String = blocked, at: Long = 1_000, shown: Boolean = false) =
+        BlockLaunchGate.PendingOverlay(pkg, at, shown)
+
+    @Test
+    fun `a second launch for an overlay already on its way is refused`() {
+        assertEquals(
+            Decision.DROP_ALREADY_PENDING,
+            BlockLaunchGate.decide(blocked, blocked, null, nowMs = 1_100, pendingOverlay = pending())
+        )
+    }
+
+    @Test
+    fun `once the overlay is on screen a fresh launch is allowed again`() {
+        assertEquals(
+            "a re-block after the user gets past the overlay is a real, separate block",
+            Decision.LAUNCH,
+            BlockLaunchGate.decide(
+                blocked, blocked, null, nowMs = 1_100, pendingOverlay = pending(shown = true)
+            )
+        )
+    }
+
+    @Test
+    fun `a pending overlay for one app does not block a launch for another`() {
+        assertEquals(
+            Decision.LAUNCH,
+            BlockLaunchGate.decide(other, other, null, nowMs = 1_100, pendingOverlay = pending())
+        )
+    }
+
+    @Test
+    fun `an overlay that never appears stops blocking launches once it goes stale`() {
+        assertEquals(
+            Decision.LAUNCH,
+            BlockLaunchGate.decide(
+                blocked, blocked, null,
+                nowMs = 1_000 + BlockLaunchGate.OVERLAY_SETTLE_MS,
+                pendingOverlay = pending()
+            )
+        )
+    }
+
+    // --- isGenuineBypass ------------------------------------------------------------------------
+
+    private fun bypass(
+        signal: ForegroundSignal,
+        pendingOverlay: BlockLaunchGate.PendingOverlay?,
+        nowMs: Long = 1_100,
+        eventType: A11yEventType = A11yEventType.WINDOW_STATE_CHANGED
+    ) = BlockLaunchGate.isGenuineBypass(eventType, signal, pendingOverlay, nowMs)
+
+    /** With nothing pending, the rule is exactly the one it replaces. */
+    @Test
+    fun `with no overlay pending the bypass rule is unchanged`() {
+        assertTrue(bypass(ForegroundSignal.AppWindow(blocked), null))
+        assertFalse(bypass(ForegroundSignal.OwnUi(nudge), null))
+        assertFalse(bypass(ForegroundSignal.SystemSurface("com.android.systemui"), null))
+        assertFalse(bypass(ForegroundSignal.Transient("com.google.android.inputmethod.latin"), null))
+        assertFalse(bypass(ForegroundSignal.PipOnly("com.google.android.youtube"), null))
+        assertFalse(
+            "only a new activity in front can be a bypass",
+            bypass(
+                ForegroundSignal.AppWindow(blocked), null,
+                eventType = A11yEventType.WINDOW_CONTENT_CHANGED
+            )
+        )
+    }
+
+    /** THE DUPLICATE BLOCK, in one assertion. */
+    @Test
+    fun `the blocked app's own window before the overlay arrives is not a bypass`() {
+        assertFalse(bypass(ForegroundSignal.AppWindow(blocked), pending()))
+    }
+
+    @Test
+    fun `the same event once the overlay is on screen is a bypass`() {
+        assertTrue(
+            "this is the case the rule exists for: the user really did get back into the app",
+            bypass(ForegroundSignal.AppWindow(blocked), pending(shown = true))
+        )
+    }
+
+    @Test
+    fun `a different app coming forward while the overlay launches is still a bypass`() {
+        assertTrue(
+            "suppressing this would swallow a genuine app switch for the whole settle window",
+            bypass(ForegroundSignal.AppWindow(other), pending())
+        )
+    }
+
+    @Test
+    fun `an overlay that never reaches the screen stops suppressing after the settle window`() {
+        assertFalse(
+            bypass(ForegroundSignal.AppWindow(blocked), pending(at = 0), nowMs = BlockLaunchGate.OVERLAY_SETTLE_MS - 1)
+        )
+        assertTrue(
+            bypass(ForegroundSignal.AppWindow(blocked), pending(at = 0), nowMs = BlockLaunchGate.OVERLAY_SETTLE_MS)
+        )
+    }
+
+    @Test
+    fun `only the overlay reporting itself resolves the pending state`() {
+        val p = pending()
+        assertSame(p, BlockLaunchGate.pendingOverlayAfter(p, overlayShown = false))
+        assertEquals(true, BlockLaunchGate.pendingOverlayAfter(p, overlayShown = true)?.windowShown)
+        assertNull(BlockLaunchGate.pendingOverlayAfter(null, overlayShown = true))
     }
 
     // --- foregroundAfter ------------------------------------------------------------------------

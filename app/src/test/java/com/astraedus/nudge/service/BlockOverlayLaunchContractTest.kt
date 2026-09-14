@@ -162,6 +162,48 @@ class BlockOverlayLaunchContractTest {
     }
 
     /**
+     * "Started" and "on screen" are different facts, and the whole duplicate-block bug was one
+     * field standing in for both. The launch records the first, the overlay's own `onResume`
+     * reports the second, and the bypass check is the only reader of the difference.
+     */
+    @Test
+    fun `the overlay reports when it actually reaches the screen`() {
+        assertTrue(
+            "the launch must record that an overlay is on its way but not yet visible",
+            launchHelper.contains("guard.onOverlayLaunched(targetPackage)")
+        )
+        val onResume = stripComments(
+            overlay.substringAfter("override fun onResume()").substringBefore("\n    }")
+        )
+        assertTrue(
+            "only the activity can say when it is on screen; the accessibility stream cannot, " +
+                "because the overlay task's first window arrives ahead of the overlay itself",
+            onResume.contains("blockLaunchGuard.onOverlayShown()")
+        )
+        assertTrue(
+            "and a destroyed overlay must stop suppressing bypasses",
+            stripComments(overlay).contains("blockLaunchGuard.onOverlayDismissed()")
+        )
+    }
+
+    /**
+     * The bypass rule must exist exactly once. It used to be a companion function on the service
+     * AND is now the gate's; keeping both would be two answers to one question, which is the shape
+     * that produced #5, #7, #19 and #28.
+     */
+    @Test
+    fun `the overlay-bypass rule lives in exactly one place`() {
+        assertFalse(
+            "the old companion copy of the bypass rule must be gone, not merely unused",
+            stripComments(service).contains("fun isOverlayBypassedByForeground(")
+        )
+        assertTrue(
+            "and the dispatch must ask the guard, which knows whether the overlay is on screen yet",
+            stripComments(service).contains("blockLaunchGuard().isGenuineBypass(")
+        )
+    }
+
+    /**
      * The gate's state comes from the ONE classification, at the one place that applies it. Feeding
      * it from the branches that happen to care is the shape that produced #5, #7, #19 and #28.
      */
