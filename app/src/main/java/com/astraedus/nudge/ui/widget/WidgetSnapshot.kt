@@ -19,10 +19,12 @@ sealed interface WidgetSnapshot {
     /**
      * "Today at a glance": the three numbers the app is about.
      *
-     * The counts are the RAW day counts the Home dashboard's own tiles show, not the de-duplicated
-     * `overlaysFromAllTimeCounts` figure. A widget whose number disagrees with the tile two taps
-     * away is a bug report, and "which apps pull hardest" already has a screen that does the
-     * careful version. Agreement with the surface the user compares against wins here.
+     * [blocked] is the same day count the Home dashboard's Blocked tile shows, read through the
+     * same query: confrontations the user was SHOWN, each counted once. A widget whose number
+     * disagrees with the tile two taps away is a bug report — which is why this used to be
+     * deliberately RAW, to match a tile that was itself wrong. Both now read
+     * `UsageRepository.getShownCountForDay`, so agreement and correctness are the same thing.
+     * [walkedAway] is its complement, not a subset of it.
      */
     data class Today(
         val screenTime: String,

@@ -1,5 +1,6 @@
 package com.astraedus.nudge.ui.screens.stats
 
+import com.astraedus.nudge.data.db.BlockHistoryFixture
 import com.astraedus.nudge.data.db.entity.UsageEvent
 import com.astraedus.nudge.data.repository.InstalledAppsRepository
 import com.astraedus.nudge.data.repository.UsageRepository
@@ -37,8 +38,7 @@ class InterventionsViewModelTest {
     private lateinit var installedAppsRepository: InstalledAppsRepository
 
     private val events = MutableStateFlow<List<UsageEvent>>(emptyList())
-    private val allTimeBlocked = MutableStateFlow(0)
-    private val allTimeChangedMind = MutableStateFlow(0)
+    private val allTimeShown = MutableStateFlow(0)
 
     @Before
     fun setUp() {
@@ -47,8 +47,7 @@ class InterventionsViewModelTest {
         installedAppsRepository = mockk(relaxed = true)
 
         every { usageRepository.getEventsSince(any()) } returns events
-        every { usageRepository.getAllTimeBlockedCount() } returns allTimeBlocked
-        every { usageRepository.getAllTimeChangedMindCount() } returns allTimeChangedMind
+        every { usageRepository.getAllTimeShownCount() } returns allTimeShown
         coEvery { installedAppsRepository.resolveAppName(any()) } answers { firstArg() }
         coEvery { installedAppsRepository.resolveIcon(any()) } returns null
     }
@@ -59,19 +58,27 @@ class InterventionsViewModelTest {
     }
 
     @Test
-    fun `the all-time headline subtracts the double-counted walk-away rows`() = runTest(dispatcher) {
-        allTimeBlocked.value = 50
-        allTimeChangedMind.value = 12
+    fun `the all-time headline counts confrontations, not the rows behind them`() =
+        runTest(dispatcher) {
+            val history = BlockHistoryFixture.day(dayStartMs = 1_700_000_000_000L, shown = 38, walkAways = 12)
+            allTimeShown.value = BlockHistoryFixture.shownCount(history)
 
-        val state = viewModel().uiState.first { !it.isLoading }
+            val state = viewModel().uiState.first { !it.isLoading }
 
-        assertEquals(38, state.allTimeTotal)
-    }
+            assertEquals(50, state.allTimeTotal)
+            // What a raw `wasBlocked` count of the same history would have shown.
+            assertEquals(62, BlockHistoryFixture.blockedRowCount(history))
+        }
 
+    /**
+     * An empty history renders 0, not an empty space or a stale number. (The old arithmetic
+     * version of this correction needed a guard here against a negative headline; counting the
+     * rows that ARE confrontations cannot go below zero, which is half the reason it replaced
+     * the subtraction.)
+     */
     @Test
-    fun `an inconsistent all-time pair still cannot render a negative headline`() = runTest(dispatcher) {
-        allTimeBlocked.value = 3
-        allTimeChangedMind.value = 9
+    fun `a device with no history reads zero`() = runTest(dispatcher) {
+        allTimeShown.value = 0
 
         val state = viewModel().uiState.first { !it.isLoading }
 

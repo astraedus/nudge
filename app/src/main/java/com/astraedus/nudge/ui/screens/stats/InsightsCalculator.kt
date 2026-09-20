@@ -1,6 +1,7 @@
 package com.astraedus.nudge.ui.screens.stats
 
 import com.astraedus.nudge.data.db.entity.UsageEvent
+import com.astraedus.nudge.data.db.entity.isShownConfrontation
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -23,8 +24,9 @@ import kotlin.math.roundToInt
  * a SECOND event is written for the same confrontation
  * (`wasBlocked=true, userChangedMind=true`). ALLOW decisions write `wasBlocked=false`.
  *
- * So `wasBlocked` alone double-counts a walk-away, and this calculator never uses it as
- * a denominator. Instead:
+ * So `wasBlocked` alone double-counts a walk-away, and nothing in the app may use it as
+ * a count. `UsageEvent.isShownConfrontation` is the one predicate that says so, and the
+ * `UsageEventDao` count queries are its SQL mirror. Here:
  *
  * ```
  * shown     = wasBlocked && !userChangedMind      (the overlay went up)
@@ -323,14 +325,6 @@ class InsightsCalculator @Inject constructor() {
     // -------------------------------------------------------------- helpers
 
     /**
-     * All-time overlays from the two all-time DAO counts. `wasBlocked` is true on the
-     * walk-away row too, so the raw blocked count double-counts every confrontation the
-     * user walked away from.
-     */
-    fun overlaysFromAllTimeCounts(blockedCount: Int, changedMindCount: Int): Int =
-        (blockedCount - changedMindCount).coerceAtLeast(0)
-
-    /**
      * Human label for a package. [resolvedName] is what PackageManager returned, which is
      * the package name itself when the app is no longer installed — in that case fall back
      * to a readable last segment ("com.zhiliaoapp.musically" -> "Musically") rather than
@@ -452,7 +446,9 @@ class InsightsCalculator @Inject constructor() {
          */
         internal fun classify(event: UsageEvent): EventKind? = when {
             event.userChangedMind -> EventKind.WALK_AWAY
-            event.wasBlocked -> EventKind.SHOWN
+            // The one predicate, shared with the DAO's count queries so a number on this screen
+            // and the same number on a tile cannot come from two different definitions.
+            event.isShownConfrontation -> EventKind.SHOWN
             else -> null
         }
 

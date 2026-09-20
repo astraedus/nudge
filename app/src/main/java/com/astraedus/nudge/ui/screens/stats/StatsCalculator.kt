@@ -1,6 +1,7 @@
 package com.astraedus.nudge.ui.screens.stats
 
 import com.astraedus.nudge.data.db.entity.UsageEvent
+import com.astraedus.nudge.data.db.entity.isShownConfrontation
 import com.astraedus.nudge.domain.engine.TimeTracker
 import com.astraedus.nudge.ui.screens.stats.charts.DayData
 import com.astraedus.nudge.ui.screens.stats.charts.TrendDay
@@ -52,7 +53,10 @@ class StatsCalculator @Inject constructor(
             val dayEnd = timeTracker.startOfDayDaysBefore(referenceDayStartMs, i - 1)
             val dayEvents = weekEvents.filter { it.timestamp in dayStart until dayEnd }
 
-            val blockedCount = dayEvents.count { it.wasBlocked }
+            // A walk-away writes a SECOND `wasBlocked` row for the same confrontation. Counting
+            // that column raw drew every walk-away in BOTH series at once: one overlay the user
+            // turned away from once was worth "blocked 2, walked away 1" on the same bar.
+            val blockedCount = dayEvents.count { it.isShownConfrontation }
             val walkedAwayCount = dayEvents.count { it.userChangedMind }
             val label = getDayLabel(dayStart)
 
@@ -77,7 +81,7 @@ class StatsCalculator @Inject constructor(
             val dayEnd = timeTracker.startOfDayDaysBefore(referenceDayStartMs, i - 1)
             val dayEvents = weekEvents
                 .filter { it.packageName == packageName && it.timestamp in dayStart until dayEnd }
-            val blockedCount = dayEvents.count { it.wasBlocked }
+            val blockedCount = dayEvents.count { it.isShownConfrontation }
             val walkedAwayCount = dayEvents.count { it.userChangedMind }
             val label = getDayLabel(dayStart)
             result.add(TrendDay(label = label, blockedCount = blockedCount, walkedAwayCount = walkedAwayCount))
@@ -99,7 +103,7 @@ class StatsCalculator @Inject constructor(
             val dayEvents = weekEvents.filter { it.timestamp in dayStart until dayEnd }
 
             val hadWalkedAway = dayEvents.any { it.userChangedMind }
-            val hadBlocked = dayEvents.any { it.wasBlocked }
+            val hadBlocked = dayEvents.any { it.isShownConfrontation }
 
             if (hadWalkedAway || hadBlocked) {
                 streak++

@@ -65,8 +65,14 @@ class HomeChartsBuilderTest {
         )
     }
 
+    /**
+     * A walk-away row carries `wasBlocked = true` as well, so it is the SAME confrontation the
+     * overlay-shown row already recorded. It belongs in the walked-away series and nowhere else:
+     * this test used to expect it in both, which is the dashboard reading a single walk-away as
+     * an extra block (fixed in 1.17.2, reported as "the Blocked tile goes up by 2").
+     */
     @Test
-    fun `nudge totals count blocks and walk-aways across the whole window`() {
+    fun `a walk-away is charted as a walk-away, never as an extra block`() {
         val todayStart = timeTracker.startOfToday()
         val events = listOf(
             event(todayStart + 1_000, wasBlocked = true),
@@ -77,9 +83,10 @@ class HomeChartsBuilderTest {
 
         val charts = builder.build(List(7) { 0L }, events, todayStart)
 
-        assertEquals(3, charts.weekBlocked)
+        assertEquals("two overlays shown, not three", 2, charts.weekBlocked)
         assertEquals(2, charts.weekWalkedAway)
-        assertEquals(2, charts.weeklyTrend.last().blockedCount)
+        assertEquals("today: one shown, one walked away", 1, charts.weeklyTrend.last().blockedCount)
+        assertEquals(1, charts.weeklyTrend.last().walkedAwayCount)
         assertEquals(1, charts.weeklyTrend.first().walkedAwayCount)
     }
 

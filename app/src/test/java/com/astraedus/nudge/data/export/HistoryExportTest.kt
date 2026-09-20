@@ -2,6 +2,7 @@ package com.astraedus.nudge.data.export
 
 import com.astraedus.nudge.data.db.entity.BlockRule
 import com.astraedus.nudge.data.db.entity.UsageEvent
+import com.astraedus.nudge.data.db.entity.isShownConfrontation
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -371,8 +372,9 @@ class HistoryExportTest {
 
     /**
      * The point of the whole feature: the counts behind the home tiles are reproduced exactly from
-     * a restored file. These are the same predicates as `UsageEventDao.getAllTimeBlockedCount` /
-     * `getAllTimeChangedMindCount`.
+     * a restored file. Both rows of a walk-away have to come back -- the tile predicate
+     * (`UsageEventDao.getAllTimeShownCount`, checked last) is only right if the raw rows it reads
+     * are intact, so the raw counts are asserted too.
      */
     @Test
     fun `blocked and walked-away counts survive the round trip`() {
@@ -391,6 +393,9 @@ class HistoryExportTest {
         assertEquals(sourceWalkAways, restored.count { it.userChangedMind })
         assertEquals(26, restored.count { it.wasBlocked })
         assertEquals(7, restored.count { it.userChangedMind })
+        // What the home tile shows for this file: 26 rows carry `wasBlocked`, 7 of them are the
+        // walk-away row, so the tile reads 19 -- never 26.
+        assertEquals(19, restored.count { it.isShownConfrontation })
     }
 
     @Test

@@ -4,6 +4,7 @@ import androidx.compose.runtime.Immutable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.astraedus.nudge.data.db.entity.UsageEvent
+import com.astraedus.nudge.data.db.entity.isShownConfrontation
 import com.astraedus.nudge.data.repository.InstalledAppsRepository
 import com.astraedus.nudge.data.repository.ScreenTimeProvider
 import com.astraedus.nudge.data.repository.UsageRepository
@@ -220,7 +221,9 @@ class StatsViewModel @Inject constructor(
             weekRangeLabel = StatsDateLabels.range(loadedWeekStart, loadedWeekEnd, today),
             canGoForward = selection.canGoForward(today),
             weekTotalFormatted = timeTracker.formatDuration(weeklyTotals.sum()),
-            selectedDayBlocked = selectedDayEvents.count { it.wasBlocked },
+            // Confrontations shown, not rows written: the walk-away row below carries
+            // `wasBlocked` too, and counting it here would show every walk-away twice.
+            selectedDayBlocked = selectedDayEvents.count { it.isShownConfrontation },
             selectedDayWalkedAway = selectedDayEvents.count { it.userChangedMind }
         )
     }

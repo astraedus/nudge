@@ -5,6 +5,7 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.astraedus.nudge.data.db.entity.UsageEvent
+import com.astraedus.nudge.data.db.entity.isShownConfrontation
 import com.astraedus.nudge.data.repository.InstalledAppsRepository
 import com.astraedus.nudge.data.repository.ScreenTimeProvider
 import com.astraedus.nudge.data.repository.UsageRepository
@@ -169,7 +170,7 @@ class AppDetailViewModel @Inject constructor(
         val selectedDayEvents = appWeekEvents.filter { it.timestamp in dayStartMs until dayEndMs }
 
         val modeBreakdown = appAllEvents
-            .filter { it.wasBlocked && it.blockMode != null }
+            .filter { it.isShownConfrontation && it.blockMode != null }
             .groupBy { it.blockMode!! }
             .mapValues { it.value.size }
 
@@ -184,9 +185,9 @@ class AppDetailViewModel @Inject constructor(
             weeklyData = statsCalculator.buildWeeklyDataFromTotals(weeklyTotals, weekEndStartMs),
             hourlyMs = hourlyMs,
             trendData = statsCalculator.buildAppTrendData(weekEvents, packageName, weekEndStartMs),
-            blockedCountToday = selectedDayEvents.count { it.wasBlocked },
+            blockedCountToday = selectedDayEvents.count { it.isShownConfrontation },
             walkedAwayCountToday = selectedDayEvents.count { it.userChangedMind },
-            blockedCountTotal = appAllEvents.count { it.wasBlocked },
+            blockedCountTotal = appAllEvents.count { it.isShownConfrontation },
             walkedAwayCountTotal = appAllEvents.count { it.userChangedMind },
             blockModeBreakdown = modeBreakdown,
             isToday = isToday,

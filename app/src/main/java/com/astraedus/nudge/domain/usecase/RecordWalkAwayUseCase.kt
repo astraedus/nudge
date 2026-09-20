@@ -35,10 +35,11 @@ import javax.inject.Singleton
  *
  * [buildEvent] is pure and `internal` so the SHAPE of the row is pinned by a JVM test rather than
  * eyeballed on a device. That shape is load-bearing beyond this file: a walk-away row also carries
- * `wasBlocked = true`, so it is counted by BOTH the "Blocked" and "Walked Away" tiles, which is the
- * double-count that
- * [com.astraedus.nudge.ui.screens.stats.InsightsCalculator.overlaysFromAllTimeCounts] subtracts back
- * out. Change `wasBlocked` here and that correction silently starts under-reporting.
+ * `wasBlocked = true`, so it would be counted by BOTH the "Blocked" and "Walked Away" tiles if
+ * anything counted that column raw. Nothing does: every displayed "Blocked" number goes through
+ * [com.astraedus.nudge.data.db.entity.isShownConfrontation] or its SQL mirror in `UsageEventDao`,
+ * both of which exclude exactly this row. Change `wasBlocked` here and those counts silently start
+ * reporting walk-aways as blocks.
  */
 @Singleton
 class RecordWalkAwayUseCase @Inject constructor(

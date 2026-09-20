@@ -41,8 +41,21 @@ interface UsageEventDao {
     @Query("SELECT COUNT(*) FROM usage_events WHERE userChangedMind = 1 AND timestamp >= :since AND timestamp < :until")
     fun getChangedMindCount(since: Long, until: Long): Flow<Int>
 
-    @Query("SELECT COUNT(*) FROM usage_events WHERE wasBlocked = 1 AND timestamp >= :since AND timestamp < :until")
-    fun getBlockedCount(since: Long, until: Long): Flow<Int>
+    /**
+     * Confrontations the user was SHOWN in `[since, until)` — the number every "Blocked" surface
+     * displays.
+     *
+     * `AND userChangedMind = 0` is the SQL mirror of
+     * [com.astraedus.nudge.data.db.entity.isShownConfrontation], and it is the whole fix: a
+     * walk-away writes a second row carrying `wasBlocked = 1`, so counting that column alone
+     * reported every walk-away twice. There is deliberately no raw
+     * "count the `wasBlocked` rows" query left to call.
+     */
+    @Query(
+        "SELECT COUNT(*) FROM usage_events " +
+            "WHERE wasBlocked = 1 AND userChangedMind = 0 AND timestamp >= :since AND timestamp < :until"
+    )
+    fun getShownCount(since: Long, until: Long): Flow<Int>
 
     @Query("SELECT * FROM usage_events WHERE timestamp >= :since")
     fun getEventsSince(since: Long): Flow<List<UsageEvent>>
@@ -58,8 +71,9 @@ interface UsageEventDao {
     @Query("SELECT MAX(id) FROM usage_events")
     fun observeLatestEventId(): Flow<Long?>
 
-    @Query("SELECT COUNT(*) FROM usage_events WHERE wasBlocked = 1")
-    fun getAllTimeBlockedCount(): Flow<Int>
+    /** All-time confrontations shown. Same predicate as [getShownCount], no window. */
+    @Query("SELECT COUNT(*) FROM usage_events WHERE wasBlocked = 1 AND userChangedMind = 0")
+    fun getAllTimeShownCount(): Flow<Int>
 
     @Query("SELECT COUNT(*) FROM usage_events WHERE userChangedMind = 1")
     fun getAllTimeChangedMindCount(): Flow<Int>

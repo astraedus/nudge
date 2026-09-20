@@ -613,3 +613,41 @@ classified it as the app and ended the very arrival the overlay belongs to. The 
 ## The bench Pixel must carry a RELEASE-signed Nudge, never a plain debug build (2026-09-21)
 
 The #36 device QA hit `INSTALL_FAILED_UPDATE_INCOMPATIBLE` installing the CI-built `main-latest` dev APK: the installed v1.17.1 had been seeded from a local `assembleDebug` (generic Android debug key) while every CI artifact, release or rolling, is signed with the real release key. A signature mismatch cannot be flagged past; the tester had to `run-as`-export the rules, uninstall, reinstall and re-import, losing the device's usage history. The device now carries the release cert. Rule: seed the Pixel only from a CI APK (`gh release download main-latest` or a `v*` release), and when a debuggable build is genuinely needed, sign debug with the release key as the 2026-08-20 entry describes, so the next CI build still installs over it.
+
+## A correction that lives on ONE screen is a bug on every other screen (2026-09-21)
+
+Device QA on the 1.17.2 dev build: the home dashboard's Blocked tile rose by **2** per walk-away, reading
+210 all-time where the user had faced 181 confrontations. Nothing was miscounted: a walk-away legitimately
+writes TWO rows (the overlay-shown row plus `wasBlocked=1, userChangedMind=1`), and the tile faithfully
+counted rows. The Interventions screen, two taps away, read 181, because `InsightsCalculator` classified its
+rows and `overlaysFromAllTimeCounts` subtracted the duplicates back out.
+
+So the app had ONE quantity with TWO definitions, and the correct one was on the screen nobody opens first.
+It had also been seen before and written down as expected: `RecordWalkAwayUseCaseTest`'s KDoc recorded "the
+home screen read Blocked 9 / Walked Away 4 off exactly those rows" in August, and
+`docs/architecture/widgets.md` said the Today widget shows "the RAW day counts the Home tiles show" **on
+purpose**, to agree with the tile. Agreement with a wrong number is how a local bug becomes a global one.
+
+What generalises:
+
+- **A correction belongs at the source of the number, not on the screens that display it.** The fix is one
+  predicate, `UsageEvent.isShownConfrontation` (`wasBlocked && !userChangedMind`), with the DAO's count
+  queries as its SQL mirror (`AND userChangedMind = 0`), and the raw `getBlockedCount` /
+  `getAllTimeBlockedCount` readers DELETED so the old question cannot be asked. `blocked - changedMind`
+  arithmetic would have produced the same numbers today and needed re-remembering on every future screen,
+  and it under-reports the moment a walk-away row outlives its paired show row.
+- **"Deliberately raw, to match the other surface" is a smell, not a decision.** Two surfaces agreeing is
+  worth nothing on its own; what they must share is the QUERY. If a doc has to explain why a screen shows
+  the less correct number, that is the bug asking to be fixed.
+- **Fix the class, then grep for the rest of it.** The report was about the home tile. The same raw count
+  also drove the Today widget, the weekly trend bars (drawing each walk-away in BOTH series of one bar),
+  App Detail's per-day/total counts and its block-mode breakdown. Five surfaces, one predicate.
+- **When the bug is WHICH question a screen asks, only a source-level test can see it** (fourth sighting in
+  this repo). There is no SQLite on this test target, so `@Query` text is never executed by any JVM test;
+  `BlockedCountSemanticsContractTest` reads it as text, forbids a `COUNT` over `wasBlocked` without the
+  exclusion, and walks every file under `ui/` asserting none touches the raw column, discovered rather than
+  hand-listed so the sixth surface is covered the day it is written. The export path is explicitly excluded
+  and separately pinned: a BACKUP carries rows, not tiles, and both rows must survive a round trip.
+- **A test whose numbers encode the bug must be re-stated, not deleted.** `HomeChartsBuilderTest` asserted
+  `weekBlocked == 3` over a fixture containing one walk-away. It was green throughout, and it was the bug
+  written down as a contract.
