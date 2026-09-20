@@ -33,7 +33,12 @@ platforms — each of the site's *features* with its own gate mode, delay and bu
 - **Block YouTube by default, allow these channels** now works end to end. With the
   youtube.com rule blocking and a channel whitelist active, allowed channels' `/watch` and
   channel pages pass the network layer, everything else is gated by the site's own mode, and
-  the block page lists the allowed channels as links so the feature is actually usable.
+  the block page lists the allowed channels as links — ahead of the Escape Hatch, so nobody
+  burns their once-a-day pass reaching a channel they were never blocked from.
+  A **spent daily limit still closes the site**, allowed channels included: the limit
+  budgets how much of the site you get, the list decides what counts. Otherwise "an hour of
+  YouTube a day" would be unlimited for allowed channels, and the limit would only ever bite
+  the videos you had already asked for less of.
 - Quick-add chips for the seven platforms, and a "Trim the feeds" row in onboarding.
 - A grayscale quick toggle in the popup, gated by Commitment Lock like every other
   weakening.
