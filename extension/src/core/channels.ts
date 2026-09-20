@@ -705,7 +705,8 @@ function sameEntry(a: ChannelEntry, b: ChannelEntry): boolean {
  *  - Matching two SEPARATE entries means the user added the same channel twice by different
  *    routes; they merge into one (earliest `addedAt`) and the reason is `merged`.
  *
- * WHAT IT CANNOT DO, which is what makes it safe to run without a Commitment Lock challenge:
+ * WHAT IT CANNOT DO, which is why the Commitment Lock never has to challenge it (the gate is
+ * KEPT, not bypassed — see `handleChannelObserved` — it simply cannot fire):
  * it never ADDS a channel (no match means no change) and never DROPS one (a merge collapses
  * entries that all describe the SAME channel, and the survivor carries every identifier they
  * held between them). The set of channels the list covers is invariant, and that set — read
