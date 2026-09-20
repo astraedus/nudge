@@ -20,6 +20,7 @@
 import { appliedBlockMode, gateAppliesNow, siteRuleAppliesNow } from '../core/applies';
 import { ruleForHost, rulesForDomain, usageKeyForHost } from '../core/ruleResolver';
 import { evaluate } from '../core/blockEngine';
+import { enrichEntries, type ChannelObservation } from '../core/channels';
 import { remainingMs, tightestLimit } from '../core/budgets';
 import { extractDomain, normalizeUserInput } from '../core/domainMatcher';
 import * as pass from '../core/emergencyPass';
@@ -44,6 +45,7 @@ import {
 } from '../core/platforms';
 import type {
   BlockContext,
+  ChannelObservedResult,
   DashboardState,
   GrantResult,
   PopupState,
@@ -561,8 +563,97 @@ async function setGrayscale(
   return handleSave({ ...settings, rules }, challengeResponse, now);
 }
 
+/**
+ * Learn the identifier a stored channel entry is missing, from a page the user just watched.
+ *
+ * The decision is entirely `core/channels.enrichEntries` — this handler only finds the list,
+ * hands it the observation and persists whatever comes back. That split is the same one the
+ * channel verdict already uses: the worker owns storage and gating, `core/` owns meaning.
+ *
+ * ROUTED THROUGH `handleSave`, deliberately, rather than writing settings itself. That is
+ * what makes the DNR recompile, the schedule alarm and the accounting flush happen exactly
+ * as they do after a user edit — and learning an id is precisely the case that NEEDS the
+ * recompile, because `/channel/UC…` only gains its allow-rule when `dnr.ts` runs again.
+ *
+ * ON THE COMMITMENT LOCK: `handleSave`'s Strict Mode gate is kept, not bypassed, and it can
+ * never fire here. `strictMode.isWeakening` compares the two channel lists per identifier
+ * (`channelMatches`, either axis), and an enrichment provably preserves that set: it never
+ * adds a channel and never drops one, it only fills a null axis or merges two rows that
+ * describe the SAME channel. Pinned by "it is not a weakening in either list mode" in
+ * tests/core/channels.test.ts. Keeping the gate also means the failure mode, if that ever
+ * stopped being true, is a refused save — a no-op — rather than a hole in the lock.
+ */
+async function handleChannelObserved(
+  observation: ChannelObservation,
+  now: Date,
+): Promise<ChannelObservedResult> {
+  const settings = await loadSettings();
+  // The observation can only have come from a YouTube page, and the channel list lives on
+  // that site's rule. Resolved with `ruleForHost` so a rule stored as "youtube.com" is found
+  // the same way every other consumer finds it, subdomains included.
+  const rule = ruleForHost(settings.rules, 'youtube.com');
+  const features = rule?.features ?? null;
+  const youtube = features?.youtube;
+  if (rule === null || features === null || youtube === undefined) {
+    return { ok: true, changed: false, reason: 'no-rule' };
+  }
+
+  const enriched = enrichEntries(youtube.channels, observation);
+  if (!enriched.changed) {
+    if (enriched.reason === 'contradiction') {
+      // Worth saying out loud: the page named a channel that disagrees with a stored entry
+      // on an axis they share, so either YouTube served two channels on one page or our
+      // detection is wrong. Both are bugs, and both are invisible without this line.
+      console.warn('[nudge] channel observation contradicts a stored entry, ignored', observation);
+    }
+    return { ok: true, changed: false, reason: enriched.reason };
+  }
+
+  const rules = settings.rules.map((candidate) =>
+    candidate.id === rule.id
+      ? {
+          ...candidate,
+          features: { ...features, youtube: { ...youtube, channels: enriched.entries } },
+        }
+      : candidate,
+  );
+
+  const saved = await handleSave({ ...settings, rules }, undefined, now);
+  return {
+    ok: saved.ok,
+    changed: saved.ok,
+    reason: saved.ok ? enriched.reason : 'not-saved',
+  };
+}
+
+/**
+ * Close the tab a message came from.
+ *
+ * The tab id comes from the SENDER and from nowhere else: a page gets to close ITSELF, and
+ * cannot name someone else's tab. `sender.tab` is undefined for a message from the popup,
+ * the dashboard or the worker, which is a refusal rather than an error.
+ */
+async function closeSenderTab(sender: chrome.runtime.MessageSender | undefined): Promise<{
+  ok: boolean;
+}> {
+  const tabId = sender?.tab?.id;
+  if (tabId === undefined) return { ok: false };
+  try {
+    await chrome.tabs.remove(tabId);
+    return { ok: true };
+  } catch {
+    // The tab can already be gone (the user closed it, or a navigation raced us). Nothing
+    // to recover, and the caller has its own fallback.
+    return { ok: false };
+  }
+}
+
 /** Dispatch one request. Throwing here would hang the caller, so it never throws. */
-export async function handleRequest(request: Request, now: Date = new Date()): Promise<unknown> {
+export async function handleRequest(
+  request: Request,
+  now: Date = new Date(),
+  sender?: chrome.runtime.MessageSender,
+): Promise<unknown> {
   switch (request.type) {
     case 'GET_BLOCK_CONTEXT': {
       const context = await buildBlockContext(request.target, now);
@@ -603,6 +694,17 @@ export async function handleRequest(request: Request, now: Date = new Date()): P
         request.challengeResponse,
         now,
       );
+    case 'CHANNEL_OBSERVED':
+      return handleChannelObserved(
+        {
+          channelId: request.channelId,
+          handle: request.handle,
+          displayName: request.displayName,
+        },
+        now,
+      );
+    case 'CLOSE_TAB':
+      return closeSenderTab(sender);
     default:
       return { ok: false, reason: 'unknown-request' };
   }
@@ -616,8 +718,8 @@ export async function handleRequest(request: Request, now: Date = new Date()): P
  * bug. A rejected handler still sends a response so the caller never hangs.
  */
 export function registerMessageRouter(): void {
-  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    handleRequest(message as Request)
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    handleRequest(message as Request, new Date(), sender)
       .then(sendResponse)
       .catch((error: unknown) => {
         console.error('[nudge] message handler failed', error);

@@ -186,3 +186,105 @@ test.describe('YouTube Hard Block with a channel whitelist', () => {
     await expect(spent.getByText('Daily limit reached')).toBeVisible();
   });
 });
+
+/**
+ * The stored entry learning the identifier the user never typed, end to end.
+ *
+ * Unit tests prove each half (`enrichEntries` folds the id in, and the DNR compiler emits a
+ * `/channel/UC…` allow-rule once the entry has one). What only a real browser can prove is
+ * that the halves MEET: the content script has to identify the channel on a page that keeps
+ * its two identifiers in different places, the worker has to persist it, and the network
+ * layer has to be recompiled before the next navigation. A failure anywhere in that chain
+ * looks identical from the outside — the channel's own page stays blocked.
+ */
+test.describe('a whitelist entry learns the identifier it was missing', () => {
+  const LEARNED_ID = 'UClearnedchannel0000001';
+  const LEARNED_HANDLE = 'learnedchannel';
+  const LEARNED_NAME = 'Learned Channel';
+
+  /** What the UI writes when the user types "@learnedchannel": a handle and nothing else. */
+  const byHandleOnly: ChannelEntry = {
+    channelId: null,
+    handle: LEARNED_HANDLE,
+    displayName: `@${LEARNED_HANDLE}`,
+    addedAt: 0,
+  };
+
+  const afterLearning: ChannelEntry = {
+    channelId: LEARNED_ID,
+    handle: LEARNED_HANDLE,
+    displayName: LEARNED_NAME,
+    addedAt: 0,
+  };
+
+  /** A watch page shaped like the real thing: id in the inline JSON, handle in the byline. */
+  function watchUrlWithHandle(video: string): string {
+    return (
+      `https://www.youtube.com/watch?v=${video}&channel=${LEARNED_ID}` +
+      `&handle=${LEARNED_HANDLE}&name=${encodeURIComponent(LEARNED_NAME)}`
+    );
+  }
+
+  test('so the channel page it always allowed stops being redirected', async ({
+    context,
+    extensionId,
+    serviceWorker,
+    setSettings,
+  }) => {
+    await setSettings(blockedExcept([byHandleOnly]));
+
+    // The hole, demonstrated before it is closed. The user allowed this channel, but the
+    // network layer only knows the handle, so the channel's own canonical URL is redirected
+    // — and no content script can rescue it, the block page has already won.
+    const cold = await context.newPage();
+    await cold.goto(`https://www.youtube.com/channel/${LEARNED_ID}`);
+    await expect(cold).toHaveURL(/blocked\.html\?target=/);
+    await cold.close();
+
+    // Watch one of that channel's videos. It plays (the handle already matches in-page),
+    // and detection assembles both identifiers off the one page.
+    const watch = await context.newPage();
+    await watch.goto(watchUrlWithHandle('enrich01'));
+    await expect(watch.locator('#player')).toBeVisible();
+
+    // The recompile is the observable that the worker has finished: an entry with an id
+    // earns one allow-rule more than the same entry without one.
+    await waitForRuleCount(serviceWorker, expectedRuleCount(blockedExcept([afterLearning])));
+
+    const stored = await sendFromExtensionPage<NudgeSettings>(context, extensionId, {
+      type: 'GET_SETTINGS',
+    });
+    expect(stored.rules[0]?.features?.youtube?.channels).toEqual([afterLearning]);
+
+    // The payoff, and the reason the feature exists at all.
+    const warm = await context.newPage();
+    await warm.goto(`https://www.youtube.com/channel/${LEARNED_ID}`);
+    await expect(warm).toHaveURL(new RegExp(`youtube\\.com/channel/${LEARNED_ID}`));
+    await expect(warm).not.toHaveURL(/blocked\.html/);
+  });
+
+  test('without ever opening the rest of YouTube', async ({
+    context,
+    serviceWorker,
+    setSettings,
+  }) => {
+    // Enrichment adds identifiers to a channel the user already listed. It must never add a
+    // channel, so everything that was blocked before it ran is still blocked after.
+    await setSettings(blockedExcept([byHandleOnly]));
+
+    const watch = await context.newPage();
+    await watch.goto(watchUrlWithHandle('enrich02'));
+    await expect(watch.locator('#player')).toBeVisible();
+    await waitForRuleCount(serviceWorker, expectedRuleCount(blockedExcept([afterLearning])));
+    await watch.close();
+
+    const home = await context.newPage();
+    await home.goto('https://www.youtube.com/');
+    await expect(home).toHaveURL(/blocked\.html\?target=/);
+    await home.close();
+
+    const other = await context.newPage();
+    await other.goto(`https://www.youtube.com/channel/${OTHER}`);
+    await expect(other).toHaveURL(/blocked\.html\?target=/);
+  });
+});

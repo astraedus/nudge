@@ -8,6 +8,7 @@
  */
 
 import type { BlockDecision, BlockMode, SiteMode } from './types';
+import type { EnrichmentReason } from './channels';
 import type { GateId, HideId, Platform } from './platforms';
 import type {
   ChannelEntry,
@@ -177,7 +178,42 @@ export type Request =
    * goes through the worker and through the Strict Mode gate — turning grayscale ON is
    * never a weakening, turning it OFF is.
    */
-  | { type: 'SET_GRAYSCALE'; domain: string; grayscale: boolean; challengeResponse?: string };
+  | { type: 'SET_GRAYSCALE'; domain: string; grayscale: boolean; challengeResponse?: string }
+  /**
+   * A channel the YouTube content script positively identified on a watch page, carrying
+   * every identifier that page revealed.
+   *
+   * The one message a content script sends that is not a question. It exists because a
+   * stored `ChannelEntry` only holds the identifier the user happened to type, while a
+   * watch page reveals both — see `enrichEntries` in `core/channels.ts` for the three holes
+   * that half-blind entry leaves open, and what the worker is allowed to do with this.
+   *
+   * ONLY ever sent from a CONFIRMED detection (`core/channelFreshness.ts`): during the
+   * settle window the byline may still name the PREVIOUS video's channel, and merging a
+   * stale id into a fresh entry would corrupt the list rather than enrich it. The handle is
+   * sent exactly as detected, leading '@' and all; the worker normalizes it.
+   */
+  | {
+      type: 'CHANNEL_OBSERVED';
+      channelId: string | null;
+      handle: string | null;
+      displayName: string | null;
+    }
+  /**
+   * Close the tab the message came from.
+   *
+   * The one thing a content script cannot do for itself: `window.close()` only works on a
+   * script-opened window, and `chrome.tabs` does not exist in an isolated world. It is a
+   * request rather than a settings change, so it goes through the router like everything
+   * else and the worker reads the tab id from the SENDER — a page cannot name a tab to
+   * close, only its own.
+   *
+   * Used by YouTube's channel gate when "I changed my mind" has nowhere to go back to
+   * (`content/overlay.ts`'s `bailAwayFromGate`): a tab opened straight onto a gated video
+   * has no previous entry, and bailing to the site root would land on the block page,
+   * which is the Known gap this closes.
+   */
+  | { type: 'CLOSE_TAB' };
 
 /** Granting temporary access, or refusing to. */
 export interface GrantResult {
@@ -246,6 +282,22 @@ export interface SiteConfig {
   } | null;
 }
 
+/**
+ * What the worker did with a `CHANNEL_OBSERVED` report.
+ *
+ * `changed` is what a caller acts on; `reason` exists so a refused observation stays
+ * DIAGNOSABLE — in particular `'contradiction'`, which means the page named a channel that
+ * disagrees with a stored entry on an axis they share, i.e. either YouTube put two channels
+ * on one page or our detection is wrong. A silent refusal there would be indistinguishable
+ * from "nothing to learn", which is the common case.
+ */
+export interface ChannelObservedResult {
+  ok: boolean;
+  /** True only when the list actually learned something and settings were saved. */
+  changed: boolean;
+  reason: EnrichmentReason | 'no-rule' | 'not-saved';
+}
+
 export interface ResponseMap {
   GET_BLOCK_CONTEXT: BlockContext;
   COMPLETE_PAUSE: GrantResult;
@@ -260,6 +312,9 @@ export interface ResponseMap {
   /** `counted` is false for a URL that is not an item, or an item already seen today. */
   ITEM_VIEWED: { ok: boolean; counted: boolean };
   SET_GRAYSCALE: SaveResult;
+  CHANNEL_OBSERVED: ChannelObservedResult;
+  /** `ok: false` when the sender had no tab id (a non-tab context) or the close failed. */
+  CLOSE_TAB: { ok: boolean };
 }
 
 export type ResponseFor<T extends Request['type']> = ResponseMap[T];

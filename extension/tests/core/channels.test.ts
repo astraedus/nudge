@@ -4,17 +4,26 @@ import {
   addChannel,
   decideChannel,
   decideWatchGate,
+  enrichEntries,
   findChannel,
   isChannelListed,
   parseChannelInput,
   removeChannel,
   sameChannel,
   shouldShowInColor,
+  type ChannelObservation,
   type ChannelProbe,
   type WatchGateInput,
   type WatchGateVerdict,
 } from '../../src/core/channels';
-import type { ChannelEntry, ChannelListMode } from '../../src/core/settingsSchema';
+import { isWeakening } from '../../src/core/strictMode';
+import {
+  DEFAULT_SETTINGS,
+  type ChannelEntry,
+  type ChannelListMode,
+  type NudgeSettings,
+} from '../../src/core/settingsSchema';
+import { featuresWith, settings, siteRule } from '../helpers/rules';
 
 /**
  * Port intent: mirrors the house style set by domainMatcher.test.ts/blockEngine.test.ts —
@@ -706,5 +715,403 @@ describe('decideWatchGate', () => {
         reason: 'unknown-channel',
       });
     });
+  });
+});
+
+// -----------------------------------------------------------------------------------
+// enrichEntries — learning the identifier a stored entry is missing
+// -----------------------------------------------------------------------------------
+
+/** The canonical worked example: added by handle, watched on a page that names both. */
+const VERITASIUM_ID = 'UCHnyfMqiRRG1u-2MsSQLbXA';
+const OTHER_ID = 'UCsXVk37bltHxD1rDPwtNM8Q';
+
+describe('enrichEntries — fills the missing identifier', () => {
+  it('teaches a handle-only entry the channel id it never had', () => {
+    const list = [entry({ handle: 'veritasium', displayName: '@veritasium' })];
+
+    const result = enrichEntries(list, {
+      channelId: VERITASIUM_ID,
+      handle: 'veritasium',
+      displayName: 'Veritasium',
+    });
+
+    expect(result.changed).toBe(true);
+    expect(result.reason).toBe('enriched');
+    expect(result.entries).toEqual([
+      {
+        channelId: VERITASIUM_ID,
+        handle: 'veritasium',
+        displayName: 'Veritasium',
+        addedAt: 0,
+      },
+    ]);
+  });
+
+  it('teaches an id-only entry the handle it never had', () => {
+    const list = [entry({ channelId: VERITASIUM_ID, displayName: VERITASIUM_ID })];
+
+    const result = enrichEntries(list, { channelId: VERITASIUM_ID, handle: '@Veritasium' });
+
+    expect(result.changed).toBe(true);
+    // Stored lowercased and without the '@', the storage contract every other path uses.
+    expect(result.entries[0]).toMatchObject({
+      channelId: VERITASIUM_ID,
+      handle: 'veritasium',
+    });
+  });
+
+  it('matches a stored handle case-insensitively', () => {
+    const list = [entry({ handle: 'veritasium', displayName: '@veritasium' })];
+
+    const result = enrichEntries(list, { handle: 'VERITASIUM', channelId: VERITASIUM_ID });
+
+    expect(result.changed).toBe(true);
+    expect(result.entries[0]?.channelId).toBe(VERITASIUM_ID);
+  });
+
+  it('leaves the other entries in the list alone, in their original order', () => {
+    const untouched = entry({ handle: 'kurzgesagt', displayName: 'Kurzgesagt' });
+    const list = [
+      untouched,
+      entry({ handle: 'veritasium', displayName: '@veritasium' }),
+      entry({ channelId: OTHER_ID, displayName: OTHER_ID }),
+    ];
+
+    const result = enrichEntries(list, { handle: 'veritasium', channelId: VERITASIUM_ID });
+
+    expect(result.entries).toHaveLength(3);
+    expect(result.entries[0]).toEqual(untouched);
+    expect(result.entries[2]?.channelId).toBe(OTHER_ID);
+  });
+
+  it('never mutates the list it was given', () => {
+    const original = entry({ handle: 'veritasium', displayName: '@veritasium' });
+    const list = [original];
+
+    enrichEntries(list, { handle: 'veritasium', channelId: VERITASIUM_ID, displayName: 'V' });
+
+    expect(list).toHaveLength(1);
+    expect(original).toEqual({
+      channelId: null,
+      handle: 'veritasium',
+      displayName: '@veritasium',
+      addedAt: 0,
+    });
+  });
+});
+
+describe('enrichEntries — display names', () => {
+  it('replaces the "@handle" placeholder with the real channel name', () => {
+    const list = [entry({ handle: 'veritasium', displayName: '@veritasium' })];
+
+    const result = enrichEntries(list, { handle: 'veritasium', displayName: 'Veritasium' });
+
+    expect(result.changed).toBe(true);
+    expect(result.entries[0]?.displayName).toBe('Veritasium');
+  });
+
+  it('replaces a bare channel id with the real channel name', () => {
+    const list = [entry({ channelId: VERITASIUM_ID, displayName: VERITASIUM_ID })];
+
+    const result = enrichEntries(list, { channelId: VERITASIUM_ID, displayName: 'Veritasium' });
+
+    expect(result.entries[0]?.displayName).toBe('Veritasium');
+  });
+
+  it('keeps a name the user already has, even while learning an identifier', () => {
+    // What a legacy "/c/Veritasium" URL stores: a lowercased handle plus the nicest human
+    // form the URL gave us. That name is not a placeholder and must survive.
+    const list = [entry({ handle: 'veritasium', displayName: 'Veritasium' })];
+
+    const result = enrichEntries(list, {
+      handle: 'veritasium',
+      channelId: VERITASIUM_ID,
+      displayName: 'Veritasium Official',
+    });
+
+    expect(result.entries[0]?.channelId).toBe(VERITASIUM_ID);
+    expect(result.entries[0]?.displayName).toBe('Veritasium');
+  });
+
+  it('refuses to "upgrade" a placeholder into another bare identifier', () => {
+    const list = [entry({ handle: 'veritasium', displayName: '@veritasium' })];
+
+    const result = enrichEntries(list, {
+      handle: 'veritasium',
+      channelId: VERITASIUM_ID,
+      displayName: VERITASIUM_ID,
+    });
+
+    expect(result.entries[0]?.displayName).toBe('@veritasium');
+  });
+
+  it('ignores a blank author name', () => {
+    const list = [entry({ handle: 'veritasium', displayName: '@veritasium' })];
+
+    const result = enrichEntries(list, { handle: 'veritasium', displayName: '   ' });
+
+    expect(result.changed).toBe(false);
+    expect(result.reason).toBe('nothing-to-learn');
+  });
+});
+
+describe('enrichEntries — a contradiction is never an enrichment', () => {
+  it('leaves the entry untouched when the handles match but the ids differ', () => {
+    const list = [entry({ channelId: VERITASIUM_ID, handle: 'veritasium', displayName: 'V' })];
+
+    const result = enrichEntries(list, { channelId: OTHER_ID, handle: 'veritasium' });
+
+    expect(result.changed).toBe(false);
+    expect(result.reason).toBe('contradiction');
+    expect(result.entries).toEqual(list);
+  });
+
+  it('leaves the entry untouched when the ids match but the handles differ', () => {
+    const list = [entry({ channelId: VERITASIUM_ID, handle: 'veritasium', displayName: 'V' })];
+
+    const result = enrichEntries(list, { channelId: VERITASIUM_ID, handle: 'someoneelse' });
+
+    expect(result.changed).toBe(false);
+    expect(result.reason).toBe('contradiction');
+  });
+
+  it('treats a differently-cased channel id as a different channel', () => {
+    // Ids are case-SENSITIVE on YouTube, so this is a contradiction, not a match.
+    const list = [entry({ channelId: VERITASIUM_ID, handle: 'veritasium', displayName: 'V' })];
+
+    const result = enrichEntries(list, {
+      channelId: VERITASIUM_ID.toLowerCase(),
+      handle: 'veritasium',
+    });
+
+    expect(result.changed).toBe(false);
+    expect(result.reason).toBe('contradiction');
+  });
+
+  it('refuses when the observation reconciles two entries that disagree with each other', () => {
+    const list = [
+      entry({ channelId: VERITASIUM_ID, handle: 'veritasium', displayName: 'V' }),
+      entry({ channelId: OTHER_ID, handle: 'veritasium', displayName: 'Other' }),
+    ];
+
+    const result = enrichEntries(list, { handle: 'veritasium' });
+
+    expect(result.changed).toBe(false);
+    expect(result.reason).toBe('contradiction');
+    expect(result.entries).toEqual(list);
+  });
+});
+
+describe('enrichEntries — merging a channel the user added twice', () => {
+  it('folds the handle entry and the id entry into one', () => {
+    const list = [
+      entry({ handle: 'veritasium', displayName: '@veritasium', addedAt: 500 }),
+      entry({ channelId: VERITASIUM_ID, displayName: VERITASIUM_ID, addedAt: 100 }),
+    ];
+
+    const result = enrichEntries(list, {
+      handle: 'veritasium',
+      channelId: VERITASIUM_ID,
+      displayName: 'Veritasium',
+    });
+
+    expect(result.changed).toBe(true);
+    expect(result.reason).toBe('merged');
+    expect(result.entries).toEqual([
+      {
+        channelId: VERITASIUM_ID,
+        handle: 'veritasium',
+        displayName: 'Veritasium',
+        // The EARLIER addedAt survives: a merge must not make the channel look newer than
+        // the day the user actually added it.
+        addedAt: 100,
+      },
+    ]);
+  });
+
+  it('keeps the merged row where the first of the two used to be', () => {
+    const list = [
+      entry({ handle: 'kurzgesagt', displayName: 'Kurzgesagt' }),
+      entry({ handle: 'veritasium', displayName: '@veritasium', addedAt: 500 }),
+      entry({ channelId: VERITASIUM_ID, displayName: VERITASIUM_ID, addedAt: 100 }),
+    ];
+
+    const result = enrichEntries(list, { handle: 'veritasium', channelId: VERITASIUM_ID });
+
+    expect(result.entries).toHaveLength(2);
+    expect(result.entries[0]?.handle).toBe('kurzgesagt');
+    expect(result.entries[1]).toMatchObject({
+      handle: 'veritasium',
+      channelId: VERITASIUM_ID,
+    });
+  });
+
+  it('leaves the merged row matching BOTH identifiers it absorbed', () => {
+    // This is what makes the merge safe: nothing the list used to cover stops being covered.
+    const byHandle = entry({ handle: 'veritasium', displayName: '@veritasium', addedAt: 500 });
+    const byId = entry({ channelId: VERITASIUM_ID, displayName: VERITASIUM_ID, addedAt: 100 });
+
+    const { entries } = enrichEntries([byHandle, byId], {
+      handle: 'veritasium',
+      channelId: VERITASIUM_ID,
+    });
+
+    expect(isChannelListed(entries, { handle: 'veritasium' })).toBe(true);
+    expect(isChannelListed(entries, { channelId: VERITASIUM_ID })).toBe(true);
+  });
+
+  it('prefers a real name over the placeholder when folding', () => {
+    const list = [
+      entry({ handle: 'veritasium', displayName: '@veritasium', addedAt: 500 }),
+      entry({ channelId: VERITASIUM_ID, displayName: 'Veritasium', addedAt: 100 }),
+    ];
+
+    const result = enrichEntries(list, { handle: 'veritasium', channelId: VERITASIUM_ID });
+
+    expect(result.entries[0]?.displayName).toBe('Veritasium');
+  });
+});
+
+describe('enrichEntries — when there is nothing to do', () => {
+  it('reports no-match rather than adding a channel nobody listed', () => {
+    const list = [entry({ handle: 'kurzgesagt', displayName: 'Kurzgesagt' })];
+
+    const result = enrichEntries(list, { handle: 'veritasium', channelId: VERITASIUM_ID });
+
+    expect(result.changed).toBe(false);
+    expect(result.reason).toBe('no-match');
+    expect(result.entries).toEqual(list);
+  });
+
+  it('reports no-match on an empty list', () => {
+    const result = enrichEntries([], { handle: 'veritasium', channelId: VERITASIUM_ID });
+
+    expect(result.changed).toBe(false);
+    expect(result.entries).toEqual([]);
+  });
+
+  it('does nothing when the observation carries no identifier at all', () => {
+    const list = [entry({ handle: 'veritasium', displayName: '@veritasium' })];
+
+    const result = enrichEntries(list, { displayName: 'Veritasium' });
+
+    expect(result.changed).toBe(false);
+    expect(result.reason).toBe('nothing-to-learn');
+    expect(result.entries).toEqual(list);
+  });
+
+  it('does nothing when the entry already knows everything the page says', () => {
+    const list = [
+      entry({ channelId: VERITASIUM_ID, handle: 'veritasium', displayName: 'Veritasium' }),
+    ];
+
+    const result = enrichEntries(list, {
+      channelId: VERITASIUM_ID,
+      handle: 'veritasium',
+      displayName: 'Veritasium',
+    });
+
+    expect(result.changed).toBe(false);
+    expect(result.reason).toBe('nothing-to-learn');
+  });
+});
+
+describe('enrichEntries — it can only ever learn, never weaken', () => {
+  /**
+   * The invariant that lets enrichment run without a Commitment Lock challenge: whatever the
+   * observation, the SET OF CHANNELS the list covers is unchanged. Nothing new is allowed
+   * (a whitelist cannot grow) and nothing stops being blocked (a blacklist cannot shrink).
+   *
+   * Asserted over a table rather than one case, because the failure mode this guards is a
+   * future edit to `enrichEntries` — not today's code.
+   */
+  const startingLists: Array<{ name: string; list: ChannelEntry[] }> = [
+    {
+      name: 'a handle-only entry',
+      list: [entry({ handle: 'veritasium', displayName: '@veritasium' })],
+    },
+    {
+      name: 'an id-only entry',
+      list: [entry({ channelId: VERITASIUM_ID, displayName: VERITASIUM_ID })],
+    },
+    {
+      name: 'the same channel added twice by different routes',
+      list: [
+        entry({ handle: 'veritasium', displayName: '@veritasium', addedAt: 500 }),
+        entry({ channelId: VERITASIUM_ID, displayName: VERITASIUM_ID, addedAt: 100 }),
+      ],
+    },
+    {
+      name: 'a list with an unrelated channel on it',
+      list: [
+        entry({ handle: 'kurzgesagt', displayName: 'Kurzgesagt' }),
+        entry({ handle: 'veritasium', displayName: '@veritasium' }),
+      ],
+    },
+  ];
+
+  const observations: Array<{ name: string; observation: ChannelObservation }> = [
+    { name: 'both identifiers', observation: { channelId: VERITASIUM_ID, handle: 'veritasium' } },
+    { name: 'the id alone', observation: { channelId: VERITASIUM_ID } },
+    { name: 'the handle alone', observation: { handle: 'veritasium' } },
+    { name: 'a contradicting id', observation: { channelId: OTHER_ID, handle: 'veritasium' } },
+    {
+      name: 'a channel nobody listed',
+      observation: { channelId: OTHER_ID, handle: 'someoneelse' },
+    },
+  ];
+
+  for (const { name: listName, list } of startingLists) {
+    for (const { name: observationName, observation } of observations) {
+      it(`covers the same channels for ${listName} observing ${observationName}`, () => {
+        const { entries } = enrichEntries(list, observation);
+
+        // Nothing new: every surviving row describes a channel that was already listed.
+        for (const result of entries) {
+          expect(list.some((before) => sameChannel(before, result))).toBe(true);
+        }
+        // Nothing lost: every channel that was listed is still matched by some row.
+        for (const before of list) {
+          expect(entries.some((result) => sameChannel(before, result))).toBe(true);
+        }
+        // And every identifier that used to match still matches.
+        for (const before of list) {
+          if (before.channelId !== null) {
+            expect(isChannelListed(entries, { channelId: before.channelId })).toBe(true);
+          }
+          if (before.handle !== null) {
+            expect(isChannelListed(entries, { handle: before.handle })).toBe(true);
+          }
+        }
+      });
+    }
+  }
+
+  it('is not a weakening in either list mode, so the Commitment Lock never challenges it', () => {
+    const before = [
+      entry({ handle: 'veritasium', displayName: '@veritasium', addedAt: 500 }),
+      entry({ channelId: VERITASIUM_ID, displayName: VERITASIUM_ID, addedAt: 100 }),
+    ];
+    const { entries: after, changed } = enrichEntries(before, {
+      channelId: VERITASIUM_ID,
+      handle: 'veritasium',
+      displayName: 'Veritasium',
+    });
+    expect(changed).toBe(true);
+
+    for (const channelMode of ['WHITELIST', 'BLACKLIST'] as const) {
+      const withChannels = (channels: ChannelEntry[]): NudgeSettings =>
+        settings({
+          strictMode: { ...DEFAULT_SETTINGS.strictMode, enabled: true },
+          rules: [
+            siteRule({
+              features: featuresWith('youtube', { youtube: { channelMode, channels } }),
+            }),
+          ],
+        });
+
+      expect(isWeakening(withChannels(before), withChannels(after))).toBe(false);
+    }
   });
 });

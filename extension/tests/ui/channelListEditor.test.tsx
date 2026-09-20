@@ -133,6 +133,45 @@ describe('ChannelListEditor — channel list', () => {
   });
 });
 
+describe('ChannelListEditor — channel row identifier line', () => {
+  it('shows the display name plus both identifiers when both are known', () => {
+    const entry = {
+      channelId: 'UCabcdefghijklmnopqrstuv',
+      handle: 'veritasium',
+      displayName: 'Veritasium',
+      addedAt: 0,
+    };
+    render(<Harness initial={makeYoutubeSettings({ channelMode: 'BLACKLIST', channels: [entry] })} />);
+
+    expect(screen.getByText('Veritasium')).toBeDefined();
+    expect(screen.getByText('@veritasium · UCabcdefghijklmnopqrstuv')).toBeDefined();
+  });
+
+  it('does not repeat a handle-only entry\'s @handle fallback display name', () => {
+    const entry = { channelId: null, handle: 'veritasium', displayName: '@veritasium', addedAt: 0 };
+    render(<Harness initial={makeYoutubeSettings({ channelMode: 'BLACKLIST', channels: [entry] })} />);
+
+    // Only the primary line renders "@veritasium" — no second copy of the same string.
+    expect(screen.getAllByText('@veritasium')).toHaveLength(1);
+  });
+
+  it('does not repeat an id-only entry\'s raw-id fallback display name', () => {
+    const channelId = 'UCabcdefghijklmnopqrstuv';
+    const entry = { channelId, handle: null, displayName: channelId, addedAt: 0 };
+    render(<Harness initial={makeYoutubeSettings({ channelMode: 'BLACKLIST', channels: [entry] })} />);
+
+    expect(screen.getAllByText(channelId)).toHaveLength(1);
+  });
+
+  it('shows the name plus the @handle line for a real display name with only a handle known', () => {
+    const entry = { channelId: null, handle: 'veritasium', displayName: 'Veritasium', addedAt: 0 };
+    render(<Harness initial={makeYoutubeSettings({ channelMode: 'BLACKLIST', channels: [entry] })} />);
+
+    expect(screen.getByText('Veritasium')).toBeDefined();
+    expect(screen.getByText('@veritasium')).toBeDefined();
+  });
+});
+
 describe('ChannelListEditor — disable autoplay', () => {
   it('flips only disableAutoplay, leaving everything else untouched', () => {
     const initial = makeYoutubeSettings();

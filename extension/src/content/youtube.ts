@@ -17,6 +17,11 @@
  *     races YouTube's router, and the whole product thesis is friction-with-a-choice,
  *     not a wall.
  *
+ * The interstitial itself, the media hold and the SPA-navigation detection are the SHARED
+ * modules every platform uses (`content/overlay.ts`, `content/spaNav.ts`); this file is
+ * YouTube's own part: which surfaces exist, what the copy says, and the channel-freshness
+ * settle machinery below. Those three used to be private copies here and no longer are.
+ *
  * EVERYTHING here arrives ALREADY RESOLVED, as a `SiteConfig` from the service worker:
  * the schedule, the budget and the applies-predicate have all been evaluated there, so a
  * gate's mode is the mode right now and nothing in this module re-derives it. That is what
@@ -26,14 +31,25 @@
 
 import type { ResolvedGate, SiteConfig } from '../core/protocol';
 import { gateDefinition } from '../core/platforms';
-import { MODE_LABELS, type BlockMode } from '../core/types';
+import type { BlockMode } from '../core/types';
 import { send } from '../ui/rpc';
 import { applyChannelFilter, applyGrayColor, watchChannelVerdict } from './channelFilter';
+import { createChannelObserver } from './channelObserver';
 import { channelKey, SETTLE_RECHECK_MS } from '../core/channelFreshness';
 import type { WatchGateVerdict } from '../core/channels';
 import { detectWatchChannel } from './channelDetection';
 import { applyAutoplayOff, applyHideToggles } from './unhook';
-import { holdMediaPaused, type MediaHold } from './overlay';
+import {
+  assignSafeLocation,
+  bailAwayFromGate,
+  createGateOverlay,
+  holdMediaPaused,
+  type GateCopy,
+  type MediaHold,
+  type OverlayHandle,
+} from './overlay';
+import { IDLE_SITE_CONFIG } from './platformGate';
+import { observeNavigation } from './spaNav';
 import {
   HIDDEN_CLASS,
   NUDGE_OVERLAY_ID,
@@ -47,17 +63,22 @@ import {
   type YoutubePageType,
 } from './selectors';
 
-/** Debounce for DOM re-checks. Long enough to batch YouTube's mutation storms. */
+/**
+ * Debounce for DOM re-checks, and the safety-net poll for when every event AND the
+ * observer miss (ext-03 §2). Both are handed to the shared `observeNavigation` rather than
+ * driving timers this module owns.
+ */
 export const DOM_DEBOUNCE_MS = 250;
-/** Safety-net poll for the case where every event AND the observer miss (ext-03 §2). */
 export const SAFETY_NET_MS = 1000;
-/** Breathing cycle: 4s in, 4s out (Android parity). */
-export const BREATH_IN_MS = 4000;
-export const BREATH_OUT_MS = 4000;
 
-/** Exact Android wording. Do not "improve" this string. */
-export const BAIL_LABEL = 'I changed my mind';
-/** Where the bail button sends the user. */
+/**
+ * Where a bail lands when there is nowhere better.
+ *
+ * The SHORTS gate always uses it: that gate only ever fires while the site itself is open
+ * (an applying site rule redirects `/shorts/*` at the network layer before this script
+ * sees the page), so the root is not being redirected out from under it. The CHANNEL gate
+ * does NOT — see `bailFromChannelGate` — and keeps this only as a last resort.
+ */
 export const BAIL_URL = 'https://www.youtube.com/';
 
 /**
@@ -210,23 +231,20 @@ export function resolveShortsGate(
 
 /* ------------------------------------------------------------------ overlay */
 
-interface OverlayHandle {
-  element: HTMLElement;
-  /** Clears every timer this overlay owns. */
-  dispose: () => void;
-}
-
 /** The human name of a gate surface, straight from the platform registry. */
 export function shortsGateLabel(): string {
   return gateDefinition('youtube', SHORTS_GATE_ID)?.label ?? 'Shorts';
 }
 
-export interface GateCopy {
-  title: string;
-  subtitle: string;
-  /** What the "Rule: X" footer names. */
-  ruleLabel: string;
-}
+/**
+ * YouTube always supplies its OWN title and subtitle for every interstitial
+ * (`shortsGateCopy`, `channelGateCopy`), so both are required here even though the shared
+ * builder treats them as optional. That is also why `baseGateCopy` below survives instead
+ * of deferring to `overlay.ts`'s internal `gateCopyForMode`: the two word the Breathing
+ * and Delay cases slightly differently ("Follow the circle. Shorts will wait.") and this
+ * is shipped microcopy, not an implementation detail to be unified away.
+ */
+export type YoutubeGateCopy = GateCopy & { title: string; subtitle: string };
 
 /**
  * Copy for the Shorts interstitial.
@@ -237,7 +255,7 @@ export interface GateCopy {
  * for a rule they never wrote. It also names WHEN it comes back, because the one thing
  * someone wants to know at that moment is whether this is for today or forever.
  */
-export function shortsGateCopy(verdict: ShortsGateVerdict): GateCopy {
+export function shortsGateCopy(verdict: ShortsGateVerdict): YoutubeGateCopy {
   const label = shortsGateLabel();
   const ruleLabel = `YouTube ${label}`;
 
@@ -273,132 +291,6 @@ function baseGateCopy(
   }
 }
 
-/**
- * Build the interstitial. Markup is deliberately tiny and self-contained: styles live in
- * youtube.css (injected via the manifest, so it is on the page before YouTube paints).
- *
- * ONE overlay serves every in-page gate — the Shorts surface, the channel list, and an
- * exhausted surface budget — because they differ only in words. A second near-identical
- * implementation is how two gates end up with two different bail buttons.
- *
- * `onComplete` fires when a Delay/Breathing pause elapses. HARD_BLOCK never calls it —
- * its only exit is the bail button, which is also why an exhausted budget renders as one.
- */
-export function createGateOverlay(
-  doc: Document,
-  gate: { mode: BlockMode; delaySeconds: number },
-  handlers: { onComplete: () => void; onBail: () => void },
-  copyIn: GateCopy,
-): OverlayHandle {
-  const { mode } = gate;
-  const copy = { title: copyIn.title, subtitle: copyIn.subtitle };
-  const timers: number[] = [];
-
-  const overlay = doc.createElement('div');
-  overlay.id = NUDGE_OVERLAY_ID;
-  overlay.className = 'nudge-overlay';
-  overlay.setAttribute('role', 'dialog');
-  overlay.setAttribute('aria-modal', 'true');
-  overlay.setAttribute('aria-label', `Nudge — ${MODE_LABELS[mode]}`);
-
-  const card = doc.createElement('div');
-  card.className = 'nudge-overlay__card';
-
-  const title = doc.createElement('h1');
-  title.className = 'nudge-overlay__title';
-  title.textContent = copy.title;
-
-  const subtitle = doc.createElement('p');
-  subtitle.className = 'nudge-overlay__subtitle';
-  subtitle.textContent = copy.subtitle;
-
-  card.append(title, subtitle);
-
-  if (mode === 'DELAY') {
-    const seconds = Math.max(1, Math.round(gate.delaySeconds));
-    const counter = doc.createElement('div');
-    counter.className = 'nudge-overlay__count';
-    counter.textContent = String(seconds);
-    card.append(counter);
-
-    let remaining = seconds;
-    const tick = doc.defaultView?.setInterval(() => {
-      remaining -= 1;
-      counter.textContent = String(Math.max(0, remaining));
-      if (remaining <= 0) {
-        clearAll();
-        handlers.onComplete();
-      }
-    }, 1000);
-    if (tick !== undefined) timers.push(tick);
-  } else if (mode === 'BREATHING') {
-    const circle = doc.createElement('div');
-    circle.className = 'nudge-overlay__breath';
-    const phase = doc.createElement('div');
-    phase.className = 'nudge-overlay__phase';
-    phase.textContent = 'Breathe in';
-    const remainingLabel = doc.createElement('div');
-    remainingLabel.className = 'nudge-overlay__remaining';
-
-    const totalMs = Math.max(1, Math.round(gate.delaySeconds)) * 1000;
-    const startedAt = Date.now();
-    remainingLabel.textContent = `${Math.ceil(totalMs / 1000)}s remaining`;
-
-    const progress = doc.createElement('div');
-    progress.className = 'nudge-overlay__progress';
-    const bar = doc.createElement('div');
-    bar.className = 'nudge-overlay__bar';
-    progress.append(bar);
-
-    card.append(circle, phase, progress, remainingLabel);
-
-    const cycle = BREATH_IN_MS + BREATH_OUT_MS;
-    const tick = doc.defaultView?.setInterval(() => {
-      const elapsed = Date.now() - startedAt;
-      const left = Math.max(0, totalMs - elapsed);
-      remainingLabel.textContent = `${Math.ceil(left / 1000)}s remaining`;
-      bar.style.width = `${Math.min(100, (elapsed / totalMs) * 100)}%`;
-      const inhaling = elapsed % cycle < BREATH_IN_MS;
-      phase.textContent = inhaling ? 'Breathe in' : 'Breathe out';
-      circle.classList.toggle('nudge-overlay__breath--in', inhaling);
-      if (left <= 0) {
-        clearAll();
-        handlers.onComplete();
-      }
-    }, 200);
-    if (tick !== undefined) timers.push(tick);
-  }
-
-  const bail = doc.createElement('button');
-  bail.type = 'button';
-  bail.className = 'nudge-overlay__bail';
-  bail.textContent = BAIL_LABEL;
-  bail.addEventListener('click', () => {
-    clearAll();
-    handlers.onBail();
-  });
-  card.append(bail);
-
-  const footer = doc.createElement('p');
-  footer.className = 'nudge-overlay__footer';
-  footer.textContent = `Rule: ${copyIn.ruleLabel} · ${MODE_LABELS[mode]}`;
-  card.append(footer);
-
-  overlay.append(card);
-
-  function clearAll(): void {
-    for (const id of timers.splice(0)) doc.defaultView?.clearInterval(id);
-  }
-
-  return {
-    element: overlay,
-    dispose: () => {
-      clearAll();
-      overlay.remove();
-    },
-  };
-}
-
 /** Anchor the overlay over the player (falls back to <body>, which still covers the view). */
 function overlayHost(doc: Document): Element {
   const { elements } = queryWithFallback(doc, SHORTS_PLAYER_CONTAINERS, {
@@ -420,7 +312,9 @@ function overlayHost(doc: Document): Element {
  * people to the wrong screen, and in the unknown case would accuse a channel that might
  * well be on their list.
  */
-export function channelGateCopy(verdict: Extract<WatchGateVerdict, { action: 'BLOCK' }>): GateCopy {
+export function channelGateCopy(
+  verdict: Extract<WatchGateVerdict, { action: 'BLOCK' }>,
+): YoutubeGateCopy {
   if (verdict.source === 'site-default') {
     if (verdict.reason === 'unknown-channel') {
       return {
@@ -459,38 +353,30 @@ export interface YoutubeController {
 }
 
 /**
- * Everything off. What the script assumes until the worker answers.
- *
- * `enabled: false` is the load-bearing field: every applier short-circuits on it, so a
- * worker that is asleep, restarting or has no rule for this site leaves the page exactly
- * as YouTube shipped it rather than half-enforcing a rule nobody has read yet.
- */
-export const IDLE_SITE_CONFIG: SiteConfig = {
-  enabled: false,
-  domain: 'youtube.com',
-  platform: 'youtube',
-  siteMode: 'ALLOW',
-  siteDelaySeconds: 15,
-  siteApplies: false,
-  siteLimitReached: false,
-  grayscale: false,
-  gates: [],
-  hides: {},
-  youtube: null,
-};
-
-/**
  * Wire everything up on a real page.
  *
- * 3-layer SPA navigation detection (ext-03 §2 — two independent OSS blockers converged
- * on exactly this, and one-layer designs are the documented failure):
- *   1. `yt-navigate-finish` on document — YouTube's own post-route-change event (primary)
- *   2. `popstate` — back/forward, which YouTube does not always announce (secondary)
- *   3. debounced MutationObserver + a slow interval — the safety net for lazy-loaded
- *      feed cards and for the day YouTube renames its event.
+ * SPA navigation detection is the SHARED layer (`content/spaNav.ts`), configured with
+ * YouTube's own cadence. It is the same 3 layers this file used to hand-build (ext-03 §2
+ * — two independent OSS blockers converged on exactly this, and one-layer designs are
+ * the documented failure), mapped one for one:
+ *   1. `navEvent: 'yt-navigate-finish'` — YouTube's own post-route-change event (primary)
+ *   2. `popstate` (and `hashchange`) — back/forward, which YouTube does not always
+ *      announce (secondary)
+ *   3. the href-diff poll at `SAFETY_NET_MS` + a `DOM_DEBOUNCE_MS` MutationObserver — the
+ *      safety net for lazy-loaded feed cards and for the day YouTube renames its event.
+ *      `mutateOnIdlePoll` is what keeps the old controller's "a poll tick that saw no
+ *      navigation still schedules the debounced pass" half.
  *
- * The observer callback does nothing but schedule: heavy work inside a mutation callback
- * on YouTube is a guaranteed jank complaint (ext-03 §4).
+ * `onNavigate` is called on the SAME TICK the URL change is noticed and is never routed
+ * through the debounce (spaNav guarantees this) — that is the repo-wide "A NAVIGATION
+ * MUST NOT BE DEBOUNCED" rule, and on YouTube specifically it is what starts the settle
+ * machinery promptly instead of letting the post-nav mutation storm starve it.
+ *
+ * What did NOT move into the shared layer, and must not: `previousChannelKey`, `navAt` and
+ * `scheduleSettleChecks` below. They exist to stop a documented P0 — a channel the user
+ * explicitly allowed being accused of being "off your list" for 3-5s after a
+ * watch→watch hop — and they are YouTube-shaped (a byline that re-renders late), not
+ * navigation-shaped.
  */
 export function initYoutubeContentScript(
   doc: Document = document,
@@ -512,8 +398,9 @@ export function initYoutubeContentScript(
   let navAt = 0;
   /** Storm-proof re-checks scheduled after a navigation. */
   const settleTimers: number[] = [];
+  /** Reports confirmed channels to the worker; owns its own per-page-load dedupe. */
+  const channelObserver = createChannelObserver();
   let lastUrl = doc.location?.href ?? '';
-  let debounceTimer: number | undefined;
   let stopped = false;
 
   function currentHref(): string {
@@ -554,6 +441,10 @@ export function initYoutubeContentScript(
     applyChannelFilter(doc, config);
     applyGrayColor(doc, config, { url, previousKey: previousChannelKey, msSinceNav });
     applyAutoplayOff(doc, config);
+    // Read-only for the page, but it can WRITE the user's channel list, so it is gated on the
+    // same CONFIRMED detection the interstitial is — never on a settling one. See
+    // content/channelObserver.ts for why that rule lives there and not here.
+    channelObserver.observe(doc, config, { url, previousKey: previousChannelKey, msSinceNav });
 
     const resolvedShortsGate = resolveShortsGate(url, config);
     // A completed pause buys the rest of the Shorts session — but it cannot buy a budget
@@ -589,7 +480,10 @@ export function initYoutubeContentScript(
     if (shortsGate !== null) {
       overlay = createGateOverlay(
         doc,
-        shortsGate,
+        NUDGE_OVERLAY_ID,
+        shortsGate.mode,
+        shortsGate.delaySeconds,
+        shortsGateCopy(shortsGate),
         {
           onComplete: () => {
             gateSatisfied = true;
@@ -597,27 +491,25 @@ export function initYoutubeContentScript(
           },
           onBail: () => {
             teardownOverlay();
-            doc.location.assign(BAIL_URL);
+            assignSafeLocation(doc, BAIL_URL);
           },
         },
-        shortsGateCopy(shortsGate),
       );
     } else if (channelGate !== null) {
       const gatedUrl = url;
       overlay = createGateOverlay(
         doc,
-        channelGate,
+        NUDGE_OVERLAY_ID,
+        channelGate.mode,
+        channelGate.delaySeconds,
+        channelGateCopy(channelGate),
         {
           onComplete: () => {
             channelGateSatisfiedFor = gatedUrl;
             teardownOverlay();
           },
-          onBail: () => {
-            teardownOverlay();
-            doc.location.assign(BAIL_URL);
-          },
+          onBail: bailFromChannelGate,
         },
-        channelGateCopy(channelGate),
       );
     }
 
@@ -640,13 +532,37 @@ export function initYoutubeContentScript(
     }
   }
 
-  function scheduleRefresh(): void {
-    if (stopped || !view) return;
-    if (debounceTimer !== undefined) view.clearTimeout(debounceTimer);
-    debounceTimer = view.setTimeout(() => {
-      debounceTimer = undefined;
-      refresh();
-    }, DOM_DEBOUNCE_MS);
+  /**
+   * "I changed my mind" on the CHANNEL gate.
+   *
+   * It cannot simply go to `BAIL_URL` the way the Shorts gate does. This gate is the one
+   * that fires under "block YouTube except these channels", and in that configuration the
+   * site root is exactly what DNR redirects — so the old bail put the user on the block
+   * page instead of back where they came from (Known gap, v0.2.0). Going BACK returns them
+   * to the page they were actually on, and for an in-SPA hop does so without touching the
+   * network layer at all.
+   *
+   * The no-history case (a tab opened straight onto a gated video from another tab or
+   * another app) has nowhere to go back to, so the worker closes the tab — which is the
+   * browser's version of what "I changed my mind" does on Android. If that fails too (no
+   * tab id, a sleeping worker, a tab already gone) we fall back to the old behaviour rather
+   * than leaving the user looking at a torn-down overlay: the block page is a worse landing
+   * than going back, but it is still an exit.
+   */
+  function bailFromChannelGate(): void {
+    teardownOverlay();
+    bailAwayFromGate(doc, {
+      onNoHistory: () => {
+        void send({ type: 'CLOSE_TAB' })
+          .then((result) => {
+            if (result.ok) return;
+            assignSafeLocation(doc, BAIL_URL);
+          })
+          .catch(() => {
+            assignSafeLocation(doc, BAIL_URL);
+          });
+      },
+    });
   }
 
   async function reload(): Promise<void> {
@@ -664,30 +580,27 @@ export function initYoutubeContentScript(
   }
 
   /**
-   * Navigation is handled IMMEDIATELY, not through the debounce.
+   * Navigation is handled IMMEDIATELY, never through the debounce.
    *
-   * `scheduleRefresh()` was the cold-hop bug (live QA, 2026-07-26): the very first refresh
-   * after a full page load is what NOTICES the url changed and starts the settle machinery,
-   * and routing it through the 250ms debounce meant YouTube's post-nav mutation storm kept
-   * resetting it, so for ~2s nothing ran at all and the page held the PREVIOUS video's
-   * verdict, colour and all. A navigation is a discrete, known-important event; it should
-   * never queue behind page churn. The debounced pass still follows for the DOM settling
-   * after it.
+   * That was the cold-hop bug (live QA, 2026-07-26): the very first refresh after a full
+   * page load is what NOTICES the url changed and starts the settle machinery, and routing
+   * it through the 250ms debounce meant YouTube's post-nav mutation storm kept resetting
+   * it, so for ~2s nothing ran at all and the page held the PREVIOUS video's verdict,
+   * colour and all. `spaNav.ts` makes that structural: `onNavigate` fires on the same tick
+   * the href change is seen, and only `onMutate` is ever debounced.
    */
-  const onNavigate = (): void => {
-    refresh();
-    scheduleRefresh();
-  };
-  doc.addEventListener('yt-navigate-finish', onNavigate);
-  view?.addEventListener('popstate', onNavigate);
-
-  const observer = view ? new view.MutationObserver(() => scheduleRefresh()) : null;
-  observer?.observe(doc.documentElement, { childList: true, subtree: true });
-
-  const safetyNet = view?.setInterval(() => {
-    if (currentHref() !== lastUrl) refresh();
-    else scheduleRefresh();
-  }, SAFETY_NET_MS);
+  const nav = observeNavigation({
+    doc,
+    navEvent: 'yt-navigate-finish',
+    pollMs: SAFETY_NET_MS,
+    mutationDebounceMs: DOM_DEBOUNCE_MS,
+    // A quiet YouTube page still has to be re-checked: the settle window can outlast the
+    // mutation storm, and the hide toggles must keep reconciling. This is the old
+    // safety-net interval's `else scheduleRefresh()` branch.
+    mutateOnIdlePoll: true,
+    onNavigate: refresh,
+    onMutate: refresh,
+  });
 
   const onStorageChanged = (): void => {
     void reload();
@@ -701,11 +614,7 @@ export function initYoutubeContentScript(
     reload,
     stop: () => {
       stopped = true;
-      doc.removeEventListener('yt-navigate-finish', onNavigate);
-      view?.removeEventListener('popstate', onNavigate);
-      observer?.disconnect();
-      if (safetyNet !== undefined) view?.clearInterval(safetyNet);
-      if (debounceTimer !== undefined) view?.clearTimeout(debounceTimer);
+      nav.dispose();
       for (const id of settleTimers.splice(0)) view?.clearTimeout(id);
       chromeApi?.storage?.onChanged?.removeListener(onStorageChanged);
       teardownOverlay();

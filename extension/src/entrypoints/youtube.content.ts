@@ -28,14 +28,19 @@ export default defineContentScript({
      * `content/youtube.ts`, and that is deliberate rather than convenient.
      *
      * Every other platform gets counting from the shared controller in
-     * `content/platformGate.ts`. YouTube does not route through it: its script carries its
-     * own navigation layer, entangled with the channel-freshness settle window that exists
-     * to stop a documented P0 (a false interstitial on a channel the user explicitly
-     * allowed, for 3-5s after a watch -> watch hop) whose regression is LIVE-ONLY, with no
-     * fixture that reproduces it. extension/CLAUDE.md records that as a Known gap and says
-     * plainly that touching it is its own isolated change, gated on
-     * `e2e/youtubeAdvanced.spec.ts`. Counting is a pure observation with no verdict of its
-     * own, so it needs none of that machinery: it observes navigation itself and reports.
+     * `content/platformGate.ts`. YouTube shares the overlay and the SPA-navigation layer
+     * now, but it still runs its OWN controller rather than `initPlatformContentScript`,
+     * so the shared reporter never fires there and something has to start one.
+     *
+     * It is started HERE rather than from inside `content/youtube.ts` because that file's
+     * navigation handling is entangled with the channel-freshness settle window, which
+     * exists to stop a documented P0 (a false interstitial on a channel the user
+     * explicitly allowed, for 3-5s after a watch -> watch hop) whose regression is
+     * LIVE-ONLY, with no fixture that reproduces it. Counting is a pure observation with
+     * no verdict of its own, so it needs none of that machinery and must not be able to
+     * perturb it. The cost is a second `observeNavigation` on a YouTube page (one poll,
+     * one observer); that is cheap, and the isolation is the point.
+     *
      * `yt-navigate-finish` is passed so a Shorts swipe is noticed on YouTube's own event
      * as well as by the href poll.
      */

@@ -1,29 +1,25 @@
 /**
- * The shared in-page gate overlay — mount/teardown, mode copy (Hard Block / Delay
- * countdown / Breathing pacer), "I changed my mind", and per-platform element identity —
- * used by all six non-YouTube platform content scripts via `platformGate.ts`.
+ * The shared in-page gate overlay: mount/teardown, mode copy (Hard Block / Delay
+ * countdown / Breathing pacer), "I changed my mind", per-platform element identity, and
+ * the media hold that keeps a gated player silent. Used by ALL SEVEN platform content
+ * scripts — the six generic ones via `platformGate.ts`, and YouTube directly from
+ * `content/youtube.ts`.
  *
- * This generalizes the exact pattern `content/youtube.ts`'s `createShortsOverlay` +
- * `overlayHost` + `selectors.ts`'s `NUDGE_OVERLAY_ID` already implement for Shorts/channel
- * gating: same markup, same CSS classes (`.nudge-overlay`, `.nudge-overlay__*`), same
- * teardown discipline (clear every timer before removing the node). It is a SEPARATE
- * module, not a rename of youtube.ts's version, because:
+ * The markup and classes originated as `youtube.ts`'s own overlay builder; this module is
+ * that builder generalized, and since the YouTube migration it is the ONLY copy. The one
+ * thing that varies per platform is the root element's `id`, which is a parameter
+ * (`overlayIdFor` for the generic six, `selectors.ts`'s `NUDGE_OVERLAY_ID` for YouTube,
+ * because `youtube.css` keys its full-screen backdrop rule off that exact id).
  *
- *  - `youtube.ts`/`selectors.ts` are owned by another lane in this release.
- *  - YouTube's overlay is entangled with the channel-freshness "settle window" machinery
- *    (`core/channelFreshness.ts`'s `SETTLE_MS`/`SETTLE_COLOR_MS`, `previousChannelKey`,
- *    `msSinceNav` in `youtube.ts`) — code that exists specifically to avoid a documented
- *    P0 (a channel the user explicitly allowed being accused of being "off the list" for
- *    3-5s after a watch→watch hop, extension/CLAUDE.md). Migrating YouTube onto this
- *    module in the SAME release that ships six new platforms would risk that regression
- *    reappearing with no user-visible upside — the user cannot tell whether the six
- *    platforms and YouTube share overlay code under the hood.
- *
- * **Known follow-up, not done here**: migrate `youtube.ts` to call this module instead of
- * its own `createShortsOverlay`/`overlayHost`, as an isolated change with the existing
- * settle-window fixture tests re-run as a regression gate. This module is deliberately
- * shaped so that migration is possible (same markup/classes, an injectable overlay id,
- * the same `{ onComplete, onBail }` handler contract) without behaviour change.
+ * Why the migration was safe to do, having been deferred once: the overlay is pure DOM and
+ * knows nothing about WHEN it is shown. YouTube's hard part — the channel-freshness
+ * settle window (`core/channelFreshness.ts`'s `SETTLE_MS` / `SETTLE_COLOR_MS`,
+ * `previousChannelKey`, `msSinceNav`), which exists to stop a documented P0: a channel the
+ * user explicitly allowed being accused of being "off your list" for 3-5s after a
+ * watch→watch hop — lives entirely in the CALLER, in `content/channelFilter.ts`'s
+ * `watchChannelVerdict`, which returns null while SETTLING so no overlay is ever built.
+ * Nothing about the interstitial itself was ever entangled with it, and nothing in this
+ * module can reintroduce that regression.
  *
  * PURE DOM — no `chrome.*` — so every export is unit-testable with jsdom and no browser.
  */
@@ -40,7 +36,11 @@ export const BREATH_OUT_MS = 4000;
 
 /**
  * A distinct overlay element id PER PLATFORM (rather than one id shared by all six),
- * mirroring `NUDGE_OVERLAY_ID`'s role for YouTube. Only one platform's content script
+ * mirroring `NUDGE_OVERLAY_ID`'s role for YouTube. Every id this returns MUST also carry a
+ * matching `#<id>.nudge-overlay` backdrop rule in `platformOverlay.css`, or the
+ * interstitial renders as an ordinary in-flow block instead of covering the page;
+ * `tests/content/overlayStyling.test.ts` is what keeps that list total.
+ * Only one platform's content script
  * ever runs on a given page, so a single shared id would work functionally — but a
  * platform-specific id keeps every hide-selector exclusion check (`isOwnOverlay`) legible
  * in isolation (a selector chain audited for, say, `tiktok/selectors.ts` never has to
@@ -59,9 +59,10 @@ export function isOwnOverlay(element: Element, overlayId: string): boolean {
 /**
  * What the interstitial RENDERS. Deliberately says nothing about where the bail button
  * goes: the overlay does not navigate, it calls `handlers.onBail` and lets the caller
- * decide. Keeping the destination out of the render copy is what lets YouTube — which
- * handles its own bail so it can tear down the settle machinery first — share this exact
- * builder with the six platform scripts that use the generic one.
+ * decide. Keeping the destination out of the render copy is what lets YouTube — whose
+ * channel gate bails by going BACK rather than to a site root the same rule is still
+ * redirecting (`bailAwayFromGate`) — share this exact builder with the six platform
+ * scripts that simply assign a hardcoded safe URL.
  */
 export interface GateCopy {
   /** What the interstitial calls the thing being gated, e.g. "Reels" or "the For You feed". */
@@ -335,4 +336,40 @@ export function assignSafeLocation(doc: Document, url: string): void {
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return;
   doc.location.assign(url);
+}
+
+/**
+ * Leave a gated page WITHOUT landing somewhere the same rule is still redirecting.
+ *
+ * "I changed my mind" used to mean `location.assign('https://www.youtube.com/')` for every
+ * YouTube gate. That is right when only a FEATURE is gated (the site itself opens fine)
+ * and wrong when the SITE rule applies: under "block YouTube except these channels" the
+ * site root is precisely what DNR redirects, so the bail button landed the user on the
+ * block page rather than back where they came from. Filed as a Known gap for v0.2.0.
+ *
+ * Going BACK is the honest answer, and better than any fixed URL could be: the previous
+ * history entry is by construction a page the user had already reached (and if it was
+ * blocked too, the block page is then the correct destination rather than a surprise). It
+ * is also same-document for an in-SPA hop, so it never re-enters the network layer.
+ *
+ * `history.length <= 1` — a tab opened straight onto the gated URL from another tab or
+ * another app — has no back to go to, which is what `onNoHistory` is for. The caller
+ * supplies that because escaping such a tab needs `chrome.tabs`, and this module is
+ * deliberately `chrome`-free.
+ *
+ * Returns which branch it took, so a caller (and a test) can tell them apart.
+ */
+export function bailAwayFromGate(
+  doc: Document,
+  handlers: { onNoHistory: () => void },
+): 'back' | 'no-history' {
+  const view = doc.defaultView;
+  // `history.length` counts the CURRENT entry, so >1 is what means "there is a previous
+  // one". A document with no view (detached, or a test fixture) counts as no history.
+  if (view !== null && view !== undefined && view.history.length > 1) {
+    view.history.back();
+    return 'back';
+  }
+  handlers.onNoHistory();
+  return 'no-history';
 }

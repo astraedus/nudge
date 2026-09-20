@@ -14,6 +14,7 @@ import { localDayKey } from '../../src/core/scheduleEvaluator';
 import { emptyDayUsage } from '../../src/core/stats';
 import { surfaceKey } from '../../src/core/surfaceKeys';
 import type { UsageSnapshot } from '../../src/core/protocol';
+import { enrichEntries } from '../../src/core/channels';
 import type { ChannelEntry } from '../../src/core/settingsSchema';
 import { featuresWith, settings, siteRule } from '../helpers/rules';
 import { installAttention, installDnr, resetBrowser } from './fakeApis';
@@ -598,5 +599,88 @@ describe('redirectOpenTabs', () => {
     await redirectOpenTabs('youtube.com');
 
     expect(Object.keys(attention.navigatedTo)).toEqual(['1', '2']);
+  });
+});
+
+describe('YouTube channel whitelist — enrichment closes the network-layer hole', () => {
+  /**
+   * The user typed "@veritasium", so the stored entry has a handle and NO id. The content
+   * script then watches one of that channel's videos, which reveals the canonical id, and
+   * the worker folds it into the entry (`enrichEntries`). The point of doing that is right
+   * here: until the entry HAS an id, `/channel/UCxxxx…` gets no allow-rule at all, so a full
+   * navigation to the channel's own canonical URL hits the site redirect even though the
+   * user explicitly allowed that channel. Only the network layer can fix that — the content
+   * script never runs, the block page has already won.
+   */
+  const VERITASIUM_ID = 'UCHnyfMqiRRG1u-2MsSQLbXA';
+
+  const whitelistOf = (channels: ChannelEntry[]) =>
+    settings({
+      rules: [
+        siteRule({
+          domain: 'youtube.com',
+          mode: 'HARD_BLOCK',
+          features: featuresWith('youtube', {
+            youtube: { channelMode: 'WHITELIST', channels },
+          }),
+        }),
+      ],
+    });
+
+  const handleOnly = [channel({ handle: 'veritasium', displayName: '@veritasium' })];
+
+  it('redirects the allowed channel own canonical URL while the entry has no id', () => {
+    const rules = compileRules(whitelistOf(handleOnly), NO_USAGE, MIDDAY);
+    expect(resolve(rules, 'https://www.youtube.com/@veritasium')).toBe('allowed');
+    // The hole. Same channel, same permission, different URL shape.
+    expect(resolve(rules, `https://www.youtube.com/channel/${VERITASIUM_ID}`)).toBe(
+      'block-page',
+    );
+  });
+
+  it('lets that same URL through once the entry has learned the id', () => {
+    const { entries, changed } = enrichEntries(handleOnly, {
+      channelId: VERITASIUM_ID,
+      handle: '@veritasium',
+      displayName: 'Veritasium',
+    });
+    expect(changed).toBe(true);
+
+    const rules = compileRules(whitelistOf(entries), NO_USAGE, MIDDAY);
+    expect(resolve(rules, `https://www.youtube.com/channel/${VERITASIUM_ID}`)).toBe('allowed');
+    expect(resolve(rules, `https://www.youtube.com/channel/${VERITASIUM_ID}/videos`)).toBe(
+      'allowed',
+    );
+    // And the handle route it already had keeps working.
+    expect(resolve(rules, 'https://www.youtube.com/@veritasium')).toBe('allowed');
+  });
+
+  it('opens nothing else: the rest of YouTube stays blocked after enrichment', () => {
+    const { entries } = enrichEntries(handleOnly, {
+      channelId: VERITASIUM_ID,
+      handle: '@veritasium',
+    });
+    const rules = compileRules(whitelistOf(entries), NO_USAGE, MIDDAY);
+
+    expect(resolve(rules, 'https://www.youtube.com/')).toBe('block-page');
+    expect(resolve(rules, 'https://www.youtube.com/feed/subscriptions')).toBe('block-page');
+    expect(resolve(rules, 'https://www.youtube.com/shorts/abc')).toBe('block-page');
+    expect(resolve(rules, 'https://www.youtube.com/@someoneelse')).toBe('block-page');
+    expect(resolve(rules, 'https://www.youtube.com/channel/UCsXVk37bltHxD1rDPwtNM8Q')).toBe(
+      'block-page',
+    );
+  });
+
+  it('mirrors it for an id-only entry learning the handle', () => {
+    const idOnly = [channel({ channelId: VERITASIUM_ID, displayName: VERITASIUM_ID })];
+    const before = compileRules(whitelistOf(idOnly), NO_USAGE, MIDDAY);
+    expect(resolve(before, 'https://www.youtube.com/@veritasium')).toBe('block-page');
+
+    const { entries } = enrichEntries(idOnly, {
+      channelId: VERITASIUM_ID,
+      handle: '@veritasium',
+    });
+    const after = compileRules(whitelistOf(entries), NO_USAGE, MIDDAY);
+    expect(resolve(after, 'https://www.youtube.com/@veritasium')).toBe('allowed');
   });
 });

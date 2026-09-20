@@ -18,6 +18,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   HIDDEN_CLASS,
+  NUDGE_OVERLAY_ID,
   SHORTS_FALLBACK_SURFACE,
   SHORTS_SURFACES,
   fallbackWarningMessage,
@@ -27,13 +28,12 @@ import {
   type SelectorRule,
 } from '../../src/content/selectors';
 import {
-  BAIL_LABEL,
   applyShortsHiding,
-  createGateOverlay,
   resolveShortsGate,
   shortsGateCopy,
   type ShortsGateVerdict,
 } from '../../src/content/youtube';
+import { BAIL_LABEL, createGateOverlay } from '../../src/content/overlay';
 import type { ResolvedGate } from '../../src/core/protocol';
 import {
   HOME_FEED_HTML,
@@ -557,9 +557,11 @@ describe('shortsGateCopy for an exhausted daily budget', () => {
 
     const overlay = createGateOverlay(
       document,
-      { mode: verdict.mode, delaySeconds: verdict.delaySeconds },
-      { onComplete, onBail: () => {} },
+      NUDGE_OVERLAY_ID,
+      verdict.mode,
+      verdict.delaySeconds,
       shortsGateCopy(verdict),
+      { onComplete, onBail: () => {} },
     );
 
     expect(overlay.element.querySelector('.nudge-overlay__count')).toBeNull();
@@ -576,17 +578,42 @@ describe('the /shorts/* interstitial overlay', () => {
     vi.useRealTimers();
   });
 
+  // youtube.css styles the interstitial via `#nudge-shorts-gate.nudge-overlay`, so an
+  // overlay built with any other id would render completely unstyled — that is the exact
+  // failure the migration onto the shared overlay builder (src/content/overlay.ts) could
+  // have introduced.
+  it('carries YouTube\'s own element id, so youtube.css can still style it', () => {
+    mount(SHORTS_PLAYER_HTML);
+    const verdict: ShortsGateVerdict = { mode: 'HARD_BLOCK', delaySeconds: 5, limitReached: false };
+
+    const overlay = createGateOverlay(
+      document,
+      NUDGE_OVERLAY_ID,
+      verdict.mode,
+      verdict.delaySeconds,
+      shortsGateCopy(verdict),
+      { onComplete: () => {}, onBail: () => {} },
+    );
+
+    expect(NUDGE_OVERLAY_ID).toBe('nudge-shorts-gate');
+    expect(overlay.element.id).toBe(NUDGE_OVERLAY_ID);
+
+    overlay.dispose();
+  });
+
   it('offers "I changed my mind" verbatim in every mode (Android parity)', () => {
     mount(SHORTS_PLAYER_HTML);
 
     for (const mode of ['HARD_BLOCK', 'DELAY', 'BREATHING'] as const) {
       const verdict: ShortsGateVerdict = { mode, delaySeconds: 5, limitReached: false };
       const overlay = createGateOverlay(
-      document,
-      { mode: mode, delaySeconds: 5 },
-      { onComplete: () => {}, onBail: () => {} },
-      shortsGateCopy(verdict),
-    );
+        document,
+        NUDGE_OVERLAY_ID,
+        mode,
+        5,
+        shortsGateCopy(verdict),
+        { onComplete: () => {}, onBail: () => {} },
+      );
       const bail = overlay.element.querySelector('button');
       // Exact wording, not "Nevermind" or "Go back" — it matches the Android app.
       expect(bail?.textContent).toBe('I changed my mind');
@@ -603,9 +630,11 @@ describe('the /shorts/* interstitial overlay', () => {
 
     const overlay = createGateOverlay(
       document,
-      { mode: 'DELAY', delaySeconds: 3 },
-      { onComplete, onBail: () => {} },
+      NUDGE_OVERLAY_ID,
+      'DELAY',
+      3,
       shortsGateCopy(verdict),
+      { onComplete, onBail: () => {} },
     );
     document.body.append(overlay.element);
 
@@ -631,9 +660,11 @@ describe('the /shorts/* interstitial overlay', () => {
 
     const overlay = createGateOverlay(
       document,
-      { mode: 'HARD_BLOCK', delaySeconds: 3 },
-      { onComplete, onBail: () => {} },
+      NUDGE_OVERLAY_ID,
+      'HARD_BLOCK',
+      3,
       shortsGateCopy(verdict),
+      { onComplete, onBail: () => {} },
     );
 
     expect(overlay.element.querySelector('.nudge-overlay__count')).toBeNull();
@@ -655,9 +686,11 @@ describe('the /shorts/* interstitial overlay', () => {
 
     const overlay = createGateOverlay(
       document,
-      { mode: 'BREATHING', delaySeconds: 16 },
-      { onComplete, onBail: () => {} },
+      NUDGE_OVERLAY_ID,
+      'BREATHING',
+      16,
       shortsGateCopy(verdict),
+      { onComplete, onBail: () => {} },
     );
     const phase = overlay.element.querySelector('.nudge-overlay__phase');
     const remaining = overlay.element.querySelector('.nudge-overlay__remaining');
@@ -681,9 +714,11 @@ describe('the /shorts/* interstitial overlay', () => {
     const verdict: ShortsGateVerdict = { mode: 'HARD_BLOCK', delaySeconds: 5, limitReached: false };
     const overlay = createGateOverlay(
       document,
-      { mode: 'HARD_BLOCK', delaySeconds: 5 },
-      { onComplete: () => {}, onBail },
+      NUDGE_OVERLAY_ID,
+      'HARD_BLOCK',
+      5,
       shortsGateCopy(verdict),
+      { onComplete: () => {}, onBail },
     );
     root.append(overlay.element);
 

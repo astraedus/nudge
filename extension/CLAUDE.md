@@ -75,12 +75,15 @@ src/
     seenItems.ts        (the day-scoped "already counted this item" set)
   background/   The service worker: dnr, tracker, itemCounter, tempAllow, alarmsHub,
                 badge, messagesRouter, storage, grayscale.
-  content/      spaNav.ts   (the generic SPA-navigation layer, shared by the platform
-                             scripts), overlay.ts (the shared in-page gate overlay),
+  content/      spaNav.ts   (the generic SPA-navigation layer), overlay.ts (the shared
+                             in-page gate overlay + the media hold + the bail helper) —
+                             BOTH shared by all seven platform scripts, YouTube included
                 itemCounter.ts (reports "we are on one item of a gate's stream")
                 YouTube: selectors.ts (ALL selectors), youtube.ts, youtube.css,
                 channelDetection.ts (3-tier channel identification), channelFilter.ts
-                (feed filtering + watch gate + colour flip), unhook.ts (hide toggles)
+                (feed filtering + watch gate + colour flip), channelObserver.ts (reports a
+                CONFIRMED channel so the stored entry can learn its missing identifier),
+                unhook.ts (hide toggles)
                 <platform>/{selectors,index}.ts for instagram, tiktok, x, facebook,
                 reddit, linkedin -- same architecture, one CSS class per hide feature
   entrypoints/  WXT entrypoints: background, blocked/, popup/, dashboard/, onboarding/,
@@ -151,9 +154,13 @@ unit-testable, exactly as the Android domain layer is.
    `popstate`/`hashchange`, an href-diff poll, and a debounced observer as a re-apply safety
    net). **Isolated-world content scripts cannot observe the page's own `history.pushState`**
    — confirmed independently on YouTube, TikTok, X, Instagram and Facebook — which is why the
-   poll is not optional. `content/spaNav.ts` is that layer, shared by the platform scripts;
-   `content/youtube.ts` still carries its own copy because its nav handling is entangled with
-   the channel-freshness settle machinery (see Known gaps).
+   poll is not optional. `content/spaNav.ts` is that layer and EVERY platform script uses
+   it, YouTube included. YouTube configures it with its own cadence (`yt-navigate-finish` as
+   the site event, a 1s poll, a 250ms mutation debounce, and `mutateOnIdlePoll` so a page
+   that has gone quiet is still re-checked) and keeps only the parts that are genuinely
+   YouTube-shaped: `previousChannelKey`, `navAt` and the fixed `SETTLE_RECHECK_MS` ladder.
+   The interstitial itself is `content/overlay.ts`'s for every platform; only the element id
+   differs, and `youtube.css` keys its backdrop rule off YouTube's.
 6. **Grayscale is per site.** `background/grayscale.ts` derives one dynamic registration's
    `matches` from the set of enabled rules with `grayscale: true`, compares it against what
    is currently registered on every wake/save, and only re-registers when it differs.
@@ -195,8 +202,14 @@ unit-testable, exactly as the Android domain layer is.
    tabs that are on that gate's SURFACE). A tally kept in the page is a tally the user can
    edit with devtools open on the very surface it limits. The shared controller in
    `content/platformGate.ts` wires the reporter for all six non-YouTube platforms; YouTube
-   starts a standalone counter from its ENTRYPOINT, leaving `content/youtube.ts` untouched
-   (see the Known gap below).
+   starts a standalone counter from its ENTRYPOINT instead, leaving `content/youtube.ts`
+   untouched. YouTube now shares `overlay.ts` and `spaNav.ts`, but it still runs its OWN
+   controller rather than `initPlatformContentScript`, so the shared reporter never fires
+   there. Keeping the counter in the entrypoint is deliberate even so: counting is a pure
+   observation with no verdict of its own, and hanging it off the channel-freshness settle
+   machinery would couple it to the one piece of this codebase whose regressions are
+   live-only, for no user-visible gain. The cost is a second `observeNavigation` on a
+   YouTube page (one poll, one observer), which is cheap and buys that isolation.
 
    **Reels mixed into a feed still cannot be counted**, for the same reason they cannot be
    filtered (see Known gaps): they have no per-item URL. Only whole-surface item streams
@@ -261,6 +274,26 @@ unit-testable, exactly as the Android domain layer is.
   silent no-op, and a fail-closed you cannot see is an unexplained block.
   Gray-screen takes the OPPOSITE bias throughout: an unidentified channel never earns
   colour, because staying gray is harmless.
+- **AN ENTRY CAN LEARN ITS MISSING IDENTIFIER, AND THAT IS ALL IT MAY EVER LEARN.** A stored
+  entry only holds the identifier the user typed, and `dnr.ts` can only carve out the
+  identifiers it holds — so a handle-only entry's own `/channel/UC…` page was redirected
+  despite being allowed, which no content script can fix. `CHANNEL_OBSERVED` closes that: a
+  CONFIRMED observation (never a settling one — persisting a stale byline would make the
+  reverse-direction P0 permanent) goes to `core/channels.enrichEntries`, which fills the null
+  axis, upgrades an `@handle`/id placeholder name, and merges two rows it proves are one
+  channel. THE INVARIANT: enrichment never adds a channel, never drops one, never overwrites a
+  non-null identifier, and refuses a contradiction on a shared axis outright. The covered set
+  is therefore unchanged, which is exactly what `strictMode.isWeakening` measures, so the
+  save goes through the normal gated `handleSave` and the Commitment Lock simply never fires.
+  Full reasoning and the rules in `core/channels.ts`; tests pin the invariant over a table.
+- **The channel gate bails BACKWARDS, not to the site root.** "I changed my mind" on the
+  channel interstitial calls `history.back()` (`content/overlay.ts`'s `bailAwayFromGate`),
+  and when there is no previous entry — a tab opened straight onto the gated video — asks
+  the worker to close the tab (`CLOSE_TAB`, whose tab id comes from the message SENDER, so a
+  page can only ever close itself). The site root is not an option here: under "block
+  YouTube except these channels" it is exactly what DNR redirects, so the old bail landed
+  the user on the block page. The SHORTS gate still uses the root, and correctly — that
+  gate only fires while the site itself is open.
 - **Feed cards are matched per-card.** The channel chain is run SCOPED to each card; an
   unscoped query returns the first channel on the page for every card.
 - **A selector match that yields nothing is a MISS, not an answer.** `channelFromDom`
@@ -477,40 +510,37 @@ xvfb), scoped with `paths: ['extension/**']`. The Android workflow carries the m
   site that forgot to pass it. Making it required turned "did every consumer get updated"
   into something `tsc` answers instead of something a person has to remember to grep. Same
   reason the DNR compiler takes ONE `UsageSnapshot` rather than two parallel maps.
+- **An element id a stylesheet keys off is a CONTRACT, and nothing else checks it.**
+  `overlayIdFor()` derives `nudge-gate-<platform>`, but `platformOverlay.css` still styled
+  `#nudge-platform-gate` from before that id was per-platform — so on all six platforms
+  the interstitial's full-screen backdrop rule matched nothing and it rendered as an
+  ordinary in-flow block: a gate that looks broken, with a green typecheck, a green unit
+  suite (every DOM test asserts the ELEMENT is attached, not that it covers anything) and no
+  console error. Found while migrating YouTube onto the same builder, which is the same
+  trap one rename away. `tests/content/overlayStyling.test.ts` now pins every platform's
+  overlay id to a matching `#<id>.nudge-overlay` rule in the stylesheet its entrypoint
+  imports, YouTube's included, and plants a bogus id to prove the check is not vacuous.
+  Generalise: when a value crosses from TS into CSS (or any other language the compiler
+  cannot follow), a test has to be the type system.
 - The React Compiler advisory lint rules (`set-state-in-effect`,
   `preserve-manual-memoization`, `use-memo`) are deliberately **off**; `rules-of-hooks` is
   deliberately **on** and has already earned its keep.
 
 ## Known gaps (MVP)
 
-- **"I changed my mind" on the CHANNEL overlay lands on the site's block page**, not back
-  where the user came from: the bail navigates to the site root, which the site rule is
-  still redirecting. Mildly confusing rather than wrong (they did ask to be kept out), and
-  accepted for v0.2.0. The fix is for the channel gate to bail somewhere the site rule does
-  not govern, or to close the tab.
 - Strict Mode cannot stop removal from `chrome://extensions`. The dashboard says so plainly
   rather than pretending; honesty is the differentiator (ext-02).
 - YouTube fixtures in `tests/content/fixtures/` are hand-authored from the ext-03 taxonomy,
   not live DOM captures. Refresh them from real YouTube DOM when possible.
 - **Reels mixed INTO a feed cannot be filtered out, or counted.** No OSS implementation
   anywhere does per-card filtering of reels/short videos in a mixed feed (ext-12), so Nudge
-  ships whole-surface control only — and a count budget needs a per-item URL for the same
-  reason, so an in-feed reel is invisible to it as well: the Reels/For You/Explore *pages* are gated by URL, and whole
-  containers (stories tray, nav entries, suggested blocks) are hidden. Each platform in
+  ships whole-surface control only: the Reels/For You/Explore *pages* are gated by URL, and
+  whole containers (stories tray, nav entries, suggested blocks) are hidden. A count budget
+  needs a per-item URL for the same reason a filter needs one, so an in-feed reel is
+  invisible to it as well. Each platform in
   `core/platforms.ts` carries a `note` saying so, and the dashboard prints it — an honest
   limitation beats a feature the code does not actually deliver. Reel tiles on a profile
   grid are likewise out of reach.
-- **YouTube does not yet share the platform modules.** `content/youtube.ts` keeps its own
-  copy of the SPA-navigation layer (`content/spaNav.ts`), the interstitial builder
-  (`content/overlay.ts`, including `BAIL_LABEL` / `BREATH_IN_MS`), and `IDLE_SITE_CONFIG`.
-  The overlay migration was attempted during this release and backed out deliberately: the
-  overlay itself is pure DOM and the swap was byte-identical and green, but YouTube's
-  *caller* is entangled with the channel-freshness settle window that exists to stop a
-  documented P0 (a false interstitial on a channel the user explicitly allowed, for 3-5s
-  after a watch→watch hop), and that regression is LIVE-ONLY — no fixture reproduces the
-  mutation storm that causes it. The risk is not worth a refactor with zero user-visible
-  gain. Do it as its own isolated change, gated on `e2e/youtubeAdvanced.spec.ts`, which is
-  the only automated guard for the settle window.
 - **Five sourced YouTube hides are researched but unshipped**: merch shelf, live-chat
   sidebar, subscribe button, annotations, and mix/radio playlists (ext-12 §F has an
   ImprovedTube selector for each). They need registry ids and selector rungs; nothing about
