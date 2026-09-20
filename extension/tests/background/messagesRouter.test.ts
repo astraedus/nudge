@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { handleRequest } from '../../src/background/messagesRouter';
 import { featureSummary } from '../../src/core/featureSummary';
-import { loadSettings, saveDay, saveSettings } from '../../src/background/storage';
+import { loadDay, loadSettings, saveDay, saveSettings } from '../../src/background/storage';
 import { localDayKey } from '../../src/core/scheduleEvaluator';
 import { emptyDayUsage } from '../../src/core/stats';
 import { surfaceKey } from '../../src/core/surfaceKeys';
@@ -453,5 +453,101 @@ describe('a page on a SUBDOMAIN of a ruled site', () => {
     });
 
     expect(result).toMatchObject({ ok: false, reason: 'no-rule' });
+  });
+});
+
+describe('the block page asking about a SUBDOMAIN whose limit is spent', () => {
+  /**
+   * QA R2 (2026-09-20), a new CRITICAL born from the subdomain fix missing one consumer.
+   * The block page found the rule but read usage under the HOST while the tracker filled
+   * the RULE's bucket, so a spent Allow rule looked under budget and the engine answered
+   * ALLOW for a URL DNR had just redirected. The page bounced to the site, DNR redirected
+   * again: 217 main-frame navigations in 8 seconds and a crashed renderer.
+   *
+   * This is the ENGINE INVARIANT in CLAUDE.md, "if any rule applies, the verdict is a
+   * BLOCK", so it is asserted as the user-visible outcome, not as which key was read.
+   */
+  const spentLimit = settings({
+    rules: [siteRule({ domain: 'wikipedia.org', mode: 'ALLOW', dailyLimitMinutes: 1 })],
+  });
+
+  beforeEach(async () => {
+    await seed(spentLimit);
+    // The tracker attributes a page on any subdomain to the RULE's bucket.
+    await saveDay(localDayKey(NOW), {
+      'wikipedia.org': { ...emptyDayUsage(), activeSec: 120 },
+    });
+  });
+
+  it('blocks a subdomain page instead of bouncing it back into the redirect', async () => {
+    const context = await ask<BlockContext>({
+      type: 'GET_BLOCK_CONTEXT',
+      target: 'https://en.wikipedia.org/wiki/Colour',
+    });
+
+    expect(context.decision.type).toBe('BLOCK');
+  });
+
+  it('says the limit is what did it, and names the rule that is enforcing', async () => {
+    const context = await ask<BlockContext>({
+      type: 'GET_BLOCK_CONTEXT',
+      target: 'https://en.wikipedia.org/wiki/Colour',
+    });
+
+    expect(context.domain).toBe('wikipedia.org');
+    if (context.decision.type !== 'BLOCK') throw new Error('expected a block');
+    expect(context.decision.limitReached).toBe(true);
+    expect(context.decision.mode).toBe('HARD_BLOCK');
+  });
+
+  it('answers the bare domain and a subdomain identically', async () => {
+    const [bare, sub] = await Promise.all([
+      ask<BlockContext>({ type: 'GET_BLOCK_CONTEXT', target: 'https://wikipedia.org/' }),
+      ask<BlockContext>({
+        type: 'GET_BLOCK_CONTEXT',
+        target: 'https://en.wikipedia.org/wiki/Colour',
+      }),
+    ]);
+
+    expect(sub.decision).toEqual(bare.decision);
+    expect(sub.domain).toBe(bare.domain);
+  });
+
+  it('does not offer a fresh Delay countdown on a subdomain whose budget is gone', async () => {
+    // The blast radius the report measured: a Delay rule returned DELAY with a full minute
+    // remaining on the subdomain, so the limit was simply a no-op there.
+    await seed(
+      settings({
+        rules: [
+          siteRule({
+            domain: 'wikipedia.org',
+            mode: 'DELAY',
+            delaySeconds: 15,
+            dailyLimitMinutes: 1,
+          }),
+        ],
+      }),
+    );
+    await saveDay(localDayKey(NOW), {
+      'wikipedia.org': { ...emptyDayUsage(), activeSec: 120 },
+    });
+
+    const context = await ask<BlockContext>({
+      type: 'GET_BLOCK_CONTEXT',
+      target: 'https://en.wikipedia.org/wiki/Colour',
+    });
+
+    if (context.decision.type !== 'BLOCK') throw new Error('expected a block');
+    expect(context.decision.mode).toBe('HARD_BLOCK');
+    expect(context.decision.limitReached).toBe(true);
+    expect(context.decision.dailyTimeRemainingMs).toBe(0);
+  });
+
+  it('counts a walk-away on a subdomain against the rule, not a separate host row', async () => {
+    await ask({ type: 'WALKED_AWAY', target: 'https://en.wikipedia.org/wiki/Colour' });
+
+    const day = await loadDay(localDayKey(NOW));
+    expect(day['wikipedia.org']?.walkedAway).toBe(1);
+    expect(day['en.wikipedia.org']).toBeUndefined();
   });
 });

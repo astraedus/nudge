@@ -96,17 +96,6 @@ async function setPendingChallenge(challenge: string | null): Promise<void> {
   }
 }
 
-/**
- * The enabled rule covering `domain`, or null.
- *
- * Subdomain-aware via `ruleForHost`, because DNR always was: a rule on `wikipedia.org`
- * governs `en.wikipedia.org`, and an exact string compare here is what made the popup
- * report "Not blocked" on a page the network layer was already enforcing.
- */
-function ruleForDomain(settings: NudgeSettings, domain: string): SiteRule | null {
-  if (domain === '') return null;
-  return ruleForHost(settings.rules, domain);
-}
 
 /** The gate a URL lands on, together with its stored settings. */
 interface GateOnPage {
@@ -151,11 +140,41 @@ function gateAsActiveRule(
   };
 }
 
+/**
+ * Everything a target URL means, resolved ONCE through the shared rule resolver.
+ *
+ * The block page was the consumer missed when subdomain matching landed (live QA R2,
+ * 2026-09-20). It found the rule correctly, `ruleForDomain` was already subdomain-aware, 
+ * but then read usage under the HOST (`en.wikipedia.org`) while the tracker had been
+ * filling the RULE's bucket (`wikipedia.org`). So `usedMs` was 0, the spent Allow rule
+ * looked under budget, and the engine answered ALLOW for a URL DNR had just redirected.
+ *
+ * That is the ENGINE INVARIANT breaking, and it is not a harmless no-op: the block page
+ * bounced to the site, DNR redirected again, 217 main-frame navigations in 8 seconds and a
+ * crashed renderer. Two halves of one question answered from two different keys is exactly
+ * the failure the resolver exists to prevent, so nothing here derives a key by hand.
+ */
+interface ResolvedTarget {
+  /** The rule covering this URL, or null. */
+  rule: SiteRule | null;
+  /** The domain to SPEAK about, the rule's own, so the block page names what is enforcing. */
+  domain: string;
+  /** The usage bucket to READ, the same one the tracker fills. */
+  usageKey: string;
+}
+
+function resolveTarget(settings: NudgeSettings, url: string): ResolvedTarget {
+  const host = extractDomain(url) ?? '';
+  if (host === '') return { rule: null, domain: '', usageKey: '' };
+  const rule = ruleForHost(settings.rules, host);
+  // With no rule, the host is both the name and the bucket, unchanged behaviour.
+  return { rule, domain: rule?.domain ?? host, usageKey: rule?.domain ?? host };
+}
+
 async function buildBlockContext(target: string, now: Date): Promise<BlockContext> {
   const settings = await loadSettings();
-  const domain = extractDomain(target) ?? '';
-  const usedMs = domain === '' ? 0 : await todayUsageMs(domain, now);
-  const rule = ruleForDomain(settings, domain);
+  const { rule, domain, usageKey } = resolveTarget(settings, target);
+  const usedMs = usageKey === '' ? 0 : await todayUsageMs(usageKey, now);
 
   let decision: BlockDecision = { type: 'ALLOW' };
   let gateId: GateId | null = null;
@@ -268,8 +287,10 @@ async function redeemEmergencyPass(target: string, now: Date): Promise<GrantResu
     return { ok: false, until: 0, reason: 'strict-mode' };
   }
 
-  const domain = extractDomain(target);
-  if (domain === null) return { ok: false, until: 0, reason: 'unknown-site' };
+  // The grant covers the RULE's domain, so a pass taken on en.wikipedia.org opens the site
+  // the user actually ruled rather than that one host.
+  const { domain } = resolveTarget(settings, target);
+  if (domain === '') return { ok: false, until: 0, reason: 'unknown-site' };
 
   const ledger = pass.parse(await loadPassLedger());
   if (!pass.canUseGlobal(ledger, now.getTime(), pass.LOCKOUT_MS)) {
@@ -341,8 +362,7 @@ async function buildDashboardState(now: Date): Promise<DashboardState> {
  */
 async function buildSiteConfig(url: string, now: Date): Promise<SiteConfig> {
   const settings = await loadSettings();
-  const domain = extractDomain(url) ?? '';
-  const rule = ruleForDomain(settings, domain);
+  const { rule, domain } = resolveTarget(settings, url);
   const knownPlatform = domain === '' ? null : platformForDomain(domain);
 
   if (!settings.globalEnabled || rule === null) {
@@ -517,8 +537,9 @@ export async function handleRequest(request: Request, now: Date = new Date()): P
     case 'COMPLETE_PAUSE':
       return completePause(request.target, now);
     case 'WALKED_AWAY': {
-      const domain = extractDomain(request.target);
-      if (domain !== null) await logWalkedAway(domain, now);
+      // Counted against the rule's bucket, like every other stat for this page.
+      const { usageKey } = resolveTarget(await loadSettings(), request.target);
+      if (usageKey !== '') await logWalkedAway(usageKey, now);
       return { ok: true };
     }
     case 'USE_EMERGENCY_PASS':

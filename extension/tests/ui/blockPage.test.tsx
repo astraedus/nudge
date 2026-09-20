@@ -789,8 +789,11 @@ describe('BlockPage — allowed channels look like the way in', () => {
     const link = screen.getByRole('link', { name: 'Veritasium' });
     expect(link.getAttribute('href')).toBe('https://www.youtube.com/@veritasium');
     expect(link.style.color).toBe('var(--nudge-link)');
-    expect(link.style.background).toBe('var(--nudge-link-bg)');
     expect(link.style.fontWeight).toBe('600');
+    // The fill comes from the CLASS, not from here. This assertion used to require the
+    // inline background, which is precisely what made the hover rule unreachable (QA R3):
+    // an inline declaration outranks any class rule, so the test was pinning the bug.
+    expect(link.style.background).toBe('');
     // The hover/focus states live in a stylesheet, since inline styles cannot express them.
     expect(link.className).toContain('nudge-channel-link');
     // Inline SVG arrow, never an emoji glyph (repo rule), and never announced.
@@ -859,5 +862,125 @@ describe('BlockPage — allowed channels look like the way in', () => {
     expect(screen.getByRole('link', { name: 'Sneaky' }).getAttribute('href')).toMatch(
       /^https:\/\/www\.youtube\.com\/@[^/]+$/,
     );
+  });
+});
+
+describe('the redirect-loop backstop', () => {
+  /**
+   * QA R2 (2026-09-20): the block page was told ALLOW for a URL DNR had just redirected,
+   * bounced to the site, got redirected back, and did it 217 times in 8 seconds until the
+   * renderer crashed. The cause is fixed; this is the structural guarantee that the next
+   * invariant break shows the user an error instead of eating their CPU.
+   */
+  beforeEach(() => {
+    window.sessionStorage.clear();
+    setTarget(TARGET);
+  });
+
+  it('sends the user on the first time, because that is the normal case', async () => {
+    sendMessageMock.mockResolvedValue(makeContext({ decision: { type: 'ALLOW' } }));
+    render(<BlockPage />);
+    await flush();
+
+    expect(replaceMock).toHaveBeenCalledWith(TARGET);
+  });
+
+  it('stops instead of bouncing the same target a second time', async () => {
+    sendMessageMock.mockResolvedValue(makeContext({ decision: { type: 'ALLOW' } }));
+
+    render(<BlockPage />);
+    await flush();
+    cleanup();
+    replaceMock.mockClear();
+
+    // The loop: the site redirected us straight back to the same target.
+    render(<BlockPage />);
+    await flush();
+
+    expect(replaceMock).not.toHaveBeenCalled();
+  });
+
+  it('says plainly that Nudge is at fault, and still offers the link', async () => {
+    sendMessageMock.mockResolvedValue(makeContext({ decision: { type: 'ALLOW' } }));
+    render(<BlockPage />);
+    await flush();
+    cleanup();
+
+    render(<BlockPage />);
+    await flush();
+
+    expect(screen.getByText(/internal error/i)).toBeDefined();
+    const link = screen.getByText(TARGET) as HTMLAnchorElement;
+    expect(link.getAttribute('href')).toBe(TARGET);
+  });
+
+  it('logs the loop so it is visible in devtools, naming the target', async () => {
+    const errors: string[] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => errors.push(String(args[0]));
+    try {
+      sendMessageMock.mockResolvedValue(makeContext({ decision: { type: 'ALLOW' } }));
+      render(<BlockPage />);
+      await flush();
+      cleanup();
+      render(<BlockPage />);
+      await flush();
+    } finally {
+      console.error = original;
+    }
+
+    expect(errors.some((line) => line.includes('redirect loop detected'))).toBe(true);
+    expect(errors.some((line) => line.includes(TARGET))).toBe(true);
+  });
+
+  it('a real block clears the history, so a later pause-and-continue still works', async () => {
+    // Bounce once, then get genuinely blocked, then bounce again later: that is an ordinary
+    // day and must not be mistaken for a loop.
+    sendMessageMock.mockResolvedValue(makeContext({ decision: { type: 'ALLOW' } }));
+    render(<BlockPage />);
+    await flush();
+    cleanup();
+
+    sendMessageMock.mockResolvedValue(makeContext());
+    render(<BlockPage />);
+    await flush();
+    cleanup();
+
+    replaceMock.mockClear();
+    sendMessageMock.mockResolvedValue(makeContext({ decision: { type: 'ALLOW' } }));
+    render(<BlockPage />);
+    await flush();
+
+    expect(replaceMock).toHaveBeenCalledWith(TARGET);
+  });
+});
+
+describe('the allowed-channel link hover state', () => {
+  /**
+   * QA R3: the hover background and border were dead because the anchor set `background`
+   * and `border` INLINE, and an inline declaration outranks any class rule, so
+   * `.nudge-channel-link:hover` could never win. It looked like hover worked, because the
+   * arrow nudge (a transform on a child) was unaffected and still moved.
+   *
+   * Asserted as "the inline style does not claim these properties", which is the thing that
+   * has to stay true; jsdom applies no stylesheet, so the hover itself cannot be observed
+   * here and asserting a computed colour would be theatre.
+   */
+  it('leaves background and border to the stylesheet so :hover can win', async () => {
+    setTarget(TARGET);
+    sendMessageMock.mockResolvedValue(
+      makeContext({
+        allowedChannels: [channel({ handle: 'veritasium', displayName: 'Veritasium' })],
+      }),
+    );
+    render(<BlockPage />);
+    await flush();
+
+    const link = screen.getByRole('link', { name: 'Veritasium' }) as HTMLAnchorElement;
+    expect(link.className).toContain('nudge-channel-link');
+    expect(link.style.background).toBe('');
+    expect(link.style.backgroundColor).toBe('');
+    expect(link.style.border).toBe('');
+    expect(link.style.borderColor).toBe('');
   });
 });

@@ -141,6 +141,15 @@ button {
  * this is the one stylesheet every entrypoint already loads, so the few rules that need a
  * state selector live here next to the tokens they use.
  */
+/* Base background/border live HERE, not in the anchor's inline style: an inline
+   declaration outranks any class rule, so setting them inline silently killed the :hover
+   below (the arrow nudge still moved, which is what made it look like :hover worked). */
+.nudge-channel-link {
+  background: var(--nudge-link-bg);
+  border: 1px solid var(--nudge-link-border);
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
 .nudge-channel-link:hover {
   background: var(--nudge-link-bg-hover);
   border-color: var(--nudge-link);

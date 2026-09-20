@@ -248,12 +248,42 @@ export interface MediaHold {
  * re-created while the overlay is up — which YouTube does.
  */
 export function holdMediaPaused(doc: Document): MediaHold {
-  const repause = (): void => pauseMedia(doc);
+  /**
+   * Muting is belt to the pause's braces, and it exists because the pause has a gap.
+   *
+   * QA R2 measured 0.68s of audible playback on 1 of 5 cold loads: the player is already
+   * running when the overlay mounts, so there is a window between "the page starts sound"
+   * and "our first pause lands" that no listener can close — the sound has already left.
+   * Muting is synchronous and takes effect immediately, so that window is silent even when
+   * the pause is a beat late. The previous muted state is restored on release, because
+   * silently un-muting a video the user had muted themselves would be its own small bug.
+   */
+  const previouslyMuted = new WeakMap<HTMLMediaElement, boolean>();
+
+  const muteAll = (): void => {
+    for (const element of Array.from(doc.querySelectorAll('video, audio'))) {
+      const media = element as HTMLMediaElement;
+      try {
+        if (!previouslyMuted.has(media)) previouslyMuted.set(media, media.muted === true);
+        media.muted = true;
+      } catch {
+        // Same tolerance as pausing: a player that refuses must not throw into the gate.
+      }
+    }
+  };
+
+  const repause = (): void => {
+    muteAll();
+    pauseMedia(doc);
+  };
 
   const onPlay = (event: Event): void => {
     const target = event.target as Partial<HTMLMediaElement> | null;
     if (target === null || typeof target.pause !== 'function') return;
     try {
+      const media = target as HTMLMediaElement;
+      if (!previouslyMuted.has(media)) previouslyMuted.set(media, media.muted === true);
+      media.muted = true;
       target.pause();
     } catch {
       // Same tolerance as pauseMedia: a player that refuses to pause must not throw into
@@ -270,6 +300,18 @@ export function holdMediaPaused(doc: Document): MediaHold {
     release: () => {
       doc.removeEventListener('play', onPlay, true);
       doc.removeEventListener('playing', onPlay, true);
+      // Give each element back the muted state it had BEFORE the overlay, not a blanket
+      // un-mute: a video the user had muted themselves must stay muted.
+      for (const element of Array.from(doc.querySelectorAll('video, audio'))) {
+        const media = element as HTMLMediaElement;
+        const before = previouslyMuted.get(media);
+        if (before === undefined) continue;
+        try {
+          media.muted = before;
+        } catch {
+          // Nothing to do; the page is already usable again.
+        }
+      }
     },
   };
 }

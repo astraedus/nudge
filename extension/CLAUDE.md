@@ -390,6 +390,18 @@ xvfb), scoped with `paths: ['extension/**']`. The Android workflow carries the m
   copies means a block page for a site the popup calls "Allowed". `core/applies.ts` is that
   function, and it is also what let Allow mode exist WITHOUT touching `blockEngine.evaluate`
   — filter before the engine, never add a branch inside it.
+- **Routing SOME consumers through a new resolver is worse than routing none.** Subdomain
+  matching was added to the popup, badge, grayscale and tracker and MISSED the block page,
+  which then found the rule correctly but read usage under the host while the tracker filled
+  the rule's bucket — so a spent limit looked unspent and the engine answered ALLOW for a
+  URL DNR had just redirected. 217 navigations in 8s and a crashed renderer. When a lookup
+  gains a new rule, ENUMERATE every caller (`grep` the primitive, not the helper) and
+  justify each one you leave alone; a half-migrated resolver breaks the invariant that the
+  un-migrated half used to satisfy by accident.
+- **Give an invariant a structural backstop, not just a fix.** The ENGINE INVARIANT is now
+  also enforced at the point it would hurt: `core/redirectLoopGuard.ts` lets the block page
+  bounce a target once and then stops, logs, and renders a plain error. Any FUTURE break of
+  that invariant costs a visible message instead of a pegged CPU.
 - **A URL pattern shared by DNR and a content script must be ONE string.** RE2 (DNR) has no
   lookaround or backreferences, so a pattern that works in the page can be silently dropped
   by the network layer, leaving a surface gated in-SPA and wide open on a full page load.
@@ -416,6 +428,11 @@ xvfb), scoped with `paths: ['extension/**']`. The Android workflow carries the m
 
 ## Known gaps (MVP)
 
+- **"I changed my mind" on the CHANNEL overlay lands on the site's block page**, not back
+  where the user came from: the bail navigates to the site root, which the site rule is
+  still redirecting. Mildly confusing rather than wrong (they did ask to be kept out), and
+  accepted for v0.2.0. The fix is for the channel gate to bail somewhere the site rule does
+  not govern, or to close the tab.
 - Strict Mode cannot stop removal from `chrome://extensions`. The dashboard says so plainly
   rather than pretending; honesty is the differentiator (ext-02).
 - YouTube fixtures in `tests/content/fixtures/` are hand-authored from the ext-03 taxonomy,

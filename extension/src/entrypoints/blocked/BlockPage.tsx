@@ -10,6 +10,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { BlockContext } from '../../core/protocol';
 import type { ChannelEntry } from '../../core/settingsSchema';
+import { clearBounces, registerBounce } from '../../core/redirectLoopGuard';
 import { Button, NudgeMark, RuleFooter } from '../../ui/components';
 import { send } from '../../ui/rpc';
 import { BreathingView } from './BreathingView';
@@ -166,13 +167,12 @@ function AllowedChannels({ channels }: { channels: ChannelEntry[] }) {
                 gap: 12,
                 padding: '11px 14px',
                 borderRadius: 'var(--nudge-radius-sm)',
-                background: 'var(--nudge-link-bg)',
-                border: '1px solid var(--nudge-link-border)',
+                // background/border deliberately absent: they live in .nudge-channel-link
+                // so the :hover rule can actually win. Inline always outranks a class.
                 color: 'var(--nudge-link)',
                 fontSize: 15,
                 fontWeight: 600,
                 textDecoration: 'none',
-                transition: 'background 140ms ease, border-color 140ms ease',
               }}
             >
               <span
@@ -425,13 +425,36 @@ export function BlockPage() {
 
   // ALLOW is unexpected on the block page (nothing to block) — send the user on rather
   // than trap them behind a dead interstitial.
+  //
+  // But bounce AT MOST ONCE per target. DNR has already redirected by the time this page
+  // runs, so if the engine answers ALLOW while a rule still applies, going back to the site
+  // walks straight into the redirect again: live QA measured 217 main-frame navigations in
+  // 8 seconds and a crashed renderer from exactly that. The guard cannot know whether the
+  // invariant is broken, only that this target has bounced before, which is enough to stop.
+  // It turns any future break into a visible error instead of a pegged CPU.
+  const [loopDetected, setLoopDetected] = useState(false);
   useEffect(() => {
     if (
-      state.status === 'ready' &&
-      state.context.decision.type === 'ALLOW' &&
-      isNavigableTarget(state.target)
+      state.status !== 'ready' ||
+      state.context.decision.type !== 'ALLOW' ||
+      !isNavigableTarget(state.target)
     ) {
-      window.location.replace(state.target);
+      return;
+    }
+    const { allowed } = registerBounce(window.sessionStorage, state.target, Date.now());
+    if (!allowed) {
+      console.error(`[nudge] redirect loop detected for ${state.target}`);
+      setLoopDetected(true);
+      return;
+    }
+    window.location.replace(state.target);
+  }, [state]);
+
+  // A real BLOCK rendering means there is no loop, so forget the history: an ordinary
+  // pause-and-continue later must never be mistaken for one.
+  useEffect(() => {
+    if (state.status === 'ready' && state.context.decision.type === 'BLOCK') {
+      clearBounces(window.sessionStorage);
     }
   }, [state]);
 
@@ -478,6 +501,25 @@ export function BlockPage() {
   const { context, target } = state;
 
   if (context.decision.type !== 'BLOCK') {
+    if (loopDetected) {
+      // Deliberately plain and honest: something inside Nudge is wrong, the user is not
+      // being blocked on purpose, and the link is here so they are not stranded.
+      return (
+        <PageShell ruleName={null}>
+          <p style={{ margin: '0 0 12px', fontSize: 15, color: 'var(--nudge-on-surface)' }}>
+            Nudge hit an internal error blocking this page.
+          </p>
+          <p
+            style={{ margin: '0 0 16px', fontSize: 14, color: 'var(--nudge-on-surface-variant)' }}
+          >
+            Reload to try again, or report it at github.com/astraedus/nudge/issues.
+          </p>
+          <a href={target} style={{ fontSize: 14, color: 'var(--nudge-link)', fontWeight: 600 }}>
+            {target}
+          </a>
+        </PageShell>
+      );
+    }
     // ALLOW — the redirect effect above handles it; render a neutral state meanwhile.
     return (
       <PageShell ruleName={null}>

@@ -17,6 +17,8 @@ import type { MediaHold } from '../../src/content/overlay';
 
 interface FakeMedia extends HTMLElement {
   pause: () => void;
+  /** jsdom's HTMLElement has no media properties; the hold sets this one. */
+  muted: boolean;
 }
 
 function addVideo(): { el: FakeMedia; pause: ReturnType<typeof vi.fn> } {
@@ -122,5 +124,56 @@ describe('holding media paused while a gate overlay is up', () => {
     pauseMedia(document);
 
     expect(pause).toHaveBeenCalled();
+  });
+});
+
+describe('muting while the overlay is up', () => {
+  /**
+   * QA R2: 1 of 5 cold loads still produced 0.68s of audible playback. The player is
+   * already running when the overlay mounts, so there is a window between "the page starts
+   * sound" and "our first pause lands" that no listener can close, because the sound has
+   * already left. Muting is synchronous, so that window is silent even when the pause is a
+   * beat late.
+   */
+  function addVideoWithMute(muted = false): { el: FakeMedia; pause: ReturnType<typeof vi.fn> } {
+    const made = addVideo();
+    made.el.muted = muted;
+    return made;
+  }
+
+  it('mutes immediately, so the gap before the pause lands is silent', () => {
+    const { el } = addVideoWithMute();
+
+    holdMediaPaused(document);
+
+    expect(el.muted).toBe(true);
+  });
+
+  it('mutes a player that starts up behind the overlay', () => {
+    holdMediaPaused(document);
+    const { el } = addVideoWithMute();
+
+    el.dispatchEvent(new Event('play'));
+
+    expect(el.muted).toBe(true);
+  });
+
+  it('un-mutes on release, so the page is usable again', () => {
+    const { el } = addVideoWithMute(false);
+    const hold = holdMediaPaused(document);
+
+    hold.release();
+
+    expect(el.muted).toBe(false);
+  });
+
+  it('leaves a video the USER had muted still muted', () => {
+    // Restoring blindly to un-muted would be its own small bug: the user chose silence.
+    const { el } = addVideoWithMute(true);
+    const hold = holdMediaPaused(document);
+
+    hold.release();
+
+    expect(el.muted).toBe(true);
   });
 });
