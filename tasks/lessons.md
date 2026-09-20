@@ -609,3 +609,7 @@ The "is this Nudge's own app in front?" question here is asked **positively, by 
 arrives ~600ms early carrying the framework class `android.widget.FrameLayout`, so a negative test would have
 classified it as the app and ended the very arrival the overlay belongs to. The still-unfixed
 `shouldClearForOwnPackageEvent` defect below is a second reason not to reuse that predicate.
+
+## The bench Pixel must carry a RELEASE-signed Nudge, never a plain debug build (2026-09-21)
+
+The #36 device QA hit `INSTALL_FAILED_UPDATE_INCOMPATIBLE` installing the CI-built `main-latest` dev APK: the installed v1.17.1 had been seeded from a local `assembleDebug` (generic Android debug key) while every CI artifact, release or rolling, is signed with the real release key. A signature mismatch cannot be flagged past; the tester had to `run-as`-export the rules, uninstall, reinstall and re-import, losing the device's usage history. The device now carries the release cert. Rule: seed the Pixel only from a CI APK (`gh release download main-latest` or a `v*` release), and when a debuggable build is genuinely needed, sign debug with the release key as the 2026-08-20 entry describes, so the next CI build still installs over it.
