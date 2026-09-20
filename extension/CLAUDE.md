@@ -352,6 +352,17 @@ xvfb), scoped with `paths: ['extension/**']`. The Android workflow carries the m
 - **e2e needs real hostnames without a network.** `--host-resolver-rules=MAP *.test
   127.0.0.1:<port>` maps arbitrary hosts onto a local server, so DNR sees ordinary
   navigations. Extensions load only via `launchPersistentContext` + `--load-extension`.
+- **`chrome.runtime.reload()` UNLOADS a `--load-extension` extension permanently** — it does
+  not restart it. No replacement `serviceworker` event ever fires, `context.serviceWorkers()`
+  stays at 0, and every extension URL then answers `ERR_BLOCKED_BY_CLIENT`, so there is
+  nothing to rebind to. Test a restart with TWO browsers over ONE `userDataDir` instead — and
+  **clear the state the first one derived** (dynamic DNR rules and any
+  `persistAcrossSessions` registration both survive), or the second browser inherits a
+  correct rule set it never had to rebuild and the spec passes vacuously.
+- **`chrome.storage.set` with an UNCHANGED value fires no `onChanged`.** "Re-save the same
+  settings so the worker recompiles" is a silent no-op, and it fails later and somewhere
+  else. Drive a recompile through the real production path (`SAVE_SETTINGS`), which
+  recompiles unconditionally.
 - **"Browser has been closed" in an e2e fixture usually means OOM**, not a code bug — this
   machine runs `earlyoom` with `--prefer ^chrome$`. The lean Chrome flags in `e2e/fixtures.ts`
   exist for that reason.
