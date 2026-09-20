@@ -77,6 +77,21 @@ describe('platform registry: structural invariants', () => {
     }
   });
 
+  it('starts every path pattern with a slash', () => {
+    // Not cosmetic, and NOT covered by the URL-composition cases below: those build their
+    // test URL from the pattern itself, so a pattern missing its '/' produces the bogus
+    // URL "https://www.youtube.comshorts/x", which it then happily matches. The circularity
+    // makes that whole class invisible unless it is asserted structurally. (Found by
+    // deliberately planting the defect and watching the composition check wave it through.)
+    for (const platform of PLATFORMS) {
+      for (const gate of platform.gates) {
+        for (const pattern of gate.paths) {
+          expect(pattern.startsWith('/'), `${platform.id}/${gate.id}: ${pattern}`).toBe(true);
+        }
+      }
+    }
+  });
+
   it('uses only regex syntax RE2 also understands, so DNR and the page agree', () => {
     // RE2 (declarativeNetRequest's engine) has no lookaround and no backreferences. A
     // pattern using either compiles fine in the content script and is REJECTED by DNR,
@@ -90,6 +105,54 @@ describe('platform registry: structural invariants', () => {
       }
     }
   });
+});
+
+describe('every path pattern survives being embedded in the DNR full-URL regex', () => {
+  /**
+   * The registry's `paths` are pathname fragments; DNR needs a whole-URL `regexFilter`, so
+   * `background/dnr.ts` composes them into the shape below. That composition is where a
+   * pattern can quietly stop working — it compiles, it just matches nothing, and the only
+   * symptom is a surface that is gated in-SPA and wide open on a full page load.
+   *
+   * Asserting it HERE, over the whole registry, means adding a platform cannot introduce
+   * that failure silently: a hand-written test per gate would only ever cover the gates
+   * someone remembered to write a test for.
+   */
+  function escapeForRegex(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+  function gateUrlRegex(domain: string, pathPattern: string): RegExp {
+    return new RegExp(
+      `^https?://([^/:@?#]*\\.)?${escapeForRegex(domain)}(?::[0-9]+)?${pathPattern}(?:[?#].*)?$`,
+    );
+  }
+  /** Turn a pattern into one concrete pathname it is supposed to match. */
+  function concretePath(pattern: string): string {
+    return pattern.replace(/\(\?:\/\.\*\)\?/g, '/x').replace(/\/\.\*$/, '/x').replace(/\\\./g, '.');
+  }
+
+  for (const platform of PLATFORMS) {
+    for (const gate of platform.gates) {
+      for (const pattern of gate.paths) {
+        it(`${platform.id}/${gate.id}: ${pattern}`, () => {
+          const domain = platform.domains[0]!;
+          const regex = gateUrlRegex(domain, pattern);
+          const path = concretePath(pattern);
+
+          expect(regex.test(`https://www.${domain}${path}`)).toBe(true);
+          // A query string or hash must not stop the surface being recognised.
+          expect(regex.test(`https://www.${domain}${path}?a=b#c`)).toBe(true);
+          // A lookalike host must never be caught by the domain anchor.
+          expect(regex.test(`https://evil-${domain.replace('.', '-')}.example.com${path}`)).toBe(
+            false,
+          );
+          if (pattern !== '/') {
+            expect(regex.test(`https://www.${domain}/definitely-not-a-gate-surface`)).toBe(false);
+          }
+        });
+      }
+    }
+  }
 });
 
 describe('platformForDomain', () => {
