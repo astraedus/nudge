@@ -22,6 +22,10 @@ namespaces were already split for exactly that reason.
   is ever removed from it, so this never weakens a rule and never asks for a Strict Mode
   challenge; an observation that contradicts a stored entry is refused outright rather than
   merged.
+- **The channel list shows what it actually knows.** Each row leads with the channel's name
+  and carries the identifiers known for it — the `@handle`, the `UC` id, or both — on a
+  quieter second line, so a list that used to read as a column of raw ids becomes legible.
+  A row never prints the same string twice.
 
 ## 0.2.0 — unreleased
 
