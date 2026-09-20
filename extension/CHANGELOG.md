@@ -10,6 +10,17 @@ namespaces were already split for exactly that reason.
 
 ### Added
 
+- **Count-based daily limits on short-form surfaces.** "20 Shorts a day, then the gate."
+  Alongside the existing minute budget, a gate whose content is an item stream can now
+  carry a limit in ITEMS: YouTube Shorts, Instagram Reels and TikTok's For You feed. One
+  increment per DISTINCT item seen today, observed through SPA navigation, so swiping back
+  to the one you were just on does not spend the allowance twice. The two axes are
+  independent: set either, both, or neither, and the gate closes the moment EITHER is
+  spent. The block page says which one it was ("You've watched 20 Shorts today"), the rule
+  editor offers the control only for surfaces where one item is actually well defined, and
+  the dashboard's per-surface line now reads `Shorts: 12m (34 Shorts)`. Raising or removing
+  a count is a weakening, so the Commitment Lock gates it exactly as it gates minutes.
+  No competitor ships this (StayFree, ScreenZen and Intention all stop at time).
 - **A channel you added learns its other name.** A channel list entry only ever held the
   identifier you typed — `@veritasium` stored a handle and no id, a pasted
   `/channel/UC...` URL stored an id and no handle. Watching one of that channel's videos now
@@ -37,6 +48,12 @@ namespaces were already split for exactly that reason.
 
 ### Fixed
 
+- **A gate with a spent minute budget could offer a pause that bought access the block page
+  would have refused.** Two layers were describing one surface differently: the in-page gate
+  asked the gate's MODE first and rendered a Delay countdown, while the block page's engine
+  independently escalated the same exhausted budget to a Hard Block. `gateAppliesNow` now
+  checks both budget caps before the mode, so the one predicate answers for both layers, and
+  it answers with the stronger verdict.
 - **The pause screen on Instagram, TikTok, X, Facebook, Reddit and LinkedIn now covers the
   page.** It was rendering as a block of text pushed into the top of the feed instead of a
   full-screen interstitial, because its stylesheet was keyed to an element name the code had

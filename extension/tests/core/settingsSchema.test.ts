@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  DAILY_COUNT_MAX_ITEMS,
+  DAILY_COUNT_MIN_ITEMS,
   DAILY_LIMIT_MAX_MINUTES,
   DAILY_LIMIT_MIN_MINUTES,
   DEFAULT_SETTINGS,
@@ -88,6 +90,166 @@ describe('migrateSettings — clamping to documented ranges', () => {
     expect(migrateSettings({ tempAllowMinutes: 0 }).tempAllowMinutes).toBe(TEMP_ALLOW_MIN_MINUTES);
     expect(migrateSettings({ tempAllowMinutes: -5 }).tempAllowMinutes).toBe(TEMP_ALLOW_MIN_MINUTES);
     expect(migrateSettings({ tempAllowMinutes: 9_999 }).tempAllowMinutes).toBe(TEMP_ALLOW_MAX_MINUTES);
+  });
+});
+
+/**
+ * `dailyLimitCount` (v0.3), the gate's independent item-count budget. Mirrors the
+ * dailyLimitMinutes clamping cases above exactly — same shape of bug, same fix — plus the
+ * one case that IS the v3 -> v4 migration step itself: a gate object with no
+ * `dailyLimitCount` key at all (every v3 blob in the wild) must read as null, never invent
+ * a limit the user never set. `youtube.com` is used here (rather than `x.com` above)
+ * because only a known-platform domain materializes a `features.gates` object to clamp.
+ */
+describe('migrateSettings — dailyLimitCount clamping (v0.3)', () => {
+  it('clamps a gate’s dailyLimitCount below the minimum up to 1', () => {
+    const result = migrateSettings({
+      rules: [{ domain: 'youtube.com', features: { gates: { shorts: { dailyLimitCount: -5 } } } }],
+    });
+    expect(result.rules[0]?.features?.gates.shorts?.dailyLimitCount).toBe(DAILY_COUNT_MIN_ITEMS);
+  });
+
+  it('clamps a gate’s dailyLimitCount above the maximum down to 500', () => {
+    const result = migrateSettings({
+      rules: [
+        { domain: 'youtube.com', features: { gates: { shorts: { dailyLimitCount: 99_999 } } } },
+      ],
+    });
+    expect(result.rules[0]?.features?.gates.shorts?.dailyLimitCount).toBe(DAILY_COUNT_MAX_ITEMS);
+  });
+
+  it('reads a non-numeric dailyLimitCount as null rather than inventing a limit', () => {
+    const result = migrateSettings({
+      rules: [
+        { domain: 'youtube.com', features: { gates: { shorts: { dailyLimitCount: 'twenty' } } } },
+      ],
+    });
+    expect(result.rules[0]?.features?.gates.shorts?.dailyLimitCount).toBeNull();
+  });
+
+  it('leaves dailyLimitCount as null when the field is entirely absent — this IS the v3 -> v4 step', () => {
+    const result = migrateSettings({
+      rules: [{ domain: 'youtube.com', features: { gates: { shorts: {} } } }],
+    });
+    expect(result.rules[0]?.features?.gates.shorts?.dailyLimitCount).toBeNull();
+  });
+
+  it('clamps independently of dailyLimitMinutes — the two axes never interfere with each other', () => {
+    const result = migrateSettings({
+      rules: [
+        {
+          domain: 'youtube.com',
+          features: {
+            gates: { shorts: { dailyLimitMinutes: 999, dailyLimitCount: -1 } },
+          },
+        },
+      ],
+    });
+    expect(result.rules[0]?.features?.gates.shorts?.dailyLimitMinutes).toBe(DAILY_LIMIT_MAX_MINUTES);
+    expect(result.rules[0]?.features?.gates.shorts?.dailyLimitCount).toBe(DAILY_COUNT_MIN_ITEMS);
+  });
+});
+
+/**
+ * v3 -> v4 (v0.3): the count axis is purely additive, so a v3 blob (no `dailyLimitCount`
+ * anywhere) must migrate to schemaVersion 4 with every gate's count null, and everything
+ * else the v3 user had configured preserved exactly.
+ */
+describe('migrateSettings — v3 -> v4 (COUNT budgets)', () => {
+  /** A realistic v3 blob: schemaVersion 3, gate settings with no `dailyLimitCount` field. */
+  const V3_SETTINGS = {
+    schemaVersion: 3,
+    globalEnabled: true,
+    onboardingComplete: true,
+    rules: [
+      {
+        id: 'rule-youtube.com',
+        domain: 'youtube.com',
+        mode: 'ALLOW',
+        delaySeconds: 15,
+        dailyLimitMinutes: null,
+        enabled: true,
+        createdAt: 1_700_000_000_000,
+        showTimeRemaining: false,
+        schedule: null,
+        grayscale: false,
+        features: {
+          platform: 'youtube',
+          gates: {
+            shorts: { mode: 'HARD_BLOCK', delaySeconds: 15, dailyLimitMinutes: 30 },
+          },
+          hides: { comments: true },
+          youtube: {
+            channelMode: 'OFF',
+            channels: [],
+            channelBlockMode: 'DELAY',
+            channelDelaySeconds: 15,
+            disableAutoplay: false,
+          },
+        },
+      },
+    ],
+    messages: { delayTitles: [], delaySubtitles: [], hardBlockMessages: [] },
+    strictMode: { enabled: false, challengeLength: 24 },
+    emergencyPass: { enabled: true },
+    tempAllowMinutes: 10,
+  };
+
+  it('round-trips a v3 blob to v4 with the gate’s dailyLimitCount read as null', () => {
+    const migrated = migrateSettings(V3_SETTINGS);
+    expect(migrated.schemaVersion).toBe(4);
+    expect(migrated.schemaVersion).toBe(SCHEMA_VERSION);
+    expect(migrated.rules[0]?.features?.gates.shorts).toMatchObject({
+      mode: 'HARD_BLOCK',
+      delaySeconds: 15,
+      dailyLimitMinutes: 30,
+      dailyLimitCount: null,
+    });
+  });
+
+  it('keeps every field the v3 user had already set, undisturbed by the new axis', () => {
+    const migrated = migrateSettings(V3_SETTINGS);
+    expect(migrated.rules[0]?.features?.hides.comments).toBe(true);
+    expect(migrated.rules[0]?.mode).toBe('ALLOW');
+    expect(migrated.rules[0]?.id).toBe('rule-youtube.com');
+  });
+
+  it('is idempotent — migrating the v3 -> v4 result again changes nothing', () => {
+    const once = migrateSettings(V3_SETTINGS);
+    expect(migrateSettings(once)).toEqual(once);
+  });
+});
+
+describe('migrateSettings — a v4 blob round-trips unchanged', () => {
+  it('preserves a configured dailyLimitCount across a second migration', () => {
+    const v4 = migrateSettings({
+      schemaVersion: 4,
+      rules: [
+        {
+          domain: 'youtube.com',
+          mode: 'ALLOW',
+          features: {
+            platform: 'youtube',
+            gates: {
+              shorts: { mode: 'OFF', delaySeconds: 15, dailyLimitMinutes: null, dailyLimitCount: 20 },
+            },
+          },
+        },
+      ],
+    });
+    expect(v4.rules[0]?.features?.gates.shorts?.dailyLimitCount).toBe(20);
+
+    const again = migrateSettings(v4);
+    expect(again).toEqual(v4);
+  });
+
+  it('preserves a null dailyLimitCount (no count configured) across a second migration', () => {
+    const v4 = migrateSettings({
+      schemaVersion: 4,
+      rules: [{ domain: 'tiktok.com', mode: 'HARD_BLOCK' }],
+    });
+    expect(v4.rules[0]?.features?.gates.foryou?.dailyLimitCount).toBeNull();
+    expect(migrateSettings(v4)).toEqual(v4);
   });
 });
 
@@ -348,6 +510,24 @@ describe('upgrading an existing user from schema v1', () => {
       channelId: 'UCsamechannel00000000001',
       handle: 'veritasium',
       displayName: 'Veritasium',
+    });
+  });
+
+  it('migrates all the way through to the CURRENT schema (v1 -> v4), not just as far as v2', () => {
+    // A two-hop migration (v1's top-level youtube block folds into v3 shape, then the count
+    // axis lands as v4) run from a single call — `migrateSettings` has no per-version branch
+    // to get half right, but this pins the whole distance travelled in one assertion.
+    const migrated = migrateSettings(V1_SETTINGS);
+    expect(migrated.schemaVersion).toBe(4);
+    expect(migrated.schemaVersion).toBe(SCHEMA_VERSION);
+    // The v1 user never had a count axis to configure, so it reads null, not invented.
+    expect(youtubeRule(migrated).features?.gates.shorts?.dailyLimitCount).toBeNull();
+    // And the v1 -> v3 fold (shorts mode, delay, hide toggles) still landed correctly
+    // alongside the new axis -- the YouTube fold is not disturbed by the v0.3 step riding
+    // on top of it.
+    expect(youtubeRule(migrated).features?.gates.shorts).toMatchObject({
+      mode: 'HARD_BLOCK',
+      delaySeconds: 20,
     });
   });
 });

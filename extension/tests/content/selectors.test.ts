@@ -74,6 +74,13 @@ function shortsResolvedGate(
     mode,
     delaySeconds: opts.delaySeconds ?? 5,
     limitReached: opts.limitReached ?? false,
+    // These three are ResolvedGate's count-budget fields (v0.3). This helper builds only
+    // the MINUTES-budget shape `resolveShortsGate` reads today — Shorts count-budget
+    // coverage lives in tests/content/itemCounter.test.ts and platformGate.test.ts, not
+    // here, so every caller gets the "no count limit" default.
+    countReached: false,
+    itemsToday: 0,
+    countLimit: null,
   };
 }
 

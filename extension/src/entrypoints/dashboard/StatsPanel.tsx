@@ -59,16 +59,29 @@ function domainTotals(usage: UsageByDay, days: string[]): { domain: string; acti
     .sort((a, b) => b.activeSec - a.activeSec);
 }
 
-/** Every surface bucket's active-second total over `days`, keyed by its full surface key
+/** One surface bucket's totals over the window: time AND items viewed. */
+interface SurfaceTotal {
+  activeSec: number;
+  items: number;
+}
+
+/** Every surface bucket's totals over `days`, keyed by its full surface key
  * (e.g. "youtube.com#shorts") so a site row can find just its own gates. */
-function surfaceTotals(usage: UsageByDay, days: string[]): Record<string, number> {
-  const totals: Record<string, number> = {};
+function surfaceTotals(usage: UsageByDay, days: string[]): Record<string, SurfaceTotal> {
+  const totals: Record<string, SurfaceTotal> = {};
   for (const day of days) {
     const dayUsage = usage[day];
     if (!dayUsage) continue;
     for (const [key, d] of Object.entries(dayUsage)) {
       if (!isSurfaceKey(key)) continue;
-      totals[key] = (totals[key] ?? 0) + d.activeSec;
+      const running = totals[key] ?? { activeSec: 0, items: 0 };
+      totals[key] = {
+        activeSec: running.activeSec + d.activeSec,
+        // Rollups written before v0.3 carry no `items`. They are normalized on read in
+        // `background/storage.ts`, but the dashboard also renders whatever a test or an
+        // imported blob hands it, so the fallback stays.
+        items: running.items + (d.items ?? 0),
+      };
     }
   }
   return totals;
@@ -84,16 +97,47 @@ function surfaceLabel(domain: string, gateId: string): string {
 
 /** The surface rows belonging to one site, sorted by time descending. */
 function surfaceRowsFor(
-  surfaces: Record<string, number>,
+  surfaces: Record<string, SurfaceTotal>,
   domain: string,
-): { label: string; activeSec: number }[] {
+): { label: string; activeSec: number; items: number; itemNoun: string | null }[] {
   return Object.entries(surfaces)
-    .map(([key, activeSec]) => ({ key, activeSec, parsed: parseSurfaceKey(key) }))
+    .map(([key, total]) => ({ total, parsed: parseSurfaceKey(key) }))
     .filter((row): row is typeof row & { parsed: NonNullable<typeof row.parsed> } =>
       row.parsed !== null && row.parsed.domain === domain,
     )
-    .map((row) => ({ label: surfaceLabel(domain, row.parsed.gateId), activeSec: row.activeSec }))
+    .map((row) => ({
+      label: surfaceLabel(domain, row.parsed.gateId),
+      activeSec: row.total.activeSec,
+      items: row.total.items,
+      itemNoun: surfaceItemNoun(domain, row.parsed.gateId),
+    }))
     .sort((a, b) => b.activeSec - a.activeSec);
+}
+
+/**
+ * The plural noun for one item of a gate's stream ("Shorts"), or null when the gate has no
+ * item stream and therefore no count to show.
+ *
+ * Read from the registry rather than stored beside the number, so the dashboard and the
+ * rule editor cannot end up calling the same thing two different things.
+ */
+function surfaceItemNoun(domain: string, gateId: string): string | null {
+  const platform = platformForDomain(domain);
+  if (platform === null) return null;
+  return gateDefinition(platform.id, gateId as GateId)?.itemNoun?.plural ?? null;
+}
+
+/** `Shorts: 12m` alone, or `Shorts: 12m (34 Shorts)` when the surface counts items. */
+function surfaceRowText(row: {
+  label: string;
+  activeSec: number;
+  items: number;
+  itemNoun: string | null;
+}): string {
+  const time = `${row.label}: ${formatDuration(row.activeSec)}`;
+  // Zero items is shown, not hidden, whenever the surface HAS a count: "0 Shorts" is a
+  // real and reassuring answer, whereas an absent line reads as the counter not working.
+  return row.itemNoun === null ? time : `${time} (${row.items} ${row.itemNoun})`;
 }
 
 function weekdayLabel(day: string): string {
@@ -283,9 +327,7 @@ export function StatsPanel({ data }: { data: DashboardState }) {
                       }}
                     >
                       of which{' '}
-                      {surfaceRows
-                        .map((row) => `${row.label}: ${formatDuration(row.activeSec)}`)
-                        .join(' · ')}
+                      {surfaceRows.map(surfaceRowText).join(' · ')}
                     </p>
                   )}
                 </div>

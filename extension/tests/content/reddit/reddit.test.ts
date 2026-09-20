@@ -63,7 +63,7 @@ describe('Reddit content script — the home gate', () => {
       window.history.replaceState({}, '', path);
 
       const fetchConfig = vi.fn(async () =>
-        configWith({ gates: [{ id: 'home', mode: 'HARD_BLOCK', delaySeconds: 15, limitReached: false }] }),
+        configWith({ gates: [{ id: 'home', mode: 'HARD_BLOCK', delaySeconds: 15, limitReached: false, countReached: false, itemsToday: 0, countLimit: null }] }),
       );
 
       const controller = initRedditContentScript(document, fetchConfig);
@@ -82,7 +82,7 @@ describe('Reddit content script — the home gate', () => {
       window.history.replaceState({}, '', path);
 
       const fetchConfig = vi.fn(async () =>
-        configWith({ gates: [{ id: 'home', mode: 'HARD_BLOCK', delaySeconds: 15, limitReached: false }] }),
+        configWith({ gates: [{ id: 'home', mode: 'HARD_BLOCK', delaySeconds: 15, limitReached: false, countReached: false, itemsToday: 0, countLimit: null }] }),
       );
 
       const controller = initRedditContentScript(document, fetchConfig);
@@ -109,7 +109,7 @@ describe('Reddit content script — SPA navigation', () => {
     window.history.replaceState({}, '', '/r/programming/');
 
     const fetchConfig = vi.fn(async () =>
-      configWith({ gates: [{ id: 'home', mode: 'HARD_BLOCK', delaySeconds: 15, limitReached: false }] }),
+      configWith({ gates: [{ id: 'home', mode: 'HARD_BLOCK', delaySeconds: 15, limitReached: false, countReached: false, itemsToday: 0, countLimit: null }] }),
     );
 
     const controller = initRedditContentScript(document, fetchConfig);

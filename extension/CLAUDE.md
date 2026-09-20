@@ -8,7 +8,8 @@ schedules, local-only usage stats, and per-site control of the feeds themselves.
 site behaves (Allow / Hard Block / Delay / Breathing), the pause length, the daily budget,
 the schedule override, whether the site is grayscaled, and — for the seven known platforms —
 that site's *features*: URL-addressable **gates** (YouTube Shorts, Instagram Reels, the X
-home timeline) each with their own mode, delay and budget, boolean **hides** for page
+home timeline) each with their own mode, delay and budgets (time AND, on a short-form item
+stream, a count of items), boolean **hides** for page
 elements, and YouTube's channel lists. There is no separate YouTube tab.
 
 Free, GPL-3.0, **no account, zero telemetry, zero network requests.**
@@ -71,11 +72,13 @@ src/
     surfaceKeys.ts      ("domain#gateId" usage buckets for per-feature budgets)
     featureSummary.ts   (the one "what is switched on for this site" line)
     budgets.ts, messages.ts, ruleResolver.ts, channelFreshness.ts
-  background/   The service worker: dnr, tracker, tempAllow, alarmsHub, badge,
-                messagesRouter, storage, grayscale.
+    seenItems.ts        (the day-scoped "already counted this item" set)
+  background/   The service worker: dnr, tracker, itemCounter, tempAllow, alarmsHub,
+                badge, messagesRouter, storage, grayscale.
   content/      spaNav.ts   (the generic SPA-navigation layer), overlay.ts (the shared
                              in-page gate overlay + the media hold + the bail helper) —
                              BOTH shared by all seven platform scripts, YouTube included
+                itemCounter.ts (reports "we are on one item of a gate's stream")
                 YouTube: selectors.ts (ALL selectors), youtube.ts, youtube.css,
                 channelDetection.ts (3-tier channel identification), channelFilter.ts
                 (feed filtering + watch gate + colour flip), channelObserver.ts (reports a
@@ -162,10 +165,56 @@ unit-testable, exactly as the Android domain layer is.
    `matches` from the set of enabled rules with `grayscale: true`, compares it against what
    is currently registered on every wake/save, and only re-registers when it differs.
    Zero gray domains ⇒ unregistered.
-7. **Feature budgets.** The tracker attributes a focused tab's time to the site bucket and,
-   when the URL is on a gate surface, also to `domain#gateId` in the same `DayUsage` map.
-   Anything that LISTS sites must filter surface keys out (`core/surfaceKeys.ts`) or the
-   stats table grows a phantom "youtube.com#shorts" site.
+7. **Feature budgets, on TWO independent axes.** The tracker attributes a focused tab's
+   time to the site bucket and, when the URL is on a gate surface, also to `domain#gateId`
+   in the same `DayUsage` map. Anything that LISTS sites must filter surface keys out
+   (`core/surfaceKeys.ts`) or the stats table grows a phantom "youtube.com#shorts" site.
+
+   Since v0.3 a gate can also carry a **count** budget ("20 Shorts a day"), stored as
+   `DayUsage.items` on that same surface key. Minutes and count are INDEPENDENT: either,
+   both or neither may be set, and `core/applies.ts#gateAppliesNow` applies the gate once
+   EITHER is spent, with `reason: 'count-exhausted'` so the block page can name it. Both
+   caps are checked BEFORE the gate's mode, because an exhausted budget is unconditional
+   and the engine escalates it to a Hard Block anyway — asking the mode first is how the
+   in-page overlay came to offer a Delay pause that bought access the block page refused.
+
+   **One item = one `itemPaths` match in `core/platforms.ts`, deduped per day.** An item
+   pattern carries exactly one capture group, and that group is the id, so `/shorts/abc`
+   and `/shorts/abc/` are the same item and re-watching one does not spend two. The day's
+   ids live in `core/seenItems.ts` under one day-stamped key, so the midnight reset falls
+   out of reading it and the set cannot accumulate across days (capped at 2,000 per
+   surface; past the cap the OLDEST ids drop, which over-counts rather than under-counts).
+
+   **`itemPaths` are NOT surface paths, and the two questions stay two functions.**
+   `gateForUrl` answers "is this URL on the gate's surface" (what DNR redirects and what
+   the in-page gate enforces); `itemForUrl` answers "is this URL one item of the gate's
+   stream" (what the count measures). On YouTube and Instagram the item paths are a subset
+   of the surface paths, so the two agree. On TikTok a For You item is `/@user/video/<id>`,
+   which is NOT the For You surface — a link a friend sent you must not be treated as the
+   feed. Collapsing them would gate that link in-page while DNR let the same URL through on
+   a full load, the exact half-enforced split the one-string `paths` rule exists to prevent.
+   The visible consequence is honest and documented: on TikTok a crossed count takes effect
+   the next time the user lands on the feed itself, not mid-swipe.
+
+   **The page reports, the worker counts.** A content script sends `ITEM_VIEWED` with its
+   URL and nothing else; `background/itemCounter.ts` resolves the gate, de-duplicates,
+   increments, and fires the crossing (revoke grant -> recompile DNR -> redirect the open
+   tabs that are on that gate's SURFACE). A tally kept in the page is a tally the user can
+   edit with devtools open on the very surface it limits. The shared controller in
+   `content/platformGate.ts` wires the reporter for all six non-YouTube platforms; YouTube
+   starts a standalone counter from its ENTRYPOINT instead, leaving `content/youtube.ts`
+   untouched. YouTube now shares `overlay.ts` and `spaNav.ts`, but it still runs its OWN
+   controller rather than `initPlatformContentScript`, so the shared reporter never fires
+   there. Keeping the counter in the entrypoint is deliberate even so: counting is a pure
+   observation with no verdict of its own, and hanging it off the channel-freshness settle
+   machinery would couple it to the one piece of this codebase whose regressions are
+   live-only, for no user-visible gain. The cost is a second `observeNavigation` on a
+   YouTube page (one poll, one observer), which is cheap and buys that isolation.
+
+   **Reels mixed into a feed still cannot be counted**, for the same reason they cannot be
+   filtered (see Known gaps): they have no per-item URL. Only whole-surface item streams
+   carry `itemPaths`, and a gate without them never offers a count control — a limit that
+   can never increment is indistinguishable from a broken blocker.
 
 ### Channel lists, gray-screen and the hide toggles (v1.1)
 
@@ -449,6 +498,18 @@ xvfb), scoped with `paths: ['extension/**']`. The Android workflow carries the m
 - **Isolated-world content scripts cannot see the page's own `history.pushState`** —
   confirmed on YouTube, TikTok, X, Instagram and Facebook. An href-diff poll is mandatory,
   not a fallback.
+- **A NEW numeric field on a stored rollup fails OPEN unless it is filled in on read.**
+  Usage data carries no schema version and is deliberately never migrated in place, so
+  `DayUsage.items` (v0.3) is simply absent from every rollup written before it. Incrementing
+  it straight off storage is `undefined + 1` = NaN, every `NaN >= limit` is false, and the
+  budget silently never fires. `core/stats.ts#coerceDayUsage` repairs the shape in
+  `background/storage.ts`'s two read paths, once, for every consumer.
+- **A required parameter is a compile error; an optional one is a silent no-op.**
+  `gateAppliesNow` takes `usageCount` with no default for the same reason `resolveRule`
+  takes `usageMs` with none: a default of 0 means "this budget is never spent" at any call
+  site that forgot to pass it. Making it required turned "did every consumer get updated"
+  into something `tsc` answers instead of something a person has to remember to grep. Same
+  reason the DNR compiler takes ONE `UsageSnapshot` rather than two parallel maps.
 - **An element id a stylesheet keys off is a CONTRACT, and nothing else checks it.**
   `overlayIdFor()` derives `nudge-gate-<platform>`, but `platformOverlay.css` still styled
   `#nudge-platform-gate` from before that id was per-platform — so on all six platforms
@@ -471,10 +532,12 @@ xvfb), scoped with `paths: ['extension/**']`. The Android workflow carries the m
   rather than pretending; honesty is the differentiator (ext-02).
 - YouTube fixtures in `tests/content/fixtures/` are hand-authored from the ext-03 taxonomy,
   not live DOM captures. Refresh them from real YouTube DOM when possible.
-- **Reels mixed INTO a feed cannot be filtered out.** No OSS implementation anywhere does
-  per-card filtering of reels/short videos in a mixed feed (ext-12), so Nudge ships
-  whole-surface control only: the Reels/For You/Explore *pages* are gated by URL, and whole
-  containers (stories tray, nav entries, suggested blocks) are hidden. Each platform in
+- **Reels mixed INTO a feed cannot be filtered out, or counted.** No OSS implementation
+  anywhere does per-card filtering of reels/short videos in a mixed feed (ext-12), so Nudge
+  ships whole-surface control only: the Reels/For You/Explore *pages* are gated by URL, and
+  whole containers (stories tray, nav entries, suggested blocks) are hidden. A count budget
+  needs a per-item URL for the same reason a filter needs one, so an in-feed reel is
+  invisible to it as well. Each platform in
   `core/platforms.ts` carries a `note` saying so, and the dashboard prints it — an honest
   limitation beats a feature the code does not actually deliver. Reel tiles on a profile
   grid are likewise out of reach.

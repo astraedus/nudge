@@ -1,8 +1,11 @@
 import { useState } from 'react';
-import { gateDefinition, platformForDomain } from '../../core/platforms';
+import { gateDefinition, gateSupportsItemCount, platformForDomain } from '../../core/platforms';
 import type { GateId, HideId, Platform } from '../../core/platforms';
 import type { GateSetting, ScheduleOverride, SiteRule } from '../../core/settingsSchema';
 import {
+  DAILY_COUNT_MAX_ITEMS,
+  DAILY_COUNT_MIN_ITEMS,
+  DAILY_COUNT_PRESETS,
   DAILY_LIMIT_MAX_MINUTES,
   DAILY_LIMIT_MIN_MINUTES,
   DAILY_LIMIT_PRESETS,
@@ -116,14 +119,28 @@ function LimitPicker({
   value,
   onChange,
   idPrefix,
+  groupLabel,
 }: {
   value: number | null;
   onChange: (minutes: number | null) => void;
   idPrefix: string;
+  /**
+   * Accessible name for the whole chip row.
+   *
+   * A gate can now show TWO budget pickers side by side, and both open with a chip
+   * labelled "No limit" followed by bare numbers. Without a named group a screen reader
+   * reads "No limit, 15, 30, 60, 120, No limit, 5, 10, 20, 50" as one undifferentiated
+   * run, and there is nothing in the chip text itself to say which budget is which.
+   */
+  groupLabel: string;
 }) {
   const isPreset = (DAILY_LIMIT_PRESETS as readonly number[]).includes(value ?? -1);
   return (
-    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+    <div
+      role="group"
+      aria-label={groupLabel}
+      style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}
+    >
       <Chip label="No limit" active={value === null} onClick={() => onChange(null)} />
       {DAILY_LIMIT_PRESETS.map((preset) => (
         <Chip
@@ -164,6 +181,73 @@ function LimitPicker({
 }
 
 /**
+ * A daily ITEM-COUNT budget: "No limit" + presets + a custom field, in the platform's own
+ * noun ("20 Shorts", "10 Reels").
+ *
+ * Structurally a twin of `LimitPicker` and deliberately NOT merged with it. They differ in
+ * every user-visible way that matters (the unit, the presets, the label, the "1h" collapse
+ * that makes no sense for items), so a single component would be a pile of `isCount`
+ * branches doing the work two plain components do by existing. The shared thing here is
+ * the visual pattern, which is the Chip primitive, and both use it.
+ */
+function CountPicker({
+  value,
+  onChange,
+  noun,
+  idPrefix,
+}: {
+  value: number | null;
+  onChange: (count: number | null) => void;
+  noun: string;
+  idPrefix: string;
+}) {
+  const isPreset = (DAILY_COUNT_PRESETS as readonly number[]).includes(value ?? -1);
+  return (
+    <div
+      role="group"
+      aria-label={`${noun} per day`}
+      style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}
+    >
+      <Chip label="No limit" active={value === null} onClick={() => onChange(null)} />
+      {DAILY_COUNT_PRESETS.map((preset) => (
+        <Chip
+          key={preset}
+          label={String(preset)}
+          active={value === preset}
+          onClick={() => onChange(preset)}
+        />
+      ))}
+      <label style={{ fontSize: 12, color: 'var(--nudge-on-surface-variant)' }}>
+        Custom
+        <input
+          type="number"
+          aria-label={`${idPrefix} custom daily ${noun} limit`}
+          min={DAILY_COUNT_MIN_ITEMS}
+          max={DAILY_COUNT_MAX_ITEMS}
+          value={isPreset || value === null ? '' : value}
+          placeholder={value === null ? '\u2014' : String(value)}
+          onChange={(e) => {
+            const parsed = Number(e.target.value);
+            if (e.target.value !== '' && Number.isFinite(parsed)) {
+              onChange(clamp(parsed, DAILY_COUNT_MIN_ITEMS, DAILY_COUNT_MAX_ITEMS));
+            }
+          }}
+          style={{
+            width: 64,
+            marginLeft: 6,
+            padding: '6px 8px',
+            borderRadius: 8,
+            border: '1px solid var(--nudge-outline)',
+            background: 'var(--nudge-background)',
+            color: 'var(--nudge-on-surface)',
+          }}
+        />
+      </label>
+    </div>
+  );
+}
+
+/**
  * One feature gate row: name + description from the registry, a mode select (incl. Off),
  * a delay picker shown only for Delay/Breathing, and a daily budget — everything a gate
  * carries per the ext-13 §2 `GateSetting` shape. Rendered generically off
@@ -185,6 +269,17 @@ function GateRow({
 
   const showDelay = gate.mode === 'DELAY' || gate.mode === 'BREATHING';
   const showBudget = gate.mode !== 'HARD_BLOCK';
+  /**
+   * The count control exists only for a gate whose registry definition carries
+   * `itemPaths`, i.e. one whose content is an item stream with a per-item URL.
+   *
+   * An X or Reddit feed has no such URL, so a count there could never increment. Offering
+   * the control anyway would let someone author "10 posts a day" and watch it do nothing
+   * forever, which is worse than the feature simply not being there: a limit that silently
+   * never fires is indistinguishable from a broken blocker.
+   */
+  const itemNoun = definition.itemNoun ?? null;
+  const showCount = showBudget && gateSupportsItemCount(definition) && itemNoun !== null;
 
   return (
     <div
@@ -230,11 +325,33 @@ function GateRow({
       {showDelay && delayPicker(gate.delaySeconds, (delaySeconds) => onChange({ ...gate, delaySeconds }), definition.id)}
 
       {showBudget ? (
-        <LimitPicker
-          value={gate.dailyLimitMinutes}
-          onChange={(dailyLimitMinutes) => onChange({ ...gate, dailyLimitMinutes })}
-          idPrefix={definition.id}
-        />
+        <>
+          <LimitPicker
+            value={gate.dailyLimitMinutes}
+            onChange={(dailyLimitMinutes) => onChange({ ...gate, dailyLimitMinutes })}
+            idPrefix={definition.id}
+            groupLabel={`${definition.label} minutes per day`}
+          />
+          {showCount && itemNoun !== null && (
+            <div>
+              <p
+                style={{
+                  margin: '0 0 6px',
+                  fontSize: 12,
+                  color: 'var(--nudge-on-surface-variant)',
+                }}
+              >
+                {`${itemNoun.plural} per day`}
+              </p>
+              <CountPicker
+                value={gate.dailyLimitCount}
+                onChange={(dailyLimitCount) => onChange({ ...gate, dailyLimitCount })}
+                noun={itemNoun.plural}
+                idPrefix={definition.id}
+              />
+            </div>
+          )}
+        </>
       ) : (
         <p style={{ margin: 0, fontSize: 12, color: 'var(--nudge-on-surface-variant)' }}>
           Not used with Hard Block — always gated, so there is no time to budget.
@@ -384,6 +501,7 @@ export function RuleEditor({
                 value={draft.dailyLimitMinutes}
                 onChange={(dailyLimitMinutes) => setDraft((d) => ({ ...d, dailyLimitMinutes }))}
                 idPrefix="default"
+                groupLabel="Daily Time Limit"
               />
               {draft.dailyLimitMinutes !== null && (
                 <div style={{ marginTop: 12 }}>

@@ -59,6 +59,7 @@ import {
   type MediaHold,
   type OverlayHandle,
 } from './overlay';
+import { createItemReporter, type SendItemView } from './itemCounter';
 import { observeNavigation } from './spaNav';
 import { defaultWarn, queryWithFallback, type SelectorRule, type WarnFn } from './selectors';
 
@@ -240,8 +241,14 @@ export function initPlatformContentScript(
   doc: Document = document,
   fetchConfig: (url: string) => Promise<SiteConfig> = (url) =>
     send({ type: 'GET_SITE_CONFIG', url }),
+  sendItemView?: SendItemView,
 ): PlatformController {
   const overlayId = overlayIdFor(options.platform);
+  // COUNT budgets (v0.3). Wired HERE, in the one shared controller, rather than in each
+  // platform module: every platform then gets counting the moment its registry entry
+  // grows `itemPaths`, with no per-platform code and no second navigation loop. The
+  // reporter only reports; the worker owns the tally (see content/itemCounter.ts).
+  const itemReporter = createItemReporter(options.platform, sendItemView);
   let config: SiteConfig = IDLE_SITE_CONFIG;
   let overlay: OverlayHandle | null = null;
   /** Held only while an interstitial is up; see `holdMediaPaused`. */
@@ -269,6 +276,13 @@ export function initPlatformContentScript(
     // stale route" property (see module doc comment) hold: there is no cached URL here to
     // go stale, and no await between reading it and using it below.
     const url = currentUrl();
+
+    // Reported BEFORE the gate is resolved, and independently of it: an item view is an
+    // observation about where the page is, not a consequence of any verdict. Reporting it
+    // only when a gate applied would mean the count stopped advancing the moment the gate
+    // started applying, so a spent budget could never be re-measured and the stats line
+    // would freeze at exactly the number the user is most interested in.
+    itemReporter.report(url);
 
     // The passive layer runs on every pass, independent of any gate: hiding must be
     // correct even while an interstitial is up, and must keep reconciling as the site

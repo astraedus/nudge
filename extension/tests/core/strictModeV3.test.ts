@@ -164,6 +164,67 @@ describe('weakening: feature gates', () => {
   });
 });
 
+/**
+ * The independent COUNT axis (v0.3): "20 Shorts a day, then the gate." `isDailyLimitWeakened`
+ * is unit-agnostic and shared between minutes and counts (see its doc comment in
+ * core/strictMode.ts), so these cases mirror 'isWeakening() — rule dailyLimitMinutes axis'
+ * in strictMode.test.ts and 'weakening: feature gates' (the minutes half) above, case for
+ * case — a gap here is a commitment a user made to themselves ("20 Shorts a day") that the
+ * Commitment Lock silently stops protecting the moment someone raises it in the editor.
+ */
+describe('weakening: feature gates — the independent COUNT axis (v0.3)', () => {
+  it('raising a gate’s daily item count is weakening', () => {
+    const before = withGate({ mode: 'OFF', dailyLimitCount: 10 });
+    const after = withGate({ mode: 'OFF', dailyLimitCount: 50 });
+    expect(isWeakening(before, after)).toBe(true);
+  });
+
+  it('removing a gate’s daily item count is weakening', () => {
+    const before = withGate({ mode: 'OFF', dailyLimitCount: 10 });
+    const after = withGate({ mode: 'OFF', dailyLimitCount: null });
+    expect(isWeakening(before, after)).toBe(true);
+  });
+
+  it('lowering a gate’s daily item count is not weakening', () => {
+    const before = withGate({ mode: 'OFF', dailyLimitCount: 50 });
+    const after = withGate({ mode: 'OFF', dailyLimitCount: 10 });
+    expect(isWeakening(before, after)).toBe(false);
+  });
+
+  it('adding a count where there was none is not weakening', () => {
+    const before = withGate({ mode: 'OFF', dailyLimitCount: null });
+    const after = withGate({ mode: 'OFF', dailyLimitCount: 10 });
+    expect(isWeakening(before, after)).toBe(false);
+  });
+
+  it('an unchanged count is not weakening', () => {
+    const before = withGate({ mode: 'OFF', dailyLimitCount: 20 });
+    const after = withGate({ mode: 'OFF', dailyLimitCount: 20 });
+    expect(isWeakening(before, after)).toBe(false);
+  });
+
+  it('is judged independently of the minute axis — softening EITHER axis weakens the comparison, even while the other strengthens', () => {
+    const before = withGate({ mode: 'OFF', dailyLimitMinutes: 60, dailyLimitCount: 10 });
+    // Minutes drop 60 -> 5 (that axis alone would be a strengthening); count rises
+    // 10 -> 100 (a weakening). isWeakening's contract evaluates every axis independently,
+    // so the count regression must not be masked by the minutes improvement.
+    const after = withGate({ mode: 'OFF', dailyLimitMinutes: 5, dailyLimitCount: 100 });
+    expect(isWeakening(before, after)).toBe(true);
+  });
+
+  it('conversely, softening only the minute axis still weakens even while the count axis improves', () => {
+    const before = withGate({ mode: 'OFF', dailyLimitMinutes: 10, dailyLimitCount: 100 });
+    const after = withGate({ mode: 'OFF', dailyLimitMinutes: 60, dailyLimitCount: 10 });
+    expect(isWeakening(before, after)).toBe(true);
+  });
+
+  it('strengthening BOTH axes at once is not weakening', () => {
+    const before = withGate({ mode: 'OFF', dailyLimitMinutes: 60, dailyLimitCount: 100 });
+    const after = withGate({ mode: 'OFF', dailyLimitMinutes: 10, dailyLimitCount: 10 });
+    expect(isWeakening(before, after)).toBe(false);
+  });
+});
+
 describe('weakening: hide toggles', () => {
   it('switching a hide off is weakening', () => {
     const before = withRule({

@@ -22,7 +22,7 @@ const SUBDOMAIN_PAGE = 'https://en.wikipedia.test/wiki/Colour';
 
 function spentLimit(mode: 'ALLOW' | 'DELAY'): {
   settings: Partial<NudgeSettings>;
-  usage: Record<string, number>;
+  usage: { ms: Record<string, number> };
 } {
   return {
     settings: baseSettings({
@@ -36,7 +36,7 @@ function spentLimit(mode: 'ALLOW' | 'DELAY'): {
     }),
     // The tracker attributes a page on ANY subdomain to the rule's own bucket, so that is
     // the key a spent budget lives under.
-    usage: { [RULE_HOST]: LIMIT_MINUTES * 60_000 },
+    usage: { ms: { [RULE_HOST]: LIMIT_MINUTES * 60_000 } },
   };
 }
 
@@ -125,7 +125,7 @@ test.describe('a spent daily limit on a subdomain of the ruled site', () => {
       baseSettings({
         rules: [rule(RULE_HOST, { mode: 'ALLOW', dailyLimitMinutes: 30 })],
       }),
-      { [RULE_HOST]: 60_000 },
+      { ms: { [RULE_HOST]: 60_000 } },
     );
 
     const page = await context.newPage();

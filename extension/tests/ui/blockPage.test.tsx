@@ -6,6 +6,7 @@ import type { BlockDecision } from '../../src/core/types';
 import type { ChannelEntry } from '../../src/core/settingsSchema';
 import { formatNextPass } from '../../src/ui/format';
 import { BlockPage, channelHomeUrl, isNavigableTarget } from '../../src/entrypoints/blocked/BlockPage';
+import { limitLabelFor } from '../../src/entrypoints/blocked/HardBlockView';
 
 const TARGET = 'https://distracting.example/feed';
 
@@ -37,6 +38,14 @@ function makeContext(overrides: Partial<BlockContext> = {}): BlockContext {
     tempAllowMinutes: 10,
     gateId: null,
     gateLabel: null,
+    // Count-budget fields (v0.3). Default to "no count budget involved" so every existing
+    // caller of makeContext() keeps testing the minutes-only shape it was written for;
+    // count-specific cases override these explicitly (see the `limitLabelFor` describe
+    // block below).
+    gateLimitKind: null,
+    gateItemsToday: 0,
+    gateCountLimit: null,
+    gateItemNoun: null,
     allowedChannels: [],
     ...overrides,
   };
@@ -656,6 +665,102 @@ describe('BlockPage — whose daily limit ran out', () => {
     await flush();
 
     expect(screen.getByText('Daily limit reached')).toBeTruthy();
+  });
+});
+
+describe('limitLabelFor — the count sentence vs the minutes sentence (v0.3)', () => {
+  /**
+   * `limitLabelFor` is the ONE place that decides which of the two sentences prints, so it
+   * gets its own direct unit coverage rather than only the round trip through BlockPage —
+   * the round trip below pins that the rendered page actually calls it, this pins the
+   * decision table itself.
+   */
+
+  it('returns the count sentence when gateLimitKind is "count" and an item noun is present', () => {
+    const context = makeContext({
+      gateId: 'shorts',
+      gateLabel: 'Shorts',
+      gateLimitKind: 'count',
+      gateItemsToday: 20,
+      gateCountLimit: 20,
+      gateItemNoun: 'Shorts',
+    });
+
+    expect(limitLabelFor(context)).toBe("You've watched 20 Shorts today");
+  });
+
+  it('falls back to itemsToday when the gate somehow carries no countLimit', () => {
+    // Defensive: countLimit is the number that SHOULD always be set alongside a count
+    // verdict, but the sentence must still read a real number rather than "null" if it
+    // is not — itemsToday is the next best true thing to say.
+    const context = makeContext({
+      gateLimitKind: 'count',
+      gateItemsToday: 7,
+      gateCountLimit: null,
+      gateItemNoun: 'Reels',
+    });
+
+    expect(limitLabelFor(context)).toBe("You've watched 7 Reels today");
+  });
+
+  it('returns the minutes sentence, qualified with the gate label, when gateLimitKind is "minutes"', () => {
+    const context = makeContext({
+      gateId: 'shorts',
+      gateLabel: 'Shorts',
+      gateLimitKind: 'minutes',
+      gateItemNoun: 'Shorts',
+    });
+
+    expect(limitLabelFor(context)).toBe('Daily Shorts limit reached');
+  });
+
+  it('returns the plain site sentence when gateLimitKind is null and no gate is involved', () => {
+    const context = makeContext({ gateId: null, gateLabel: null, gateLimitKind: null });
+
+    expect(limitLabelFor(context)).toBe('Daily limit reached');
+  });
+
+  it('a gate with NO item noun never produces the count sentence, even if gateLimitKind claims "count"', () => {
+    // Fail toward the copy that is always true: "You've watched N <noun> today" is
+    // meaningless without a noun to fill in, so an inconsistent worker response (a bug
+    // there, not something the page should ever trust blindly) must still degrade to the
+    // ordinary "Daily <label> limit reached" sentence rather than rendering broken text.
+    const context = makeContext({
+      gateId: 'shorts',
+      gateLabel: 'Shorts',
+      gateLimitKind: 'count',
+      gateItemsToday: 20,
+      gateCountLimit: 20,
+      gateItemNoun: null,
+    });
+
+    expect(limitLabelFor(context)).toBe('Daily Shorts limit reached');
+  });
+});
+
+describe('BlockPage — the count sentence renders in the Hard Block view (v0.3)', () => {
+  it('shows "You\'ve watched N <Noun> today" for a count-exhausted gate, not the minutes sentence', async () => {
+    setTarget(TARGET);
+    sendMessageMock.mockResolvedValueOnce(
+      makeContext({
+        domain: 'youtube.com',
+        gateId: 'shorts',
+        gateLabel: 'Shorts',
+        gateLimitKind: 'count',
+        gateItemsToday: 20,
+        gateCountLimit: 20,
+        gateItemNoun: 'Shorts',
+        decision: hardBlockDecision({
+          ruleName: 'youtube.com · Shorts (limit reached)',
+          limitReached: true,
+        }),
+      }),
+    );
+    render(<BlockPage />);
+    await flush();
+
+    expect(screen.getByText("You've watched 20 Shorts today")).toBeTruthy();
+    expect(screen.queryByText('Daily Shorts limit reached')).toBeNull();
   });
 });
 

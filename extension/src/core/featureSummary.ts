@@ -53,11 +53,24 @@ export function featureSummaryParts(rule: SiteRule): string[] {
       const mode = gateModeLabel(setting.mode, setting.delaySeconds);
       if (mode !== '') {
         parts.push(`${gate.label}: ${mode}`);
-      } else if (setting.dailyLimitMinutes !== null) {
-        // An OFF gate with a budget is still doing something, and it is the shape the
-        // feature exists for ("10 minutes of Shorts a day").
-        parts.push(`${gate.label}: ${setting.dailyLimitMinutes}m/day`);
+        continue;
       }
+      // An OFF gate with a budget is still doing something, and it is the shape the
+      // feature exists for ("10 minutes of Shorts a day", "20 Shorts a day"). BOTH axes
+      // are listed: a count-only gate that printed nothing here would leave the popup and
+      // the rule card calling a rule "no effect" while it is the only thing standing
+      // between the user and an afternoon of Shorts.
+      const budgets: string[] = [];
+      if (setting.dailyLimitMinutes !== null) budgets.push(`${setting.dailyLimitMinutes}m/day`);
+      if (setting.dailyLimitCount !== null) {
+        const noun = gate.itemNoun;
+        const label =
+          noun === undefined
+            ? `${setting.dailyLimitCount}/day`
+            : `${setting.dailyLimitCount} ${setting.dailyLimitCount === 1 ? noun.singular : noun.plural}/day`;
+        budgets.push(label);
+      }
+      if (budgets.length > 0) parts.push(`${gate.label}: ${budgets.join(', ')}`);
     }
 
     const hidden = platform.hides

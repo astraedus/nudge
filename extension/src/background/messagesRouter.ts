@@ -37,6 +37,7 @@ import {
 } from '../core/messages';
 import {
   gateForUrl,
+  gateSupportsItemCount,
   platformById,
   platformForDomain,
   type GateDefinition,
@@ -67,6 +68,7 @@ import {
 import { allTimeTotals, lastNDayKeys, totalActiveSeconds } from '../core/stats';
 import * as strict from '../core/strictMode';
 import { surfaceKey } from '../core/surfaceKeys';
+import { handleItemViewed } from './itemCounter';
 import type { ActiveRule, BlockDecision, SiteMode } from '../core/types';
 import { ensureScheduleAlarm } from './alarmsHub';
 import { applyRules } from './dnr';
@@ -77,6 +79,7 @@ import {
   loadSettings,
   saveSettings,
   savePassLedger,
+  todayItemCount,
   todayUsageMs,
 } from './storage';
 import { grantTempAllow } from './tempAllow';
@@ -181,6 +184,10 @@ async function buildBlockContext(target: string, now: Date): Promise<BlockContex
   let decision: BlockDecision = { type: 'ALLOW' };
   let gateId: GateId | null = null;
   let gateLabel: string | null = null;
+  let gateLimitKind: 'minutes' | 'count' | null = null;
+  let gateItemsToday = 0;
+  let gateCountLimit: number | null = null;
+  let gateItemNoun: string | null = null;
 
   if (settings.globalEnabled) {
     // The gate is asked FIRST because the gate redirect outranks the site redirect at the
@@ -189,17 +196,39 @@ async function buildBlockContext(target: string, now: Date): Promise<BlockContex
     // send the user straight back into the redirect.
     const gate = rule === null ? null : gateForPage(rule, target);
     if (gate !== null) {
-      const surfaceMs = await todayUsageMs(surfaceKey(domain, gate.definition.id), now);
-      const verdict = gateAppliesNow(gate.setting, surfaceMs);
+      const key = surfaceKey(domain, gate.definition.id);
+      const surfaceMs = await todayUsageMs(key, now);
+      const surfaceCount = await todayItemCount(key, now);
+      const verdict = gateAppliesNow(gate.setting, surfaceMs, surfaceCount);
       const mode = appliedBlockMode(verdict);
       if (mode !== null && rule !== null) {
         gateId = gate.definition.id;
         gateLabel = gate.definition.label;
+        // WHICH budget ran out, for the page's copy. "Daily Shorts limit reached" is the
+        // wrong sentence for someone who set a count of 20 and no time budget at all:
+        // they would go looking in the editor for a minutes limit they never set.
+        gateLimitKind =
+          verdict.reason === 'limit-exhausted'
+            ? 'minutes'
+            : verdict.reason === 'count-exhausted'
+              ? 'count'
+              : null;
+        gateItemsToday = gateSupportsItemCount(gate.definition) ? surfaceCount : 0;
+        gateCountLimit = gate.setting.dailyLimitCount;
+        gateItemNoun = gate.definition.itemNoun?.plural ?? null;
         decision = evaluate(
           [gateAsActiveRule(rule, gate, verdict.delaySeconds, mode)],
           surfaceMs,
           now,
         );
+        // A count-driven block reaches the engine as a plain Hard Block (the engine knows
+        // only the minute axis, and teaching it a second one would mean a second branch
+        // inside the ENGINE INVARIANT it is not worth risking). The engine therefore does
+        // not set `limitReached`, so the page would show no limit line at all. Set it here
+        // from the verdict that actually decided, which is the one thing that knows.
+        if (gateLimitKind === 'count' && decision.type === 'BLOCK') {
+          decision = { ...decision, limitReached: true };
+        }
       }
     }
     if (gateId === null) {
@@ -234,6 +263,10 @@ async function buildBlockContext(target: string, now: Date): Promise<BlockContex
     tempAllowMinutes: settings.tempAllowMinutes,
     gateId,
     gateLabel,
+    gateLimitKind,
+    gateItemsToday,
+    gateCountLimit,
+    gateItemNoun,
     allowedChannels: allowedChannelsFor(rule),
   };
 }
@@ -401,13 +434,18 @@ async function buildSiteConfig(url: string, now: Date): Promise<SiteConfig> {
     for (const definition of platformById(features.platform).gates) {
       const setting = features.gates[definition.id];
       if (setting === undefined) continue;
-      const surfaceMs = await todayUsageMs(surfaceKey(domain, definition.id), now);
-      const gateVerdict = gateAppliesNow(setting, surfaceMs);
+      const key = surfaceKey(domain, definition.id);
+      const surfaceMs = await todayUsageMs(key, now);
+      const surfaceCount = await todayItemCount(key, now);
+      const gateVerdict = gateAppliesNow(setting, surfaceMs, surfaceCount);
       gates.push({
         id: definition.id,
         mode: appliedBlockMode(gateVerdict) ?? 'ALLOW',
         delaySeconds: gateVerdict.delaySeconds,
         limitReached: gateVerdict.reason === 'limit-exhausted',
+        countReached: gateVerdict.reason === 'count-exhausted',
+        itemsToday: gateSupportsItemCount(definition) ? surfaceCount : 0,
+        countLimit: setting.dailyLimitCount,
       });
     }
   }
@@ -647,6 +685,8 @@ export async function handleRequest(
       return loadSettings();
     case 'GET_SITE_CONFIG':
       return buildSiteConfig(request.url, now);
+    case 'ITEM_VIEWED':
+      return handleItemViewed(request.url, now);
     case 'SET_GRAYSCALE':
       return setGrayscale(
         request.domain,

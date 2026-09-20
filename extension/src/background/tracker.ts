@@ -35,9 +35,8 @@ import { rulesForDomain, usageKeyForHost } from '../core/ruleResolver';
 import { gateForUrl, platformForDomain, type GateId } from '../core/platforms';
 import { localDayKey } from '../core/scheduleEvaluator';
 import { addActiveSeconds, recordBlocked, recordWalkedAway } from '../core/stats';
-import { crossesLimit, tightestLimit } from '../core/budgets';
+import { crossesLimit, tightestGateMinutes, tightestLimit } from '../core/budgets';
 import { surfaceKey } from '../core/surfaceKeys';
-import type { SiteRule } from '../core/settingsSchema';
 import {
   loadSettings,
   loadTrackerState,
@@ -175,17 +174,6 @@ interface AccountingStep {
   nextSurfaceMs: number;
 }
 
-/** The tightest budget configured for one gate across the rules covering a domain. */
-function tightestGateLimit(rules: readonly SiteRule[], gateId: GateId): number | null {
-  let min: number | null = null;
-  for (const rule of rules) {
-    const limit = rule.features?.gates[gateId]?.dailyLimitMinutes ?? null;
-    if (limit === null) continue;
-    if (min === null || limit < min) min = limit;
-  }
-  return min;
-}
-
 /**
  * Flip a site — or one feature surface of it — to blocked the instant its daily limit is
  * crossed.
@@ -220,7 +208,7 @@ async function enforceBudget(step: AccountingStep, now: Date): Promise<void> {
   const siteCrossed = crossesLimit(siteLimit, step.previousSiteMs, step.nextSiteMs);
 
   const gateId = step.gateId;
-  const gateLimit = gateId === null ? null : tightestGateLimit(rules, gateId);
+  const gateLimit = gateId === null ? null : tightestGateMinutes(rules, gateId);
   const gateCrossed =
     gateId !== null && crossesLimit(gateLimit, step.previousSurfaceMs, step.nextSurfaceMs);
 

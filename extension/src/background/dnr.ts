@@ -60,13 +60,17 @@ import {
 import { platformById, type GateId } from '../core/platforms';
 import type { ChannelEntry, NudgeSettings, SiteRule } from '../core/settingsSchema';
 import { surfaceKey } from '../core/surfaceKeys';
-import { todayUsageMap } from './storage';
+import type { UsageSnapshot } from '../core/protocol';
+import { todayUsageSnapshot } from './storage';
 
 /**
  * Today's active milliseconds per usage key — plain domains AND `domain#gate` surface
  * buckets (see `core/surfaceKeys.ts`). A missing key means zero.
  */
 export type UsageByKey = Readonly<Record<string, number>>;
+
+/** Re-exported so every caller of the compiler reads one definition of "today's usage". */
+export type { UsageSnapshot };
 
 /** Id ranges, one per kind, so a rule's kind is legible from its id while debugging. */
 const SITE_RULE_ID_BASE = 1;
@@ -180,14 +184,16 @@ function siteUsageKey(rule: SiteRule): string {
  */
 export function redirectedDomains(
   settings: NudgeSettings,
-  usage: UsageByKey,
+  usage: UsageSnapshot,
   now: Date,
 ): string[] {
   if (!settings.globalEnabled) return [];
   const domains = new Set<string>();
   for (const rule of settings.rules) {
     const key = siteUsageKey(rule);
-    if (siteRuleAppliesNow(rule, usage[key] ?? 0, now).applies) domains.add(key);
+    // Site rules have no count axis: "one item" is a property of a gate's stream, not of a
+    // whole site, so only the minute budget can put a site rule in force.
+    if (siteRuleAppliesNow(rule, usage.ms[key] ?? 0, now).applies) domains.add(key);
   }
   return [...domains].sort();
 }
@@ -210,7 +216,7 @@ interface GateRedirect {
  * inherits the site's rhythm by living inside the site rule, so the only thing that can
  * change a gate's verdict between two moments is its usage.
  */
-function gateRedirects(settings: NudgeSettings, usage: UsageByKey): GateRedirect[] {
+function gateRedirects(settings: NudgeSettings, usage: UsageSnapshot): GateRedirect[] {
   if (!settings.globalEnabled) return [];
   const redirects: GateRedirect[] = [];
 
@@ -223,8 +229,11 @@ function gateRedirects(settings: NudgeSettings, usage: UsageByKey): GateRedirect
     for (const definition of platformById(rule.features.platform).gates) {
       const gate = rule.features.gates[definition.id];
       if (gate === undefined) continue;
-      const surfaceUsage = usage[surfaceKey(domain, definition.id)] ?? 0;
-      if (!gateAppliesNow(gate, surfaceUsage).applies) continue;
+      const key = surfaceKey(domain, definition.id);
+      // Both axes, from the same snapshot: a gate whose COUNT is spent has to compile its
+      // redirect exactly as one whose minutes are, or "20 Shorts a day" would be enforced
+      // in-page and wide open to a typed URL.
+      if (!gateAppliesNow(gate, usage.ms[key] ?? 0, usage.counts[key] ?? 0).applies) continue;
       for (const path of definition.paths) {
         redirects.push({
           domain,
@@ -271,7 +280,7 @@ export function youtubeWhitelistPaths(channels: readonly ChannelEntry[]): string
  */
 function channelAllowFilters(
   settings: NudgeSettings,
-  usage: UsageByKey,
+  usage: UsageSnapshot,
   now: Date,
 ): string[] {
   if (!settings.globalEnabled) return [];
@@ -282,7 +291,7 @@ function channelAllowFilters(
     if (!rule.enabled || youtube === undefined) continue;
     if (youtube.channelMode !== 'WHITELIST' || youtube.channels.length === 0) continue;
     const domain = siteUsageKey(rule);
-    const verdict = siteRuleAppliesNow(rule, usage[domain] ?? 0, now);
+    const verdict = siteRuleAppliesNow(rule, usage.ms[domain] ?? 0, now);
     if (!verdict.applies) continue;
     // A daily limit and a channel list answer DIFFERENT questions: the limit budgets HOW
     // MUCH of the site, the list restricts WHAT. Once the budget is spent there is no
@@ -326,7 +335,7 @@ function channelAllowFilters(
  */
 export function compiledRuleCount(
   settings: NudgeSettings,
-  usage: UsageByKey,
+  usage: UsageSnapshot,
   now: Date,
 ): number {
   return (
@@ -338,7 +347,7 @@ export function compiledRuleCount(
 
 export function compileRules(
   settings: NudgeSettings,
-  usage: UsageByKey,
+  usage: UsageSnapshot,
   now: Date,
 ): chrome.declarativeNetRequest.Rule[] {
   const rules: chrome.declarativeNetRequest.Rule[] = [];
@@ -385,7 +394,7 @@ export async function applyRules(
   settings: NudgeSettings,
   now: Date = new Date(),
 ): Promise<void> {
-  const usage = await todayUsageMap(now);
+  const usage = await todayUsageSnapshot(now);
   const existing = await chrome.declarativeNetRequest.getDynamicRules();
   await chrome.declarativeNetRequest.updateDynamicRules({
     removeRuleIds: existing.map((rule) => rule.id),

@@ -59,6 +59,90 @@ describe('featureSummary', () => {
     expect(featureSummary(rule)).toBe('Shorts: 10m/day');
   });
 
+  /**
+   * The COUNT axis (v0.3): a count-only gate must not summarise as "no effect" — it is the
+   * only thing standing between the user and an afternoon of Shorts, and both budget axes
+   * are independent, so both must be able to print, together or alone.
+   */
+  describe('the count budget (v0.3)', () => {
+    it('reports an OFF gate whose only budget is a daily item count, pluralised via the registry noun', () => {
+      const rule = siteRule({
+        mode: 'ALLOW',
+        features: featuresWith('youtube', {
+          gates: { shorts: { mode: 'OFF', dailyLimitCount: 20 } },
+        }),
+      });
+      expect(featureSummary(rule)).toBe('Shorts: 20 Shorts/day');
+    });
+
+    it('uses the SINGULAR noun when the count is exactly 1', () => {
+      const rule = siteRule({
+        mode: 'ALLOW',
+        features: featuresWith('youtube', {
+          gates: { shorts: { mode: 'OFF', dailyLimitCount: 1 } },
+        }),
+      });
+      expect(featureSummary(rule)).toBe('Shorts: 1 Short/day');
+    });
+
+    it('lists BOTH budgets together, minutes first, when a gate carries both axes at once', () => {
+      const rule = siteRule({
+        mode: 'ALLOW',
+        features: featuresWith('youtube', {
+          gates: { shorts: { mode: 'OFF', dailyLimitMinutes: 10, dailyLimitCount: 20 } },
+        }),
+      });
+      expect(featureSummary(rule)).toBe('Shorts: 10m/day, 20 Shorts/day');
+    });
+
+    it('still prints the mode label instead of a budget when the gate is actively gating, even with a count set', () => {
+      // A gate whose mode is a real block mode already says so ("Shorts: Delay 15s"); the
+      // budget clause is only for the OFF-but-budgeted shape, so this must not double up.
+      const rule = siteRule({
+        mode: 'ALLOW',
+        features: featuresWith('youtube', {
+          gates: { shorts: { mode: 'DELAY', delaySeconds: 15, dailyLimitCount: 20 } },
+        }),
+      });
+      expect(featureSummary(rule)).toBe('Shorts: Delay 15s');
+    });
+
+    it('uses the item noun on Instagram Reels and TikTok too, not just YouTube Shorts', () => {
+      const reels = siteRule({
+        domain: 'instagram.com',
+        mode: 'ALLOW',
+        features: featuresWith('instagram', {
+          gates: { reels: { mode: 'OFF', dailyLimitCount: 5 } },
+        }),
+      });
+      expect(featureSummary(reels)).toBe('Reels: 5 Reels/day');
+
+      const forYou = siteRule({
+        domain: 'tiktok.com',
+        mode: 'ALLOW',
+        features: featuresWith('tiktok', {
+          gates: { foryou: { mode: 'OFF', dailyLimitCount: 5 } },
+        }),
+      });
+      expect(featureSummary(forYou)).toBe('For You feed: 5 videos/day');
+    });
+
+    it('falls back to a bare "N/day" for a gate the registry gives no item noun, rather than crashing', () => {
+      // No shipped gate can actually reach this state through the editor (itemNoun and
+      // itemPaths are pinned together by the registry invariant tests), but the pure
+      // function itself has to stay defensive against a hand-edited/imported settings blob
+      // that sets a count on a gate the registry never offered one for.
+      const rule = siteRule({
+        domain: 'instagram.com',
+        mode: 'ALLOW',
+        features: featuresWith('instagram', {
+          gates: { explore: { mode: 'OFF', dailyLimitCount: 20 } },
+        }),
+      });
+      expect(featureSummary(rule)).toBe('Explore: 20/day');
+    });
+  });
+
   it('names a single hidden element and counts several', () => {
     const one = siteRule({
       mode: 'ALLOW',
@@ -156,6 +240,18 @@ describe('isNothingActive', () => {
         }),
       ),
     ).toBe(false);
+  });
+
+  it('is false for a gate whose ONLY configured thing is a daily item count (v0.3)', () => {
+    // "20 Shorts a day" alone is real protection — a rule this describes must never read as
+    // having no effect.
+    const rule = siteRule({
+      mode: 'ALLOW',
+      features: featuresWith('youtube', {
+        gates: { shorts: { mode: 'OFF', dailyLimitCount: 20 } },
+      }),
+    });
+    expect(isNothingActive(rule)).toBe(false);
   });
 
   it('is false for a rule that only blocks inside a schedule window', () => {

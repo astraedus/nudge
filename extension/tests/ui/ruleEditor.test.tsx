@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { defaultFeatures, newSiteRule } from '../../src/core/settingsSchema';
 import type { SiteRule } from '../../src/core/settingsSchema';
 import { platformById } from '../../src/core/platforms';
@@ -190,5 +190,142 @@ describe('RuleEditor — Site features', () => {
     });
     render(<RuleEditor rule={rule} onSave={noop} onCancel={noop} />);
     expect(screen.getByText(/lock things down to only the ones you choose/i)).toBeTruthy();
+  });
+});
+
+/**
+ * The count picker's own named group, scoped by its accessible name ("<Noun> per day") —
+ * `RuleEditor.tsx`'s `CountPicker` wraps its chip row in `role="group"` with that name
+ * specifically so a gate's TWO budget pickers (minutes and count) never read as one
+ * undifferentiated run of chips, to a screen reader or to a query in here.
+ */
+function countGroupFor(noun: string): HTMLElement {
+  return screen.getByRole('group', { name: `${noun} per day` });
+}
+
+describe('RuleEditor — the daily ITEM-COUNT control (v0.3, "20 Shorts a day")', () => {
+  afterEach(cleanup);
+
+  it('appears for YouTube Shorts, Instagram Reels and TikTok For You, each with its own noun', () => {
+    const cases: { domain: string; platform: 'youtube' | 'instagram' | 'tiktok'; noun: string }[] = [
+      { domain: 'youtube.com', platform: 'youtube', noun: 'Shorts' },
+      { domain: 'instagram.com', platform: 'instagram', noun: 'Reels' },
+      { domain: 'tiktok.com', platform: 'tiktok', noun: 'videos' },
+    ];
+
+    for (const { domain, platform, noun } of cases) {
+      const rule = makeRule({ domain, features: defaultFeatures(platform) });
+      const { unmount } = render(<RuleEditor rule={rule} onSave={noop} onCancel={noop} />);
+
+      // The visible "<Noun> per day" paragraph still exists above the group too, so
+      // getByText would match twice — the named group is the unambiguous, and
+      // accessibility-meaningful, way to find "the count picker specifically".
+      expect(screen.getByText(`${noun} per day`)).toBeTruthy();
+      const section = within(countGroupFor(noun));
+      expect(section.getByRole('button', { name: 'No limit' })).toBeTruthy();
+      for (const preset of [5, 10, 20, 50]) {
+        expect(section.getByRole('button', { name: String(preset) })).toBeTruthy();
+      }
+
+      unmount();
+    }
+  });
+
+  it('names the minutes and count groups distinctly, so the two "No limit" chips are not one undifferentiated run', () => {
+    // The exact a11y bug a peer found and fixed in src (RuleEditor.tsx `LimitPicker`'s
+    // `groupLabel` doc comment): without this, a screen reader heard "No limit, 15, 30,
+    // 60, 120, No limit, 5, 10, 20, 50" with nothing to say which budget was which.
+    const rule = makeRule({ domain: 'youtube.com', features: defaultFeatures('youtube') });
+    render(<RuleEditor rule={rule} onSave={noop} onCancel={noop} />);
+
+    const minutesGroup = screen.getByRole('group', { name: 'Shorts minutes per day' });
+    const countGroup = screen.getByRole('group', { name: 'Shorts per day' });
+    expect(minutesGroup).not.toBe(countGroup);
+    expect(within(minutesGroup).getByRole('button', { name: 'No limit' })).toBeTruthy();
+    expect(within(countGroup).getByRole('button', { name: 'No limit' })).toBeTruthy();
+  });
+
+  it('does NOT appear for X Home timeline, Reddit home or LinkedIn Feed — gates with no item stream', () => {
+    // A limit that can never increment is worse than no limit at all: it is
+    // indistinguishable from a broken blocker (RuleEditor.tsx `GateRow` doc comment). None
+    // of these three gates carries `itemPaths` in the registry, so the control must be
+    // absent, not merely disabled.
+    const cases: { domain: string; platform: 'x' | 'reddit' | 'linkedin'; gateLabel: string }[] = [
+      { domain: 'x.com', platform: 'x', gateLabel: 'Home timeline' },
+      { domain: 'reddit.com', platform: 'reddit', gateLabel: 'Home, Popular and All' },
+      { domain: 'linkedin.com', platform: 'linkedin', gateLabel: 'Feed' },
+    ];
+
+    for (const { domain, platform, gateLabel } of cases) {
+      const rule = makeRule({ domain, features: defaultFeatures(platform) });
+      const { unmount } = render(<RuleEditor rule={rule} onSave={noop} onCancel={noop} />);
+
+      // Sanity: the gate row itself IS present — it is specifically the count control
+      // that must be missing, not the whole feature.
+      expect(screen.getByText(gateLabel)).toBeTruthy();
+      expect(screen.queryByText(/per day/i)).toBeNull();
+
+      unmount();
+    }
+  });
+
+  it('does NOT appear when the gate mode is Hard Block, even for a gate with an item stream', () => {
+    const features = defaultFeatures('youtube');
+    features.gates.shorts = { ...features.gates.shorts!, mode: 'HARD_BLOCK' };
+    const rule = makeRule({ domain: 'youtube.com', features });
+    render(<RuleEditor rule={rule} onSave={noop} onCancel={noop} />);
+
+    // Hard Block already explains itself ("always gated, so there is no time to budget")
+    // and offers neither the minutes nor the count control.
+    expect(screen.getByText(/not used with hard block/i)).toBeTruthy();
+    expect(screen.queryByText('Shorts per day')).toBeNull();
+  });
+
+  it('reaches onSave as dailyLimitCount when a preset is picked', () => {
+    const onSave = vi.fn();
+    const rule = makeRule({ domain: 'youtube.com', features: defaultFeatures('youtube') });
+    render(<RuleEditor rule={rule} onSave={onSave} onCancel={noop} />);
+
+    fireEvent.click(screen.getByRole('button', { name: '20' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save rule' }));
+
+    expect(onSave).toHaveBeenCalledTimes(1);
+    const saved = onSave.mock.calls[0]![0] as SiteRule;
+    expect(saved.features?.gates.shorts?.dailyLimitCount).toBe(20);
+  });
+
+  it('reaches onSave as dailyLimitCount when a custom value is typed', () => {
+    const onSave = vi.fn();
+    const rule = makeRule({ domain: 'instagram.com', features: defaultFeatures('instagram') });
+    render(<RuleEditor rule={rule} onSave={onSave} onCancel={noop} />);
+
+    fireEvent.change(screen.getByLabelText('reels custom daily Reels limit'), {
+      target: { value: '37' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save rule' }));
+
+    expect(onSave).toHaveBeenCalledTimes(1);
+    const saved = onSave.mock.calls[0]![0] as SiteRule;
+    expect(saved.features?.gates.reels?.dailyLimitCount).toBe(37);
+  });
+
+  it('clamps a custom value above the 500 ceiling', () => {
+    const rule = makeRule({ domain: 'youtube.com', features: defaultFeatures('youtube') });
+    render(<RuleEditor rule={rule} onSave={noop} onCancel={noop} />);
+
+    const input = screen.getByLabelText('shorts custom daily Shorts limit') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: '9001' } });
+
+    expect(input.value).toBe('500');
+  });
+
+  it('clamps a custom value below the 1 floor', () => {
+    const rule = makeRule({ domain: 'youtube.com', features: defaultFeatures('youtube') });
+    render(<RuleEditor rule={rule} onSave={noop} onCancel={noop} />);
+
+    const input = screen.getByLabelText('shorts custom daily Shorts limit') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: '0' } });
+
+    expect(input.value).toBe('1');
   });
 });

@@ -91,7 +91,7 @@ describe('LinkedIn content script — the feed gate', () => {
     window.history.replaceState({}, '', '/feed/');
 
     const fetchConfig = vi.fn(async () =>
-      configWith({ gates: [{ id: 'feed', mode: 'HARD_BLOCK', delaySeconds: 15, limitReached: false }] }),
+      configWith({ gates: [{ id: 'feed', mode: 'HARD_BLOCK', delaySeconds: 15, limitReached: false, countReached: false, itemsToday: 0, countLimit: null }] }),
     );
     const controller = initLinkedinContentScript(document, fetchConfig);
     await controller.reload();
@@ -106,7 +106,7 @@ describe('LinkedIn content script — the feed gate', () => {
     window.history.replaceState({}, '', '/feed/');
 
     const fetchConfig = vi.fn(async () =>
-      configWith({ gates: [{ id: 'feed', mode: 'ALLOW', delaySeconds: 15, limitReached: false }] }),
+      configWith({ gates: [{ id: 'feed', mode: 'ALLOW', delaySeconds: 15, limitReached: false, countReached: false, itemsToday: 0, countLimit: null }] }),
     );
     const controller = initLinkedinContentScript(document, fetchConfig);
     await controller.reload();
@@ -121,7 +121,7 @@ describe('LinkedIn content script — the feed gate', () => {
     window.history.replaceState({}, '', '/in/someone/');
 
     const fetchConfig = vi.fn(async () =>
-      configWith({ gates: [{ id: 'feed', mode: 'HARD_BLOCK', delaySeconds: 15, limitReached: false }] }),
+      configWith({ gates: [{ id: 'feed', mode: 'HARD_BLOCK', delaySeconds: 15, limitReached: false, countReached: false, itemsToday: 0, countLimit: null }] }),
     );
     const controller = initLinkedinContentScript(document, fetchConfig);
     await controller.reload();
@@ -146,7 +146,7 @@ describe('LinkedIn content script — SPA navigation', () => {
     window.history.replaceState({}, '', '/in/someone/');
 
     const fetchConfig = vi.fn(async () =>
-      configWith({ gates: [{ id: 'feed', mode: 'HARD_BLOCK', delaySeconds: 15, limitReached: false }] }),
+      configWith({ gates: [{ id: 'feed', mode: 'HARD_BLOCK', delaySeconds: 15, limitReached: false, countReached: false, itemsToday: 0, countLimit: null }] }),
     );
     const controller = initLinkedinContentScript(document, fetchConfig);
     await controller.reload();

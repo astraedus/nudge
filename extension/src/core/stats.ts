@@ -48,13 +48,73 @@ export function surfaceActiveSeconds(
   return day[surfaceKey(domain, gateId)]?.activeSec ?? 0;
 }
 
+/**
+ * One feature surface's ITEM count for a day, or 0 when nothing was recorded (v0.3).
+ *
+ * The dashboard's "of which Shorts: 12m, 34 Shorts" line. Same key builder as the writer,
+ * for the same reason as `surfaceActiveSeconds`.
+ */
+export function surfaceItemViews(
+  day: Record<string, DayUsage>,
+  domain: string,
+  gateId: GateId,
+): number {
+  return day[surfaceKey(domain, gateId)]?.items ?? 0;
+}
+
 function cloneHourly(hourly: readonly number[]): number[] {
   return [...hourly];
 }
 
 /** A fresh, all-zero rollup for a domain that hasn't been seen yet today. */
 export function emptyDayUsage(): DayUsage {
-  return { activeSec: 0, blocked: 0, walkedAway: 0, hourly: new Array<number>(HOURS_PER_DAY).fill(0) };
+  return {
+    activeSec: 0,
+    blocked: 0,
+    walkedAway: 0,
+    hourly: new Array<number>(HOURS_PER_DAY).fill(0),
+    items: 0,
+  };
+}
+
+/**
+ * Normalize one STORED rollup into a complete `DayUsage`.
+ *
+ * Usage data carries no schema version and is never migrated in place: it is a rolling
+ * local measurement, and rewriting months of it on every upgrade would be a lot of risk for
+ * a number that is about to be replaced tomorrow anyway. So the shape is repaired on READ,
+ * here, once, for every reader.
+ *
+ * This is what keeps a NEW numeric field from failing open. `items` (v0.3) does not exist
+ * on any rollup written before it; `usage.items + 1` against a stored v0.2 rollup is
+ * `undefined + 1` = NaN, every `NaN >= limit` comparison is false, and a count budget that
+ * can never be over is a budget that silently never blocks.
+ */
+export function coerceDayUsage(value: unknown): DayUsage {
+  const base = emptyDayUsage();
+  if (!value || typeof value !== 'object') return base;
+  const raw = value as Partial<DayUsage>;
+  const hourly = Array.isArray(raw.hourly)
+    ? Array.from({ length: HOURS_PER_DAY }, (_, h) =>
+        typeof raw.hourly?.[h] === 'number' ? (raw.hourly[h] as number) : 0,
+      )
+    : base.hourly;
+  return {
+    activeSec: typeof raw.activeSec === 'number' ? raw.activeSec : 0,
+    blocked: typeof raw.blocked === 'number' ? raw.blocked : 0,
+    walkedAway: typeof raw.walkedAway === 'number' ? raw.walkedAway : 0,
+    hourly,
+    items: typeof raw.items === 'number' ? raw.items : 0,
+  };
+}
+
+/** Add one viewed item to a rollup. Pure, returns a new `DayUsage`. */
+export function recordItemView(usage: DayUsage): DayUsage {
+  return {
+    ...usage,
+    items: (typeof usage.items === 'number' ? usage.items : 0) + 1,
+    hourly: cloneHourly(usage.hourly),
+  };
 }
 
 /**

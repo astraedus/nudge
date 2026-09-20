@@ -118,8 +118,8 @@ describe('applyPlatformHides — each surface owns its own class, independently 
 
 describe('resolveActiveGate', () => {
   const gates: ResolvedGate[] = [
-    { id: 'reels', mode: 'HARD_BLOCK', delaySeconds: 15, limitReached: false },
-    { id: 'explore', mode: 'ALLOW', delaySeconds: 15, limitReached: false },
+    { id: 'reels', mode: 'HARD_BLOCK', delaySeconds: 15, limitReached: false, countReached: false, itemsToday: 0, countLimit: null },
+    { id: 'explore', mode: 'ALLOW', delaySeconds: 15, limitReached: false, countReached: false, itemsToday: 0, countLimit: null },
   ];
 
   it('returns the resolved gate matching the current URL', () => {
@@ -143,7 +143,7 @@ describe('initPlatformContentScript — the shared controller', () => {
     window.history.replaceState({}, '', '/reels/');
 
     const fetchConfig = vi.fn(async () =>
-      configWith({ gates: [{ id: 'reels', mode: 'HARD_BLOCK', delaySeconds: 15, limitReached: false }] }),
+      configWith({ gates: [{ id: 'reels', mode: 'HARD_BLOCK', delaySeconds: 15, limitReached: false, countReached: false, itemsToday: 0, countLimit: null }] }),
     );
 
     const controller = initPlatformContentScript(
@@ -168,7 +168,7 @@ describe('initPlatformContentScript — the shared controller', () => {
     window.history.replaceState({}, '', '/explore/');
 
     const fetchConfig = vi.fn(async () =>
-      configWith({ gates: [{ id: 'explore', mode: 'ALLOW', delaySeconds: 15, limitReached: false }] }),
+      configWith({ gates: [{ id: 'explore', mode: 'ALLOW', delaySeconds: 15, limitReached: false, countReached: false, itemsToday: 0, countLimit: null }] }),
     );
 
     const controller = initPlatformContentScript(
@@ -193,7 +193,7 @@ describe('initPlatformContentScript — the shared controller', () => {
     window.history.replaceState({}, '', '/direct/inbox/');
 
     const fetchConfig = vi.fn(async () =>
-      configWith({ gates: [{ id: 'reels', mode: 'HARD_BLOCK', delaySeconds: 15, limitReached: false }] }),
+      configWith({ gates: [{ id: 'reels', mode: 'HARD_BLOCK', delaySeconds: 15, limitReached: false, countReached: false, itemsToday: 0, countLimit: null }] }),
     );
 
     const controller = initPlatformContentScript(
@@ -242,7 +242,7 @@ describe('initPlatformContentScript — the shared controller', () => {
     mount(FIXTURE_HTML);
     window.history.replaceState({}, '', '/reels/one');
 
-    const currentGates: ResolvedGate[] = [{ id: 'reels', mode: 'DELAY', delaySeconds: 5, limitReached: false }];
+    const currentGates: ResolvedGate[] = [{ id: 'reels', mode: 'DELAY', delaySeconds: 5, limitReached: false, countReached: false, itemsToday: 0, countLimit: null }];
     const fetchConfig = vi.fn(async () => configWith({ gates: currentGates }));
 
     const controller = initPlatformContentScript(
@@ -279,7 +279,7 @@ describe('initPlatformContentScript — the shared controller', () => {
     window.history.replaceState({}, '', '/reels/');
 
     const fetchConfig = vi.fn(async () =>
-      configWith({ gates: [{ id: 'reels', mode: 'HARD_BLOCK', delaySeconds: 15, limitReached: false }] }),
+      configWith({ gates: [{ id: 'reels', mode: 'HARD_BLOCK', delaySeconds: 15, limitReached: false, countReached: false, itemsToday: 0, countLimit: null }] }),
     );
 
     const controller = initPlatformContentScript(
@@ -297,5 +297,154 @@ describe('initPlatformContentScript — the shared controller', () => {
 
     controller.stop();
     expect(document.getElementById(OVERLAY_ID)).toBeNull();
+  });
+});
+
+describe('initPlatformContentScript — item-view reporting (COUNT budgets, v0.3)', () => {
+  function configWith(overrides: Partial<SiteConfig>): SiteConfig {
+    return { ...IDLE_SITE_CONFIG, enabled: true, platform: 'instagram', ...overrides };
+  }
+
+  /** A reel gate, count-exhausted, the shape the worker sends once today's budget is spent. */
+  const COUNT_EXHAUSTED_REEL_GATE: ResolvedGate = {
+    id: 'reels',
+    mode: 'HARD_BLOCK',
+    delaySeconds: 15,
+    limitReached: false,
+    countReached: true,
+    itemsToday: 20,
+    countLimit: 20,
+  };
+
+  it('reports an item view on navigation to an item URL', async () => {
+    // The content script reports WHERE it is on every refresh (`report()`'s own local
+    // dedupe against the LAST url is the only filtering it does) — it is the worker,
+    // not the page, that decides whether a given URL names an item (`core/platforms.ts`
+    // `itemForUrl`). So the very first refresh (on `/`) reports too; what this test pins is
+    // that navigating ONTO the item URL reports exactly that URL.
+    mount(FIXTURE_HTML);
+    window.history.replaceState({}, '', '/');
+
+    const fetchConfig = vi.fn(async () => configWith({ gates: [] }));
+    const sendItemView = vi.fn();
+
+    const controller = initPlatformContentScript(
+      {
+        platform: 'instagram',
+        hideSurfaces: [],
+        gateCopy: () => ({ ruleLabel: 'Reels' }),
+        bailUrl: 'https://www.instagram.com/',
+      },
+      document,
+      fetchConfig,
+      sendItemView,
+    );
+    await controller.reload();
+    expect(sendItemView).toHaveBeenCalledTimes(1);
+
+    window.history.replaceState({}, '', '/reels/abc/');
+    controller.refresh();
+
+    expect(sendItemView).toHaveBeenCalledTimes(2);
+    expect(sendItemView).toHaveBeenLastCalledWith(window.location.href);
+    expect(window.location.href).toMatch(/\/reels\/abc\/?$/);
+
+    controller.stop();
+  });
+
+  it('reports even when NO gate applies to the current URL', async () => {
+    // An item view is an observation about where the page is, not a consequence of a
+    // verdict. `/reels/abc/` is on Instagram's Reels item stream regardless of whether the
+    // registry's `reels` GATE happens to be configured — the reporter and the gate resolver
+    // read the same URL independently (itemForUrl vs gateForUrl), so a rule with no gates
+    // at all still must not blind the count.
+    mount(FIXTURE_HTML);
+    window.history.replaceState({}, '', '/reels/xyz/');
+
+    const fetchConfig = vi.fn(async () => configWith({ gates: [] }));
+    const sendItemView = vi.fn();
+
+    const controller = initPlatformContentScript(
+      {
+        platform: 'instagram',
+        hideSurfaces: [],
+        gateCopy: () => ({ ruleLabel: 'Reels' }),
+        bailUrl: 'https://www.instagram.com/',
+      },
+      document,
+      fetchConfig,
+      sendItemView,
+    );
+    await controller.reload();
+
+    expect(document.getElementById(OVERLAY_ID)).toBeNull();
+    expect(sendItemView).toHaveBeenCalledWith(window.location.href);
+
+    controller.stop();
+  });
+
+  it('reports even while an interstitial is up for the same surface', async () => {
+    // A report that only fired while NOT gated would freeze the count at exactly the
+    // number the user is most trying to keep an eye on — the moment the gate starts
+    // applying is exactly when the measurement matters most.
+    mount(FIXTURE_HTML);
+    window.history.replaceState({}, '', '/reels/abc/');
+
+    const fetchConfig = vi.fn(async () =>
+      configWith({
+        gates: [{ id: 'reels', mode: 'HARD_BLOCK', delaySeconds: 15, limitReached: false, countReached: false, itemsToday: 0, countLimit: null }],
+      }),
+    );
+    const sendItemView = vi.fn();
+
+    const controller = initPlatformContentScript(
+      {
+        platform: 'instagram',
+        hideSurfaces: [],
+        gateCopy: () => ({ ruleLabel: 'Reels' }),
+        bailUrl: 'https://www.instagram.com/',
+      },
+      document,
+      fetchConfig,
+      sendItemView,
+    );
+    await controller.reload();
+
+    expect(document.getElementById(OVERLAY_ID)).not.toBeNull();
+    expect(sendItemView).toHaveBeenCalledWith(window.location.href);
+
+    controller.stop();
+  });
+
+  it('a count-exhausted gate arrives as HARD_BLOCK and raises the interstitial with no countdown', async () => {
+    // The worker escalates a spent count budget to HARD_BLOCK before this module ever sees
+    // it (core/applies.ts) — the page has no idea "count" and "minutes" are different axes,
+    // it only ever renders the mode it is handed. `createGateOverlay` renders no countdown
+    // for HARD_BLOCK, whatever delaySeconds says.
+    mount(FIXTURE_HTML);
+    window.history.replaceState({}, '', '/reels/abc/');
+
+    const fetchConfig = vi.fn(async () => configWith({ gates: [COUNT_EXHAUSTED_REEL_GATE] }));
+
+    const controller = initPlatformContentScript(
+      {
+        platform: 'instagram',
+        hideSurfaces: [],
+        gateCopy: () => ({ ruleLabel: 'Reels' }),
+        bailUrl: 'https://www.instagram.com/',
+      },
+      document,
+      fetchConfig,
+    );
+    await controller.reload();
+
+    const overlay = document.getElementById(OVERLAY_ID);
+    expect(overlay).not.toBeNull();
+    // `.nudge-overlay__count` is the DELAY-only countdown digit (`createGateOverlay`) —
+    // HARD_BLOCK renders none, whatever `delaySeconds` the gate carries.
+    expect(overlay?.querySelector('.nudge-overlay__count')).toBeNull();
+    expect(overlay?.querySelector('.nudge-overlay__title')?.textContent).toBe('Reels is blocked');
+
+    controller.stop();
   });
 });

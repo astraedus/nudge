@@ -13,6 +13,7 @@ import { saveDay } from '../../src/background/storage';
 import { localDayKey } from '../../src/core/scheduleEvaluator';
 import { emptyDayUsage } from '../../src/core/stats';
 import { surfaceKey } from '../../src/core/surfaceKeys';
+import type { UsageSnapshot } from '../../src/core/protocol';
 import { enrichEntries } from '../../src/core/channels';
 import type { ChannelEntry } from '../../src/core/settingsSchema';
 import { featuresWith, settings, siteRule } from '../helpers/rules';
@@ -47,7 +48,19 @@ function resolve(rules: chrome.declarativeNetRequest.Rule[], url: string): Outco
 }
 
 const MIDDAY = new Date(2026, 8, 20, 12, 0, 0);
-const NO_USAGE: UsageByKey = {};
+
+/**
+ * `compileRules` / `compiledRuleCount` / `redirectedDomains` all take a `UsageSnapshot`
+ * (both the minute AND the count axis) rather than a flat ms map, so every fixture below
+ * builds one — even the ones only exercising the minute axis need an (empty) `counts` so
+ * the type checker catches a call site that forgot the count axis exists, rather than a
+ * missing-field bug only showing up once a count budget is added to a test later.
+ */
+function usage(ms: UsageByKey, counts: UsageByKey = {}): UsageSnapshot {
+  return { ms, counts };
+}
+
+const NO_USAGE: UsageSnapshot = usage({});
 
 function channel(overrides: Partial<ChannelEntry>): ChannelEntry {
   return { channelId: null, handle: null, displayName: 'x', addedAt: 0, ...overrides };
@@ -83,7 +96,7 @@ describe('site rules', () => {
     const rule = siteRule({ domain: 'reddit.com', mode: 'ALLOW', dailyLimitMinutes: 30 });
     const rules = compileRules(
       settings({ rules: [rule] }),
-      { 'reddit.com': 29 * 60_000 },
+      usage({ 'reddit.com': 29 * 60_000 }),
       MIDDAY,
     );
     expect(resolve(rules, 'https://www.reddit.com/r/all')).toBe('untouched');
@@ -93,7 +106,7 @@ describe('site rules', () => {
     const rule = siteRule({ domain: 'reddit.com', mode: 'ALLOW', dailyLimitMinutes: 30 });
     const rules = compileRules(
       settings({ rules: [rule] }),
-      { 'reddit.com': 30 * 60_000 },
+      usage({ 'reddit.com': 30 * 60_000 }),
       MIDDAY,
     );
     expect(resolve(rules, 'https://www.reddit.com/r/all')).toBe('block-page');
@@ -156,12 +169,38 @@ describe('feature gates', () => {
     });
     const under = compileRules(
       settings({ rules: [rule] }),
-      { [surfaceKey('youtube.com', 'shorts')]: 9 * 60_000 },
+      usage({ [surfaceKey('youtube.com', 'shorts')]: 9 * 60_000 }),
       MIDDAY,
     );
     const spent = compileRules(
       settings({ rules: [rule] }),
-      { [surfaceKey('youtube.com', 'shorts')]: 10 * 60_000 },
+      usage({ [surfaceKey('youtube.com', 'shorts')]: 10 * 60_000 }),
+      MIDDAY,
+    );
+    expect(resolve(under, 'https://www.youtube.com/shorts/abc')).toBe('untouched');
+    expect(resolve(spent, 'https://www.youtube.com/shorts/abc')).toBe('block-page');
+  });
+
+  it('gates a surface whose own COUNT is spent exactly as one whose minutes are', () => {
+    // "20 Shorts a day, then the gate": mode OFF + a count cap, nothing to do with the
+    // minute axis at all, has to compile a redirect once the count crosses just as
+    // reliably as a minute cap does — otherwise "20 Shorts a day" is enforced only in-page
+    // and wide open to a typed URL.
+    const rule = siteRule({
+      domain: 'youtube.com',
+      mode: 'ALLOW',
+      features: featuresWith('youtube', {
+        gates: { shorts: { mode: 'OFF', dailyLimitCount: 20 } },
+      }),
+    });
+    const under = compileRules(
+      settings({ rules: [rule] }),
+      usage({}, { [surfaceKey('youtube.com', 'shorts')]: 19 }),
+      MIDDAY,
+    );
+    const spent = compileRules(
+      settings({ rules: [rule] }),
+      usage({}, { [surfaceKey('youtube.com', 'shorts')]: 20 }),
       MIDDAY,
     );
     expect(resolve(under, 'https://www.youtube.com/shorts/abc')).toBe('untouched');
@@ -179,10 +218,35 @@ describe('feature gates', () => {
     });
     const rules = compileRules(
       settings({ rules: [rule] }),
-      {
+      usage({
         'instagram.com': 10 * 60_000,
         [surfaceKey('instagram.com', 'reels')]: 5 * 60_000,
-      },
+      }),
+      MIDDAY,
+    );
+    expect(resolve(rules, 'https://www.instagram.com/reels/')).toBe('block-page');
+    expect(resolve(rules, 'https://www.instagram.com/p/abc/')).toBe('untouched');
+  });
+
+  it('does not let a spent GATE COUNT close the site, or a spent SITE budget depend on counts', () => {
+    // The count sibling of the test above, on the same two directions: a count cap is a
+    // property of one gate's stream, never of the whole site (`redirectedDomains` never
+    // reads `usage.counts` at all), and a site's minute budget must not care what
+    // `usage.counts` says either way.
+    const rule = siteRule({
+      domain: 'instagram.com',
+      mode: 'ALLOW',
+      dailyLimitMinutes: 60,
+      features: featuresWith('instagram', {
+        gates: { reels: { mode: 'OFF', dailyLimitCount: 20 } },
+      }),
+    });
+    const rules = compileRules(
+      settings({ rules: [rule] }),
+      usage(
+        { 'instagram.com': 10 * 60_000 },
+        { [surfaceKey('instagram.com', 'reels')]: 20 },
+      ),
       MIDDAY,
     );
     expect(resolve(rules, 'https://www.instagram.com/reels/')).toBe('block-page');
@@ -315,11 +379,11 @@ describe('YouTube channel whitelist', () => {
       ],
     });
 
-    const underBudget = compileRules(limited, { 'youtube.com': 10 * 60_000 }, MIDDAY);
+    const underBudget = compileRules(limited, usage({ 'youtube.com': 10 * 60_000 }), MIDDAY);
     expect(resolve(underBudget, 'https://www.youtube.com/watch?v=abc')).toBe('untouched');
     expect(resolve(underBudget, 'https://www.youtube.com/@veritasium')).toBe('untouched');
 
-    const spent = compileRules(limited, { 'youtube.com': 60 * 60_000 }, MIDDAY);
+    const spent = compileRules(limited, usage({ 'youtube.com': 60 * 60_000 }), MIDDAY);
     expect(resolve(spent, 'https://www.youtube.com/watch?v=abc')).toBe('block-page');
     expect(resolve(spent, 'https://www.youtube.com/@veritasium')).toBe('block-page');
     expect(resolve(spent, 'https://www.youtube.com/')).toBe('block-page');
@@ -329,7 +393,11 @@ describe('YouTube channel whitelist', () => {
     // The negative of the case above: a spent budget is the only reason to withdraw the
     // carve-out. "Block YouTube, except these channels" must keep working — it is the
     // headline feature.
-    const rules = compileRules(whitelisted([veritasium]), { 'youtube.com': 60 * 60_000 }, MIDDAY);
+    const rules = compileRules(
+      whitelisted([veritasium]),
+      usage({ 'youtube.com': 60 * 60_000 }),
+      MIDDAY,
+    );
     expect(resolve(rules, 'https://www.youtube.com/watch?v=abc')).toBe('allowed');
   });
 
@@ -392,7 +460,7 @@ describe('compiledRuleCount', () => {
    * Driven over states that exercise all three rule kinds rather than one happy path,
    * because the three are summed separately and only a mixed case catches a missed term.
    */
-  const states: [string, ReturnType<typeof settings>, UsageByKey][] = [
+  const states: [string, ReturnType<typeof settings>, UsageSnapshot][] = [
     ['nothing configured', settings({ rules: [] }), NO_USAGE],
     [
       'a plain Hard Block',
@@ -411,7 +479,7 @@ describe('compiledRuleCount', () => {
       settings({
         rules: [siteRule({ domain: 'example.com', mode: 'ALLOW', dailyLimitMinutes: 30 })],
       }),
-      { 'example.com': 45 * 60_000 },
+      usage({ 'example.com': 45 * 60_000 }),
     ],
     [
       'gates and a whitelist together',
@@ -444,6 +512,25 @@ describe('compiledRuleCount', () => {
         rules: [siteRule({ domain: 'example.com', mode: 'HARD_BLOCK' })],
       }),
       NO_USAGE,
+    ],
+    [
+      // The e2e harness waits on `compiledRuleCount` to know a gate redirect has appeared,
+      // and the count axis is exactly as capable of producing one as the minute axis — a
+      // pairing that is wrong in the permissive direction (too LOW) turns into a race
+      // rather than an honest failure, which is the whole reason this table exists.
+      'a gate whose COUNT is spent',
+      settings({
+        rules: [
+          siteRule({
+            domain: 'youtube.com',
+            mode: 'ALLOW',
+            features: featuresWith('youtube', {
+              gates: { shorts: { mode: 'OFF', dailyLimitCount: 20 } },
+            }),
+          }),
+        ],
+      }),
+      usage({}, { [surfaceKey('youtube.com', 'shorts')]: 20 }),
     ],
   ];
 

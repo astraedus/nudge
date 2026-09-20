@@ -93,6 +93,39 @@ export interface GateDefinition {
   /** One line shown under the gate row in the rule editor. */
   description: string;
   paths: readonly string[];
+  /**
+   * Anchored pathname patterns whose match identifies ONE item of this gate's stream:
+   * one Short, one Reel, one For You video. Each pattern MUST carry exactly one capturing
+   * group, and that group is the item's id: counting "how many Shorts today" is only
+   * meaningful if two visits to the same Short are the same item (see `itemForUrl`).
+   *
+   * Present ONLY on gates whose content is genuinely an item stream with a per-item URL. A
+   * gate without `itemPaths` can never carry a count budget and the rule editor does not
+   * offer one. An X/Facebook/LinkedIn/Reddit feed has no reliable per-item URL, and a
+   * count that silently never increments is worse than no count at all.
+   *
+   * **These are NOT surface paths and deliberately do not widen the gated surface.**
+   * `paths` is what DNR redirects and what the in-page gate resolves against; `itemPaths`
+   * is only ever asked "which gate's stream does this page belong to, for counting". On
+   * YouTube and Instagram the item paths happen to be a subset of the surface paths, so the
+   * two agree; on TikTok a For You item lives at `/@user/video/<id>`, which is NOT part of
+   * the For You SURFACE (a shared video link must not be treated as the feed). Folding them
+   * together would gate a link from a friend in-page while DNR let the same URL through on
+   * a full load: the exact half-enforced split `paths` exists as one string to prevent.
+   */
+  itemPaths?: readonly string[];
+  /**
+   * What one item of this stream is CALLED, for the count budget's UI and block-page copy
+   * ("You've watched 20 Shorts today"). Required alongside `itemPaths`; meaningless
+   * without them. Pinned together by `tests/core/platforms.test.ts`.
+   */
+  itemNoun?: ItemNoun;
+}
+
+/** Singular/plural naming for one item of a gate's stream. */
+export interface ItemNoun {
+  singular: string;
+  plural: string;
 }
 
 export interface HideDefinition {
@@ -134,6 +167,8 @@ export const PLATFORMS: readonly PlatformDefinition[] = [
         label: 'Shorts',
         description: 'The vertical short-video player and its URLs.',
         paths: ['/shorts(?:/.*)?'],
+        itemPaths: ['/shorts/([^/?#]+)/?'],
+        itemNoun: { singular: 'Short', plural: 'Shorts' },
       },
     ],
     hides: [
@@ -175,6 +210,9 @@ export const PLATFORMS: readonly PlatformDefinition[] = [
         label: 'Reels',
         description: 'The Reels tab and individual reel pages.',
         paths: ['/reels(?:/.*)?', '/reel/.*'],
+        // `/reels/` itself (the tab) has nothing after the slash, so it is not an item.
+        itemPaths: ['/reels/([^/?#]+)/?', '/reel/([^/?#]+)/?'],
+        itemNoun: { singular: 'Reel', plural: 'Reels' },
       },
       {
         id: 'explore',
@@ -224,6 +262,10 @@ export const PLATFORMS: readonly PlatformDefinition[] = [
         label: 'For You feed',
         description: 'tiktok.com itself, plus the For You and Following feeds.',
         paths: [ROOT, '/foryou(?:/.*)?', '/following(?:/.*)?'],
+        // Scrolling the For You feed pushes a new `/@user/video/<id>` URL per item. That
+        // URL is the item, NOT the surface, see `itemPaths` on GateDefinition.
+        itemPaths: ['/@[^/?#]+/video/([^/?#]+)/?'],
+        itemNoun: { singular: 'video', plural: 'videos' },
       },
       {
         id: 'explore',
@@ -476,6 +518,74 @@ export function gateForUrl(platform: Platform, url: string): GateId | null {
 
 function longestPatternLength(gate: GateDefinition): number {
   return gate.paths.reduce((max, pattern) => Math.max(max, pattern.length), 0);
+}
+
+/** True when this gate's content is an item stream, i.e. it can carry a count budget. */
+export function gateSupportsItemCount(gate: GateDefinition): boolean {
+  return gate.itemPaths !== undefined && gate.itemPaths.length > 0;
+}
+
+/** The same question by id, for callers holding only a `GateId`. */
+export function gateIdSupportsItemCount(platform: Platform, gateId: GateId): boolean {
+  const definition = gateDefinition(platform, gateId);
+  return definition !== null && gateSupportsItemCount(definition);
+}
+
+/** The noun for one item of this gate's stream, or null when it has no item stream. */
+export function gateItemNoun(platform: Platform, gateId: GateId): ItemNoun | null {
+  return gateDefinition(platform, gateId)?.itemNoun ?? null;
+}
+
+/**
+ * The item id `pathname` names within `gate`, or null when it names no single item.
+ *
+ * The id is capture group 1 of the matching pattern, never the whole path, so
+ * `/shorts/abc` and `/shorts/abc/` are the SAME item and re-watching one Short cannot
+ * spend two of the day's allowance.
+ */
+export function itemIdForPath(gate: GateDefinition, pathname: string): string | null {
+  for (const pattern of gate.itemPaths ?? []) {
+    const match = gatePathRegex(pattern).exec(pathname);
+    const id = match?.[1];
+    if (id !== undefined && id !== '') return id;
+  }
+  return null;
+}
+
+/**
+ * Which gate's stream `url` is one item OF, and which item, or null.
+ *
+ * The COUNTING counterpart of `gateForUrl`, and deliberately a separate function: that one
+ * answers "is this URL on the gate's surface" (what DNR redirects and what the in-page gate
+ * enforces); this one answers "is this URL one item of the gate's stream" (what a count
+ * budget measures). The two questions have different answers on TikTok and must not be
+ * collapsed, see `GateDefinition.itemPaths`.
+ *
+ * Most-specific-first for the same reason `gateForUrl` sorts: a platform could one day
+ * define overlapping item patterns, and order-dependence there would be silent.
+ */
+export function itemForUrl(
+  platform: Platform,
+  url: string,
+): { gateId: GateId; itemId: string } | null {
+  let pathname: string;
+  try {
+    pathname = new URL(url).pathname;
+  } catch {
+    return null;
+  }
+  const gates = [...platformById(platform).gates]
+    .filter(gateSupportsItemCount)
+    .sort((a, b) => longestItemPatternLength(b) - longestItemPatternLength(a));
+  for (const gate of gates) {
+    const itemId = itemIdForPath(gate, pathname);
+    if (itemId !== null) return { gateId: gate.id, itemId };
+  }
+  return null;
+}
+
+function longestItemPatternLength(gate: GateDefinition): number {
+  return (gate.itemPaths ?? []).reduce((max, pattern) => Math.max(max, pattern.length), 0);
 }
 
 /** Strength ordering for a gate mode. Higher = more protection. Mirrors strictMode's. */

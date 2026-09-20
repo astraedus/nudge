@@ -11,14 +11,16 @@
 
 import { migrateSettings, type NudgeSettings } from '../core/settingsSchema';
 import { localDayKey } from '../core/scheduleEvaluator';
-import { emptyDayUsage } from '../core/stats';
-import type { DayUsage, UsageByDay } from '../core/protocol';
+import { coerceDayUsage, emptyDayUsage } from '../core/stats';
+import { coerceSeenItems, emptySeenItems, type SeenItems } from '../core/seenItems';
+import type { DayUsage, UsageByDay, UsageSnapshot } from '../core/protocol';
 
 const SETTINGS_KEY = 'nudge:settings';
 const USAGE_PREFIX = 'usage:';
 const PASS_LEDGER_KEY = 'nudge:passLedger';
 const TRACKER_STATE_KEY = 'nudge:tracker';
 const TEMP_ALLOW_KEY = 'nudge:tempAllow';
+const SEEN_ITEMS_KEY = 'nudge:seenItems';
 
 /** Settings live in sync; a sync failure (quota, sync disabled) degrades to local. */
 export async function loadSettings(): Promise<NudgeSettings> {
@@ -47,10 +49,24 @@ function usageKey(dayKey: string): string {
   return `${USAGE_PREFIX}${dayKey}`;
 }
 
+/**
+ * One day's rollups, every entry normalized on read (`core/stats.ts#coerceDayUsage`).
+ *
+ * Usage data carries no schema version, so a field added in a later release is simply
+ * missing from every rollup written before it. Repairing the shape HERE, in the one module
+ * that reads storage, is what keeps that from becoming an arithmetic bug in each consumer:
+ * `items` (v0.3) is absent on every v0.2 rollup, and `undefined + 1` is NaN, which is never
+ * over any limit, so a count budget would silently never fire.
+ */
 export async function loadDay(dayKey: string): Promise<Record<string, DayUsage>> {
   const stored = await chrome.storage.local.get(usageKey(dayKey));
   const day = stored[usageKey(dayKey)];
-  return day && typeof day === 'object' ? (day as Record<string, DayUsage>) : {};
+  if (!day || typeof day !== 'object') return {};
+  const normalized: Record<string, DayUsage> = {};
+  for (const [key, rollup] of Object.entries(day as Record<string, unknown>)) {
+    normalized[key] = coerceDayUsage(rollup);
+  }
+  return normalized;
 }
 
 export async function saveDay(
@@ -90,20 +106,55 @@ export async function todayUsageMs(key: string, now: Date): Promise<number> {
   return (day[key]?.activeSec ?? 0) * 1000;
 }
 
+/** Items viewed today on one SURFACE key (`core/surfaceKeys.ts`). 0 when none. */
+export async function todayItemCount(key: string, now: Date): Promise<number> {
+  const day = await loadDay(localDayKey(now));
+  return day[key]?.items ?? 0;
+}
+
 /**
- * Today's active milliseconds for EVERY usage key, sites and surfaces alike.
+ * Today's usage for EVERY key, sites and surfaces alike, on BOTH budget axes.
  *
- * The DNR compiler needs the whole map at once: it has to answer "is this rule in force"
+ * The DNR compiler needs the whole thing at once: it has to answer "is this rule in force"
  * for every rule and "is this gate's budget spent" for every gate in a single pass, and
  * reading storage once per rule would turn a recompile into dozens of round trips.
+ *
+ * Both axes travel together in ONE snapshot rather than as two parameters. A compiler that
+ * took them separately would have a call site that passed only the minutes, and that call
+ * site would compile a rule set in which no count budget is ever spent: a count-only gate
+ * that quietly never redirects, which is the exact failure mode this feature must not have.
  */
-export async function todayUsageMap(now: Date): Promise<Record<string, number>> {
+export async function todayUsageSnapshot(now: Date): Promise<UsageSnapshot> {
   const day = await loadDay(localDayKey(now));
-  const usage: Record<string, number> = {};
+  const ms: Record<string, number> = {};
+  const counts: Record<string, number> = {};
   for (const [key, rollup] of Object.entries(day)) {
-    usage[key] = rollup.activeSec * 1000;
+    ms[key] = rollup.activeSec * 1000;
+    counts[key] = rollup.items;
   }
-  return usage;
+  return { ms, counts };
+}
+
+/**
+ * Today's seen-item set, or an empty one when the stored blob belongs to another day.
+ *
+ * `storage.local`, like the rollups it de-duplicates for: it is usage data and must never
+ * reach `storage.sync`, both because it would burn the sync quota and because a list of
+ * every Short someone watched is exactly the kind of thing this product promises never
+ * leaves the device.
+ */
+export async function loadSeenItems(now: Date): Promise<SeenItems> {
+  const today = localDayKey(now);
+  try {
+    const stored = await chrome.storage.local.get(SEEN_ITEMS_KEY);
+    return coerceSeenItems(stored[SEEN_ITEMS_KEY], today);
+  } catch {
+    return emptySeenItems(today);
+  }
+}
+
+export async function saveSeenItems(state: SeenItems): Promise<void> {
+  await chrome.storage.local.set({ [SEEN_ITEMS_KEY]: state });
 }
 
 /** Load every stored day, newest keys included. Used by the dashboard. */
@@ -112,7 +163,11 @@ export async function loadAllUsage(): Promise<UsageByDay> {
   const usage: UsageByDay = {};
   for (const [key, value] of Object.entries(all)) {
     if (key.startsWith(USAGE_PREFIX) && value && typeof value === 'object') {
-      usage[key.slice(USAGE_PREFIX.length)] = value as Record<string, DayUsage>;
+      const day: Record<string, DayUsage> = {};
+      for (const [domain, rollup] of Object.entries(value as Record<string, unknown>)) {
+        day[domain] = coerceDayUsage(rollup);
+      }
+      usage[key.slice(USAGE_PREFIX.length)] = day;
     }
   }
   return usage;

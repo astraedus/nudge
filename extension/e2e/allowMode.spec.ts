@@ -47,7 +47,7 @@ test.describe('Allow mode with a daily limit', () => {
     // pins the actual behaviour.
     const settings = limitOnly('blocked.test');
     await seedUsage('blocked.test', 30);
-    await setSettings(settings, { 'blocked.test': 30_000 });
+    await setSettings(settings, { ms: { 'blocked.test': 30_000 } });
 
     const before = await context.newPage();
     await before.goto(siteUrl('blocked.test'));
@@ -67,7 +67,7 @@ test.describe('Allow mode with a daily limit', () => {
     });
     await waitForRuleCount(
       serviceWorker,
-      expectedRuleCount(settings, { 'blocked.test': LIMIT_SECONDS * 1_000 }),
+      expectedRuleCount(settings, { ms: { 'blocked.test': LIMIT_SECONDS * 1_000 } }),
     );
 
     const after = await context.newPage();
@@ -99,7 +99,7 @@ test.describe('Allow mode with a daily limit', () => {
           rule('allowed.test', { mode: 'ALLOW', dailyLimitMinutes: LIMIT_MINUTES }),
         ],
       }),
-      { 'blocked.test': LIMIT_SECONDS * 1_000, 'allowed.test': 20_000 },
+      { ms: { 'blocked.test': LIMIT_SECONDS * 1_000, 'allowed.test': 20_000 } },
     );
 
     const open = await context.newPage();
