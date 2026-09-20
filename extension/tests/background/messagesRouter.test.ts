@@ -389,3 +389,69 @@ describe('GET_POPUP_STATE', () => {
   });
 });
 
+
+describe('a page on a SUBDOMAIN of a ruled site', () => {
+  /**
+   * Live QA 2026-09-20, on en.wikipedia.org with a `wikipedia.org` Allow + 1-minute rule.
+   * DNR governs every subdomain, but the popup and the grayscale toggle compared rule
+   * domains by exact string, so the popup offered to block a site that was already ruled
+   * and the toggle failed silently with `no-rule`. Both now resolve the way DNR does.
+   */
+  const wikipedia = siteRule({
+    domain: 'wikipedia.org',
+    mode: 'ALLOW',
+    dailyLimitMinutes: 1,
+  });
+
+  beforeEach(() => {
+    attention.tabs = [{ id: 1, url: 'https://en.wikipedia.org/wiki/Cat' }];
+  });
+
+  it('the popup reports the governing rule, not "no rule here"', async () => {
+    await seed(settings({ rules: [wikipedia] }));
+
+    const state = await ask<PopupState>({ type: 'GET_POPUP_STATE' });
+
+    expect(state.currentRule?.domain).toBe('wikipedia.org');
+    expect(state.currentMode).toBe('ALLOW');
+  });
+
+  it('the popup counts down the bucket the tracker actually fills', async () => {
+    await seed(settings({ rules: [wikipedia] }));
+    // The tracker attributes a page on en.wikipedia.org to the RULE's domain.
+    await saveDay(localDayKey(NOW), {
+      'wikipedia.org': { ...emptyDayUsage(), activeSec: 30 },
+    });
+
+    const state = await ask<PopupState>({ type: 'GET_POPUP_STATE' });
+
+    expect(state.currentUsageSeconds).toBe(30);
+    expect(state.currentRemainingMs).toBe(30_000);
+  });
+
+  it('the grayscale toggle finds the rule instead of answering no-rule', async () => {
+    await seed(settings({ rules: [wikipedia] }));
+
+    const result = await ask<SaveResult>({
+      type: 'SET_GRAYSCALE',
+      domain: 'en.wikipedia.org',
+      grayscale: true,
+    });
+
+    expect(result.ok).toBe(true);
+    const [saved] = (await loadSettings()).rules;
+    expect(saved?.grayscale).toBe(true);
+  });
+
+  it('still refuses a site that genuinely has no rule', async () => {
+    await seed(settings({ rules: [wikipedia] }));
+
+    const result = await ask<SaveResult>({
+      type: 'SET_GRAYSCALE',
+      domain: 'notwikipedia.org',
+      grayscale: true,
+    });
+
+    expect(result).toMatchObject({ ok: false, reason: 'no-rule' });
+  });
+});

@@ -18,6 +18,7 @@
  */
 
 import { appliedBlockMode, gateAppliesNow, siteRuleAppliesNow } from '../core/applies';
+import { ruleForHost, rulesForDomain, usageKeyForHost } from '../core/ruleResolver';
 import { evaluate } from '../core/blockEngine';
 import { remainingMs, tightestLimit } from '../core/budgets';
 import { extractDomain, normalizeUserInput } from '../core/domainMatcher';
@@ -95,10 +96,16 @@ async function setPendingChallenge(challenge: string | null): Promise<void> {
   }
 }
 
-/** The enabled rule covering `domain`, or null. */
+/**
+ * The enabled rule covering `domain`, or null.
+ *
+ * Subdomain-aware via `ruleForHost`, because DNR always was: a rule on `wikipedia.org`
+ * governs `en.wikipedia.org`, and an exact string compare here is what made the popup
+ * report "Not blocked" on a page the network layer was already enforcing.
+ */
 function ruleForDomain(settings: NudgeSettings, domain: string): SiteRule | null {
   if (domain === '') return null;
-  return settings.rules.find((rule) => rule.enabled && rule.domain === domain) ?? null;
+  return ruleForHost(settings.rules, domain);
 }
 
 /** The gate a URL lands on, together with its stored settings. */
@@ -285,12 +292,12 @@ async function buildPopupState(now: Date): Promise<PopupState> {
   const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   const currentDomain = tab?.url === undefined ? null : extractDomain(tab.url);
 
-  const rules =
-    currentDomain === null
-      ? []
-      : settings.rules.filter((rule) => rule.domain === currentDomain);
-  const limit = tightestLimit(rules.filter((rule) => rule.enabled));
-  const usedMs = currentDomain === null ? 0 : (day[currentDomain]?.activeSec ?? 0) * 1000;
+  const rules = currentDomain === null ? [] : rulesForDomain(settings.rules, currentDomain);
+  const limit = tightestLimit(rules);
+  // Read the bucket the TRACKER fills, which is the matching rule's domain rather than the
+  // host, otherwise the popup counts down a budget nothing is adding to.
+  const usageKey = currentDomain === null ? null : usageKeyForHost(settings.rules, currentDomain);
+  const usedMs = usageKey === null ? 0 : (day[usageKey]?.activeSec ?? 0) * 1000;
 
   const currentRule = rules[0] ?? null;
   const verdict =
@@ -484,8 +491,10 @@ async function setGrayscale(
 ): Promise<SaveResult> {
   const normalizedDomain = normalizeUserInput(domain) ?? domain;
   const settings = await loadSettings();
-  const target = settings.rules.find((rule) => rule.domain === normalizedDomain);
-  if (target === undefined) return { ok: false, reason: 'no-rule' };
+  // Subdomain-aware: the popup offers this toggle for whatever page is open, so on
+  // `en.wikipedia.org` it must find the `wikipedia.org` rule rather than fail `no-rule`.
+  const target = ruleForHost(settings.rules, normalizedDomain);
+  if (target === null) return { ok: false, reason: 'no-rule' };
   if (target.grayscale === grayscale) return { ok: true };
 
   const rules = settings.rules.map((rule) =>

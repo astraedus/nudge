@@ -199,3 +199,40 @@ describe('crossing the site budget', () => {
     expect(Object.keys(attention.navigatedTo).sort()).toEqual(['1', '2']);
   });
 });
+
+describe('time spent on a subdomain of a ruled site', () => {
+  /**
+   * The live-QA limit bug (2026-09-20): a `wikipedia.org` Allow + 1-minute rule, browsing
+   * en.wikipedia.org focused for nearly three minutes, and the block never came. DNR governs
+   * every subdomain, but the tracker keyed the interval under `en.wikipedia.org` while every
+   * budget check read `wikipedia.org`, two buckets, so the limit could not be crossed no
+   * matter how long the user sat there.
+   */
+  const limited = settings({
+    rules: [siteRule({ domain: 'wikipedia.org', mode: 'ALLOW', dailyLimitMinutes: 1 })],
+  });
+
+  it('counts against the rule, not against the host', async () => {
+    await seed(limited);
+    await spend('https://en.wikipedia.org/wiki/Cat', 2);
+
+    expect((await usage('wikipedia.org'))?.activeSec).toBe(120);
+    expect(await usage('en.wikipedia.org')).toBeUndefined();
+  });
+
+  it('crosses the daily limit and pushes the open subdomain tab to the block page', async () => {
+    await seed(limited);
+    attention.tabs = [{ id: 7, url: 'https://en.wikipedia.org/wiki/Cat' }];
+
+    await spend('https://en.wikipedia.org/wiki/Cat', 2);
+
+    expect(attention.navigatedTo[7]).toContain('blocked.html');
+  });
+
+  it('leaves an un-ruled site keyed by its own host, so plain stats are unchanged', async () => {
+    await seed(limited);
+    await spend('https://news.ycombinator.com/', 2);
+
+    expect((await usage('news.ycombinator.com'))?.activeSec).toBe(120);
+  });
+});

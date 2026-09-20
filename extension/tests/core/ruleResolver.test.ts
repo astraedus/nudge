@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveActiveRules, resolveRule, rulesForDomain } from '../../src/core/ruleResolver';
+import {
+  resolveActiveRules,
+  resolveRule,
+  ruleForHost,
+  rulesForDomain,
+  usageKeyForHost,
+} from '../../src/core/ruleResolver';
 import type { ActiveRule } from '../../src/core/types';
 import { scheduleOverride, siteRule } from '../helpers/rules';
 
@@ -148,5 +154,62 @@ describe('resolveActiveRules', () => {
     expect(result).toHaveLength(1);
     expect(result[0]?.ruleName).toBe('youtube.com');
     expect(result[0]?.mode).toBe('HARD_BLOCK');
+  });
+});
+
+describe('a rule covers its subdomains, exactly as the network layer always did', () => {
+  /**
+   * Live QA 2026-09-20. `dnrUrlFilter` compiles `||domain^` and matches every subdomain, but
+   * everything that read a rule by exact string did not, so on en.wikipedia.org the daily
+   * limit never fired, the popup said "Not blocked" and offered to block an already-ruled
+   * site, grayscale answered `no-rule`, and the badge showed nothing. One resolver now
+   * answers "which rule covers this host" for all of them.
+   */
+  const wikipedia = siteRule({ id: 'w', domain: 'wikipedia.org', mode: 'ALLOW' });
+  const google = siteRule({ id: 'g', domain: 'google.com', mode: 'ALLOW' });
+  const docs = siteRule({ id: 'd', domain: 'docs.google.com', mode: 'HARD_BLOCK' });
+
+  it('matches a subdomain of the rule domain', () => {
+    expect(ruleForHost([wikipedia], 'en.wikipedia.org')?.id).toBe('w');
+    expect(ruleForHost([wikipedia], 'wikipedia.org')?.id).toBe('w');
+    expect(ruleForHost([siteRule({ domain: 'reddit.com' })], 'old.reddit.com')).not.toBeNull();
+  });
+
+  it('does not match a different site that merely ends the same way', () => {
+    // "notwikipedia.org" is a different company, not a subdomain.
+    expect(ruleForHost([wikipedia], 'notwikipedia.org')).toBeNull();
+    expect(ruleForHost([wikipedia], 'wikipedia.org.evil.com')).toBeNull();
+  });
+
+  it('prefers the most specific rule when both could apply', () => {
+    expect(ruleForHost([google, docs], 'docs.google.com')?.id).toBe('d');
+    expect(ruleForHost([google, docs], 'mail.google.com')?.id).toBe('g');
+  });
+
+  it('ignores a disabled rule', () => {
+    const off = siteRule({ domain: 'wikipedia.org', enabled: false });
+    expect(ruleForHost([off], 'en.wikipedia.org')).toBeNull();
+  });
+
+  it('attributes usage to the RULE, so the tracker and the budget read one bucket', () => {
+    // This is the whole limit bug in one line: fill `en.wikipedia.org`, read
+    // `wikipedia.org`, and no amount of browsing ever crosses the limit.
+    expect(usageKeyForHost([wikipedia], 'en.wikipedia.org')).toBe('wikipedia.org');
+    expect(usageKeyForHost([google, docs], 'docs.google.com')).toBe('docs.google.com');
+  });
+
+  it('falls back to the host itself when no rule covers it, leaving plain stats untouched', () => {
+    expect(usageKeyForHost([wikipedia], 'news.ycombinator.com')).toBe('news.ycombinator.com');
+    expect(usageKeyForHost([], 'en.wikipedia.org')).toBe('en.wikipedia.org');
+  });
+
+  it('puts a subdomain page under the rule for the engine too', () => {
+    const active = resolveActiveRules(
+      [siteRule({ domain: 'wikipedia.org', mode: 'HARD_BLOCK' })],
+      'en.wikipedia.org',
+      at(2026, 1, 7, 12, 0),
+      0,
+    );
+    expect(active).toHaveLength(1);
   });
 });

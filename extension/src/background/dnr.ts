@@ -52,7 +52,11 @@
  */
 
 import { gateAppliesNow, siteRuleAppliesNow } from '../core/applies';
-import { extractDomain, normalizeToBaseDomain } from '../core/domainMatcher';
+import {
+  extractDomain,
+  hostMatchesRuleDomain,
+  normalizeToBaseDomain,
+} from '../core/domainMatcher';
 import { platformById, type GateId } from '../core/platforms';
 import type { ChannelEntry, NudgeSettings, SiteRule } from '../core/settingsSchema';
 import { surfaceKey } from '../core/surfaceKeys';
@@ -438,7 +442,11 @@ export async function redirectOpenTabs(
   await Promise.all(
     tabs.map(async (tab) => {
       if (tab.id === undefined || tab.url === undefined) return;
-      if (extractDomain(tab.url) !== base) return;
+      // Subdomain-aware, because the redirect that DNR would do on the next navigation is.
+      // An exact compare left the tab the user was ACTUALLY on (en.wikipedia.org) sitting
+      // open and readable at the very moment its budget ran out.
+      const host = extractDomain(tab.url);
+      if (host === null || !hostMatchesRuleDomain(host, base)) return;
       if (!matchesUrl(tab.url)) return;
       try {
         await chrome.tabs.update(tab.id, { url: `${blockedUrl}?target=${tab.url}` });

@@ -31,6 +31,7 @@
  */
 
 import { extractDomain } from '../core/domainMatcher';
+import { rulesForDomain, usageKeyForHost } from '../core/ruleResolver';
 import { gateForUrl, platformForDomain, type GateId } from '../core/platforms';
 import { localDayKey } from '../core/scheduleEvaluator';
 import { addActiveSeconds, recordBlocked, recordWalkedAway } from '../core/stats';
@@ -126,15 +127,25 @@ export async function accountAndSwitch(
   const dayKey = localDayKey(at);
   const addedMs = seconds * 1000;
 
-  const previousSiteMs = await todayUsageMs(domain, at);
-  await updateDomainUsage(dayKey, domain, (usage) =>
+  // Attribute the time to the RULE that governs this host, not to the host string.
+  // `extractDomain` only strips www./m., so browsing en.wikipedia.org used to fill an
+  // `en.wikipedia.org` bucket while every budget check read `wikipedia.org`, the limit
+  // could never fire, however long you sat there (live QA 2026-09-20). With no rule
+  // covering the host this is the host itself, so un-ruled sites track exactly as before.
+  const settings = await loadSettings();
+  const usageKey = usageKeyForHost(settings.rules, domain);
+
+  const previousSiteMs = await todayUsageMs(usageKey, at);
+  await updateDomainUsage(dayKey, usageKey, (usage) =>
     addActiveSeconds(usage, seconds, at.getHours()),
   );
 
-  const gateId = trackedGate(domain, state.url);
+  // The gate is resolved from the RULE's domain too: platformForDomain('en.wikipedia.org')
+  // is null, and a surface bucket keyed off the host would never be read back.
+  const gateId = trackedGate(usageKey, state.url);
   let previousSurfaceMs = 0;
   if (gateId !== null) {
-    const key = surfaceKey(domain, gateId);
+    const key = surfaceKey(usageKey, gateId);
     previousSurfaceMs = await todayUsageMs(key, at);
     await updateDomainUsage(dayKey, key, (usage) =>
       addActiveSeconds(usage, seconds, at.getHours()),
@@ -143,7 +154,7 @@ export async function accountAndSwitch(
 
   await enforceBudget(
     {
-      domain,
+      domain: usageKey,
       gateId,
       previousSiteMs,
       nextSiteMs: previousSiteMs + addedMs,
@@ -199,9 +210,10 @@ async function enforceBudget(step: AccountingStep, now: Date): Promise<void> {
   const settings = await loadSettings();
   if (!settings.globalEnabled) return;
 
-  const rules = settings.rules.filter(
-    (rule) => rule.enabled && rule.domain === step.domain,
-  );
+  // `step.domain` is already the matching rule's domain (see accountAndSwitch), so this is
+  // an exact hit in practice; going through the shared resolver keeps one definition of
+  // "which rules cover this" rather than a fifth private copy.
+  const rules = rulesForDomain(settings.rules, step.domain);
   if (rules.length === 0) return;
 
   const siteLimit = tightestLimit(rules);

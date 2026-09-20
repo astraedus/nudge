@@ -13,15 +13,45 @@
  */
 
 import { appliedBlockMode, siteRuleAppliesNow } from './applies';
+import { hostMatchesRuleDomain } from './domainMatcher';
 import type { SiteRule } from './settingsSchema';
 import type { ActiveRule } from './types';
 
-/** All enabled rules whose domain matches `domain` (already normalized). */
+/**
+ * All enabled rules covering `host` — the host itself or any subdomain of a rule's domain,
+ * matching what the network layer does (`hostMatchesRuleDomain`).
+ *
+ * The most specific rule comes first, so a rule on `docs.google.com` outranks one on
+ * `google.com` for a caller that wants "the" rule. Every consumer of "which rule covers
+ * this page?" goes through here or `ruleForHost`; four separate `rule.domain === host`
+ * comparisons is what let the popup, the budget, the badge and grayscale each disagree with
+ * DNR about the same page.
+ */
 export function rulesForDomain(
   rules: readonly SiteRule[],
-  domain: string,
+  host: string,
 ): SiteRule[] {
-  return rules.filter((rule) => rule.enabled && rule.domain === domain);
+  return rules
+    .filter((rule) => rule.enabled && hostMatchesRuleDomain(host, rule.domain))
+    .sort((a, b) => b.domain.length - a.domain.length);
+}
+
+/** The single most specific enabled rule covering `host`, or null. */
+export function ruleForHost(rules: readonly SiteRule[], host: string): SiteRule | null {
+  return rulesForDomain(rules, host)[0] ?? null;
+}
+
+/**
+ * The usage bucket a page on `host` should be attributed to.
+ *
+ * The MATCHING RULE's domain when one covers the host, so time spent on
+ * `en.wikipedia.org` counts against the `wikipedia.org` rule that is actually enforcing —
+ * otherwise the tracker fills one key while every budget check reads another and the limit
+ * can never fire. Falls back to the host itself when no rule matches, which keeps stats for
+ * un-ruled sites exactly as they were.
+ */
+export function usageKeyForHost(rules: readonly SiteRule[], host: string): string {
+  return ruleForHost(rules, host)?.domain ?? host;
 }
 
 /**
