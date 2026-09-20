@@ -6,6 +6,23 @@ independently-numbered products in one file invites the reader to match a `v1.17
 release against a `0.2.0` extension release and conclude something about both; the tag
 namespaces were already split for exactly that reason.
 
+## 0.3.0 — unreleased
+
+### Added
+
+- **A channel you added learns its other name.** A channel list entry only ever held the
+  identifier you typed — `@veritasium` stored a handle and no id, a pasted
+  `/channel/UC...` URL stored an id and no handle. Watching one of that channel's videos now
+  teaches the entry the identifier it was missing, and the real channel name in place of the
+  `@handle`/id placeholder. That closes a hole you could actually hit: until the entry had an
+  id, a full navigation to the channel's own `youtube.com/channel/UC...` page was redirected
+  to the block page even though you had explicitly allowed that channel, because the network
+  layer can only carve out the identifiers the entry holds. The same channel added twice by
+  two different routes is merged into one row. Nothing is ever added to your list and nothing
+  is ever removed from it, so this never weakens a rule and never asks for a Strict Mode
+  challenge; an observation that contradicts a stored entry is refused outright rather than
+  merged.
+
 ## 0.2.0 — unreleased
 
 Per-site everything. A rule is now the unit: how the whole site behaves, how long the pause
