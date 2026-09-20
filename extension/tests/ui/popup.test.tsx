@@ -173,3 +173,43 @@ describe('Popup — grayscale quick toggle', () => {
     expect(screen.queryByTestId('challenge-code')).toBeNull();
   });
 });
+
+describe('Popup, the status line is graded by severity', () => {
+  /**
+   * QA 2026-09-20: the popup painted Hard Block, Delay and Breathing in one flat
+   * `--nudge-danger`, so three different amounts of friction read as the same thing. The
+   * dashboard chips already had a ramp; this line did not.
+   */
+  async function statusColorFor(mode: 'HARD_BLOCK' | 'DELAY' | 'BREATHING') {
+    const rule = newSiteRule({ domain: 'youtube.com', mode, createdAt: 0 });
+    sendMessageMock.mockResolvedValue(
+      makeState({ currentRule: rule, currentMode: mode, currentApplies: true }),
+    );
+    render(<Popup />);
+    await flush();
+    const line = screen.getByText(
+      mode === 'HARD_BLOCK' ? 'Hard Block' : mode === 'DELAY' ? 'Delay' : 'Breathing',
+    );
+    const color = (line as HTMLElement).style.color;
+    cleanup();
+    return color;
+  }
+
+  it('gives each block mode its own colour rather than one flat red', async () => {
+    const hard = await statusColorFor('HARD_BLOCK');
+    const delay = await statusColorFor('DELAY');
+    const breathing = await statusColorFor('BREATHING');
+
+    expect(new Set([hard, delay, breathing]).size).toBe(3);
+    // And none of them is the old flat token.
+    for (const color of [hard, delay, breathing]) {
+      expect(color).not.toContain('nudge-danger');
+    }
+  });
+
+  it('draws each mode from the shared ramp the dashboard chips use', async () => {
+    expect(await statusColorFor('HARD_BLOCK')).toContain('nudge-mode-hard-accent');
+    expect(await statusColorFor('DELAY')).toContain('nudge-mode-delay-accent');
+    expect(await statusColorFor('BREATHING')).toContain('nudge-mode-breathing-accent');
+  });
+});

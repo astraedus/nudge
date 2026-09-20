@@ -25,8 +25,48 @@
   --nudge-warn: #b26a00;
   --nudge-danger: #ba1a1a;
 
+
+  /* Block-page card: a raised surface so the interstitial reads as ONE object centred in
+     the viewport, rather than loose text floating on the page background. */
+  --nudge-surface-raised: #ffffff;
+  --nudge-shadow-card: 0 1px 2px rgba(10, 38, 31, 0.08), 0 14px 36px rgba(10, 38, 31, 0.10);
+
+  /* "Your allowed channels", the only route back INTO an allowed channel when the site is
+     Hard Blocked, so it is the primary action on that page and has to look like a link. */
+  --nudge-link: #155448;
+  --nudge-link-bg: #eef7f3;
+  --nudge-link-border: #bfe4d6;
+  --nudge-link-bg-hover: #d9efe6;
+
+  /* Mode chips, graded by severity: Hard Block (red) > Delay (amber) > Breathing (sand),
+     with Allow in the teal family. Same red for all three read as "these are the same
+     thing"; the ramp is what makes them scannable. Every text/background pair below is
+     >= 7:1 in BOTH themes (app-design-reference.md §1 requires >= 4.5:1 for real text). */
+  --nudge-mode-allow-bg: #a7f2dc;
+  --nudge-mode-allow-fg: #00201a;
+  --nudge-mode-allow-border: #7fd8bd;
+  --nudge-mode-hard-bg: #ffdad6;
+  --nudge-mode-hard-fg: #410002;
+  --nudge-mode-hard-border: #f3b4ad;
+  --nudge-mode-delay-bg: #ffdcbe;
+  --nudge-mode-delay-fg: #2e1500;
+  --nudge-mode-delay-border: #f0c193;
+  --nudge-mode-breathing-bg: #faeaba;
+  --nudge-mode-breathing-fg: #2f2600;
+  --nudge-mode-breathing-border: #e8d285;
+
+  /* The same severity ramp as TEXT on a surface, for places that show the mode as a line
+     rather than a chip (the popup's status). The chip foregrounds are near-black by design
+     and would read as plain text here, so these are their own tokens. All >= 6.3:1 on
+     --nudge-surface. */
+  --nudge-mode-allow-accent: #0f6b57;
+  --nudge-mode-hard-accent: #ba1a1a;
+  --nudge-mode-delay-accent: #8a5200;
+  --nudge-mode-breathing-accent: #6b5a00;
+
   --nudge-radius: 16px;
   --nudge-radius-sm: 10px;
+  --nudge-radius-lg: 24px;
   --nudge-font: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
 }
 
@@ -50,6 +90,32 @@
     --nudge-ok: #8bd6c1;
     --nudge-warn: #ffb95c;
     --nudge-danger: #ffb4ab;
+
+    --nudge-surface-raised: #232726;
+    --nudge-shadow-card: 0 1px 2px rgba(0, 0, 0, 0.45), 0 14px 36px rgba(0, 0, 0, 0.40);
+
+    --nudge-link: #8bd6c1;
+    --nudge-link-bg: #22302c;
+    --nudge-link-border: #3c574f;
+    --nudge-link-bg-hover: #2c403a;
+
+    --nudge-mode-allow-bg: #005143;
+    --nudge-mode-allow-fg: #a7f2dc;
+    --nudge-mode-allow-border: #14705e;
+    --nudge-mode-hard-bg: #93000a;
+    --nudge-mode-hard-fg: #ffdad6;
+    --nudge-mode-hard-border: #b8151f;
+    --nudge-mode-delay-bg: #6d3c00;
+    --nudge-mode-delay-fg: #ffdcbe;
+    --nudge-mode-delay-border: #8d5410;
+    --nudge-mode-breathing-bg: #5b4d00;
+    --nudge-mode-breathing-fg: #faeaba;
+    --nudge-mode-breathing-border: #786700;
+
+    --nudge-mode-allow-accent: #8bd6c1;
+    --nudge-mode-hard-accent: #ffb4ab;
+    --nudge-mode-delay-accent: #ffb95c;
+    --nudge-mode-breathing-accent: #e0cc72;
   }
 }
 
@@ -68,4 +134,33 @@ body {
 button {
   font-family: inherit;
   cursor: pointer;
+}
+
+/*
+ * Shared interactive states. Inline styles cannot express :hover / :focus-visible, and
+ * this is the one stylesheet every entrypoint already loads, so the few rules that need a
+ * state selector live here next to the tokens they use.
+ */
+.nudge-channel-link:hover {
+  background: var(--nudge-link-bg-hover);
+  border-color: var(--nudge-link);
+}
+
+.nudge-channel-link:focus-visible {
+  outline: 2px solid var(--nudge-link);
+  outline-offset: 2px;
+}
+
+.nudge-channel-link:hover .nudge-channel-link-arrow {
+  transform: translateX(3px);
+}
+
+.nudge-channel-link-arrow {
+  transition: transform 140ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nudge-channel-link-arrow {
+    transition: none;
+  }
 }

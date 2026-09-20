@@ -658,3 +658,206 @@ describe('BlockPage — whose daily limit ran out', () => {
     expect(screen.getByText('Daily limit reached')).toBeTruthy();
   });
 });
+
+describe('BlockPage — what is off-limits, in the headline', () => {
+  const spentGateBudget = hardBlockDecision({
+    ruleName: 'youtube.com · Shorts (limit reached)',
+    dailyTimeRemainingMs: 0,
+    dailyLimitMinutes: 10,
+    limitReached: true,
+  });
+
+  it('names the SURFACE in the headline when a gate is what blocked the page', async () => {
+    // The page contradicted itself: the biggest text said the whole site was off-limits
+    // while the line under it said only the Shorts budget was spent. Someone reading the
+    // headline goes hunting for a site block they never set.
+    setTarget(TARGET);
+    sendMessageMock.mockResolvedValueOnce(
+      makeContext({
+        domain: 'youtube.com',
+        gateId: 'shorts',
+        gateLabel: 'Shorts',
+        hardBlockMessage: 'This site is off-limits right now.',
+        decision: spentGateBudget,
+      }),
+    );
+    render(<BlockPage />);
+    await flush();
+
+    expect(screen.getByText('Shorts is off-limits right now')).toBeTruthy();
+    expect(screen.queryByText('This site is off-limits right now.')).toBeNull();
+    expect(screen.getByText('Daily Shorts limit reached')).toBeTruthy();
+  });
+
+  it('does the same for a gate set to Hard Block outright, not only a spent budget', async () => {
+    // The whole class: every gate block had the site-level headline, the spent budget was
+    // just the case QA happened to walk.
+    setTarget(TARGET);
+    sendMessageMock.mockResolvedValueOnce(
+      makeContext({
+        domain: 'instagram.com',
+        gateId: 'reels',
+        gateLabel: 'Reels',
+        hardBlockMessage: "You've blocked access to this site",
+        decision: hardBlockDecision({ ruleName: 'instagram.com · Reels' }),
+      }),
+    );
+    render(<BlockPage />);
+    await flush();
+
+    expect(screen.getByText('Reels is off-limits right now')).toBeTruthy();
+    expect(screen.queryByText("You've blocked access to this site")).toBeNull();
+  });
+
+  it('keeps the rotating site message when the whole SITE is what was blocked', async () => {
+    setTarget(TARGET);
+    sendMessageMock.mockResolvedValueOnce(
+      makeContext({
+        domain: 'youtube.com',
+        gateId: null,
+        gateLabel: null,
+        hardBlockMessage: 'You set this boundary for a reason',
+      }),
+    );
+    render(<BlockPage />);
+    await flush();
+
+    expect(screen.getByText('You set this boundary for a reason')).toBeTruthy();
+  });
+});
+
+describe('BlockPage — layout', () => {
+  it('puts the whole interstitial in ONE card that stays centred and never clips its own top', async () => {
+    setTarget(TARGET);
+    sendMessageMock.mockResolvedValueOnce(
+      makeContext({
+        domain: 'youtube.com',
+        decision: hardBlockDecision({ ruleName: 'youtube.com' }),
+        allowedChannels: [channel({ handle: 'veritasium', displayName: 'Veritasium' })],
+        passEnabled: true,
+        passAvailable: true,
+      }),
+    );
+    render(<BlockPage />);
+    await flush();
+
+    const card = screen.getByTestId('block-card');
+    // Everything the user reads or acts on belongs to the same object, rather than three
+    // loose stacks floating on the page background.
+    expect(card.contains(screen.getByRole('button', { name: 'Go Back' }))).toBe(true);
+    expect(card.contains(screen.getByRole('link', { name: 'Veritasium' }))).toBe(true);
+    expect(card.contains(screen.getByRole('button', { name: /Use for 2 minutes/ }))).toBe(true);
+    expect(card.contains(screen.getByText('Rule: youtube.com'))).toBe(true);
+
+    // Auto margins, not `justify-content: center`. Both centre a card in a tall viewport;
+    // only auto margins keep the TOP reachable once the card outgrows it (a long channel
+    // list, an error state under a pause), because a centred flex item overflows in both
+    // directions and the part above the scroll origin cannot be scrolled back to.
+    expect(card.style.margin).toBe('auto');
+    const page = card.parentElement as HTMLElement;
+    expect(page.style.minHeight).toBe('100vh');
+    expect(page.style.justifyContent).toBe('');
+    expect(page.style.alignItems).toBe('');
+  });
+
+  it('centres the card on the loading and error states too, not just the block itself', async () => {
+    setTarget(TARGET);
+    sendMessageMock.mockImplementationOnce(() => new Promise(() => {}));
+    render(<BlockPage />);
+
+    const card = screen.getByTestId('block-card');
+    expect(card.contains(screen.getByText('Loading…'))).toBe(true);
+    expect(card.style.margin).toBe('auto');
+  });
+});
+
+describe('BlockPage — allowed channels look like the way in', () => {
+  it('renders each channel as a teal link with an affordance, not a flat grey pill', async () => {
+    // This list is the ONLY route into a channel the user explicitly allowed while the site
+    // is Hard Blocked, so it is the primary action on the page. Rendered as grey pills it
+    // read as disabled metadata, which turns the whole feature back into a dead end.
+    setTarget(TARGET);
+    sendMessageMock.mockResolvedValueOnce(
+      makeContext({
+        domain: 'youtube.com',
+        allowedChannels: [channel({ handle: 'veritasium', displayName: 'Veritasium' })],
+      }),
+    );
+    render(<BlockPage />);
+    await flush();
+
+    const link = screen.getByRole('link', { name: 'Veritasium' });
+    expect(link.getAttribute('href')).toBe('https://www.youtube.com/@veritasium');
+    expect(link.style.color).toBe('var(--nudge-link)');
+    expect(link.style.background).toBe('var(--nudge-link-bg)');
+    expect(link.style.fontWeight).toBe('600');
+    // The hover/focus states live in a stylesheet, since inline styles cannot express them.
+    expect(link.className).toContain('nudge-channel-link');
+    // Inline SVG arrow, never an emoji glyph (repo rule), and never announced.
+    const arrow = link.querySelector('svg');
+    expect(arrow).not.toBeNull();
+    expect(arrow!.getAttribute('aria-hidden')).toBe('true');
+  });
+
+  it('lets a long channel name truncate instead of widening the whole page', async () => {
+    // Regression, introduced by this very restyle and caught by measuring a real 420px
+    // render: a grid track and a flex item both default their minimum size to MIN-CONTENT,
+    // so one long name refused to shrink and pushed the card 106px past the window edge.
+    // `ellipsis` can never fire until both floors are lifted, so both are pinned here.
+    setTarget(TARGET);
+    sendMessageMock.mockResolvedValueOnce(
+      makeContext({
+        domain: 'youtube.com',
+        allowedChannels: [
+          channel({ handle: 'longone', displayName: 'A Very Very Very Long Channel Name' }),
+        ],
+      }),
+    );
+    render(<BlockPage />);
+    await flush();
+
+    const link = screen.getByRole('link', { name: 'A Very Very Very Long Channel Name' });
+    const label = link.querySelector('span') as HTMLElement;
+    expect(label.style.textOverflow).toBe('ellipsis');
+    expect(label.style.minWidth).toBe('0px');
+
+    const list = link.closest('ul') as HTMLElement;
+    expect(list.style.gridTemplateColumns).toBe('minmax(0, 1fr)');
+  });
+
+  it('keeps the accessible name to the channel name, so the arrow is not read out', async () => {
+    setTarget(TARGET);
+    sendMessageMock.mockResolvedValueOnce(
+      makeContext({
+        domain: 'youtube.com',
+        allowedChannels: [channel({ channelId: 'UC999', displayName: 'Other Channel' })],
+      }),
+    );
+    render(<BlockPage />);
+    await flush();
+
+    expect(screen.getByRole('link', { name: 'Other Channel' })).toBeTruthy();
+  });
+
+  it('still refuses to build a link for an unsafe identifier', async () => {
+    // The https-only guard is unchanged by the restyle: prove it still holds here, not only
+    // in channelHomeUrl's own unit tests.
+    setTarget(TARGET);
+    sendMessageMock.mockResolvedValueOnce(
+      makeContext({
+        domain: 'youtube.com',
+        allowedChannels: [
+          channel({ displayName: 'Nameless Channel' }),
+          channel({ handle: 'evil/../other', displayName: 'Sneaky' }),
+        ],
+      }),
+    );
+    render(<BlockPage />);
+    await flush();
+
+    expect(screen.queryByText('Nameless Channel')).toBeNull();
+    expect(screen.getByRole('link', { name: 'Sneaky' }).getAttribute('href')).toMatch(
+      /^https:\/\/www\.youtube\.com\/@[^/]+$/,
+    );
+  });
+});

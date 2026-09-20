@@ -2,8 +2,8 @@ import { useState } from 'react';
 import { addChannel, parseChannelInput, removeChannel } from '../../core/channels';
 import { DELAY_MAX_SECONDS, DELAY_MIN_SECONDS, DELAY_PRESETS } from '../../core/settingsSchema';
 import type { ChannelEntry, ChannelListMode, YoutubeFeatureSettings } from '../../core/settingsSchema';
-import type { BlockMode } from '../../core/types';
-import { MODE_LABELS } from '../../core/types';
+import type { BlockMode, SiteMode } from '../../core/types';
+import { isBlockMode, MODE_LABELS, SITE_MODE_LABELS } from '../../core/types';
 import { Button, Card, Chip, Toggle } from '../../ui/components';
 
 const CHANNEL_BLOCK_MODES: BlockMode[] = ['HARD_BLOCK', 'DELAY', 'BREATHING'];
@@ -144,20 +144,21 @@ function channelKey(entry: ChannelEntry): string {
  * moved out of the old standalone YoutubePanel tab (ext-13 §5) into a component owned by
  * `RuleEditor`, since a channel list is a per-site-rule setting like everything else now.
  *
- * `isBlocked` says whether the SITE's own default mode is currently a block mode — it
- * changes what a disallowed channel falls back to (ext-13 §3: "unknown channel resolves
- * to the site's default") and is purely a copy concern here; the actual fallback decision
- * lives in `core/channels.ts`/the worker, never in this component.
+ * `siteMode` is the SITE's own default mode. It changes what a disallowed channel falls
+ * back to (ext-13 §3: "unknown channel resolves to the site's default"), which is both a
+ * copy concern here AND the reason one of the controls below disappears; the actual
+ * fallback decision lives in `core/channels.ts`/the worker, never in this component.
  */
 export function ChannelListEditor({
   youtube,
-  isBlocked,
+  siteMode,
   onChange,
 }: {
   youtube: YoutubeFeatureSettings;
-  isBlocked: boolean;
+  siteMode: SiteMode;
   onChange: (next: YoutubeFeatureSettings) => void;
 }) {
+  const isBlocked = isBlockMode(siteMode);
   const [channelInput, setChannelInput] = useState('');
   const [channelInputError, setChannelInputError] = useState<string | null>(null);
 
@@ -181,6 +182,21 @@ export function ChannelListEditor({
   }
 
   const whitelistIsEmpty = youtube.channelMode === 'WHITELIST' && youtube.channels.length === 0;
+
+  /**
+   * A meaningless field combination is a UI bug, not just an engine one (repo lesson).
+   *
+   * `decideWatchGate` hands a WHITELIST's disallowed channels to the SITE's mode and pause
+   * whenever the site rule is in force, and a site rule in a block mode always is. So with
+   * the site set to Hard Block / Delay / Breathing, this control cannot change anything a
+   * user would ever see: it is answering a question the site's own mode already answered.
+   *
+   * A BLACKLIST is deliberately NOT included. The site default only stands in for a
+   * whitelist, so a named-and-blocked channel really is held behind THIS mode, and the
+   * combination is reachable: a pause completed (or the Escape Hatch spent) on a Delay
+   * site opens it for the temporary-access window, and the blacklist gates inside that.
+   */
+  const siteModeWins = isBlocked && youtube.channelMode === 'WHITELIST';
 
   return (
     <Card title="YouTube channels">
@@ -226,22 +242,32 @@ export function ChannelListEditor({
             <p style={{ margin: '0 0 8px', fontSize: 13, fontWeight: 600 }}>
               What happens to a {youtube.channelMode === 'BLACKLIST' ? 'blocked' : 'disallowed'} channel
             </p>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
-              {CHANNEL_BLOCK_MODES.map((m) => (
-                <Chip
-                  key={m}
-                  label={MODE_LABELS[m]}
-                  active={youtube.channelBlockMode === m}
-                  onClick={() => patch({ channelBlockMode: m })}
-                />
-              ))}
-            </div>
-            {youtube.channelBlockMode !== 'HARD_BLOCK' && (
-              <DelayPicker
-                value={youtube.channelDelaySeconds}
-                onChange={(channelDelaySeconds) => patch({ channelDelaySeconds })}
-                idPrefix="channel"
-              />
+            {siteModeWins ? (
+              <p style={{ margin: 0, fontSize: 13, color: 'var(--nudge-on-surface-variant)' }}>
+                Not used while this site is set to {SITE_MODE_LABELS[siteMode]} — a channel that
+                is not on your list falls back to the site's own mode and pause. Switch the site to
+                Allow to give disallowed channels their own.
+              </p>
+            ) : (
+              <>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+                  {CHANNEL_BLOCK_MODES.map((m) => (
+                    <Chip
+                      key={m}
+                      label={MODE_LABELS[m]}
+                      active={youtube.channelBlockMode === m}
+                      onClick={() => patch({ channelBlockMode: m })}
+                    />
+                  ))}
+                </div>
+                {youtube.channelBlockMode !== 'HARD_BLOCK' && (
+                  <DelayPicker
+                    value={youtube.channelDelaySeconds}
+                    onChange={(channelDelaySeconds) => patch({ channelDelaySeconds })}
+                    idPrefix="channel"
+                  />
+                )}
+              </>
             )}
           </div>
 

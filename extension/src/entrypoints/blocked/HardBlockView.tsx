@@ -47,6 +47,27 @@ export function HardBlockView({ context }: { context: BlockContext }) {
       ? 'Daily limit reached'
       : `Daily ${context.gateLabel} limit reached`;
 
+  /**
+   * WHAT is off-limits, in the headline.
+   *
+   * `hardBlockMessage` is the rotating site-level pool, and every line in it (bundled or
+   * user-written) is a sentence about "this site". Printed above "Daily Shorts limit
+   * reached" it produced a page that contradicted itself: the biggest text said the whole
+   * site was off-limits while the line under it said only the Shorts budget was spent, and
+   * someone reading the headline goes looking for a site block they never set.
+   *
+   * `gateLabel` is non-null exactly when the acting rule is the GATE rather than the whole
+   * site, so that is when the headline has to name the surface instead. The rotating pool
+   * is deliberately not used here: it cannot be true of a gate, whatever it says. It is
+   * untouched for the site case, which is what it was written for. This is the whole class,
+   * not just the spent-budget instance: a gate set to Hard Block outright had exactly the
+   * same wrong headline.
+   */
+  const headline =
+    context.gateLabel === null
+      ? context.hardBlockMessage
+      : `${context.gateLabel} is off-limits right now`;
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 20, width: '100%' }}>
       <BlockGlyph />
@@ -59,7 +80,7 @@ export function HardBlockView({ context }: { context: BlockContext }) {
           color: 'var(--nudge-on-surface)',
         }}
       >
-        {context.hardBlockMessage}
+        {headline}
       </p>
       {decision.limitReached && (
         <p style={{ margin: 0, fontSize: 14, fontWeight: 600, color: 'var(--nudge-danger)' }}>

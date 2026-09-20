@@ -6,7 +6,7 @@ import {
   DEFAULT_HARD_BLOCK_MESSAGES,
 } from '../../core/messages';
 import { quickAddPlatforms } from '../../core/platforms';
-import { featureSummary, isNothingActive, NOTHING_ACTIVE } from '../../core/featureSummary';
+import { featureSummaryParts, isNothingActive, NOTHING_ACTIVE } from '../../core/featureSummary';
 import {
   CHALLENGE_LENGTH_EASY,
   CHALLENGE_LENGTH_HARD,
@@ -22,10 +22,10 @@ import {
   newSiteRule,
 } from '../../core/settingsSchema';
 import type { NudgeSettings, SiteRule } from '../../core/settingsSchema';
-import { isBlockMode, SITE_MODE_LABELS } from '../../core/types';
+import { isBlockMode } from '../../core/types';
 import { buildExport, dedupeImportedRules, parseImport } from '../../ui/exportImport';
 import { formatMinuteOfDay } from '../../ui/format';
-import { Button, Card, Chip, Toggle } from '../../ui/components';
+import { Button, Card, Chip, ModeChip, Toggle } from '../../ui/components';
 import { RuleEditor } from './RuleEditor';
 
 const DIFFICULTIES: { label: string; length: number }[] = [
@@ -112,19 +112,28 @@ function MessageField({
 }
 
 /**
- * A compact summary line for a rule row: "Delay · 15s · Scheduled 23:00–06:00 · 30m/day ·
- * Shorts: Delay 15s". The feature half (daily limit, grayscale, gates, hides, YouTube
- * channels) and the "does this rule do anything at all" decision are NOT re-derived here —
+ * A compact summary line for a rule row: "15s pause · Scheduled 23:00–06:00 · 30m/day
+ * · Shorts: Delay 15s", or null when the mode chip beside it is already the whole story.
+ *
+ * THE MODE IS NOT IN HERE, deliberately. The row renders a `ModeChip` immediately above
+ * this line, so printing `SITE_MODE_LABELS[rule.mode]` again made every card read
+ * "Hard Block" twice in a row: once as the badge and once as the first word of its own
+ * summary. A fact stated twice on one card reads as two facts that happen to agree, and it
+ * crowds out the parts that are only said once.
+ *
+ * The feature half (daily limit, grayscale, gates, hides, YouTube channels) and the "does
+ * this rule do anything at all" decision are NOT re-derived here —
  * `core/featureSummary.ts` is the single source of truth every surface (popup, sites list,
  * rule editor) reads, so the same rule can never describe itself two different ways
- * depending on where it's shown. This function only adds what genuinely belongs to the
- * ROW (the mode, its pause, the schedule window, the enabled state).
+ * depending on where it's shown. This function only adds what genuinely belongs to the ROW
+ * and is not already on a chip (the pause length, the schedule window, the enabled state).
  */
-function ruleSummary(rule: SiteRule): string {
+function ruleSummary(rule: SiteRule): string | null {
   if (isNothingActive(rule)) return NOTHING_ACTIVE;
 
-  const parts: string[] = [SITE_MODE_LABELS[rule.mode]];
-  if (isBlockMode(rule.mode) && rule.mode !== 'HARD_BLOCK') parts.push(`${rule.delaySeconds}s`);
+  const parts: string[] = [];
+  // The chip says "Delay"; this says how long. A Hard Block has no pause to name.
+  if (isBlockMode(rule.mode) && rule.mode !== 'HARD_BLOCK') parts.push(`${rule.delaySeconds}s pause`);
   if (rule.schedule?.enabled) {
     const start = rule.schedule.startMinute;
     const end = rule.schedule.endMinute;
@@ -136,9 +145,15 @@ function ruleSummary(rule: SiteRule): string {
   }
   if (!rule.enabled) parts.push('disabled');
 
-  const features = featureSummary(rule);
-  const base = parts.join(' · ');
-  return features === null ? base : `${base} · ${features}`;
+  // Grayscale has its own chip on this row for the same reason the mode does, so it is
+  // taken out of the summary the same way. Asking `core/featureSummary` about a copy with
+  // grayscale off is how: the exclusion stays expressed as a RULE, not as a magic string
+  // matched against core's own wording, which would rot the first time that wording moved.
+  parts.push(...featureSummaryParts({ ...rule, grayscale: false }));
+
+  // Empty means the chip already said everything there is to say (a plain Hard Block with
+  // no schedule and no features). Render nothing rather than an empty line.
+  return parts.length === 0 ? null : parts.join(' · ');
 }
 
 export function SettingsPanel({
@@ -307,7 +322,9 @@ export function SettingsPanel({
           </p>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {settings.rules.map((rule) => (
+            {settings.rules.map((rule) => {
+              const summary = ruleSummary(rule);
+              return (
               <div
                 key={rule.id}
                 style={{
@@ -334,19 +351,7 @@ export function SettingsPanel({
                     >
                       {rule.domain}
                     </p>
-                    <span
-                      style={{
-                        flexShrink: 0,
-                        fontSize: 11,
-                        fontWeight: 700,
-                        padding: '2px 8px',
-                        borderRadius: 999,
-                        color: rule.mode === 'ALLOW' ? 'var(--nudge-on-primary-container)' : 'var(--nudge-on-error)',
-                        background: rule.mode === 'ALLOW' ? 'var(--nudge-primary-container)' : 'var(--nudge-error)',
-                      }}
-                    >
-                      {SITE_MODE_LABELS[rule.mode]}
-                    </span>
+                    <ModeChip mode={rule.mode} />
                     {rule.grayscale && (
                       <span
                         style={{
@@ -363,9 +368,11 @@ export function SettingsPanel({
                       </span>
                     )}
                   </div>
-                  <p style={{ margin: '2px 0 0', fontSize: 12, color: 'var(--nudge-on-surface-variant)' }}>
-                    {ruleSummary(rule)}
-                  </p>
+                  {summary !== null && (
+                    <p style={{ margin: '2px 0 0', fontSize: 12, color: 'var(--nudge-on-surface-variant)' }}>
+                      {summary}
+                    </p>
+                  )}
                 </div>
                 <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
                   <Button
@@ -384,7 +391,8 @@ export function SettingsPanel({
                   </Button>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
 

@@ -5,7 +5,7 @@ import type { BlockMode } from '../../core/types';
 import { MODE_LABELS, SITE_MODE_LABELS } from '../../core/types';
 import { send } from '../../ui/rpc';
 import { formatDuration } from '../../ui/format';
-import { Button, NudgeMark, Toggle } from '../../ui/components';
+import { Button, NudgeMark, Toggle, modeAccent } from '../../ui/components';
 import { ChallengeDialog } from '../dashboard/ChallengeDialog';
 
 const MODES: BlockMode[] = ['HARD_BLOCK', 'DELAY', 'BREATHING'];
@@ -49,7 +49,10 @@ function statusLine(state: PopupState): { text: string; color: string } {
   // the user as "Blocked · limit reached", not "Allow".
   const label =
     state.currentMode === 'ALLOW' ? 'Blocked · limit reached' : SITE_MODE_LABELS[state.currentMode];
-  return { text: label, color: 'var(--nudge-danger)' };
+  // Graded like the dashboard's chips rather than one flat danger red: Hard Block, Delay and
+  // Breathing are different amounts of friction and should not read as the same thing. An
+  // exhausted budget is unconditional until midnight, so it takes the Hard Block accent.
+  return { text: label, color: modeAccent(state.currentMode === 'ALLOW' ? 'HARD_BLOCK' : state.currentMode) };
 }
 
 function openDashboard() {

@@ -71,11 +71,37 @@ export function channelHomeUrl(entry: ChannelEntry): string | null {
  * said they wanted is to type a URL from memory. A rule that punishes you for obeying it
  * is a rule you turn off. The block page has to BE the door.
  */
+/**
+ * A plain right-pointing arrow. Inline SVG, never an emoji glyph (repo rule): it has to
+ * inherit the link colour and it must not be announced, so it carries `aria-hidden`.
+ */
+function ChannelArrow() {
+  return (
+    <svg
+      className="nudge-channel-link-arrow"
+      width={16}
+      height={16}
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+      style={{ flexShrink: 0 }}
+    >
+      <path
+        d="M5 12h12M12 6l6 6-6 6"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 function AllowedChannels({ channels }: { channels: ChannelEntry[] }) {
   // `?? []` is not defensive typing theatre: this page's whole job is to appear when a
   // site is blocked, and a worker that answers without this field (mid-update, or an old
   // service worker still alive after a reload) would otherwise throw here and leave the
-  // user staring at a blank tab instead of a block page — failing open in the worst way.
+  // user staring at a blank tab instead of a block page, failing open in the worst way.
   const links = (channels ?? [])
     .map((entry) => ({ entry, href: channelHomeUrl(entry) }))
     .filter((row): row is { entry: ChannelEntry; href: string } => row.href !== null);
@@ -85,9 +111,7 @@ function AllowedChannels({ channels }: { channels: ChannelEntry[] }) {
   return (
     <section
       style={{
-        marginTop: 28,
         width: '100%',
-        maxWidth: 440,
         textAlign: 'left',
         borderTop: '1px solid var(--nudge-surface-variant)',
         paddingTop: 20,
@@ -95,9 +119,9 @@ function AllowedChannels({ channels }: { channels: ChannelEntry[] }) {
     >
       <h2
         style={{
-          margin: '0 0 10px',
+          margin: '0 0 2px',
           fontSize: 13,
-          fontWeight: 600,
+          fontWeight: 700,
           letterSpacing: 0.3,
           textTransform: 'uppercase',
           color: 'var(--nudge-on-surface-variant)',
@@ -105,22 +129,68 @@ function AllowedChannels({ channels }: { channels: ChannelEntry[] }) {
       >
         Your allowed channels
       </h2>
-      <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: 6 }}>
+      <p style={{ margin: '0 0 12px', fontSize: 13, color: 'var(--nudge-on-surface-variant)' }}>
+        These are still open. Pick one to carry on.
+      </p>
+      {/*
+        THESE ARE THE PRIMARY ACTION ON THIS PAGE, not a footnote.
+        When YouTube is Hard Blocked this list is the ONLY way into a channel the user
+        explicitly allowed, so it has to look like something you click: link-coloured,
+        weighted, with an affordance arrow and a real hover/focus state. Rendered as flat
+        grey pills it read as disabled metadata, which turns "block YouTube except these
+        channels" back into the dead end the list exists to prevent.
+      */}
+      <ul
+        style={{
+          listStyle: 'none',
+          margin: 0,
+          padding: 0,
+          display: 'grid',
+          // `minmax(0, 1fr)`, not the implicit `1fr`. A grid track's default floor is its
+          // MIN-CONTENT width, so one long channel name stretched the row, the card and the
+          // page: 106px of sideways scroll on a 420px window. The column has to be allowed
+          // to go narrower than its text before the ellipsis below can ever apply.
+          gridTemplateColumns: 'minmax(0, 1fr)',
+          gap: 8,
+        }}
+      >
         {links.map(({ entry, href }) => (
           <li key={href}>
             <a
+              className="nudge-channel-link"
               href={href}
               style={{
-                display: 'block',
-                padding: '8px 12px',
-                borderRadius: 8,
-                background: 'var(--nudge-surface-variant)',
-                color: 'var(--nudge-on-surface)',
-                fontSize: 14,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 12,
+                padding: '11px 14px',
+                borderRadius: 'var(--nudge-radius-sm)',
+                background: 'var(--nudge-link-bg)',
+                border: '1px solid var(--nudge-link-border)',
+                color: 'var(--nudge-link)',
+                fontSize: 15,
+                fontWeight: 600,
                 textDecoration: 'none',
+                transition: 'background 140ms ease, border-color 140ms ease',
               }}
             >
-              {entry.displayName}
+              <span
+                style={{
+                  // `minWidth: 0` is what makes the ellipsis work at all. A flex item's
+                  // default `min-width: auto` is its CONTENT width, so a nowrap span
+                  // refuses to shrink and pushes the whole card wider than the window
+                  // instead of truncating. One long channel name was enough to scroll the
+                  // block page sideways at 420px.
+                  minWidth: 0,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {entry.displayName}
+              </span>
+              <ChannelArrow />
             </a>
           </li>
         ))}
@@ -254,59 +324,75 @@ function PageShell({
   children: ReactNode;
 }) {
   return (
-    <div
-      style={{
-        minHeight: '100vh',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: '48px 24px',
-        gap: 32,
-        textAlign: 'center',
-      }}
-    >
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
-        <NudgeMark size={36} />
-        <p
-          style={{
-            margin: 0,
-            fontSize: 13,
-            fontWeight: 500,
-            color: 'var(--nudge-on-surface-variant)',
-            letterSpacing: 0.2,
-          }}
-        >
-          Break the scroll. Take back your time.
-        </p>
-        {surfaceLabel !== null && (
-          <p
-            style={{
-              margin: 0,
-              padding: '3px 10px',
-              borderRadius: 999,
-              background: 'var(--nudge-surface-variant)',
-              color: 'var(--nudge-on-surface)',
-              fontSize: 12,
-              fontWeight: 600,
-            }}
-          >
-            {surfaceLabel}
-          </p>
-        )}
-      </div>
-      <div
+    <div style={{ minHeight: '100vh', display: 'flex', padding: '40px 24px' }}>
+      {/*
+        `margin: auto` on the card, NOT `justify-content`/`align-items: center` on the
+        flex parent. Both centre a card in a viewport taller than it; only auto margins
+        keep the card's TOP reachable when it is taller (a long allowed-channel list, an
+        error state under a pause). A centred flex item overflows in both directions and
+        the part above the scroll origin cannot be scrolled back to.
+      */}
+      <main
+        data-testid="block-card"
         style={{
+          margin: 'auto',
+          width: '100%',
+          maxWidth: 480,
+          minWidth: 0,
+          background: 'var(--nudge-surface-raised)',
+          border: '1px solid var(--nudge-surface-variant)',
+          borderRadius: 'var(--nudge-radius-lg)',
+          boxShadow: 'var(--nudge-shadow-card)',
+          padding: '40px 32px 32px',
           display: 'flex',
           flexDirection: 'column',
           alignItems: 'center',
-          maxWidth: 440,
-          width: '100%',
+          gap: 28,
+          textAlign: 'center',
         }}
       >
-        {children}
-      </div>
-      <RuleFooter ruleName={ruleName} />
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
+          <NudgeMark size={36} />
+          <p
+            style={{
+              margin: 0,
+              fontSize: 13,
+              fontWeight: 500,
+              color: 'var(--nudge-on-surface-variant)',
+              letterSpacing: 0.2,
+            }}
+          >
+            Break the scroll. Take back your time.
+          </p>
+          {surfaceLabel !== null && (
+            <p
+              style={{
+                margin: 0,
+                padding: '3px 10px',
+                borderRadius: 999,
+                background: 'var(--nudge-surface-variant)',
+                color: 'var(--nudge-on-surface)',
+                fontSize: 12,
+                fontWeight: 600,
+              }}
+            >
+              {surfaceLabel}
+            </p>
+          )}
+        </div>
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: 28,
+            width: '100%',
+          }}
+        >
+          {children}
+        </div>
+        <RuleFooter ruleName={ruleName} />
+      </main>
     </div>
   );
 }

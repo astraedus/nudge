@@ -564,7 +564,7 @@ export function RuleEditor({
         {draft.features?.youtube !== undefined && (
           <ChannelListEditor
             youtube={draft.features.youtube}
-            isBlocked={isBlockMode(draft.mode)}
+            siteMode={draft.mode}
             onChange={(youtube) =>
               setDraft((d) => (d.features === null ? d : { ...d, features: { ...d.features, youtube } }))
             }

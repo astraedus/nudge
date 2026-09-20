@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { defaultYoutubeFeatureSettings } from '../../src/core/settingsSchema';
 import type { YoutubeFeatureSettings } from '../../src/core/settingsSchema';
+import type { SiteMode } from '../../src/core/types';
 import { ChannelListEditor } from '../../src/entrypoints/dashboard/ChannelListEditor';
 
 function makeYoutubeSettings(overrides: Partial<YoutubeFeatureSettings> = {}): YoutubeFeatureSettings {
@@ -16,23 +17,32 @@ function makeYoutubeSettings(overrides: Partial<YoutubeFeatureSettings> = {}): Y
  * emitted on a given change without having to diff DOM state. */
 function Harness({
   initial,
-  isBlocked = false,
+  siteMode = 'ALLOW',
   onEmit,
 }: {
   initial: YoutubeFeatureSettings;
-  isBlocked?: boolean;
+  siteMode?: SiteMode;
   onEmit?: (next: YoutubeFeatureSettings) => void;
 }) {
   const [settings, setSettings] = useState(initial);
   return (
     <ChannelListEditor
       youtube={settings}
-      isBlocked={isBlocked}
+      siteMode={siteMode}
       onChange={(next) => {
         onEmit?.(next);
         setSettings(next);
       }}
     />
+  );
+}
+
+/** The three chips that answer "what happens to a channel this list rejects". */
+const CHANNEL_BLOCK_MODE_LABELS = ['Hard Block', 'Delay', 'Breathing'] as const;
+
+function channelBlockModeChips() {
+  return CHANNEL_BLOCK_MODE_LABELS.map((label) =>
+    screen.queryByRole('button', { name: label }),
   );
 }
 
@@ -47,14 +57,14 @@ afterEach(() => {
 
 describe('ChannelListEditor — copy changes with the site\'s block state', () => {
   it('explains the whitelist-as-exception-list framing when the site is blocked', () => {
-    render(<Harness initial={makeYoutubeSettings()} isBlocked />);
+    render(<Harness initial={makeYoutubeSettings()} siteMode="HARD_BLOCK" />);
     expect(
       screen.getByText('YouTube is blocked; videos and pages from these channels are still allowed.'),
     ).toBeDefined();
   });
 
   it('explains the generic filter framing when the site is not blocked', () => {
-    render(<Harness initial={makeYoutubeSettings()} isBlocked={false} />);
+    render(<Harness initial={makeYoutubeSettings()} siteMode="ALLOW" />);
     expect(screen.getByText(/Filter YouTube by channel/i)).toBeDefined();
   });
 });
@@ -144,5 +154,61 @@ describe('ChannelListEditor — disable autoplay', () => {
     render(<Harness initial={makeYoutubeSettings()} />);
     expect(screen.getByText(/best-effort/i)).toBeDefined();
     expect(screen.getByText(/YouTube can restore its own player state/i)).toBeDefined();
+  });
+});
+
+describe('ChannelListEditor — a setting that cannot do anything is not offered', () => {
+  it('drops the disallowed-channel mode and pause once the site mode already decides them', () => {
+    // With the site itself blocked, a WHITELIST hands every disallowed channel to the
+    // SITE's mode and pause (core/channels.ts decideWatchGate), so these chips answer a
+    // question the site's own mode already answered. Repo lesson: a meaningless field
+    // combination is a UI bug, not just an engine one.
+    render(
+      <Harness
+        initial={makeYoutubeSettings({ channelMode: 'WHITELIST' })}
+        siteMode="HARD_BLOCK"
+      />,
+    );
+
+    expect(channelBlockModeChips()).toEqual([null, null, null]);
+    expect(screen.getByText(/Not used while this site is set to Hard Block/)).toBeDefined();
+  });
+
+  it('names the site mode it is deferring to, whichever one that is', () => {
+    render(
+      <Harness initial={makeYoutubeSettings({ channelMode: 'WHITELIST' })} siteMode="BREATHING" />,
+    );
+
+    expect(screen.getByText(/Not used while this site is set to Breathing/)).toBeDefined();
+  });
+
+  it('still offers it when the site is Allowed, which is when it decides anything', () => {
+    render(
+      <Harness initial={makeYoutubeSettings({ channelMode: 'WHITELIST' })} siteMode="ALLOW" />,
+    );
+
+    expect(channelBlockModeChips().every((chip) => chip !== null)).toBe(true);
+    expect(screen.queryByText(/Not used while this site is set to/)).toBeNull();
+  });
+
+  it('still offers it for a BLACKLIST on a blocked site, where it really is what fires', () => {
+    // The site default only stands in for a whitelist. A named-and-blocked channel is held
+    // behind THIS mode, and that is reachable: completing a pause (or spending the Escape
+    // Hatch) opens the site for the temporary-access window and the blacklist gates inside
+    // it. Over-hiding here would take away a control the user needs.
+    render(
+      <Harness initial={makeYoutubeSettings({ channelMode: 'BLACKLIST' })} siteMode="DELAY" />,
+    );
+
+    expect(channelBlockModeChips().every((chip) => chip !== null)).toBe(true);
+    expect(screen.queryByText(/Not used while this site is set to/)).toBeNull();
+  });
+
+  it('hides nothing at all while the channel list is Off', () => {
+    render(<Harness initial={makeYoutubeSettings({ channelMode: 'OFF' })} siteMode="HARD_BLOCK" />);
+
+    // The whole section is absent when the feature is off; there is nothing to explain.
+    expect(channelBlockModeChips()).toEqual([null, null, null]);
+    expect(screen.queryByText(/Not used while this site is set to/)).toBeNull();
   });
 });

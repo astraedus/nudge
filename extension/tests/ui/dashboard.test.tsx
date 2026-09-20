@@ -416,6 +416,87 @@ describe('SettingsPanel — sites list (ext-13 §5)', () => {
     expect(screen.getAllByText('Hard Block').length).toBeGreaterThan(0);
   });
 
+  it("states a rule's mode exactly once, on the chip, not again at the head of its summary", async () => {
+    // Every card read "Hard Block" twice in a row, once as the badge and once as the first
+    // word of its own summary line. A fact stated twice on one card reads as two facts that
+    // happen to agree, and it crowds out the parts that are only said once.
+    const rule = makeRule({
+      domain: 'block.example',
+      mode: 'HARD_BLOCK',
+      dailyLimitMinutes: 30,
+      grayscale: false,
+      features: null,
+      schedule: null,
+    });
+    sendMessageMock.mockResolvedValue(makeState({ settings: makeSettings({ rules: [rule] }) }));
+    const { container } = render(<Dashboard />);
+    await flush();
+    fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
+
+    const printed = (container.textContent ?? '').split('Hard Block').length - 1;
+    expect(printed).toBe(1);
+    // Everything the chip does NOT already say survives.
+    expect(container.textContent).toContain('30m/day');
+  });
+
+  it('keeps the pause length on the summary, since the chip only names the mode', async () => {
+    const rule = makeRule({
+      domain: 'delay.example',
+      mode: 'DELAY',
+      delaySeconds: 30,
+      dailyLimitMinutes: null,
+      grayscale: false,
+      features: null,
+      schedule: null,
+    });
+    sendMessageMock.mockResolvedValue(makeState({ settings: makeSettings({ rules: [rule] }) }));
+    const { container } = render(<Dashboard />);
+    await flush();
+    fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
+
+    expect(container.textContent).toContain('30s pause');
+    expect(container.textContent).not.toContain('Delay · 30s');
+  });
+
+  it('drops the summary line entirely when the chip is already the whole story', async () => {
+    const rule = makeRule({
+      domain: 'plain.example',
+      mode: 'HARD_BLOCK',
+      dailyLimitMinutes: null,
+      grayscale: false,
+      features: null,
+      schedule: null,
+    });
+    sendMessageMock.mockResolvedValue(makeState({ settings: makeSettings({ rules: [rule] }) }));
+    const { container } = render(<Dashboard />);
+    await flush();
+    fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
+
+    expect((container.textContent ?? '').split('Hard Block').length - 1).toBe(1);
+    // An empty second line is a visible gap under the domain; render nothing instead.
+    expect(container.querySelector('p[style*="margin: 2px 0px 0px"]')).toBeNull();
+  });
+
+  it('states grayscale once too, on its own badge, not again inside the summary', async () => {
+    // Same defect as the mode, same card, same line: the badge said "Grayscale" and the
+    // summary under it said "Grayscale" again.
+    const rule = makeRule({
+      domain: 'gray.example',
+      mode: 'ALLOW',
+      grayscale: true,
+      dailyLimitMinutes: 30,
+      features: null,
+      schedule: null,
+    });
+    sendMessageMock.mockResolvedValue(makeState({ settings: makeSettings({ rules: [rule] }) }));
+    const { container } = render(<Dashboard />);
+    await flush();
+    fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
+
+    expect((container.textContent ?? '').split('Grayscale').length - 1).toBe(1);
+    expect(container.textContent).toContain('30m/day');
+  });
+
   it('shows a grayscale badge on a rule with grayscale on', async () => {
     const rule = makeRule({ domain: 'gray.example', mode: 'ALLOW', grayscale: true });
     sendMessageMock.mockResolvedValue(makeState({ settings: makeSettings({ rules: [rule] }) }));
