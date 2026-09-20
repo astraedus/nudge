@@ -1,6 +1,7 @@
 package com.astraedus.nudge.data.export
 
 import com.astraedus.nudge.data.db.entity.UsageEvent
+import com.astraedus.nudge.data.db.entity.isShownConfrontation
 import com.astraedus.nudge.ui.screens.stats.InsightsCalculator
 import com.astraedus.nudge.ui.screens.stats.InsightsRange
 import org.junit.Assert.assertEquals
@@ -125,25 +126,22 @@ class ImportedHistoryInsightsTest {
     }
 
     /**
-     * The home tiles are raw DAO counts, not calculator output, so they are checked with the same
-     * predicates the DAO queries use. A restored device must show the same two big numbers.
+     * The home tiles are DAO counts, not calculator output, so they are checked with the same
+     * predicates the DAO queries use. A restored device must show the same two big numbers -- and
+     * the raw rows must survive too, because the tile predicate is only correct if BOTH rows of a
+     * walk-away came back.
      */
     @Test
     fun `the home tile counts match the source device`() {
         val source = sourceCorpus()
         val restored = restore(source)
 
-        val sourceBlocked = source.count { it.wasBlocked }
-        val sourceWalkAways = source.count { it.userChangedMind }
-
-        assertEquals(sourceBlocked, restored.count { it.wasBlocked })
-        assertEquals(sourceWalkAways, restored.count { it.userChangedMind })
+        assertEquals(source.count { it.wasBlocked }, restored.count { it.wasBlocked })
+        assertEquals(source.count { it.userChangedMind }, restored.count { it.userChangedMind })
+        // `UsageEventDao.getAllTimeShownCount` / `getAllTimeChangedMindCount`, as the tiles read them.
         assertEquals(
-            calculator.overlaysFromAllTimeCounts(sourceBlocked, sourceWalkAways),
-            calculator.overlaysFromAllTimeCounts(
-                restored.count { it.wasBlocked },
-                restored.count { it.userChangedMind }
-            )
+            source.count { it.isShownConfrontation },
+            restored.count { it.isShownConfrontation }
         )
     }
 

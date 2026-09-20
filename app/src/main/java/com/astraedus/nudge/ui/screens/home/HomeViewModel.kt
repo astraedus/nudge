@@ -63,6 +63,11 @@ data class HomeUiState(
     val isGlobalEnabled: Boolean = true,
     val todayTotalUsageFormatted: String = "0s",
     val activeRuleCount: Int = 0,
+    /**
+     * The "Blocked" tiles: confrontations the user was SHOWN, each counted once. A walk-away is a
+     * walk-away and lands in [changedMindCountToday] / [allTimeChangedMindCount]; it is not also a
+     * second block. See `UsageEvent.isShownConfrontation`.
+     */
     val blockedCountToday: Int = 0,
     val changedMindCountToday: Int = 0,
     val allTimeBlockedCount: Int = 0,
@@ -122,12 +127,15 @@ class HomeViewModel @Inject constructor(
         // today's counts would take an hour of yesterday's (or drop an hour of their own).
         val dayEnd = timeTracker.startOfDayDaysBefore(dayStart, -1)
         combine(
-            usageRepository.getBlockedCountForDay(dayStart, dayEnd),
+            // SHOWN confrontations, not raw `wasBlocked` rows. A walk-away writes a second
+            // `wasBlocked` row for the same confrontation, so the raw count made this tile rise
+            // by two every time the user turned around — 210 on a device that had faced 181.
+            usageRepository.getShownCountForDay(dayStart, dayEnd),
             usageRepository.getChangedMindCountForDay(dayStart, dayEnd),
-            usageRepository.getAllTimeBlockedCount(),
+            usageRepository.getAllTimeShownCount(),
             usageRepository.getAllTimeChangedMindCount()
-        ) { blockedToday, changedMindToday, allTimeBlocked, allTimeChangedMind ->
-            CountsSnapshot(blockedToday, changedMindToday, allTimeBlocked, allTimeChangedMind)
+        ) { shownToday, changedMindToday, allTimeShown, allTimeChangedMind ->
+            CountsSnapshot(shownToday, changedMindToday, allTimeShown, allTimeChangedMind)
         }
     }
 
@@ -245,9 +253,9 @@ class HomeViewModel @Inject constructor(
             isGlobalEnabled = enabled,
             todayTotalUsageFormatted = formatDayTotal(screenTime.todayMs, timeTracker),
             activeRuleCount = activeRuleCount,
-            blockedCountToday = counts.blockedToday,
+            blockedCountToday = counts.shownToday,
             changedMindCountToday = counts.changedMindToday,
-            allTimeBlockedCount = counts.allTimeBlocked,
+            allTimeBlockedCount = counts.allTimeShown,
             allTimeChangedMindCount = counts.allTimeChangedMind,
             hasUsagePermission = screenTime.hasPermission,
             charts = charts,
@@ -304,10 +312,11 @@ class HomeViewModel @Inject constructor(
         val events: List<UsageEvent>
     )
 
+    /** Confrontations shown and walked away from; `shown` already excludes the walk-away rows. */
     private data class CountsSnapshot(
-        val blockedToday: Int,
+        val shownToday: Int,
         val changedMindToday: Int,
-        val allTimeBlocked: Int,
+        val allTimeShown: Int,
         val allTimeChangedMind: Int
     )
 

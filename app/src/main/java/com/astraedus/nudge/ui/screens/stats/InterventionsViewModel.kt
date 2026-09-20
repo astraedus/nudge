@@ -59,17 +59,22 @@ class InterventionsViewModel @Inject constructor(
 
     private val eventsFlow = usageRepository.getEventsSince(windowStartMs)
 
-    private val allTimeCountsFlow = combine(
-        usageRepository.getAllTimeBlockedCount(),
-        usageRepository.getAllTimeChangedMindCount()
-    ) { blocked, changedMind -> blocked to changedMind }
+    /**
+     * All-time confrontations, straight from the one corrected query.
+     *
+     * This used to be two counts combined here and subtracted by the calculator
+     * (`blocked - changedMind`), a correction this screen did and the home dashboard did not.
+     * The correction now lives in the query itself, so there is no second count to read and no
+     * arithmetic for a screen to get wrong or forget.
+     */
+    private val allTimeShownFlow = usageRepository.getAllTimeShownCount()
 
     val uiState: StateFlow<InterventionsUiState> = combine(
         eventsFlow,
         _range,
-        allTimeCountsFlow
-    ) { events, range, (allTimeBlocked, allTimeChangedMind) ->
-        buildUiState(events, range, allTimeBlocked, allTimeChangedMind)
+        allTimeShownFlow
+    ) { events, range, allTimeShown ->
+        buildUiState(events, range, allTimeShown)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), InterventionsUiState())
 
     fun selectRange(range: InsightsRange) {
@@ -79,17 +84,11 @@ class InterventionsViewModel @Inject constructor(
     private suspend fun buildUiState(
         events: List<UsageEvent>,
         range: InsightsRange,
-        allTimeBlocked: Int,
-        allTimeChangedMind: Int
+        allTimeShown: Int
     ): InterventionsUiState {
         val now = System.currentTimeMillis()
         val zone = ZoneId.systemDefault()
         val insights = calculator.interventions(events, now, zone, range)
-
-        // The raw all-time blocked count double-counts every walk-away (it carries
-        // wasBlocked=true too) — overlaysFromAllTimeCounts is the one place that correction
-        // happens, so the hero "all time" number is never a raw DAO read.
-        val allTimeTotal = calculator.overlaysFromAllTimeCounts(allTimeBlocked, allTimeChangedMind)
 
         val appRows = insights.apps.take(TOP_APPS_LIMIT).map { stat ->
             InterventionAppRow(
@@ -107,7 +106,9 @@ class InterventionsViewModel @Inject constructor(
         return InterventionsUiState(
             range = range,
             insights = insights,
-            allTimeTotal = allTimeTotal,
+            // Already de-duplicated by the query, with the same predicate `interventions`
+            // classifies by — so the hero number and the bars beneath it count the same thing.
+            allTimeTotal = allTimeShown,
             dailyCounts = insights.dailySeries.map { it.count },
             apps = appRows,
             isLoading = false

@@ -19,10 +19,11 @@ import org.junit.Test
  * Device evidence that motivated pinning this (Pixel 3, 2026-08-20): across 11 clean walk-aways the
  * DB showed **two** `wasBlocked = 1` rows per attempt — the overlay-shown row written by
  * `NudgeAccessibilityService.handleDecision`, plus the walk-away row written here — and the home
- * screen read Blocked 9 / Walked Away 4 off exactly those rows. That double-count is not an
- * accident, it is what
- * [com.astraedus.nudge.ui.screens.stats.InsightsCalculator.overlaysFromAllTimeCounts] subtracts back
- * out, so the row shape is a cross-file contract and belongs in a test rather than in a comment.
+ * screen read Blocked 9 / Walked Away 4 off exactly those rows -- the tile counting a walk-away
+ * as two blocks, which was reported again on 1.17.2 and fixed there. The two-row shape itself is
+ * deliberate; what reads it must exclude this row, which every "Blocked" count now does via
+ * [com.astraedus.nudge.data.db.entity.isShownConfrontation] and its SQL mirror in `UsageEventDao`.
+ * So the row shape is a cross-file contract and belongs in a test rather than in a comment.
  */
 class RecordWalkAwayUseCaseTest {
 

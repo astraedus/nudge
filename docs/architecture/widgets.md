@@ -80,10 +80,11 @@ provideContent { NudgeGlanceTheme { TodayContent(snapshot) } }
   both counts on one line beneath it; 4x2 has room for three labelled columns. Both render from **one** read, so
   the two size variants cannot disagree — a per-size read would be the two-computations defect wearing a
   responsive-layout costume.
-- **Today shows the RAW day counts the Home tiles show**, not the de-duplicated `overlaysFromAllTimeCounts`
-  figure. The careful version of "how many confrontations" already has a screen. Here, agreement with the tile
-  the user will compare against is worth more than statistical purity, and the choice is written down in
-  `WidgetSnapshot.Today`'s KDoc so it reads as a decision rather than an oversight.
+- **Today reads the Home tiles' own query**, `UsageRepository.getShownCountForDay`, confrontations SHOWN,
+  each counted once. Until 1.17.2 it read the RAW `wasBlocked` count on purpose, to agree with a tile that was
+  itself counting every walk-away twice; agreeing with the surface the user compares against was the right
+  instinct and the wrong query, so both now read the corrected one and agreement costs nothing. The rule that
+  survives: the widget never computes a number the dashboard also computes, it reads the same query.
 - **Blocked most reads through `InsightsCalculator.topBlockedApps`, the ONE per-app aggregation in the app**,
   over the same `startOfDayDaysBefore(today, WEEK_DAYS - 1)` boundary the dashboard's week card subscribes with.
   It reads the taller variant's five rows once and lets the composable trim to three; reading per size would be

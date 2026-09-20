@@ -51,7 +51,10 @@ object WidgetReads {
             // day's screen time is worded, including the "< 1m" case. A second formatting rule is
             // how the same quantity came to read "< 1m" on one screen and "0s" on another.
             screenTimeFormatted = StatsViewModel.formatDayTotal(weekly.totalOn(dayStart), timeTracker),
-            blockedCount = usage.getBlockedCountForDay(dayStart, dayEnd).first(),
+            // The SAME query the dashboard's Blocked tile observes, so the widget and the tile it
+            // mirrors cannot report one number two ways — and it counts SHOWN confrontations, so
+            // neither of them counts a walk-away twice.
+            blockedCount = usage.getShownCountForDay(dayStart, dayEnd).first(),
             walkAwayCount = usage.getChangedMindCountForDay(dayStart, dayEnd).first(),
             hasUsagePermission = screenTime.hasPermission()
         )

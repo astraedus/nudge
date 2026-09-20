@@ -518,15 +518,9 @@ class InsightsCalculatorTest {
         assertTrue(result.dailySeries.zipWithNext().all { (a, b) -> a.startMs < b.startMs })
     }
 
-    // ------------------------------------------------------- all-time counts
-
-    @Test
-    fun `all-time overlays subtract the walk-away rows the blocked count double-counts`() {
-        assertEquals(40, calculator.overlaysFromAllTimeCounts(blockedCount = 50, changedMindCount = 10))
-        assertEquals(0, calculator.overlaysFromAllTimeCounts(blockedCount = 0, changedMindCount = 0))
-        // Defensive: an inconsistent pair must not render a negative headline.
-        assertEquals(0, calculator.overlaysFromAllTimeCounts(blockedCount = 3, changedMindCount = 9))
-    }
+    // All-time counts moved OUT of this class: the correction is no longer arithmetic over two
+    // DAO reads but the query's own predicate (`UsageEventDao.getAllTimeShownCount`), so it is
+    // pinned by BlockedCountSemanticsTest and BlockedCountSemanticsContractTest instead.
 
     // ------------------------------------------------------ time reclaimed
 

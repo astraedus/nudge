@@ -92,11 +92,19 @@ class UsageRepository @Inject constructor(
     fun getChangedMindCountForDay(dayStart: Long, dayEnd: Long): Flow<Int> =
         usageEventDao.getChangedMindCount(dayStart, dayEnd)
 
-    fun getBlockedCountForDay(dayStart: Long, dayEnd: Long): Flow<Int> =
-        usageEventDao.getBlockedCount(dayStart, dayEnd)
+    /**
+     * A day's "Blocked" number: confrontations SHOWN, walk-aways counted once, not twice.
+     *
+     * Named for what it counts rather than for the tile it feeds, because the old name
+     * (`getBlockedCountForDay`) read as if it already meant this and did not — see
+     * [com.astraedus.nudge.data.db.entity.isShownConfrontation].
+     */
+    fun getShownCountForDay(dayStart: Long, dayEnd: Long): Flow<Int> =
+        usageEventDao.getShownCount(dayStart, dayEnd)
 
-    fun getAllTimeBlockedCount(): Flow<Int> =
-        usageEventDao.getAllTimeBlockedCount()
+    /** All-time "Blocked" number. Same correction as [getShownCountForDay], no window. */
+    fun getAllTimeShownCount(): Flow<Int> =
+        usageEventDao.getAllTimeShownCount()
 
     fun getAllTimeChangedMindCount(): Flow<Int> =
         usageEventDao.getAllTimeChangedMindCount()
