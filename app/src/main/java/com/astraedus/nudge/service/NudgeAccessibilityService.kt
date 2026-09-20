@@ -395,6 +395,13 @@ class NudgeAccessibilityService : AccessibilityService() {
                 className?.startsWith(ownPackageName) == true
         }
 
+        // "Is this Nudge's own MAIN app window?" (issue #36) is deliberately NOT here, next to its
+        // sibling above: it lives in `BlockLaunchGate.isOwnMainAppWindow` because naming an
+        // Activity class inside a service file is exactly what `MonitorServiceContractTest`
+        // forbids, and it is right to forbid it — "a service put its UI over another app" is a bug
+        // report this repo has already received. The predicate compares a class NAME and starts
+        // nothing, but the contract is worth more than the convenience of keeping the two together.
+
         // The overlay-bypass rule used to live here as `isOverlayBypassedByForeground`, and it is
         // now `BlockLaunchGate.isGenuineBypass`, which needs state this companion cannot hold: it
         // has to know whether the overlay we launched has actually reached the screen yet. Keeping
@@ -495,6 +502,13 @@ class NudgeAccessibilityService : AccessibilityService() {
             override fun onReceive(context: android.content.Context?, intent: Intent?) {
                 if (intent?.action != Intent.ACTION_SCREEN_OFF) return
                 entryPoint.passthroughManager().onScreenOff()
+                // The same evidence that ends the sitting ends the ARRIVAL (issue #36): coming back
+                // to a blocked app after the phone has been off is a fresh confrontation and owes
+                // its own row. It arrives here rather than through the signal pipeline because a
+                // screen-off is a broadcast and not an accessibility event at all -- and because
+                // the overlay's own `onStop`/`finish()` on screen-off is one half of the loop that
+                // produced 2500 interventions in a day.
+                entryPoint.blockLaunchGuard().onDeparture("screen_off")
                 // The awareness overlays and the clocks belong to a screen nobody is looking at.
                 hideAllOverlays()
             }
@@ -968,6 +982,16 @@ class NudgeAccessibilityService : AccessibilityService() {
         if (signal is ForegroundSignal.OwnUi) {
             if (isOwnAppWindowEvent(event)) {
                 clearOverlays(packageName, "own_app_window")
+            }
+            // Nudge's MAIN app window really is the user somewhere else, so it ends the arrival and
+            // the next block for whatever they were in is a fresh confrontation that owes a row
+            // (issue #36). Reported from here rather than read off the signal because the
+            // classifier calls our block OVERLAY `OwnUi` too -- and the overlay is on screen for
+            // every confrontation by construction, so letting it end an arrival would re-open the
+            // arrival it belongs to. See [isOwnMainAppWindowEvent] for why this asks by exact
+            // class instead of reusing the predicate on the line above.
+            if (BlockLaunchGate.isOwnMainAppWindow(record.type, record.className)) {
+                entryPoint.blockLaunchGuard().onDeparture("own_app_window")
             }
             return
         }
@@ -1787,6 +1811,23 @@ class NudgeAccessibilityService : AccessibilityService() {
     ): Boolean {
         val guard = entryPoint.blockLaunchGuard()
         val decision = guard.decide(targetPackage)
+
+        // THE STORM DIAGNOSTIC (issue #36), and it counts ATTEMPTS rather than launches.
+        //
+        // The arrival invariant below (`claimConfrontation`) makes the intervention count safe
+        // whatever loop produces the launches, which is the point of it -- and it also makes the
+        // loop invisible, because a mechanism that used to arrive as "2500 interventions" now
+        // arrives as nothing at all. One `w` line per storm, naming the target, how many attempts,
+        // what the gate said and what it believed was in front, so the NEXT field report carries
+        // its own mechanism instead of costing a device session to find.
+        guard.onLaunchAttempt(targetPackage, decision)?.let { storm ->
+            entryPoint.nudgeLogger().w(
+                "block overlay launch storm target=${storm.targetPackage} " +
+                    "attempts=${storm.launches} withinMs=${storm.windowMs} " +
+                    "decisions=${storm.decisions.joinToString("/")} ${guard.stateDescription()}"
+            )
+        }
+
         if (decision != BlockLaunchGate.Decision.LAUNCH) {
             // Logged unconditionally and with BOTH the target and what is actually in front,
             // because "the block was dropped" and "the block never happened" are indistinguishable
@@ -1875,6 +1916,35 @@ class NudgeAccessibilityService : AccessibilityService() {
                 if (decision.grayscale) {
                     entryPoint.grayscaleManager().enableGrayscale()
                     grayscaleActiveForPackage = packageName
+                }
+
+                // ONE CONFRONTATION PER ARRIVAL (issue #36), and it sits BELOW the launch and below
+                // grayscale on purpose: this refuses a ROW, never a block. The overlay is already
+                // on its way, and it should be -- somebody still sitting in a blocked app should go
+                // on meeting the block. What must not go on is the COUNT rising for a confrontation
+                // the user never walked into.
+                //
+                // The 2500-in-a-day report is what happens without it. Nothing above this line
+                // answers "has the user arrived here since the last time we counted them", so every
+                // mechanism that can re-launch an overlay by itself -- an overlay stopped and
+                // finished by a screen-off or a re-fronting app, a re-delivery through
+                // `onNewIntent`, the walk-away fail-safe popping the app back -- also re-counted it,
+                // once per iteration, for as long as it ran.
+                val counted = entryPoint.blockLaunchGuard().claimConfrontation(
+                    targetPackage = web?.browserPackage ?: packageName,
+                    key = BlockLaunchGate.confrontationKey(
+                        attributedPackage = packageName,
+                        featureKey = featureKey,
+                        webDomain = web?.domain
+                    )
+                )
+                if (!counted) {
+                    entryPoint.nudgeLogger().i(
+                        "block shown but NOT counted package=$packageName " +
+                            "reason=already_counted_this_arrival feature=$featureKey " +
+                            "domain=${web?.domain}"
+                    )
+                    return
                 }
 
                 entryPoint.usageRepository().logEvent(

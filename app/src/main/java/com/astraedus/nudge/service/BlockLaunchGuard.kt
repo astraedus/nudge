@@ -57,6 +57,29 @@ class BlockLaunchGuard @Inject constructor() {
     private var pendingOverlay: BlockLaunchGate.PendingOverlay? = null
 
     /**
+     * The confrontations already COUNTED for the arrival the user is currently in (issue #36).
+     *
+     * Every other field here governs whether an overlay is SHOWN. This one governs only whether a
+     * `UsageEvent` is WRITTEN, which is a different question that had no owner until 2500
+     * interventions landed in one day: a row was written whenever a launch happened, so every
+     * mechanism that could re-launch an overlay on its own could also re-count it. See
+     * [BlockLaunchGate.Arrival].
+     */
+    @Volatile
+    private var arrival: BlockLaunchGate.Arrival? = null
+
+    /** Launch attempts for one target with no departure in between. [BlockLaunchGate.LaunchStorm]. */
+    @Volatile
+    private var storm: BlockLaunchGate.LaunchStorm? = null
+
+    /** Why the last arrival ended. Diagnostic only; it appears in the storm line. */
+    @Volatile
+    private var lastDepartureReason: String = "none"
+
+    /** Hands out [BlockLaunchGate.PendingOverlay.id]s. Monotonic, so an id is never reused. */
+    private val overlayIds = java.util.concurrent.atomic.AtomicLong(0L)
+
+    /**
      * Apply the ONE classification the service made for this event.
      *
      * Called from the same place, and only from the same place, that feeds the sitting model, so
@@ -67,6 +90,28 @@ class BlockLaunchGuard @Inject constructor() {
     fun onForegroundSignal(signal: ForegroundSignal) {
         foregroundPackage = BlockLaunchGate.foregroundAfter(signal, foregroundPackage)
         walkAway = BlockLaunchGate.walkAwayAfter(signal, walkAway)
+        arrival = BlockLaunchGate.arrivalAfterSignal(signal, arrival)
+        storm = BlockLaunchGate.stormAfterSignal(signal, storm)
+    }
+
+    /**
+     * The foreground left the blocked app by a route the accessibility stream cannot describe.
+     *
+     * There are exactly two, and both are real departures the user made: Nudge's own MAIN app
+     * window coming forward (the stream classifies that as [ForegroundSignal.OwnUi], which is also
+     * what our block overlay is, and only `isOwnAppWindowEvent` can tell them apart), and the
+     * screen going off (`ACTION_SCREEN_OFF`, which is a broadcast and not an accessibility event at
+     * all -- the same evidence `SittingTracker.SCREEN_OFF` runs on).
+     *
+     * Both end the ARRIVAL, which means the next block for that app is a fresh confrontation and
+     * owes a row. Enforcement is unaffected either way.
+     */
+    @Synchronized
+    fun onDeparture(reason: String) {
+        if (arrival == null && storm == null) return
+        arrival = null
+        storm = null
+        lastDepartureReason = reason
     }
 
     /**
@@ -83,13 +128,26 @@ class BlockLaunchGuard @Inject constructor() {
     }
 
     /** A block overlay for [packageName] has been started, and has not reached the screen yet. */
+    @Synchronized
     fun onOverlayLaunched(packageName: String) {
-        pendingOverlay = BlockLaunchGate.PendingOverlay(
-            packageName = packageName,
-            launchedAtMs = nowMs(),
-            windowShown = false
+        val current = pendingOverlay
+        pendingOverlay = BlockLaunchGate.pendingOverlayAfterLaunch(
+            pending = current,
+            target = packageName,
+            nowMs = nowMs(),
+            id = if (current != null && current.packageName == packageName && current.windowShown) {
+                current.id
+            } else {
+                overlayIds.incrementAndGet()
+            }
         )
     }
+
+    /**
+     * The id of the overlay currently in flight, read by `BlockOverlayActivity` as it renders so it
+     * can later say which overlay it was. [BlockLaunchGate.NO_OVERLAY_ID] when there is none.
+     */
+    fun currentOverlayId(): Long = pendingOverlay?.id ?: BlockLaunchGate.NO_OVERLAY_ID
 
     /**
      * The block overlay is on screen (reported from `BlockOverlayActivity.onResume`).
@@ -101,9 +159,68 @@ class BlockLaunchGuard @Inject constructor() {
         pendingOverlay = BlockLaunchGate.pendingOverlayAfter(pendingOverlay, overlayShown = true)
     }
 
-    /** The overlay is gone; there is nothing pending to protect. */
-    fun onOverlayDismissed() {
-        pendingOverlay = null
+    /**
+     * The overlay instance holding [overlayId] is gone; there is nothing pending to protect.
+     *
+     * Identified rather than unconditional: see [BlockLaunchGate.pendingOverlayAfterDismissal].
+     */
+    @Synchronized
+    fun onOverlayDismissed(overlayId: Long) {
+        pendingOverlay = BlockLaunchGate.pendingOverlayAfterDismissal(pendingOverlay, overlayId)
+    }
+
+    /**
+     * Claim the right to write a `UsageEvent` for this confrontation, or report that this arrival
+     * has already been counted for it (issue #36).
+     *
+     * **This never refuses a block, only a row.** The caller has already shown the overlay by the
+     * time it gets here, and it must go on showing it: someone still sitting in a blocked app
+     * should keep meeting the block. What must not keep happening is the COUNT rising for a
+     * confrontation the user never walked into.
+     *
+     * @param targetPackage the app the user is sitting in (the browser, for a web block) -- the
+     *   same package [decide] compares against the foreground, and the one whose departure opens
+     *   the next arrival.
+     * @param key [BlockLaunchGate.confrontationKey] for what the user actually ran into.
+     * @return true when a row is owed.
+     */
+    @Synchronized
+    fun claimConfrontation(targetPackage: String, key: String): Boolean {
+        if (!BlockLaunchGate.isNewConfrontation(arrival, targetPackage, key)) return false
+        arrival = BlockLaunchGate.arrivalAfterConfrontation(arrival, targetPackage, key)
+        return true
+    }
+
+    /**
+     * Record one launch ATTEMPT for [targetPackage] and return the storm line to log, if this is
+     * the attempt that crosses [BlockLaunchGate.STORM_LAUNCH_THRESHOLD].
+     *
+     * Attempts, not launches: a run the gate keeps dropping writes no rows and so is invisible in
+     * the stats, which after this change is exactly where a new loop would hide.
+     */
+    @Synchronized
+    fun onLaunchAttempt(
+        targetPackage: String,
+        decision: BlockLaunchGate.Decision
+    ): BlockLaunchGate.StormReport? {
+        val now = nowMs()
+        val next = BlockLaunchGate.stormAfterLaunch(storm, targetPackage, decision, now)
+        val report = BlockLaunchGate.stormReport(next, now)
+        storm = if (report == null) next else next.copy(reported = true)
+        return report
+    }
+
+    /** One line of everything the storm log needs that is not in the report itself. */
+    fun stateDescription(): String {
+        val pending = pendingOverlay
+        return "foreground=$foregroundPackage " +
+            "pendingOverlay=" + (
+                pending?.let {
+                    "${it.packageName}(shown=${it.windowShown},age=${nowMs() - it.launchedAtMs}ms)"
+                } ?: "none"
+                ) +
+            " countedThisArrival=${arrival?.countedKeys?.size ?: 0}" +
+            " lastDeparture=$lastDepartureReason"
     }
 
     /**
@@ -142,9 +259,17 @@ class BlockLaunchGuard @Inject constructor() {
     internal var nowMs: () -> Long = { SystemClock.elapsedRealtime() }
 
     /** Test seam / global-disable: forget everything. */
+    @Synchronized
     fun reset() {
         foregroundPackage = null
         walkAway = null
         pendingOverlay = null
+        // An observation gap (a service rebind) or a global disable means we cannot claim the user
+        // is still in the arrival we were counting, and "no claim" must never SUPPRESS a row for a
+        // confrontation that really is fresh. Same fail-toward-honesty direction the foreground
+        // claim is dropped in.
+        arrival = null
+        storm = null
+        lastDepartureReason = "reset"
     }
 }

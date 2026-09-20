@@ -572,3 +572,40 @@ was solved instead by having `BlockOverlayActivity.onResume` report itself (see
 and wants its own ticket. **The general trap: a test that supplies its own value for a production constant
 cannot see that the production value breaks the predicate.** Where a test hardcodes an identity like a
 package name, it is worth one assertion tying it to the real `applicationId`.
+
+## The gate that decides whether to SHOW is not the gate that decides whether to COUNT (2026-09-20, issue #36)
+
+A user reported 2500 interventions in one day against a usual couple of hundred, on v1.17.1, the release
+that had just fixed two over-counting bugs. It was not a third double-count. It was a loop, and the reason a
+loop could exist at all is that `handleDecision` wrote a `UsageEvent` for **every launch `BlockLaunchGate`
+allowed**. Four separate gates in this subsystem are careful about whether an overlay may be shown, and all
+four are correct about that; none of them was ever about counting. So the count silently inherited "one row
+per launch". Every mechanism that can put the overlay back up by itself then wrote a row too, once per
+iteration, for as long as it ran: the overlay stopped and finished by a screen-off or a re-fronting app, a
+re-delivery through `onNewIntent`, a dying instance clearing the live one's state, the walk-away fail-safe
+popping the app back.
+
+**The general trap: when one piece of state answers a question nobody asked it, the second question inherits
+the first one's rule and nothing type-checks the difference.** Ask what the NUMBER on the user's screen is
+supposed to mean, in the user's words, before deciding where to gate it. Here it is *"how many times did I
+run into a block"*, which is a fact about the user's ARRIVAL, and arrival is not a fact any of the existing
+gates held.
+
+Two corollaries worth keeping:
+
+- **A cap that evicts is not an invariant.** The arrival first remembered "the last 32 confrontation keys",
+  which bounds memory and leaves the rows unbounded: an evicted key looks new again the next time round. A
+  loop that manufactured distinct keys would have been back at 2500 a day with a tidier data structure. The
+  cap only became a guarantee when it became a refusal. The test that caught this was the one asserting the
+  ceiling as a NUMBER: it failed on the first run. Writing it as "and there is a cap" would have passed.
+- **An invariant that silences a symptom owes a diagnostic.** Once the count is safe whatever loops, the
+  loop stops announcing itself and the next report arrives as nothing at all. `launchBlockOverlay` therefore
+  counts launch ATTEMPTS (not launches: a run the gate keeps dropping writes no rows and is exactly where the
+  next one hides) and logs one `w` line per storm. One line, not one per event, or the loop fills logcat with
+  the evidence of itself and pushes out everything that explains it.
+
+The "is this Nudge's own app in front?" question here is asked **positively, by exact class**
+(`isOwnMainAppWindowEvent`), never as "Nudge and not the block overlay": the overlay TASK's first window
+arrives ~600ms early carrying the framework class `android.widget.FrameLayout`, so a negative test would have
+classified it as the app and ended the very arrival the overlay belongs to. The still-unfixed
+`shouldClearForOwnPackageEvent` defect below is a second reason not to reuse that predicate.
