@@ -98,6 +98,18 @@ export function installScripting(): ScriptingState {
       unregisterContentScripts: async (filter?: { ids?: string[] }) => {
         state.calls.push('unregister');
         const ids = filter?.ids;
+        if (ids !== undefined) {
+          // Real Chrome REJECTS an unregister for an id it does not hold, with
+          // "Script with ID 'x' does not exist or is not fully registered". The fake used
+          // to shrug, which is exactly why a red console error on a plain grayscale-off
+          // reached live QA (2026-09-20) with the unit suite green.
+          const missing = ids.filter((id) => !state.scripts.some((s) => s.id === id));
+          if (missing.length > 0) {
+            throw new Error(
+              `Script with ID '${missing[0]}' does not exist or is not fully registered`,
+            );
+          }
+        }
         state.scripts =
           ids === undefined
             ? []

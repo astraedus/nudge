@@ -150,3 +150,46 @@ describe('applyGrayscale', () => {
     await expect(applyGrayscale(grey('reddit.com'))).resolves.toBeUndefined();
   });
 });
+
+describe('switching grayscale off', () => {
+  /**
+   * Live QA 2026-09-20, reproduced twice: turning grayscale off logged
+   * "[nudge] gray-screen registration failed Error: Script with ID 'nudge-grayscale' does
+   * not exist or is not fully registered". Saving settings applies grayscale directly AND
+   * fires storage.onChanged, which applies it again; both read the registration, both see
+   * it, and the loser unregisters something already gone. Nothing was broken, but the only
+   * thing a red error tells a user is that turning a cosmetic feature off does not work.
+   */
+  const grey = settings({
+    rules: [siteRule({ domain: 'youtube.com', grayscale: true })],
+  });
+  const plain = settings({
+    rules: [siteRule({ domain: 'youtube.com', grayscale: false })],
+  });
+
+  it('leaves nothing registered and says nothing to the console', async () => {
+    const errors: unknown[] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => errors.push(args);
+    try {
+      await applyGrayscale(grey);
+      expect(registered()).toBeDefined();
+
+      // Both callers fire, as they do in production.
+      await Promise.all([applyGrayscale(plain), applyGrayscale(plain)]);
+    } finally {
+      console.error = original;
+    }
+
+    expect(registered()).toBeUndefined();
+    expect(errors).toEqual([]);
+  });
+
+  it('is still gone after a third redundant pass', async () => {
+    await applyGrayscale(grey);
+    await applyGrayscale(plain);
+    await applyGrayscale(plain);
+
+    expect(registered()).toBeUndefined();
+  });
+});

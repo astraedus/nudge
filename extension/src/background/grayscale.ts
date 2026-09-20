@@ -74,6 +74,23 @@ async function registeredMatches(): Promise<string[] | null> {
   }
 }
 
+/**
+ * Unregister, treating "it was already gone" as success.
+ *
+ * Absence is the outcome this call is asking for, so reaching it by another route is not a
+ * failure and must not reach the console: the only thing a red error here tells a user is
+ * that turning a cosmetic feature off is broken, which it is not. Anything else still
+ * propagates to the caller's logging.
+ */
+async function unregisterTolerantly(): Promise<void> {
+  try {
+    await chrome.scripting.unregisterContentScripts({ ids: [GRAYSCALE_SCRIPT_ID] });
+  } catch (error) {
+    if (await registeredMatches() === null) return;
+    throw error;
+  }
+}
+
 function sameList(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((value, index) => value === b[index]);
 }
@@ -100,14 +117,27 @@ function registration(matches: string[]): chrome.scripting.RegisteredContentScri
  * mechanism exists to avoid.
  */
 export async function applyGrayscale(settings: NudgeSettings): Promise<void> {
+  // SERIALIZED. Two callers routinely race: saving settings runs this directly AND fires
+  // `storage.onChanged`, which runs it again. Both read the registration, both see one, and
+  // the loser then unregisters something the winner already removed — Chrome answers
+  // "Script with ID 'nudge-grayscale' does not exist or is not fully registered" and the
+  // user gets a red console error for doing nothing more exotic than switching grayscale off
+  // (live QA 2026-09-20, reproduced twice). Queueing makes each call read state the previous
+  // one has finished writing.
+  applyQueue = applyQueue.then(() => applyGrayscaleNow(settings)).catch(() => undefined);
+  return applyQueue;
+}
+
+/** Tail of the serialization chain; never rejects, so one failure cannot poison the queue. */
+let applyQueue: Promise<void> = Promise.resolve();
+
+async function applyGrayscaleNow(settings: NudgeSettings): Promise<void> {
   const desired = grayscaleMatches(settings);
   const current = await registeredMatches();
 
   try {
     if (desired.length === 0) {
-      if (current !== null) {
-        await chrome.scripting.unregisterContentScripts({ ids: [GRAYSCALE_SCRIPT_ID] });
-      }
+      if (current !== null) await unregisterTolerantly();
       return;
     }
     if (current !== null && sameList(current, desired)) return;

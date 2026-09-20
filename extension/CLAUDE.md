@@ -366,6 +366,18 @@ xvfb), scoped with `paths: ['extension/**']`. The Android workflow carries the m
 - **"Browser has been closed" in an e2e fixture usually means OOM**, not a code bug — this
   machine runs `earlyoom` with `--prefer ^chrome$`. The lean Chrome flags in `e2e/fixtures.ts`
   exist for that reason.
+- **A LOCKED desktop makes `chrome.idle` report `locked`, so no usage accrues at all** — any
+  budget test then sits there and silently never fires, looking exactly like a broken limit.
+  Run device/QA sessions under a private D-Bus session bus so the screen state is the
+  harness's, not the machine's.
+- **A full `/tmp` (tmpfs) crashes Chrome renderers at random**, with failures that move
+  around between runs and implicate innocent specs. Put Playwright profiles somewhere else
+  before believing a flaky e2e result.
+- **A fake chrome.* API that is more forgiving than the real one hides real bugs.** The
+  scripting fake used to shrug at `unregisterContentScripts` for an id it did not hold;
+  real Chrome REJECTS it, and that gap is exactly why a red console error on a plain
+  grayscale-off reached live QA with the unit suite green. When a fake and the real API
+  disagree about an error, the fake is wrong.
 - **A `<button>` inside `role="tablist"` is exposed as role `tab`, not `button`.** The
   dashboard's Stats/Settings tabs are invisible to `getByRole('button')` and only match
   `getByRole('tab')`. Correct behaviour, surprising in tests — when a locator finds nothing
