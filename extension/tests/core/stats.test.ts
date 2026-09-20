@@ -3,12 +3,15 @@ import {
   addActiveSeconds,
   allTimeTotals,
   calculateStreak,
+  coerceDayUsage,
   emptyDayUsage,
   hourlyHeatmap,
   lastNDayKeys,
   recordBlocked,
+  recordItemView,
   recordWalkedAway,
   surfaceActiveSeconds,
+  surfaceItemViews,
   topSites,
   totalActiveSeconds,
   weeklySeries,
@@ -22,6 +25,7 @@ function usageWith(overrides: Partial<DayUsage> = {}): DayUsage {
     blocked: overrides.blocked ?? 0,
     walkedAway: overrides.walkedAway ?? 0,
     hourly: overrides.hourly ?? new Array<number>(24).fill(0),
+    items: overrides.items ?? 0,
   };
 }
 
@@ -45,9 +49,15 @@ function nextDayKey(key: string): string {
 }
 
 describe('emptyDayUsage', () => {
-  it('returns the all-zero shape with a 24-length hourly array', () => {
+  it('returns the all-zero shape with a 24-length hourly array and items: 0 (v0.3)', () => {
     const usage = emptyDayUsage();
-    expect(usage).toEqual({ activeSec: 0, blocked: 0, walkedAway: 0, hourly: new Array(24).fill(0) });
+    expect(usage).toEqual({
+      activeSec: 0,
+      blocked: 0,
+      walkedAway: 0,
+      hourly: new Array(24).fill(0),
+      items: 0,
+    });
     expect(usage.hourly).toHaveLength(24);
   });
 
@@ -55,6 +65,120 @@ describe('emptyDayUsage', () => {
     const a = emptyDayUsage();
     const b = emptyDayUsage();
     expect(a.hourly).not.toBe(b.hourly);
+  });
+});
+
+/**
+ * `items` (v0.3) does not exist on any rollup written before the count axis shipped. A
+ * stored rollup is normalized on every READ (never migrated in place — see the doc comment
+ * on `coerceDayUsage`), so this is what stands between a pre-v0.3 rollup and a NaN count
+ * budget that can never trip.
+ */
+describe('coerceDayUsage', () => {
+  it('repairs a stored pre-v0.3 rollup (no `items` field at all) to items: 0, not NaN', () => {
+    const legacy = { activeSec: 120, blocked: 1, walkedAway: 0, hourly: new Array(24).fill(0) };
+    const repaired = coerceDayUsage(legacy);
+    expect(repaired.items).toBe(0);
+    expect(Number.isNaN(repaired.items)).toBe(false);
+    // The rest of the shape is preserved, not just defaulted alongside items.
+    expect(repaired.activeSec).toBe(120);
+    expect(repaired.blocked).toBe(1);
+  });
+
+  it('keeps a real items count when the stored rollup already has one', () => {
+    const stored = { activeSec: 0, blocked: 0, walkedAway: 0, hourly: new Array(24).fill(0), items: 7 };
+    expect(coerceDayUsage(stored).items).toBe(7);
+  });
+
+  it('reads a non-numeric items field as 0 rather than propagating garbage', () => {
+    const stored = { activeSec: 0, blocked: 0, walkedAway: 0, hourly: [], items: 'seven' };
+    expect(coerceDayUsage(stored).items).toBe(0);
+  });
+
+  it('repairs a short hourly array to a valid length-24 array, keeping the values it has', () => {
+    const shortHourly = { hourly: [1, 2, 3] };
+    const repaired = coerceDayUsage(shortHourly);
+    expect(repaired.hourly).toHaveLength(24);
+    expect(repaired.hourly.slice(0, 3)).toEqual([1, 2, 3]);
+    expect(repaired.hourly.slice(3).every((v) => v === 0)).toBe(true);
+  });
+
+  it('repairs an hourly array containing garbage entries, zero-filling only the bad ones', () => {
+    const garbageHourly = { hourly: [1, 'two', null, 4, undefined] };
+    const repaired = coerceDayUsage(garbageHourly);
+    expect(repaired.hourly).toHaveLength(24);
+    expect(repaired.hourly[0]).toBe(1);
+    expect(repaired.hourly[1]).toBe(0);
+    expect(repaired.hourly[2]).toBe(0);
+    expect(repaired.hourly[3]).toBe(4);
+    expect(repaired.hourly[4]).toBe(0);
+  });
+
+  it('falls back to the all-zero shape for non-object input', () => {
+    for (const garbage of [null, undefined, 'nope', 42, true]) {
+      expect(coerceDayUsage(garbage)).toEqual(emptyDayUsage());
+    }
+  });
+
+  it('does not mutate the input value', () => {
+    const stored = { activeSec: 5, blocked: 0, walkedAway: 0, hourly: [1, 2], items: 3 };
+    const snapshot = JSON.parse(JSON.stringify(stored));
+    coerceDayUsage(stored);
+    expect(stored).toEqual(snapshot);
+  });
+});
+
+describe('recordItemView', () => {
+  it('adds one to items and is pure — returns a new object, never mutates the input', () => {
+    const original = emptyDayUsage();
+    const snapshot = JSON.parse(JSON.stringify(original));
+    const next = recordItemView(original);
+    expect(next).not.toBe(original);
+    expect(original).toEqual(snapshot);
+    expect(next.items).toBe(1);
+  });
+
+  it('accumulates across repeated calls', () => {
+    let usage = emptyDayUsage();
+    usage = recordItemView(usage);
+    usage = recordItemView(usage);
+    usage = recordItemView(usage);
+    expect(usage.items).toBe(3);
+  });
+
+  it('clones the hourly array rather than sharing the reference (matches addActiveSeconds)', () => {
+    const original = emptyDayUsage();
+    const next = recordItemView(original);
+    expect(next.hourly).not.toBe(original.hourly);
+  });
+
+  it('survives a rollup whose items is missing at runtime, rather than producing NaN', () => {
+    // The normal repair point is coerceDayUsage on read, but recordItemView guards the same
+    // failure mode itself (`typeof usage.items === 'number' ? usage.items : 0`) as defence
+    // in depth: a v0.2-shaped object smuggled past the type system must not silently make
+    // every future `items >= limit` comparison false forever.
+    const legacy = {
+      activeSec: 0,
+      blocked: 0,
+      walkedAway: 0,
+      hourly: new Array(24).fill(0),
+    } as DayUsage;
+    const next = recordItemView(legacy);
+    expect(next.items).toBe(1);
+    expect(Number.isNaN(next.items)).toBe(false);
+  });
+});
+
+describe('surfaceItemViews', () => {
+  it("reads one surface's item count for a day", () => {
+    const day = buildDay({ 'youtube.com#shorts': { items: 12 } });
+    expect(surfaceItemViews(day, 'youtube.com', 'shorts')).toBe(12);
+  });
+
+  it('is 0 when the surface was never recorded that day', () => {
+    const day = buildDay({ 'youtube.com#shorts': { items: 12 } });
+    expect(surfaceItemViews(day, 'youtube.com', 'home')).toBe(0);
+    expect(surfaceItemViews({}, 'youtube.com', 'shorts')).toBe(0);
   });
 });
 

@@ -160,7 +160,7 @@ describe('initXContentScript — gate overlay', () => {
     window.history.replaceState({}, '', '/home');
 
     const fetchConfig = vi.fn(async () =>
-      configWith({ gates: [{ id: 'home', mode: 'HARD_BLOCK', delaySeconds: 15, limitReached: false }] }),
+      configWith({ gates: [{ id: 'home', mode: 'HARD_BLOCK', delaySeconds: 15, limitReached: false, countReached: false, itemsToday: 0, countLimit: null }] }),
     );
 
     const controller = initXContentScript(document, fetchConfig);
@@ -176,7 +176,7 @@ describe('initXContentScript — gate overlay', () => {
     window.history.replaceState({}, '', '/notifications');
 
     const fetchConfig = vi.fn(async () =>
-      configWith({ gates: [{ id: 'notifications', mode: 'ALLOW', delaySeconds: 15, limitReached: false }] }),
+      configWith({ gates: [{ id: 'notifications', mode: 'ALLOW', delaySeconds: 15, limitReached: false, countReached: false, itemsToday: 0, countLimit: null }] }),
     );
 
     const controller = initXContentScript(document, fetchConfig);
@@ -192,7 +192,7 @@ describe('initXContentScript — gate overlay', () => {
     window.history.replaceState({}, '', '/someuser/status/12345');
 
     const fetchConfig = vi.fn(async () =>
-      configWith({ gates: [{ id: 'home', mode: 'HARD_BLOCK', delaySeconds: 15, limitReached: false }] }),
+      configWith({ gates: [{ id: 'home', mode: 'HARD_BLOCK', delaySeconds: 15, limitReached: false, countReached: false, itemsToday: 0, countLimit: null }] }),
     );
 
     const controller = initXContentScript(document, fetchConfig);
@@ -208,8 +208,8 @@ describe('initXContentScript — gate overlay', () => {
     window.history.replaceState({}, '', '/someuser/status/12345');
 
     const currentGates: ResolvedGate[] = [
-      { id: 'home', mode: 'HARD_BLOCK', delaySeconds: 15, limitReached: false },
-      { id: 'explore', mode: 'HARD_BLOCK', delaySeconds: 15, limitReached: false },
+      { id: 'home', mode: 'HARD_BLOCK', delaySeconds: 15, limitReached: false, countReached: false, itemsToday: 0, countLimit: null },
+      { id: 'explore', mode: 'HARD_BLOCK', delaySeconds: 15, limitReached: false, countReached: false, itemsToday: 0, countLimit: null },
     ];
     const fetchConfig = vi.fn(async () => configWith({ gates: currentGates }));
 

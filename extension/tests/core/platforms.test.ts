@@ -2,11 +2,17 @@ import { describe, expect, it } from 'vitest';
 
 import {
   PLATFORMS,
+  gateDefinition,
   gateForUrl,
+  gateIdSupportsItemCount,
+  gateItemNoun,
   gateMatchesPath,
   gatePathRegex,
+  gateSupportsItemCount,
   isKnownGate,
   isKnownHide,
+  itemForUrl,
+  itemIdForPath,
   platformById,
   platformForDomain,
   quickAddPlatforms,
@@ -104,6 +110,105 @@ describe('platform registry: structural invariants', () => {
         }
       }
     }
+  });
+});
+
+/**
+ * `itemPaths` (v0.3): the count-budget counterpart of `paths`. These invariants exist for
+ * exactly the reason the `paths` ones above do — DNR and the content script must agree —
+ * PLUS one `itemPaths` alone requires: each pattern's single capture group is the item id
+ * a count budget de-duplicates against, so a pattern with zero or two+ groups either never
+ * counts anything or counts the wrong substring as the id.
+ */
+describe('platform registry: item-path (count-budget) invariants', () => {
+  /**
+   * A crude but sufficient capture-group counter for this registry's patterns: every
+   * pattern here uses `(?:…)` for a non-capturing group and `(...)` (no leading `?`) for a
+   * capturing one, so counting un-escaped `(` not immediately followed by `?` is exact for
+   * every string actually in `core/platforms.ts`.
+   */
+  function captureGroupCount(pattern: string): number {
+    let count = 0;
+    for (let i = 0; i < pattern.length; i++) {
+      const char = pattern[i];
+      if (char === '\\') {
+        i++; // skip the escaped character, e.g. the '.' in '\\.'
+        continue;
+      }
+      if (char === '(' && pattern[i + 1] !== '?') count++;
+    }
+    return count;
+  }
+
+  it('the capture-group counter itself distinguishes a real item pattern from a broken one', () => {
+    // Plant the defect: prove this guard would actually FAIL a pattern missing its capture
+    // group, and that the leading-slash assertion below would fail one missing its slash —
+    // the registry test suite has a documented case (see 'starts every path pattern with a
+    // slash' above) of a guard that built its own test input FROM the pattern and so
+    // validated nothing. This case is the same discipline applied to the new invariant.
+    expect(captureGroupCount('/shorts(?:/.*)?')).toBe(0); // a surface pattern, no item id at all
+    expect(captureGroupCount('/shorts/([^/?#]+)/?')).toBe(1); // a real item pattern
+    expect(captureGroupCount('/@[^/?#]+/video/([^/?#]+)/?')).toBe(1);
+    const slashless = 'shorts/([^/?#]+)/?';
+    expect(captureGroupCount(slashless)).toBe(1); // has its capture group...
+    expect(slashless.startsWith('/')).toBe(false); // ...but the OTHER assertion catches this
+  });
+
+  it('gives every itemPaths pattern the same anchoring as a surface path', () => {
+    for (const platform of PLATFORMS) {
+      for (const gate of platform.gates) {
+        for (const pattern of gate.itemPaths ?? []) {
+          const regex = gatePathRegex(pattern);
+          expect(regex.source.startsWith('^'), `${platform.id}/${gate.id}: ${pattern}`).toBe(true);
+          expect(regex.source.endsWith('$'), `${platform.id}/${gate.id}: ${pattern}`).toBe(true);
+        }
+      }
+    }
+  });
+
+  it('starts every itemPaths pattern with a slash', () => {
+    for (const platform of PLATFORMS) {
+      for (const gate of platform.gates) {
+        for (const pattern of gate.itemPaths ?? []) {
+          expect(pattern.startsWith('/'), `${platform.id}/${gate.id}: ${pattern}`).toBe(true);
+        }
+      }
+    }
+  });
+
+  it('gives every itemPaths pattern EXACTLY one capturing group — that group is the item id', () => {
+    for (const platform of PLATFORMS) {
+      for (const gate of platform.gates) {
+        for (const pattern of gate.itemPaths ?? []) {
+          expect(
+            captureGroupCount(pattern),
+            `${platform.id}/${gate.id}: ${pattern} must have exactly one capture group`,
+          ).toBe(1);
+        }
+      }
+    }
+  });
+
+  it('never lets a gate carry itemPaths without itemNoun, or itemNoun without itemPaths', () => {
+    for (const platform of PLATFORMS) {
+      for (const gate of platform.gates) {
+        const hasItemPaths = (gate.itemPaths?.length ?? 0) > 0;
+        const hasItemNoun = gate.itemNoun !== undefined;
+        expect(hasItemPaths, `${platform.id}/${gate.id}: itemNoun without itemPaths`).toBe(
+          hasItemNoun,
+        );
+        expect(hasItemNoun, `${platform.id}/${gate.id}: itemPaths without itemNoun`).toBe(
+          hasItemPaths,
+        );
+      }
+    }
+  });
+
+  it('only the three documented gates carry an item stream — adding one elsewhere is a deliberate act, not an accident', () => {
+    const withItems = PLATFORMS.flatMap((platform) =>
+      platform.gates.filter(gateSupportsItemCount).map((gate) => `${platform.id}/${gate.id}`),
+    );
+    expect(withItems.sort()).toEqual(['instagram/reels', 'tiktok/foryou', 'youtube/shorts']);
   });
 });
 
@@ -272,5 +377,152 @@ describe('isKnownGate / isKnownHide', () => {
     expect(isKnownGate('youtube', 'reels')).toBe(false);
     expect(isKnownHide('linkedin', 'trends')).toBe(false);
     expect(isKnownGate('reddit', 'nonsense')).toBe(false);
+  });
+});
+
+describe('gateSupportsItemCount / gateIdSupportsItemCount / gateItemNoun', () => {
+  it('is true for exactly the three gates the registry gives an item stream', () => {
+    expect(gateIdSupportsItemCount('youtube', 'shorts')).toBe(true);
+    expect(gateIdSupportsItemCount('instagram', 'reels')).toBe(true);
+    expect(gateIdSupportsItemCount('tiktok', 'foryou')).toBe(true);
+  });
+
+  it('is false for every gate without an item stream, including on the SAME platforms', () => {
+    expect(gateIdSupportsItemCount('youtube', 'shorts')).toBe(true); // sanity anchor
+    expect(gateIdSupportsItemCount('instagram', 'explore')).toBe(false);
+    expect(gateIdSupportsItemCount('instagram', 'home')).toBe(false);
+    expect(gateIdSupportsItemCount('tiktok', 'explore')).toBe(false);
+    expect(gateIdSupportsItemCount('tiktok', 'live')).toBe(false);
+    expect(gateIdSupportsItemCount('x', 'home')).toBe(false);
+    expect(gateIdSupportsItemCount('reddit', 'home')).toBe(false);
+    expect(gateIdSupportsItemCount('linkedin', 'feed')).toBe(false);
+    expect(gateIdSupportsItemCount('facebook', 'reels')).toBe(false);
+  });
+
+  it('gateSupportsItemCount agrees with gateIdSupportsItemCount for a definition object directly', () => {
+    const shorts = gateDefinition('youtube', 'shorts')!;
+    const explore = gateDefinition('instagram', 'explore')!;
+    expect(gateSupportsItemCount(shorts)).toBe(true);
+    expect(gateSupportsItemCount(explore)).toBe(false);
+  });
+
+  it('gateItemNoun returns the singular/plural pair for a count-capable gate, null otherwise', () => {
+    expect(gateItemNoun('youtube', 'shorts')).toEqual({ singular: 'Short', plural: 'Shorts' });
+    expect(gateItemNoun('instagram', 'reels')).toEqual({ singular: 'Reel', plural: 'Reels' });
+    expect(gateItemNoun('tiktok', 'foryou')).toEqual({ singular: 'video', plural: 'videos' });
+    expect(gateItemNoun('x', 'home')).toBeNull();
+    expect(gateItemNoun('instagram', 'explore')).toBeNull();
+  });
+});
+
+describe('itemIdForPath', () => {
+  const shorts = gateDefinition('youtube', 'shorts')!;
+  const reels = gateDefinition('instagram', 'reels')!;
+
+  it('extracts the item id from a Shorts path', () => {
+    expect(itemIdForPath(shorts, '/shorts/abc123')).toBe('abc123');
+  });
+
+  it('treats a trailing slash as the SAME item, not a different one', () => {
+    expect(itemIdForPath(shorts, '/shorts/abc123')).toBe(itemIdForPath(shorts, '/shorts/abc123/'));
+  });
+
+  it('is null for the bare Shorts tab — it is a surface, not an item', () => {
+    expect(itemIdForPath(shorts, '/shorts/')).toBeNull();
+    expect(itemIdForPath(shorts, '/shorts')).toBeNull();
+  });
+
+  it('tries every itemPaths pattern on a gate that has more than one (Instagram reel vs reels)', () => {
+    expect(itemIdForPath(reels, '/reels/Cabc123/')).toBe('Cabc123');
+    expect(itemIdForPath(reels, '/reel/Cxyz789/')).toBe('Cxyz789');
+  });
+
+  it('is null for an unrelated path', () => {
+    expect(itemIdForPath(shorts, '/watch')).toBeNull();
+  });
+
+  it('is null on a gate with no itemPaths at all', () => {
+    const explore = gateDefinition('instagram', 'explore')!;
+    expect(itemIdForPath(explore, '/explore/anything')).toBeNull();
+  });
+});
+
+/**
+ * `itemForUrl` is the COUNTING counterpart of `gateForUrl`: it answers "is this URL one
+ * item of a gate's stream", which is deliberately a different question from "is this URL
+ * on the gate's surface" (see the doc comment on `GateDefinition.itemPaths`). The two
+ * disagree by design on TikTok, so that disagreement is asserted directly here rather than
+ * only implied by the registry invariants above.
+ */
+describe('itemForUrl', () => {
+  it('resolves a Short to its gate and item id', () => {
+    expect(itemForUrl('youtube', 'https://www.youtube.com/shorts/abc123')).toEqual({
+      gateId: 'shorts',
+      itemId: 'abc123',
+    });
+  });
+
+  it('treats /shorts/abc and /shorts/abc/ as the SAME item', () => {
+    expect(itemForUrl('youtube', 'https://www.youtube.com/shorts/abc')).toEqual({
+      gateId: 'shorts',
+      itemId: 'abc',
+    });
+    expect(itemForUrl('youtube', 'https://www.youtube.com/shorts/abc/')).toEqual({
+      gateId: 'shorts',
+      itemId: 'abc',
+    });
+  });
+
+  it('a bare Shorts tab is not an item', () => {
+    expect(itemForUrl('youtube', 'https://www.youtube.com/shorts/')).toBeNull();
+    expect(itemForUrl('youtube', 'https://www.youtube.com/shorts')).toBeNull();
+  });
+
+  it('a bare Reels tab is not an item', () => {
+    expect(itemForUrl('instagram', 'https://www.instagram.com/reels/')).toBeNull();
+  });
+
+  it('an Instagram Reels-audio page is not an item, even though it starts with /reels/', () => {
+    expect(itemForUrl('instagram', 'https://www.instagram.com/reels/audio/123456/')).toBeNull();
+  });
+
+  it('resolves a single Instagram reel page (the /reel/ singular path)', () => {
+    expect(itemForUrl('instagram', 'https://www.instagram.com/reel/Cxyz789/')).toEqual({
+      gateId: 'reels',
+      itemId: 'Cxyz789',
+    });
+  });
+
+  it('a TikTok profile video URL resolves to the For You gate — it is an ITEM of that stream even though it is NOT the For You surface', () => {
+    // gateForUrl must NOT call this an in-surface page (a shared video link is not the
+    // feed); itemForUrl must still recognise it as one item of the feed's stream, for
+    // counting. Both must be true at once, which is the entire reason the two are separate
+    // functions.
+    expect(gateForUrl('tiktok', 'https://www.tiktok.com/@someone/video/123')).toBeNull();
+    expect(itemForUrl('tiktok', 'https://www.tiktok.com/@someone/video/123')).toEqual({
+      gateId: 'foryou',
+      itemId: '123',
+    });
+  });
+
+  it('an X, Reddit, LinkedIn or Facebook feed gate has no item paths, so nothing on those platforms is ever an item', () => {
+    expect(itemForUrl('x', 'https://x.com/home')).toBeNull();
+    expect(itemForUrl('x', 'https://x.com/someone/status/1')).toBeNull();
+    expect(itemForUrl('reddit', 'https://www.reddit.com/r/popular')).toBeNull();
+    expect(itemForUrl('reddit', 'https://www.reddit.com/r/programming/comments/abc/title/')).toBeNull();
+    expect(itemForUrl('linkedin', 'https://www.linkedin.com/feed/')).toBeNull();
+    expect(itemForUrl('facebook', 'https://www.facebook.com/reel/123')).toBeNull();
+    expect(itemForUrl('facebook', 'https://www.facebook.com/watch')).toBeNull();
+  });
+
+  it('returns null rather than throwing on an unparseable URL', () => {
+    expect(itemForUrl('youtube', 'not a url')).toBeNull();
+    expect(itemForUrl('youtube', '')).toBeNull();
+  });
+
+  it('ignores the query string and hash when matching an item URL', () => {
+    expect(itemForUrl('youtube', 'https://www.youtube.com/shorts/abc123?feature=share#t=5')).toEqual(
+      { gateId: 'shorts', itemId: 'abc123' },
+    );
   });
 });

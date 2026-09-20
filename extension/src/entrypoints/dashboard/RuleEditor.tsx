@@ -119,14 +119,28 @@ function LimitPicker({
   value,
   onChange,
   idPrefix,
+  groupLabel,
 }: {
   value: number | null;
   onChange: (minutes: number | null) => void;
   idPrefix: string;
+  /**
+   * Accessible name for the whole chip row.
+   *
+   * A gate can now show TWO budget pickers side by side, and both open with a chip
+   * labelled "No limit" followed by bare numbers. Without a named group a screen reader
+   * reads "No limit, 15, 30, 60, 120, No limit, 5, 10, 20, 50" as one undifferentiated
+   * run, and there is nothing in the chip text itself to say which budget is which.
+   */
+  groupLabel: string;
 }) {
   const isPreset = (DAILY_LIMIT_PRESETS as readonly number[]).includes(value ?? -1);
   return (
-    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+    <div
+      role="group"
+      aria-label={groupLabel}
+      style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}
+    >
       <Chip label="No limit" active={value === null} onClick={() => onChange(null)} />
       {DAILY_LIMIT_PRESETS.map((preset) => (
         <Chip
@@ -189,7 +203,11 @@ function CountPicker({
 }) {
   const isPreset = (DAILY_COUNT_PRESETS as readonly number[]).includes(value ?? -1);
   return (
-    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+    <div
+      role="group"
+      aria-label={`${noun} per day`}
+      style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}
+    >
       <Chip label="No limit" active={value === null} onClick={() => onChange(null)} />
       {DAILY_COUNT_PRESETS.map((preset) => (
         <Chip
@@ -312,6 +330,7 @@ function GateRow({
             value={gate.dailyLimitMinutes}
             onChange={(dailyLimitMinutes) => onChange({ ...gate, dailyLimitMinutes })}
             idPrefix={definition.id}
+            groupLabel={`${definition.label} minutes per day`}
           />
           {showCount && itemNoun !== null && (
             <div>
@@ -482,6 +501,7 @@ export function RuleEditor({
                 value={draft.dailyLimitMinutes}
                 onChange={(dailyLimitMinutes) => setDraft((d) => ({ ...d, dailyLimitMinutes }))}
                 idPrefix="default"
+                groupLabel="Daily Time Limit"
               />
               {draft.dailyLimitMinutes !== null && (
                 <div style={{ marginTop: 12 }}>

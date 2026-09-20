@@ -69,7 +69,18 @@ describe('GET_SITE_CONFIG', () => {
     expect(config.hides.comments).toBe(true);
     expect(config.youtube?.channelMode).toBe('WHITELIST');
     expect(config.gates).toEqual([
-      { id: 'shorts', mode: 'DELAY', delaySeconds: 20, limitReached: false },
+      {
+        id: 'shorts',
+        mode: 'DELAY',
+        delaySeconds: 20,
+        limitReached: false,
+        // v0.3: the count axis rides alongside the minute one on every resolved gate.
+        // Nothing was viewed and no count budget is set, so both read their "nothing
+        // spent, nothing configured" defaults.
+        countReached: false,
+        itemsToday: 0,
+        countLimit: null,
+      },
     ]);
   });
 
@@ -97,7 +108,17 @@ describe('GET_SITE_CONFIG', () => {
     });
     // Delay 0 because an exhausted budget has nothing left to wait out today.
     expect(config.gates).toEqual([
-      { id: 'shorts', mode: 'HARD_BLOCK', delaySeconds: 0, limitReached: true },
+      {
+        id: 'shorts',
+        mode: 'HARD_BLOCK',
+        delaySeconds: 0,
+        limitReached: true,
+        // The MINUTE budget is what is spent here, not the count one — the two axes
+        // are independent, and this rule never configured a count limit at all.
+        countReached: false,
+        itemsToday: 0,
+        countLimit: null,
+      },
     ]);
   });
 
@@ -127,7 +148,15 @@ describe('GET_SITE_CONFIG', () => {
       url: 'https://www.youtube.com/shorts/abc',
     });
     expect(config.gates).toEqual([
-      { id: 'shorts', mode: 'HARD_BLOCK', delaySeconds: 15, limitReached: false },
+      {
+        id: 'shorts',
+        mode: 'HARD_BLOCK',
+        delaySeconds: 15,
+        limitReached: false,
+        countReached: false,
+        itemsToday: 0,
+        countLimit: null,
+      },
     ]);
   });
 
@@ -152,6 +181,43 @@ describe('GET_SITE_CONFIG', () => {
     });
     expect(config.enabled).toBe(false);
     expect(config.platform).toBe('instagram');
+  });
+
+  it('reports countReached and itemsToday for a gate whose COUNT budget is spent', async () => {
+    await seed(
+      settings({
+        rules: [
+          siteRule({
+            domain: 'youtube.com',
+            mode: 'ALLOW',
+            features: featuresWith('youtube', {
+              gates: { shorts: { mode: 'OFF', dailyLimitCount: 20 } },
+            }),
+          }),
+        ],
+      }),
+    );
+    await saveDay(localDayKey(NOW), {
+      [surfaceKey('youtube.com', 'shorts')]: { ...emptyDayUsage(), items: 20 },
+    });
+
+    const config = await ask<SiteConfig>({
+      type: 'GET_SITE_CONFIG',
+      url: 'https://www.youtube.com/shorts/abc',
+    });
+    // Delay 0 for the same reason a spent minute budget reads 0: an exhausted count has
+    // nothing left to wait out today either.
+    expect(config.gates).toEqual([
+      {
+        id: 'shorts',
+        mode: 'HARD_BLOCK',
+        delaySeconds: 0,
+        limitReached: false,
+        countReached: true,
+        itemsToday: 20,
+        countLimit: 20,
+      },
+    ]);
   });
 });
 
@@ -263,6 +329,79 @@ describe('GET_BLOCK_CONTEXT', () => {
     });
     expect(youtube.allowedChannels).toEqual([]);
     expect(reddit.allowedChannels).toEqual([]);
+  });
+
+  it('names the COUNT budget when that is what closed the gate, distinct from a minute limit', async () => {
+    // "Daily Shorts limit reached" is the wrong sentence for someone who set a count of 20
+    // and no time budget at all — they would go looking in the editor for a minutes limit
+    // they never set. `gateLimitKind` is what lets the block page tell the two apart.
+    await seed(
+      settings({
+        rules: [
+          siteRule({
+            domain: 'youtube.com',
+            mode: 'ALLOW',
+            features: featuresWith('youtube', {
+              gates: { shorts: { mode: 'OFF', dailyLimitCount: 20 } },
+            }),
+          }),
+        ],
+      }),
+    );
+    await saveDay(localDayKey(NOW), {
+      [surfaceKey('youtube.com', 'shorts')]: { ...emptyDayUsage(), items: 20 },
+    });
+
+    const context = await ask<BlockContext>({
+      type: 'GET_BLOCK_CONTEXT',
+      target: 'https://www.youtube.com/shorts/abc',
+    });
+
+    expect(context.gateId).toBe('shorts');
+    expect(context.gateLimitKind).toBe('count');
+    expect(context.gateItemsToday).toBe(20);
+    expect(context.gateCountLimit).toBe(20);
+    expect(context.gateItemNoun).toBe('Shorts');
+    expect(context.decision.type).toBe('BLOCK');
+    if (context.decision.type === 'BLOCK') {
+      // The engine itself knows only the minute axis (teaching it a second one risks the
+      // ENGINE INVARIANT), so it answers a plain Hard Block; `buildBlockContext` sets
+      // `limitReached` afterwards from the verdict that actually decided.
+      expect(context.decision.mode).toBe('HARD_BLOCK');
+      expect(context.decision.limitReached).toBe(true);
+    }
+  });
+});
+
+describe('ITEM_VIEWED', () => {
+  it('reaches the counter and answers ok/counted', async () => {
+    await seed(settings({ rules: [siteRule({ domain: 'youtube.com' })] }));
+
+    const result = await ask<{ ok: boolean; counted: boolean }>({
+      type: 'ITEM_VIEWED',
+      url: 'https://www.youtube.com/shorts/abc',
+    });
+
+    expect(result).toEqual({ ok: true, counted: true });
+    const day = await loadDay(localDayKey(NOW));
+    expect(day[surfaceKey('youtube.com', 'shorts')]?.items).toBe(1);
+  });
+
+  it('still answers on an unknown or garbage URL, rather than hanging the caller', async () => {
+    // A handler that never responds hangs the content script's sendMessage promise
+    // forever — the same lesson `registerMessageRouter`'s own docstring calls out for the
+    // router as a whole, and it applies just as much to one request type as to all of them.
+    const unknown = await ask<{ ok: boolean; counted: boolean }>({
+      type: 'ITEM_VIEWED',
+      url: 'https://example.com/nothing-here',
+    });
+    const garbage = await ask<{ ok: boolean; counted: boolean }>({
+      type: 'ITEM_VIEWED',
+      url: 'not a url at all',
+    });
+
+    expect(unknown).toEqual({ ok: true, counted: false });
+    expect(garbage).toEqual({ ok: true, counted: false });
   });
 });
 

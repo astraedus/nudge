@@ -284,5 +284,95 @@ describe('v3 features validation', () => {
     expect(Object.values(features?.hides ?? {}).every((h) => h === false)).toBe(true);
     // Channel lists are a YouTube-only concept.
     expect(features?.youtube).toBeUndefined();
+    // v0.3's count axis is materialized (via defaultFeatures/defaultGateSetting) just like
+    // every other new gate field, unset -- upgrading changes nothing the user sees.
+    expect(Object.values(features?.gates ?? {}).every((g) => g.dailyLimitCount === null)).toBe(
+      true,
+    );
+  });
+});
+
+/**
+ * The v2 fold (this file's whole subject) still has to land on the CURRENT schema, not just
+ * on v3 — the v0.3 count axis riding on top of it must not stop a real v0.1.0/v0.2.0 user's
+ * settings from completing the full migration distance in one `migrateSettings` call.
+ */
+describe('v2 -> v4: the fold still lands on the current schema, count axis included', () => {
+  it('a v2 blob migrates all the way through to v4', () => {
+    const migrated = migrateSettings(v2WithEverythingOn());
+    expect(migrated.schemaVersion).toBe(4);
+    expect(migrated.schemaVersion).toBe(SCHEMA_VERSION);
+    // The v2 fold itself is undisturbed: the shorts gate still carries what v2 configured.
+    const rule = ruleFor(migrated, 'youtube.com');
+    expect(rule.features?.gates.shorts).toMatchObject({ mode: 'HARD_BLOCK', delaySeconds: 25 });
+    // v2 never had a count axis, so the folded-in gate reads null, never invented.
+    expect(rule.features?.gates.shorts?.dailyLimitCount).toBeNull();
+  });
+});
+
+/**
+ * `mergeFeatures` (private to settingsSchema.ts) merges the count axis with the same
+ * "tighter cap wins, any cap beats no cap" rule as the minute axis (`tighterCap`), reached
+ * here through its one real caller, `foldLegacyYoutube`.
+ *
+ * NOTE on coverage: v2 never had a count axis at all, so the legacy-derived `incoming` side
+ * of this merge always contributes `dailyLimitCount: null` — there is no code path in the
+ * real product that can hand `mergeFeatures` two DIFFERING non-null counts to pick between
+ * (the only caller is this v2 fold, and `mergeFeatures` is not otherwise exported). The
+ * genuinely-reachable case is therefore "a count set on the existing v3+ rule survives a v2
+ * sync that knows nothing about counts" — asserted below — rather than a two-sided
+ * disagreement, which is a real but currently unreachable case (see the "any cap beats no
+ * cap" half of `tighterCap`'s doc comment for the same reasoning on the minute axis).
+ */
+describe('v2 -> v4: mergeFeatures on the independent COUNT axis', () => {
+  it('keeps a count that is set on only the EXISTING rule when the legacy v2 fold contributes none', () => {
+    const existingRule = {
+      id: 'rule-youtube.com',
+      domain: 'youtube.com',
+      mode: 'ALLOW',
+      delaySeconds: 15,
+      dailyLimitMinutes: null,
+      enabled: true,
+      createdAt: 0,
+      showTimeRemaining: false,
+      schedule: null,
+      grayscale: false,
+      features: {
+        platform: 'youtube',
+        gates: {
+          shorts: { mode: 'DELAY', delaySeconds: 15, dailyLimitMinutes: null, dailyLimitCount: 15 },
+        },
+        hides: {},
+      },
+    };
+    const rule = ruleFor(migrateSettings(v2WithEverythingOn([existingRule])), 'youtube.com');
+    expect(rule.features?.gates.shorts?.dailyLimitCount).toBe(15);
+    // The v2 block's own (stronger) mode still wins on that independent axis, proving this
+    // really did run the merge and not just pass the existing rule through untouched.
+    expect(rule.features?.gates.shorts?.mode).toBe('HARD_BLOCK');
+  });
+
+  it('is idempotent -- folding a count-bearing rule against the same v2 block twice is stable', () => {
+    const existingRule = {
+      id: 'rule-youtube.com',
+      domain: 'youtube.com',
+      mode: 'ALLOW',
+      delaySeconds: 15,
+      dailyLimitMinutes: null,
+      enabled: true,
+      createdAt: 0,
+      showTimeRemaining: false,
+      schedule: null,
+      grayscale: false,
+      features: {
+        platform: 'youtube',
+        gates: {
+          shorts: { mode: 'DELAY', delaySeconds: 15, dailyLimitMinutes: null, dailyLimitCount: 15 },
+        },
+        hides: {},
+      },
+    };
+    const once = migrateSettings(v2WithEverythingOn([existingRule]));
+    expect(migrateSettings(once)).toEqual(once);
   });
 });

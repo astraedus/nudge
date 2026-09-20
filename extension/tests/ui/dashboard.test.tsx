@@ -3,9 +3,10 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DashboardState, DayUsage } from '../../src/core/protocol';
 import { NOTHING_ACTIVE } from '../../src/core/featureSummary';
-import { DEFAULT_SETTINGS, structuredCloneSettings } from '../../src/core/settingsSchema';
+import { DEFAULT_SETTINGS, defaultFeatures, structuredCloneSettings } from '../../src/core/settingsSchema';
 import type { NudgeSettings, SiteRule } from '../../src/core/settingsSchema';
 import { forDisplay } from '../../src/core/strictMode';
+import { surfaceKey } from '../../src/core/surfaceKeys';
 import { Dashboard } from '../../src/entrypoints/dashboard/Dashboard';
 import { ChallengeDialog } from '../../src/entrypoints/dashboard/ChallengeDialog';
 import { StatsPanel } from '../../src/entrypoints/dashboard/StatsPanel';
@@ -13,7 +14,17 @@ import { StatsPanel } from '../../src/entrypoints/dashboard/StatsPanel';
 let sendMessageMock: ReturnType<typeof vi.fn>;
 
 function makeDay(overrides: Partial<DayUsage> = {}): DayUsage {
-  return { activeSec: 0, blocked: 0, walkedAway: 0, hourly: new Array<number>(24).fill(0), ...overrides };
+  return {
+    activeSec: 0,
+    blocked: 0,
+    walkedAway: 0,
+    hourly: new Array<number>(24).fill(0),
+    // Distinct items viewed today (v0.3), only ever non-zero on a `domain#gate` surface
+    // key. 0 by default so every existing caller keeps testing the "no item stream, or no
+    // items yet" shape it was written for; the "of which" count tests override this.
+    items: 0,
+    ...overrides,
+  };
 }
 
 function makeRule(overrides: Partial<SiteRule> = {}): SiteRule {
@@ -147,6 +158,68 @@ describe('StatsPanel', () => {
   it('renders a 24-cell hourly heatmap', () => {
     const { container } = render(<StatsPanel data={makeState()} />);
     expect(container.querySelectorAll('[title$=":00 — 0s"], [title*=":00 — "]').length).toBe(24);
+  });
+});
+
+describe('StatsPanel — the "of which" line (v0.3 count budgets)', () => {
+  /**
+   * A gate's time is attributed to BOTH its site key ("youtube.com") and its own surface
+   * key ("youtube.com#shorts") — see `core/surfaceKeys.ts` — so every fixture below carries
+   * both, exactly like the real tracker.
+   */
+  function stateWithSurfaces(overrides: Partial<DashboardState> = {}): DashboardState {
+    return {
+      settings: makeSettings({ rules: [] }),
+      recentDays: RECENT_DAYS,
+      usage: {
+        '2026-07-26': {
+          'youtube.com': makeDay({ activeSec: 720 }),
+          [surfaceKey('youtube.com', 'shorts')]: makeDay({ activeSec: 720, items: 34 }),
+          'instagram.com': makeDay({ activeSec: 60 }),
+          [surfaceKey('instagram.com', 'reels')]: makeDay({ activeSec: 60, items: 0 }),
+          'x.com': makeDay({ activeSec: 180 }),
+          [surfaceKey('x.com', 'home')]: makeDay({ activeSec: 180 }),
+        },
+      },
+      allTimeBlocked: 0,
+      allTimeWalkedAway: 0,
+      ...overrides,
+    };
+  }
+
+  it('shows the item count for a counted surface, in the registry noun', () => {
+    // The "of which" line is one text node ("of which " + the joined rows), so this checks
+    // the rendered markup contains the row rather than matching it as a standalone node —
+    // same pattern the existing summary-line tests in this file already use.
+    const { container } = render(<StatsPanel data={stateWithSurfaces()} />);
+    expect(container.textContent).toContain('Shorts: 12m (34 Shorts)');
+  });
+
+  it('shows "0 <Noun>" rather than omitting the line, when the surface has a count but no items yet', () => {
+    // An absent line reads as the counter not working; "0 Reels" is a real, reassuring
+    // answer (StatsPanel.tsx `surfaceRowText` doc comment).
+    const { container } = render(<StatsPanel data={stateWithSurfaces()} />);
+    expect(container.textContent).toContain('Reels: 1m (0 Reels)');
+  });
+
+  it('shows no count at all for a surface with no item stream', () => {
+    // X's home timeline gate carries no `itemPaths` in the registry, so it can never have
+    // a meaningful count — the line stays time-only, with no "(0 …)" suffix invented for it.
+    const { container } = render(<StatsPanel data={stateWithSurfaces()} />);
+    expect(container.textContent).toContain('Home timeline: 3m');
+    expect(container.textContent).not.toMatch(/Home timeline: 3m\s*\(/);
+  });
+
+  it('the phantom-site invariant still holds: a domain#gate key never appears as its own site row', () => {
+    // `isSurfaceKey`/`domainKeysOnly` (core/surfaceKeys.ts) exist specifically so a stats
+    // table built by naively listing the usage map's keys does not grow a phantom
+    // "youtube.com#shorts" site alongside the real "youtube.com" row.
+    render(<StatsPanel data={stateWithSurfaces()} />);
+
+    expect(screen.getByText('youtube.com')).toBeDefined();
+    expect(screen.queryByText('youtube.com#shorts')).toBeNull();
+    expect(screen.queryByText(surfaceKey('youtube.com', 'shorts'))).toBeNull();
+    expect(screen.getAllByText('youtube.com')).toHaveLength(1);
   });
 });
 
@@ -505,5 +578,31 @@ describe('SettingsPanel — sites list (ext-13 §5)', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
 
     expect(screen.getByText('Grayscale')).toBeDefined();
+  });
+
+  it('summarises a rule whose ONLY effect is a gate\'s COUNT budget — not "Nothing active" (v0.3)', async () => {
+    // `SettingsPanel.tsx`'s `ruleSummary` reads `core/featureSummaryParts` as the single
+    // source of truth for "does this rule do anything" — it lists a gate's count budget
+    // alongside its minutes budget, so a rule whose sole effect is "20 Shorts a day" (no
+    // site limit, no grayscale, the gate's own mode left OFF) must not summarise as having
+    // no effect: that combination is exactly the shape count budgets exist for, and it is
+    // the only thing standing between the user and an afternoon of Shorts.
+    const features = defaultFeatures('youtube');
+    features.gates.shorts = { ...features.gates.shorts!, dailyLimitCount: 20 };
+    const rule = makeRule({
+      domain: 'youtube.com',
+      mode: 'ALLOW',
+      dailyLimitMinutes: null,
+      grayscale: false,
+      schedule: null,
+      features,
+    });
+    sendMessageMock.mockResolvedValue(makeState({ settings: makeSettings({ rules: [rule] }) }));
+    const { container } = render(<Dashboard />);
+    await flush();
+    fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
+
+    expect(screen.queryByText(NOTHING_ACTIVE)).toBeNull();
+    expect(container.textContent).toContain('Shorts: 20 Shorts/day');
   });
 });

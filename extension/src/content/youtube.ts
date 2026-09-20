@@ -193,7 +193,15 @@ export function resolveShortsGate(
   const gate: ResolvedGate | undefined = config.gates.find((g) => g.id === SHORTS_GATE_ID);
   if (gate === undefined) return null;
 
-  if (gate.limitReached) {
+  // Either budget axis exhausts the gate the same way (see core/applies.ts): a spent
+  // COUNT is just as unconditional as a spent MINUTES budget, so it gets the identical
+  // Hard-Block-with-no-countdown treatment. `ShortsGateVerdict.limitReached` therefore
+  // means "some budget ran out", not "specifically minutes" — `shortsGateCopy`'s wording
+  // ("your daily Shorts limit is used up") is unit-agnostic on purpose and reads correctly
+  // either way, and the session-grant check below (`gateSatisfied`) reads this same flag to
+  // decide whether an exhausted gate can be waived by an earlier pause, which it must never
+  // be for either axis.
+  if (gate.limitReached || gate.countReached) {
     return { mode: 'HARD_BLOCK', delaySeconds: 0, limitReached: true };
   }
   if (gate.mode === 'ALLOW') return null;

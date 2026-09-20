@@ -178,7 +178,7 @@ describe('Instagram gate overlay (initInstagramContentScript)', () => {
     window.history.replaceState({}, '', '/reels/');
 
     const fetchConfig = vi.fn(async () =>
-      configWith({ gates: [{ id: 'reels', mode: 'HARD_BLOCK', delaySeconds: 15, limitReached: false }] }),
+      configWith({ gates: [{ id: 'reels', mode: 'HARD_BLOCK', delaySeconds: 15, limitReached: false, countReached: false, itemsToday: 0, countLimit: null }] }),
     );
 
     const controller = initInstagramContentScript(document, fetchConfig);
@@ -194,7 +194,7 @@ describe('Instagram gate overlay (initInstagramContentScript)', () => {
     window.history.replaceState({}, '', '/explore/');
 
     const fetchConfig = vi.fn(async () =>
-      configWith({ gates: [{ id: 'explore', mode: 'ALLOW', delaySeconds: 15, limitReached: false }] }),
+      configWith({ gates: [{ id: 'explore', mode: 'ALLOW', delaySeconds: 15, limitReached: false, countReached: false, itemsToday: 0, countLimit: null }] }),
     );
 
     const controller = initInstagramContentScript(document, fetchConfig);
@@ -210,7 +210,7 @@ describe('Instagram gate overlay (initInstagramContentScript)', () => {
     window.history.replaceState({}, '', '/direct/inbox/');
 
     const fetchConfig = vi.fn(async () =>
-      configWith({ gates: [{ id: 'reels', mode: 'HARD_BLOCK', delaySeconds: 15, limitReached: false }] }),
+      configWith({ gates: [{ id: 'reels', mode: 'HARD_BLOCK', delaySeconds: 15, limitReached: false, countReached: false, itemsToday: 0, countLimit: null }] }),
     );
 
     const controller = initInstagramContentScript(document, fetchConfig);
@@ -244,7 +244,7 @@ describe('Instagram SPA navigation', () => {
     // Simulate the worker's answer changing alongside the SPA hop (mirrors how the real
     // extension re-reads config on storage/nav events) and drive navigation via
     // pushState, exactly as an in-app Instagram link click would.
-    currentGates = [{ id: 'reels', mode: 'HARD_BLOCK', delaySeconds: 15, limitReached: false }];
+    currentGates = [{ id: 'reels', mode: 'HARD_BLOCK', delaySeconds: 15, limitReached: false, countReached: false, itemsToday: 0, countLimit: null }];
     window.history.pushState({}, '', '/reels/');
     await controller.reload();
 
@@ -262,7 +262,7 @@ describe('Instagram SPA navigation', () => {
         ...IDLE_SITE_CONFIG,
         enabled: true,
         platform: 'instagram',
-        gates: [{ id: 'reels', mode: 'HARD_BLOCK', delaySeconds: 15, limitReached: false }],
+        gates: [{ id: 'reels', mode: 'HARD_BLOCK', delaySeconds: 15, limitReached: false, countReached: false, itemsToday: 0, countLimit: null }],
       }),
     );
 

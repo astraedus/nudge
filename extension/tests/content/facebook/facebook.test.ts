@@ -173,7 +173,7 @@ describe('Facebook gate overlay (initFacebookContentScript)', () => {
     window.history.replaceState({}, '', '/');
 
     const fetchConfig = vi.fn(async () =>
-      configWith({ gates: [{ id: 'feed', mode: 'HARD_BLOCK', delaySeconds: 15, limitReached: false }] }),
+      configWith({ gates: [{ id: 'feed', mode: 'HARD_BLOCK', delaySeconds: 15, limitReached: false, countReached: false, itemsToday: 0, countLimit: null }] }),
     );
 
     const controller = initFacebookContentScript(document, fetchConfig);
@@ -189,7 +189,7 @@ describe('Facebook gate overlay (initFacebookContentScript)', () => {
     window.history.replaceState({}, '', '/marketplace/');
 
     const fetchConfig = vi.fn(async () =>
-      configWith({ gates: [{ id: 'marketplace', mode: 'ALLOW', delaySeconds: 15, limitReached: false }] }),
+      configWith({ gates: [{ id: 'marketplace', mode: 'ALLOW', delaySeconds: 15, limitReached: false, countReached: false, itemsToday: 0, countLimit: null }] }),
     );
 
     const controller = initFacebookContentScript(document, fetchConfig);
@@ -205,7 +205,7 @@ describe('Facebook gate overlay (initFacebookContentScript)', () => {
     window.history.replaceState({}, '', '/settings/');
 
     const fetchConfig = vi.fn(async () =>
-      configWith({ gates: [{ id: 'feed', mode: 'HARD_BLOCK', delaySeconds: 15, limitReached: false }] }),
+      configWith({ gates: [{ id: 'feed', mode: 'HARD_BLOCK', delaySeconds: 15, limitReached: false, countReached: false, itemsToday: 0, countLimit: null }] }),
     );
 
     const controller = initFacebookContentScript(document, fetchConfig);
@@ -236,7 +236,7 @@ describe('Facebook SPA navigation', () => {
     await controller.reload();
     expect(document.getElementById(OVERLAY_ID)).toBeNull();
 
-    currentGates = [{ id: 'watch', mode: 'HARD_BLOCK', delaySeconds: 15, limitReached: false }];
+    currentGates = [{ id: 'watch', mode: 'HARD_BLOCK', delaySeconds: 15, limitReached: false, countReached: false, itemsToday: 0, countLimit: null }];
     window.history.pushState({}, '', '/watch/');
     await controller.reload();
 
@@ -254,7 +254,7 @@ describe('Facebook SPA navigation', () => {
         ...IDLE_SITE_CONFIG,
         enabled: true,
         platform: 'facebook',
-        gates: [{ id: 'reels', mode: 'HARD_BLOCK', delaySeconds: 15, limitReached: false }],
+        gates: [{ id: 'reels', mode: 'HARD_BLOCK', delaySeconds: 15, limitReached: false, countReached: false, itemsToday: 0, countLimit: null }],
       }),
     );
 

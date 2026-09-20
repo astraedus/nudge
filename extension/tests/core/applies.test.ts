@@ -164,15 +164,18 @@ describe('appliedBlockMode', () => {
 });
 
 describe('gateAppliesNow', () => {
+  // `usageCount` is a required third argument (v0.3) — a default of 0 would silently mean
+  // "the count is never spent" at any call site that forgot it, so every case here passes
+  // it explicitly, even the ones that are only exercising the minute axis.
   it('does not gate a surface that is off and under (or without) a budget', () => {
-    expect(gateAppliesNow(gateSetting({ mode: 'OFF' }), 0).applies).toBe(false);
+    expect(gateAppliesNow(gateSetting({ mode: 'OFF' }), 0, 0).applies).toBe(false);
     expect(
-      gateAppliesNow(gateSetting({ mode: 'OFF', dailyLimitMinutes: 10 }), 5 * MINUTES).applies,
+      gateAppliesNow(gateSetting({ mode: 'OFF', dailyLimitMinutes: 10 }), 5 * MINUTES, 0).applies,
     ).toBe(false);
   });
 
   it('gates a surface whose mode is set, whatever its usage', () => {
-    const verdict = gateAppliesNow(gateSetting({ mode: 'DELAY', delaySeconds: 20 }), 0);
+    const verdict = gateAppliesNow(gateSetting({ mode: 'DELAY', delaySeconds: 20 }), 0, 0);
     expect(verdict.applies).toBe(true);
     expect(verdict.mode).toBe('DELAY');
     expect(verdict.delaySeconds).toBe(20);
@@ -182,6 +185,7 @@ describe('gateAppliesNow', () => {
     const verdict = gateAppliesNow(
       gateSetting({ mode: 'OFF', dailyLimitMinutes: 10 }),
       10 * MINUTES,
+      0,
     );
     expect(verdict.applies).toBe(true);
     expect(verdict.reason).toBe('limit-exhausted');
@@ -189,11 +193,161 @@ describe('gateAppliesNow', () => {
   });
 
   it('escalates a spent budget to a Hard Block even on a Delay gate', () => {
-    // Nothing is left to wait for today, so offering a countdown would be a lie.
+    // Nothing is left to wait for today, so offering a countdown would be a lie. This used
+    // to read 'mode-blocks' with a real DELAY countdown before the caps were checked before
+    // the mode (see core/applies.ts's ordering comment) — the block page's engine had
+    // already escalated the same gate to HARD_BLOCK independently, so the in-page overlay
+    // was offering a pause that bought access the block page would have refused. Now one
+    // predicate answers for both layers.
     const verdict = gateAppliesNow(
       gateSetting({ mode: 'OFF', dailyLimitMinutes: 5 }),
       60 * MINUTES,
+      0,
     );
+    expect(verdict.reason).toBe('limit-exhausted');
     expect(appliedBlockMode(verdict)).toBe('HARD_BLOCK');
   });
+
+  it('a DELAY gate whose minute budget is spent resolves to a Hard Block, not a Delay countdown', () => {
+    // Same case as above, stated directly against a gate whose OWN mode is DELAY (not OFF)
+    // — this is exactly the shape the redirect-loop-class lesson in CLAUDE.md warns about:
+    // a test written from a spec sentence can encode the bug. The user-visible outcome is
+    // "the surface is gated, with no countdown", not "the DELAY branch ran".
+    const verdict = gateAppliesNow(
+      gateSetting({ mode: 'DELAY', delaySeconds: 20, dailyLimitMinutes: 10 }),
+      10 * MINUTES,
+      0,
+    );
+    expect(verdict.applies).toBe(true);
+    expect(verdict.reason).toBe('limit-exhausted');
+    expect(verdict.mode).toBe('HARD_BLOCK');
+    expect(verdict.delaySeconds).toBe(0);
+  });
+});
+
+/**
+ * The independent COUNT axis (v0.3): "20 Shorts a day, then the gate." Mirrors the minute
+ * axis's own describe block above, case for case, because the two are meant to behave
+ * identically except for their unit.
+ */
+describe('gateAppliesNow: the COUNT axis (v0.3)', () => {
+  it('gates a surface once its item count is spent, even though its mode is OFF', () => {
+    const verdict = gateAppliesNow(gateSetting({ mode: 'OFF', dailyLimitCount: 20 }), 0, 20);
+    expect(verdict.applies).toBe(true);
+    expect(verdict.reason).toBe('count-exhausted');
+    expect(verdict.mode).toBe('HARD_BLOCK');
+  });
+
+  it('does not gate while strictly under the count', () => {
+    const verdict = gateAppliesNow(gateSetting({ mode: 'OFF', dailyLimitCount: 20 }), 0, 19);
+    expect(verdict.applies).toBe(false);
+  });
+
+  it('escalates a spent count to a Hard Block even on a Delay gate — nothing left to wait for today', () => {
+    const verdict = gateAppliesNow(
+      gateSetting({ mode: 'DELAY', delaySeconds: 20, dailyLimitCount: 5 }),
+      0,
+      5,
+    );
+    expect(verdict.reason).toBe('count-exhausted');
+    expect(appliedBlockMode(verdict)).toBe('HARD_BLOCK');
+    expect(verdict.delaySeconds).toBe(0);
+  });
+
+  it('minutes and count are independent — either alone is enough to gate the surface', () => {
+    const minutesOnly = gateAppliesNow(
+      gateSetting({ mode: 'OFF', dailyLimitMinutes: 10, dailyLimitCount: null }),
+      10 * MINUTES,
+      0,
+    );
+    expect(minutesOnly.applies).toBe(true);
+    expect(minutesOnly.reason).toBe('limit-exhausted');
+
+    const countOnly = gateAppliesNow(
+      gateSetting({ mode: 'OFF', dailyLimitMinutes: null, dailyLimitCount: 5 }),
+      0,
+      5,
+    );
+    expect(countOnly.applies).toBe(true);
+    expect(countOnly.reason).toBe('count-exhausted');
+  });
+
+  it('reports minutes first when BOTH budgets are spent at once — but the verdict is identical either way', () => {
+    // core/applies.ts's ordering comment: minutes are checked first only so ONE reason has
+    // to win; applies/mode/delaySeconds are the same regardless of which axis "wins" the
+    // reason string.
+    const verdict = gateAppliesNow(
+      gateSetting({ mode: 'OFF', dailyLimitMinutes: 10, dailyLimitCount: 5 }),
+      10 * MINUTES,
+      5,
+    );
+    expect(verdict.reason).toBe('limit-exhausted');
+    expect(verdict.applies).toBe(true);
+    expect(verdict.mode).toBe('HARD_BLOCK');
+  });
+});
+
+/**
+ * The full mode x minutes x count matrix, asserting the USER-VISIBLE outcome rather than
+ * the internal branch — per the redirect-loop lesson in CLAUDE.md, a test written from a
+ * spec sentence ("a Hard Block with a spent budget is unconditional") can encode exactly
+ * the bug it meant to prevent. So every case here states only two things a user can
+ * observe: whether the surface is gated, and — whenever some cap is spent — that it
+ * resolves to a Hard Block rather than a countdown.
+ */
+describe('gateAppliesNow: the mode x minutes x count matrix', () => {
+  type CapState = 'none' | 'under' | 'spent';
+  const CAP_STATES: readonly CapState[] = ['none', 'under', 'spent'];
+  const MODES: readonly ('OFF' | 'DELAY' | 'HARD_BLOCK')[] = ['OFF', 'DELAY', 'HARD_BLOCK'];
+
+  function minutesFor(state: CapState): { dailyLimitMinutes: number | null; usageMs: number } {
+    switch (state) {
+      case 'none':
+        return { dailyLimitMinutes: null, usageMs: 0 };
+      case 'under':
+        return { dailyLimitMinutes: 10, usageMs: 5 * MINUTES };
+      case 'spent':
+        return { dailyLimitMinutes: 10, usageMs: 10 * MINUTES };
+    }
+  }
+
+  function countFor(state: CapState): { dailyLimitCount: number | null; usageCount: number } {
+    switch (state) {
+      case 'none':
+        return { dailyLimitCount: null, usageCount: 0 };
+      case 'under':
+        return { dailyLimitCount: 5, usageCount: 2 };
+      case 'spent':
+        return { dailyLimitCount: 5, usageCount: 5 };
+    }
+  }
+
+  for (const mode of MODES) {
+    for (const minuteState of CAP_STATES) {
+      for (const countState of CAP_STATES) {
+        const { dailyLimitMinutes, usageMs } = minutesFor(minuteState);
+        const { dailyLimitCount, usageCount } = countFor(countState);
+        const anyCapSpent = minuteState === 'spent' || countState === 'spent';
+        const expectedApplies = anyCapSpent || mode !== 'OFF';
+
+        it(`mode=${mode} minutes=${minuteState} count=${countState} -> applies=${expectedApplies}`, () => {
+          const gate = gateSetting({
+            mode,
+            delaySeconds: 20,
+            dailyLimitMinutes,
+            dailyLimitCount,
+          });
+          const verdict = gateAppliesNow(gate, usageMs, usageCount);
+
+          expect(verdict.applies).toBe(expectedApplies);
+          if (anyCapSpent) {
+            // Whichever cap is spent (or both), nothing is left to wait for today: the
+            // surface must resolve to an unconditional Hard Block, never a countdown.
+            expect(appliedBlockMode(verdict)).toBe('HARD_BLOCK');
+            expect(verdict.delaySeconds).toBe(0);
+          }
+        });
+      }
+    }
+  }
 });
