@@ -253,3 +253,90 @@ describe('observeNavigation — dispose() removes every listener and timer', () 
     expect(onNavigate).not.toHaveBeenCalled();
   });
 });
+
+describe('observeNavigation — mutateOnIdlePoll keeps a QUIET page being re-checked', () => {
+  /**
+   * The failure this prevents, as the user would see it on YouTube: the post-navigation
+   * mutation storm dies down, the page stops firing the observer, and the re-apply pass
+   * stops running with it — so the channel verdict, the colour flip and the hide toggles
+   * are frozen at whatever they were when the DOM last moved. YouTube's original
+   * controller had a 1s safety-net interval whose `else` branch scheduled the debounced
+   * pass on every tick that saw no navigation; this flag is that branch, and the six
+   * other platforms deliberately do not set it.
+   */
+  it('still runs the re-apply pass on a page with no mutations and no navigation', () => {
+    const onMutate = vi.fn();
+    const handle = observeNavigation({
+      onNavigate: () => {},
+      onMutate,
+      pollMs: POLL_MS,
+      mutationDebounceMs: MUTATION_DEBOUNCE_MS,
+      mutateOnIdlePoll: true,
+    });
+
+    // Nothing happens to the page at all. The poll tick alone must schedule the pass.
+    vi.advanceTimersByTime(POLL_MS);
+    expect(onMutate).not.toHaveBeenCalled();
+
+    // ...and it is still DEBOUNCED, not immediate — same single timer the observer uses.
+    vi.advanceTimersByTime(MUTATION_DEBOUNCE_MS);
+    expect(onMutate).toHaveBeenCalledTimes(1);
+
+    vi.advanceTimersByTime(POLL_MS + MUTATION_DEBOUNCE_MS);
+    expect(onMutate).toHaveBeenCalledTimes(2);
+
+    handle.dispose();
+  });
+
+  it('is off by default, so a quiet page re-checks nothing for the other six platforms', () => {
+    const onMutate = vi.fn();
+    const handle = observeNavigation({
+      onNavigate: () => {},
+      onMutate,
+      pollMs: POLL_MS,
+      mutationDebounceMs: MUTATION_DEBOUNCE_MS,
+    });
+
+    vi.advanceTimersByTime(POLL_MS * 5 + MUTATION_DEBOUNCE_MS);
+    expect(onMutate).not.toHaveBeenCalled();
+
+    handle.dispose();
+  });
+
+  it('a poll tick that DID find a navigation reports it, and does not also fire the idle pass', () => {
+    const onNavigate = vi.fn();
+    const onMutate = vi.fn();
+    const handle = observeNavigation({
+      onNavigate,
+      onMutate,
+      pollMs: POLL_MS,
+      mutationDebounceMs: MUTATION_DEBOUNCE_MS,
+      mutateOnIdlePoll: true,
+    });
+
+    window.history.pushState({}, '', '/watch?v=idlepoll');
+    vi.advanceTimersByTime(POLL_MS);
+
+    expect(onNavigate).toHaveBeenCalledTimes(1);
+    // A navigation is not an idle tick: the debounced pass is not scheduled by it.
+    vi.advanceTimersByTime(MUTATION_DEBOUNCE_MS);
+    expect(onMutate).not.toHaveBeenCalled();
+
+    handle.dispose();
+  });
+
+  it('stops entirely after dispose, idle poll included', () => {
+    const onMutate = vi.fn();
+    const handle = observeNavigation({
+      onNavigate: () => {},
+      onMutate,
+      pollMs: POLL_MS,
+      mutationDebounceMs: MUTATION_DEBOUNCE_MS,
+      mutateOnIdlePoll: true,
+    });
+
+    handle.dispose();
+    vi.advanceTimersByTime(POLL_MS * 10 + MUTATION_DEBOUNCE_MS);
+    expect(onMutate).not.toHaveBeenCalled();
+  });
+});

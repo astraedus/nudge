@@ -19,7 +19,22 @@
  * Iconography: none. No emoji-as-icon anywhere.
  */
 
-#nudge-platform-gate.nudge-overlay {
+/*
+ * The root selector is a written-out, exhaustive list of the six real element ids rather
+ * than one shared placeholder id (or a bare `.nudge-overlay` class). `overlayIdFor()` in
+ * `overlay.ts` derives each platform's id as `nudge-gate-${platform}` at mount time — CSS
+ * has no way to express that same template, so the six concrete ids have to be spelled
+ * out here by hand. That means this list can silently go stale the moment a platform is
+ * added to `core/platforms.ts` without a matching line added here, which is exactly what
+ * `tests/content/overlayStyling.test.ts` exists to catch: it walks the platform registry
+ * and asserts every non-YouTube id has a matching `#<id>.nudge-overlay` rule in this file.
+ */
+#nudge-gate-instagram.nudge-overlay,
+#nudge-gate-tiktok.nudge-overlay,
+#nudge-gate-x.nudge-overlay,
+#nudge-gate-facebook.nudge-overlay,
+#nudge-gate-reddit.nudge-overlay,
+#nudge-gate-linkedin.nudge-overlay {
   position: fixed;
   inset: 0;
   z-index: 2147483647; /* above the platform's own full-screen layers (video players, modals) */

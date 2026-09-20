@@ -27,6 +27,21 @@ namespaces were already split for exactly that reason.
   quieter second line, so a list that used to read as a column of raw ids becomes legible.
   A row never prints the same string twice.
 
+### Changed
+
+- **"I changed my mind" on a blocked YouTube channel now takes you back where you came
+  from.** It used to go to youtube.com, which is exactly what a "block YouTube except these
+  channels" rule redirects — so the button that means "get me out of here" put you on the
+  block page. It now goes back a page, and closes the tab when there is no page to go back
+  to (a tab opened straight onto the video).
+
+### Fixed
+
+- **The pause screen on Instagram, TikTok, X, Facebook, Reddit and LinkedIn now covers the
+  page.** It was rendering as a block of text pushed into the top of the feed instead of a
+  full-screen interstitial, because its stylesheet was keyed to an element name the code had
+  stopped using. YouTube was unaffected.
+
 ## 0.2.0 — unreleased
 
 Per-site everything. A rule is now the unit: how the whole site behaves, how long the pause

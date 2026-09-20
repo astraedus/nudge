@@ -137,7 +137,22 @@ export type Request =
       channelId: string | null;
       handle: string | null;
       displayName: string | null;
-    };
+    }
+  /**
+   * Close the tab the message came from.
+   *
+   * The one thing a content script cannot do for itself: `window.close()` only works on a
+   * script-opened window, and `chrome.tabs` does not exist in an isolated world. It is a
+   * request rather than a settings change, so it goes through the router like everything
+   * else and the worker reads the tab id from the SENDER — a page cannot name a tab to
+   * close, only its own.
+   *
+   * Used by YouTube's channel gate when "I changed my mind" has nowhere to go back to
+   * (`content/overlay.ts`'s `bailAwayFromGate`): a tab opened straight onto a gated video
+   * has no previous entry, and bailing to the site root would land on the block page,
+   * which is the Known gap this closes.
+   */
+  | { type: 'CLOSE_TAB' };
 
 /** Granting temporary access, or refusing to. */
 export interface GrantResult {
@@ -229,6 +244,8 @@ export interface ResponseMap {
   GET_SITE_CONFIG: SiteConfig;
   SET_GRAYSCALE: SaveResult;
   CHANNEL_OBSERVED: ChannelObservedResult;
+  /** `ok: false` when the sender had no tab id (a non-tab context) or the close failed. */
+  CLOSE_TAB: { ok: boolean };
 }
 
 export type ResponseFor<T extends Request['type']> = ResponseMap[T];
