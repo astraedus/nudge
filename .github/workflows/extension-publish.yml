@@ -1,0 +1,90 @@
+name: Extension Publish (Chrome Web Store)
+
+# Publishes the Chrome extension to the Chrome Web Store on an `ext-v*` tag via the CWS API v2
+# with a service account. `v*` tags are the Android app (release.yml); the two never collide.
+#
+# What the API can and cannot do (ops/routes/nudge/research/ext-10-publish-tooling.md):
+#   - CAN upload a new package and submit it for review (this workflow).
+#   - CANNOT change visibility (Unlisted/Public), listing text, screenshots or the Data Usage
+#     form. Those stay dashboard-only, forever.
+#
+# Secrets (set 2026-09-20): CHROME_PUBLISHER_ID, CHROME_EXTENSION_ID,
+# CHROME_SERVICE_ACCOUNT_CLIENT_EMAIL, CHROME_SERVICE_ACCOUNT_PRIVATE_KEY (multi-line PEM, raw).
+#
+# The tag's package.json version must match the tag (ext-v0.2.0 <-> "0.2.0"); the gate below
+# refuses otherwise so a stale tag can never ship the wrong build.
+
+on:
+  push:
+    tags:
+      - 'ext-v*'
+  workflow_dispatch:
+    inputs:
+      skip_review:
+        description: 'Upload only, do not submit for review'
+        type: boolean
+        default: false
+
+defaults:
+  run:
+    working-directory: extension
+
+jobs:
+  publish:
+    name: Build, verify, upload to CWS
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Tag matches package.json version
+        if: startsWith(github.ref, 'refs/tags/ext-v')
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#ext-v}"
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "Tag ext-v$TAG_VERSION does not match package.json version $PKG_VERSION" >&2
+            exit 1
+          fi
+
+      - name: Lint, typecheck, unit tests
+        run: npm run lint && npm run typecheck && npm test
+
+      - name: Build and zip
+        run: npm run build && npm run zip
+
+      - name: Verify the built manifest is Chrome Web Store valid
+        run: npm run verify:manifest
+
+      - name: Upload to the Chrome Web Store (API v2, service account)
+        env:
+          CHROME_API_VERSION: v2
+          CHROME_PUBLISHER_ID: ${{ secrets.CHROME_PUBLISHER_ID }}
+          CHROME_EXTENSION_ID: ${{ secrets.CHROME_EXTENSION_ID }}
+          CHROME_SERVICE_ACCOUNT_CLIENT_EMAIL: ${{ secrets.CHROME_SERVICE_ACCOUNT_CLIENT_EMAIL }}
+          CHROME_SERVICE_ACCOUNT_PRIVATE_KEY: ${{ secrets.CHROME_SERVICE_ACCOUNT_PRIVATE_KEY }}
+          # The WXT-bundled publish CLI (4.x) predates API v2; pin a v2-capable release.
+          SKIP_REVIEW: ${{ github.event.inputs.skip_review == 'true' && '--chrome-skip-submit-review' || '' }}
+        run: |
+          ZIP="$(ls .output/*-chrome.zip | head -1)"
+          echo "Uploading $ZIP"
+          npx --yes publish-browser-extension@6.1.1 --chrome-zip "$ZIP" $SKIP_REVIEW
+
+      - name: Attach the zip to the GitHub release
+        if: startsWith(github.ref, 'refs/tags/ext-v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ZIP="$(ls .output/*-chrome.zip | head -1)"
+          gh release create "$GITHUB_REF_NAME" "$ZIP" \
+            --title "Nudge for Chrome $GITHUB_REF_NAME" \
+            --notes "Chrome extension release. Submitted to the Chrome Web Store for review by CI; the store listing updates once Google approves. Load unpacked: unzip and pick the folder in chrome://extensions (Developer mode)." \
+            || gh release upload "$GITHUB_REF_NAME" "$ZIP" --clobber
