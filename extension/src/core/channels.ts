@@ -205,9 +205,15 @@ export interface ChannelProbe {
   handle?: string | null;
 }
 
+/**
+ * The canonical comparison form for a handle: no leading '@', lowercased, surrounding
+ * whitespace gone, and null rather than an empty string, so a blank handle can never
+ * accidentally compare equal to anything.
+ */
 function normalizeProbeHandle(handle: string | null | undefined): string | null {
   if (handle === null || handle === undefined) return null;
-  return handle.replace(/^@/, '').toLowerCase();
+  const value = handle.trim().replace(/^@/, '').trim().toLowerCase();
+  return value === '' ? null : value;
 }
 
 /** Find the stored entry matching `probe` by EITHER identifier — the whole point of
@@ -496,4 +502,283 @@ export function decideWatchGate(input: WatchGateInput): WatchGateVerdict {
   // mode === 'WHITELIST'
   if (listed) return { action: 'ALLOW', reason: 'listed' };
   return siteDefault ? blockBySite('not-listed') : blockByChannelRule('not-listed');
+}
+
+// ---------------------------------------------------------------------------------------
+// Enrichment: teaching a stored entry the identifier it is missing
+// ---------------------------------------------------------------------------------------
+
+/**
+ * What a content script actually SAW on a page, once the freshness state machine confirmed
+ * the observation describes the video in the address bar.
+ *
+ * Distinct from `ChannelProbe` on purpose: a probe is a QUESTION ("does the list know this
+ * channel?") and carries only the two identifiers, while an observation is an ASSERTION
+ * about a real channel and may also carry the author name YouTube printed beside it.
+ */
+export interface ChannelObservation {
+  channelId?: string | null;
+  handle?: string | null;
+  displayName?: string | null;
+}
+
+/**
+ * Why `enrichEntries` did or did not change the list. Every value is worth distinguishing:
+ *
+ *  - `enriched`         an identifier and/or a real display name was learned.
+ *  - `merged`           the observation proved two stored entries are one channel.
+ *  - `contradiction`    the observation disagrees with a stored entry on an axis they SHARE.
+ *                       Never an enrichment, and worth LOGGING: it means either YouTube put
+ *                       two channels on one page or our detection is wrong.
+ *  - `no-match`         no stored entry describes this channel. Enrichment never ADDS one.
+ *  - `nothing-to-learn` the observation carries no identifier, or the matched entry already
+ *                       knows everything it says.
+ */
+export type EnrichmentReason =
+  | 'enriched'
+  | 'merged'
+  | 'contradiction'
+  | 'no-match'
+  | 'nothing-to-learn';
+
+export interface EnrichResult {
+  /** The list to persist. Same content as the input unless `changed` is true. */
+  entries: ChannelEntry[];
+  changed: boolean;
+  reason: EnrichmentReason;
+}
+
+/** An observation with both identifiers in their canonical comparison form. */
+interface NormalizedObservation {
+  channelId: string | null;
+  handle: string | null;
+  displayName: string | null;
+}
+
+function normalizeObservation(observation: ChannelObservation): NormalizedObservation {
+  const rawId = observation.channelId;
+  const rawName = observation.displayName;
+  return {
+    // Ids are case-SENSITIVE and kept verbatim, exactly as `parseChannelInput` stores them.
+    channelId: typeof rawId === 'string' && rawId.trim() !== '' ? rawId.trim() : null,
+    handle: normalizeProbeHandle(observation.handle),
+    displayName: typeof rawName === 'string' && rawName.trim() !== '' ? rawName.trim() : null,
+  };
+}
+
+/**
+ * True when `displayName` is merely the placeholder built out of an identifier, so there is
+ * a real name to be gained by replacing it.
+ *
+ * Deliberately EXACT rather than "looks like an identifier": a legacy `/c/Veritasium` entry
+ * stores `handle: 'veritasium'` with `displayName: 'Veritasium'`, which is the nicest human
+ * form that URL gave us and must survive. Only the literal `@handle` that `buildHandleEntry`
+ * writes and the raw id that `buildIdEntry` writes yield.
+ */
+function isFallbackDisplayName(entry: ChannelEntry): boolean {
+  const name = entry.displayName.trim();
+  if (name === '') return true;
+  if (entry.channelId !== null && name === entry.channelId) return true;
+  return entry.handle !== null && name.toLowerCase() === `@${entry.handle.toLowerCase()}`;
+}
+
+/** Does this stored entry describe the observed channel? EITHER axis is enough. */
+function matchesObservation(entry: ChannelEntry, observed: NormalizedObservation): boolean {
+  const idMatch =
+    observed.channelId !== null &&
+    entry.channelId !== null &&
+    entry.channelId === observed.channelId;
+  const handleMatch =
+    observed.handle !== null &&
+    entry.handle !== null &&
+    entry.handle.toLowerCase() === observed.handle;
+  return idMatch || handleMatch;
+}
+
+/**
+ * True when a stored entry and an observation cannot be the same channel.
+ *
+ * Only a SHARED axis can prove it — the same rule `assembleChannel` uses in the detection
+ * layer. An id here and a handle there overlap on nothing, and combining exactly that pair
+ * is the entire point of enrichment.
+ */
+function contradictsObservation(
+  entry: ChannelEntry,
+  observed: NormalizedObservation,
+): boolean {
+  if (
+    entry.channelId !== null &&
+    observed.channelId !== null &&
+    entry.channelId !== observed.channelId
+  ) {
+    return true;
+  }
+  return (
+    entry.handle !== null &&
+    observed.handle !== null &&
+    entry.handle.toLowerCase() !== observed.handle
+  );
+}
+
+/** Two stored entries disagreeing on an axis they both hold. */
+function entriesContradict(a: ChannelEntry, b: ChannelEntry): boolean {
+  if (a.channelId !== null && b.channelId !== null && a.channelId !== b.channelId) return true;
+  return (
+    a.handle !== null && b.handle !== null && a.handle.toLowerCase() !== b.handle.toLowerCase()
+  );
+}
+
+/**
+ * The display name to keep. Upgrades ONLY a fallback name, and never to another identifier:
+ * swapping `@veritasium` for a bare `UCxxxx…` is a downgrade wearing an upgrade's clothes.
+ */
+function upgradedDisplayName(
+  current: string,
+  currentIsFallback: boolean,
+  observed: NormalizedObservation,
+  nextId: string | null,
+  nextHandle: string | null,
+): string {
+  const name = observed.displayName;
+  if (name === null || !currentIsFallback) return current;
+  if (name === nextId) return current;
+  if (nextHandle !== null && name.toLowerCase() === `@${nextHandle}`) return current;
+  return name;
+}
+
+/**
+ * Fold everything known about one channel into a single entry.
+ *
+ * `matched` is every stored entry the observation matched, in list order. More than one
+ * means the user added the same channel twice by different routes (`@x` from a feed card,
+ * `UCxxxx…` from a watch URL), and the observation is the first thing able to PROVE they are
+ * one channel: until now the two shared no axis at all.
+ */
+function foldEntries(
+  matched: readonly ChannelEntry[],
+  observed: NormalizedObservation,
+): ChannelEntry {
+  const first = matched[0]!;
+  const nextId = matched.find((e) => e.channelId !== null)?.channelId ?? observed.channelId;
+  const nextHandle = matched.find((e) => e.handle !== null)?.handle ?? observed.handle;
+
+  // The oldest `addedAt` wins, so a merge never makes a channel look newer than the day the
+  // user actually added it.
+  const addedAt = matched.reduce((oldest, e) => Math.min(oldest, e.addedAt), first.addedAt);
+
+  // A real name already typed or learned beats the observation; only when every copy is
+  // still showing a placeholder does the observed author name get to win.
+  const named = matched.find((e) => !isFallbackDisplayName(e));
+
+  return {
+    channelId: nextId,
+    handle: nextHandle,
+    displayName: upgradedDisplayName(
+      named?.displayName ?? first.displayName,
+      named === undefined,
+      observed,
+      nextId,
+      nextHandle,
+    ),
+    addedAt,
+  };
+}
+
+function sameEntry(a: ChannelEntry, b: ChannelEntry): boolean {
+  return (
+    a.channelId === b.channelId &&
+    a.handle === b.handle &&
+    a.displayName === b.displayName &&
+    a.addedAt === b.addedAt
+  );
+}
+
+/**
+ * Learn the identifier a stored entry is missing, from a channel the user just watched. PURE.
+ *
+ * WHY THIS EXISTS. A `ChannelEntry` records whichever identifier the user happened to supply:
+ * typing `@veritasium` stores a handle and no id, pasting a `/channel/UCxxxx…` URL stores an
+ * id and no handle. Detection ASSEMBLES both from a watch page, so matching works there, but
+ * the stored entry stays half-blind, and three real things break:
+ *
+ *  1. `background/dnr.ts` compiles a `/channel/UCxxxx…` allow-rule only for an entry that HAS
+ *     an id, and an `/@handle` allow-rule only for one that has a handle. A handle-only entry
+ *     therefore gets no network allow for its own `/channel/UCxxxx…` page: a full navigation
+ *     to that URL shape hits the site redirect even though the channel is allowed. Learning
+ *     the other axis closes that hole at the network layer, where the content script cannot.
+ *  2. During the settle window, and on surfaces where only ONE tier may speak (a stale byline
+ *     is excluded; an inline tier is authoritative but carries only the id), a handle-only
+ *     entry cannot match an id-only observation at all.
+ *  3. The dashboard shows `@veritasium` or a bare `UCxxxx…` instead of "Veritasium".
+ *
+ * THE RULES, and why each is load-bearing:
+ *
+ *  - A non-null identifier is NEVER overwritten. Enrichment only ever fills a null.
+ *  - A CONTRADICTION IS NOT AN ENRICHMENT. If the stored id differs from the observed id
+ *    while the handles match (or the mirror image), the entry is left completely untouched
+ *    and the reason is `contradiction`. Welding two channels into a chimera that matches
+ *    neither is strictly worse than learning nothing, and invisible afterwards.
+ *  - Ids compare case-SENSITIVELY, handles case-INSENSITIVELY, and a handle is stored
+ *    lowercased without its '@' — the storage contract `settingsSchema.ts` already enforces.
+ *  - `displayName` is upgraded only when the stored one is the bare `@handle`/id fallback.
+ *  - Matching two SEPARATE entries means the user added the same channel twice by different
+ *    routes; they merge into one (earliest `addedAt`) and the reason is `merged`.
+ *
+ * WHAT IT CANNOT DO, which is what makes it safe to run without a Commitment Lock challenge:
+ * it never ADDS a channel (no match means no change) and never DROPS one (a merge collapses
+ * entries that all describe the SAME channel, and the survivor carries every identifier they
+ * held between them). The set of channels the list covers is invariant, and that set — read
+ * per identifier through `channelMatches` — is exactly what `strictMode.isWeakening`
+ * measures, so an enrichment can never register as a weakening in either list mode.
+ */
+export function enrichEntries(
+  entries: readonly ChannelEntry[],
+  observation: ChannelObservation,
+): EnrichResult {
+  const unchanged = (reason: EnrichmentReason): EnrichResult => ({
+    entries: [...entries],
+    changed: false,
+    reason,
+  });
+
+  const observed = normalizeObservation(observation);
+  if (observed.channelId === null && observed.handle === null) {
+    return unchanged('nothing-to-learn');
+  }
+
+  // Indices, not the entries themselves: a merge is destructive and must never depend on
+  // object identity holding across a list a caller may have built by hand.
+  const matchedIndices: number[] = [];
+  entries.forEach((entry, index) => {
+    if (matchesObservation(entry, observed)) matchedIndices.push(index);
+  });
+  if (matchedIndices.length === 0) return unchanged('no-match');
+
+  const matched = matchedIndices.map((index) => entries[index]!);
+  if (matched.some((entry) => contradictsObservation(entry, observed))) {
+    return unchanged('contradiction');
+  }
+  // Two entries that match the same observation but disagree with EACH OTHER on an axis the
+  // observation is silent about cannot be merged either. `dedupeChannels` makes that
+  // unreachable for a list loaded through the schema, but a merge proves its own
+  // precondition rather than trusting the caller.
+  const mutuallyConsistent = matched.every((entry, index) =>
+    matched.slice(index + 1).every((other) => !entriesContradict(entry, other)),
+  );
+  if (!mutuallyConsistent) return unchanged('contradiction');
+
+  const folded = foldEntries(matched, observed);
+  if (matched.length === 1 && sameEntry(matched[0]!, folded)) {
+    return unchanged('nothing-to-learn');
+  }
+
+  // The survivor keeps the FIRST match's position, so enrichment never reorders the list
+  // underneath a user who is looking at it.
+  const survivorIndex = matchedIndices[0]!;
+  const absorbed = new Set(matchedIndices.slice(1));
+  const next = entries
+    .map((entry, index) => (index === survivorIndex ? folded : entry))
+    .filter((_, index) => !absorbed.has(index));
+
+  return { entries: next, changed: true, reason: matched.length > 1 ? 'merged' : 'enriched' };
 }
