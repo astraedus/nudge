@@ -377,6 +377,12 @@ export function channelFromDom(root: ParentNode): DetectedChannel | null {
     // is a miss, so keep looking.
     let fallbackName: string | null = null;
 
+    // Every anchor that names this channel is collected, not just the first that yields an
+    // identifier: one card routinely carries BOTH a `/channel/UC…` link and a `/@handle`
+    // link, and stopping at whichever came first is what left a probe carrying one axis
+    // while the user's stored entry carried the other (see `assembleChannel`).
+    const observations: DetectedChannel[] = [];
+
     for (const rule of CHANNEL_ELEMENTS) {
       let matches: Element[];
       try {
@@ -397,8 +403,13 @@ export function channelFromDom(root: ParentNode): DetectedChannel | null {
           fallbackName ??= displayNameFrom(anchor);
           continue;
         }
-        return { channelId, handle, displayName: displayNameFrom(anchor) ?? fallbackName };
+        observations.push({ channelId, handle, displayName: displayNameFrom(anchor) });
       }
+    }
+
+    const assembled = assembleChannel(observations);
+    if (assembled !== null) {
+      return { ...assembled, displayName: assembled.displayName ?? fallbackName };
     }
 
     // Nothing identifying anywhere. A bare name is not an identifier (see `hasIdentifier`),
@@ -414,6 +425,68 @@ export function channelFromDom(root: ParentNode): DetectedChannel | null {
 /** True when a result actually identifies a channel (an id or a handle) — a bare name does not. */
 function hasIdentifier(result: DetectedChannel | null): result is DetectedChannel {
   return result !== null && (result.channelId !== null || result.handle !== null);
+}
+
+/** Both axes present — nothing further can be learned about this channel. */
+function isComplete(result: DetectedChannel): boolean {
+  return result.channelId !== null && result.handle !== null;
+}
+
+/**
+ * True when two observations cannot be the same channel.
+ *
+ * Only a SHARED axis can prove a contradiction: two different ids, or two different
+ * handles. Two observations that overlap on nothing (an id here, a handle there) are
+ * exactly the case assembly exists to combine, so they are never treated as conflicting.
+ */
+function contradicts(a: DetectedChannel, b: DetectedChannel): boolean {
+  if (a.channelId !== null && b.channelId !== null && a.channelId !== b.channelId) return true;
+  return (
+    a.handle !== null &&
+    b.handle !== null &&
+    a.handle.replace(/^@/, '').toLowerCase() !== b.handle.replace(/^@/, '').toLowerCase()
+  );
+}
+
+/**
+ * Combine several observations of the same channel into ONE that carries every identifier
+ * any of them saw.
+ *
+ * THIS IS THE FIX FOR A WHITELIST THAT SILENTLY INVERTED (live QA, 2026-09-20). A watch
+ * page yields its identifiers from different places: `ytInitialPlayerResponse` gives the
+ * canonical `UC…` id and NO handle, while the owner byline in the DOM gives `/@handle` and
+ * no id. The old chain returned the FIRST tier that carried any identifier at all, so a
+ * watch page always probed as `{channelId, handle: null}` — and a stored entry added by
+ * handle (which is what the UI writes when the user types `@veritasium`) carries
+ * `{channelId: null, handle}`. The two share no axis, `sameChannel` matches on neither, and
+ * the verdict was "off your list" for a channel the user had explicitly allowed. The
+ * blacklist failed the mirror way: nothing was ever blocked.
+ *
+ * Entries are merged in order, most authoritative first, and a later observation only FILLS
+ * a gap — it never overwrites. An observation that contradicts what is already assembled is
+ * skipped rather than merged, so two genuinely different channels on one page can never be
+ * welded into a chimera that matches neither.
+ */
+export function assembleChannel(
+  observations: readonly (DetectedChannel | null)[],
+): DetectedChannel | null {
+  const assembled: DetectedChannel = { channelId: null, handle: null, displayName: null };
+
+  for (const observation of observations) {
+    if (observation === null) continue;
+    if (hasIdentifier(assembled) && contradicts(assembled, observation)) continue;
+    assembled.channelId ??= observation.channelId;
+    assembled.handle ??= observation.handle;
+    assembled.displayName ??= observation.displayName;
+    if (isComplete(assembled)) break;
+  }
+
+  // Deliberately NOT `hasIdentifier` here: it is a type predicate, so TypeScript narrows the
+  // false branch of an already-`DetectedChannel` value to `never`.
+  if (assembled.channelId !== null || assembled.handle !== null) return assembled;
+  // No identifier anywhere. A bare name is not one, but returning it keeps the display
+  // useful for a caller that only wants a label (same contract as `channelFromDom`).
+  return assembled.displayName === null ? null : assembled;
 }
 
 /** The video id a watch/shorts URL refers to, or null when the URL names no video. */
@@ -480,21 +553,28 @@ export function detectWatchChannel(
     return tierVideoId === expectedVideoId;
   }
 
+  // Every tier that is allowed to speak contributes what it knows, and the result carries
+  // the UNION. A watch page's inline data gives the canonical id and no handle; the owner
+  // byline gives the handle and no id — and a stored entry may hold only one of the two, so
+  // a probe carrying only the other matches nothing. Returning the first tier with any
+  // identifier at all is what silently inverted the whitelist (see `assembleChannel`).
+  //
+  // The staleness rules are untouched: a tier that cannot prove it describes the video in
+  // the address bar is still excluded entirely, so a stale id can never be merged into a
+  // fresh observation.
+  const observations: (DetectedChannel | null)[] = [];
+
   if (inlineTierIsCurrent(playerResponseVideoId(doc))) {
-    const fromPlayerResponse = channelFromPlayerResponse(doc);
-    if (hasIdentifier(fromPlayerResponse)) return fromPlayerResponse;
+    observations.push(channelFromPlayerResponse(doc));
   }
-
   if (inlineTierIsCurrent(initialDataVideoId(doc))) {
-    const fromInitialData = channelFromInitialData(doc);
-    if (hasIdentifier(fromInitialData)) return fromInitialData;
+    observations.push(channelFromInitialData(doc));
   }
-
   // Always fresh: YouTube re-renders the byline on every navigation.
-  const fromDom = channelFromDom(doc);
-  if (hasIdentifier(fromDom)) return fromDom;
+  observations.push(channelFromDom(doc));
 
-  return null;
+  const assembled = assembleChannel(observations);
+  return hasIdentifier(assembled) ? assembled : null;
 }
 
 /**

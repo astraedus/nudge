@@ -18,6 +18,9 @@ import {
   WATCH_FIXTURE_VIDEO_ID,
   WATCH_NOTHING_HTML,
   WATCH_PLAYER_RESPONSE_HTML,
+  WATCH_ID_INLINE_HANDLE_DOM_HTML,
+  REAL_WATCH_ID_INLINE_HANDLE_DOM_CHANNEL_ID,
+  REAL_WATCH_ID_INLINE_HANDLE_DOM_HANDLE,
 } from './fixtures/watchPage';
 
 /**
@@ -532,5 +535,67 @@ describe('the degraded-detection canary on an ordinary feed', () => {
     );
 
     expect(warnings).toEqual([]);
+  });
+});
+
+describe('a channel the user added by @handle, on a real watch page', () => {
+  /**
+   * The flagship feature inverted in live QA (2026-09-20). Typing `@veritasium` into the
+   * channel list stores `{channelId: null, handle: "veritasium"}`, but a watch page's inline
+   * data only ever yields the canonical `UC…` id, so the probe and the entry shared no axis
+   * and matched on neither. A whitelist blocked the one channel the user allowed; a
+   * blacklist blocked nothing at all.
+   */
+  const HANDLE_ONLY = channel({ handle: REAL_WATCH_ID_INLINE_HANDLE_DOM_HANDLE });
+
+  beforeEach(() => {
+    document.body.innerHTML = WATCH_ID_INLINE_HANDLE_DOM_HTML;
+  });
+
+  it('plays when the whitelist holds only its handle', () => {
+    const verdict = watchChannelVerdict(
+      document,
+      withYoutube({ channelMode: 'WHITELIST', channels: [HANDLE_ONLY] }),
+      { url: WATCH_URL },
+    );
+    expect(verdict).toEqual({ action: 'ALLOW', reason: 'listed' });
+  });
+
+  it('is interrupted when the blacklist holds only its handle', () => {
+    const verdict = watchChannelVerdict(
+      document,
+      withYoutube({
+        channelMode: 'BLACKLIST',
+        channels: [HANDLE_ONLY],
+        channelBlockMode: 'HARD_BLOCK',
+      }),
+      { url: WATCH_URL },
+    );
+    expect(verdict).toMatchObject({ action: 'BLOCK', reason: 'listed' });
+  });
+
+  it('still blocks a DIFFERENT handle under a whitelist, so the fix did not just open everything', () => {
+    const verdict = watchChannelVerdict(
+      document,
+      withYoutube({
+        channelMode: 'WHITELIST',
+        channels: [channel({ handle: 'someoneelse' })],
+        channelBlockMode: 'HARD_BLOCK',
+      }),
+      { url: WATCH_URL },
+    );
+    expect(verdict).toMatchObject({ action: 'BLOCK', reason: 'not-listed' });
+  });
+
+  it('matches by id too, so an entry added from a watch page keeps working', () => {
+    const verdict = watchChannelVerdict(
+      document,
+      withYoutube({
+        channelMode: 'WHITELIST',
+        channels: [channel({ channelId: REAL_WATCH_ID_INLINE_HANDLE_DOM_CHANNEL_ID })],
+      }),
+      { url: WATCH_URL },
+    );
+    expect(verdict).toEqual({ action: 'ALLOW', reason: 'listed' });
   });
 });
