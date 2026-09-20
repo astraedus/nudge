@@ -23,7 +23,6 @@ export default defineContentScript({
   runAt: 'document_idle',
   cssInjectionMode: 'manifest',
   main(ctx) {
-    const controller = initYoutubeContentScript();
     /*
      * COUNT budgets ("20 Shorts a day", v0.3) are started HERE rather than inside
      * `content/youtube.ts`, and that is deliberate rather than convenient.
@@ -40,10 +39,15 @@ export default defineContentScript({
      * `yt-navigate-finish` is passed so a Shorts swipe is noticed on YouTube's own event
      * as well as by the href poll.
      */
+    // Started BEFORE the main controller, deliberately: counting is independent of
+    // everything the controller does, and if the controller ever throws on an unfamiliar
+    // page shape, the budget the user set must still be measured rather than silently
+    // stopping for as long as that page is open.
     const itemCounter = startItemViewCounter({
       platform: 'youtube',
       navEvent: 'yt-navigate-finish',
     });
+    const controller = initYoutubeContentScript();
     // An extension reload leaves the old script alive on the page; without this it keeps
     // its observer and interval running against a dead message port.
     ctx.onInvalidated(() => {
