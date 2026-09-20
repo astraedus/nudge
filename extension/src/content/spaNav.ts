@@ -1,9 +1,9 @@
 /**
- * The generic SPA-navigation layer, shared by every non-YouTube platform content script
- * (Instagram, TikTok, X, Facebook, Reddit, LinkedIn). YouTube keeps its own hand-built
- * 3-layer detection in `youtube.ts` (`yt-navigate-finish` + `popstate` + debounced
- * observer + safety-net poll) — this module is the SAME mechanism generalized so the
- * other six platforms don't each reinvent it with six chances to drift.
+ * The generic SPA-navigation layer, shared by EVERY platform content script: Instagram,
+ * TikTok, X, Facebook, Reddit, LinkedIn and, since the YouTube migration, `youtube.ts`
+ * too. It is the generalization of YouTube's original hand-built 3-layer detection
+ * (`yt-navigate-finish` + `popstate` + debounced observer + safety-net poll), so seven
+ * platforms share one mechanism instead of seven chances to drift.
  *
  * Why this exists at all (ext-12 §G, confirmed independently on YouTube, TikTok, X,
  * Instagram and Facebook — 5-for-5): an isolated-world content script CANNOT observe the
@@ -65,6 +65,24 @@ export interface ObserveNavigationOptions {
   pollMs?: number;
   /** Debounce window for the mutation-storm re-apply pass, ms. Default 250. */
   mutationDebounceMs?: number;
+  /**
+   * Also schedule the debounced `onMutate` re-apply pass on every poll tick that saw NO
+   * navigation. Off by default; YouTube is the one caller that turns it on.
+   *
+   * Why it exists: a page whose DOM has gone quiet stops firing the mutation observer, so
+   * the re-apply pass stops running — and on YouTube that pass is not merely cosmetic
+   * reconciliation, it is what re-evaluates the channel verdict, the colour flip and the
+   * hide toggles as the page finishes settling. `youtube.ts`'s original controller had
+   * exactly this: a 1s safety-net interval that refreshed immediately on an href change
+   * and otherwise scheduled the debounced pass (`else scheduleRefresh()`). This flag is
+   * that second half, kept so the migration onto this module changes nothing about when
+   * YouTube re-checks a page.
+   *
+   * It is deliberately routed through the SAME debounce as the observer rather than
+   * calling `onMutate` directly, so a mutation storm and a poll tick landing together
+   * still collapse into one pass — which is what the old shared `debounceTimer` did.
+   */
+  mutateOnIdlePoll?: boolean;
   /** Injectable for tests; defaults to the global `document`. */
   doc?: Document;
   /**
@@ -103,15 +121,18 @@ export function observeNavigation(options: ObserveNavigationOptions): ObserveNav
    * it (a site that fires BOTH its own event and a popstate for the same hop must not
    * double-fire).
    */
-  function checkForNavigation(): void {
-    if (stopped) return;
+  function checkForNavigation(): boolean {
+    if (stopped) return false;
     const href = doc.location?.href ?? '';
-    if (href === lastHref) return;
+    if (href === lastHref) return false;
     lastHref = href;
     options.onNavigate();
+    return true;
   }
 
-  const onNavSignal = (): void => checkForNavigation();
+  const onNavSignal = (): void => {
+    checkForNavigation();
+  };
 
   win.addEventListener('popstate', onNavSignal);
   win.addEventListener('hashchange', onNavSignal);
@@ -119,7 +140,12 @@ export function observeNavigation(options: ObserveNavigationOptions): ObserveNav
 
   // The href-diff poll: the ONLY reliable way to notice a same-document `pushState`/
   // `replaceState` call an isolated-world content script cannot observe directly.
-  const pollTimer = win.setInterval(checkForNavigation, pollMs);
+  const pollTimer = win.setInterval(() => {
+    // A tick that found no navigation is the "this page has gone quiet" signal, and for a
+    // caller that asked for it that is exactly when the debounced re-apply pass must still
+    // run: a quiet DOM fires no mutations to schedule it. See `mutateOnIdlePoll`.
+    if (!checkForNavigation() && options.mutateOnIdlePoll === true) scheduleMutate();
+  }, pollMs);
 
   function scheduleMutate(): void {
     if (stopped || !options.onMutate) return;
