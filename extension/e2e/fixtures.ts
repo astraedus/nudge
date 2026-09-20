@@ -29,8 +29,13 @@ import {
   type BrowserContext,
   type Worker,
 } from '@playwright/test';
-import { DEFAULT_SETTINGS, SCHEMA_VERSION } from '../src/core/settingsSchema';
-import type { NudgeSettings, SiteRule } from '../src/core/settingsSchema';
+import { SCHEMA_VERSION, newSiteRule } from '../src/core/settingsSchema';
+import type {
+  GateSetting,
+  NudgeSettings,
+  SiteFeatures,
+  SiteRule,
+} from '../src/core/settingsSchema';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const EXTENSION_PATH = path.resolve(here, '../.output/chrome-mv3');
@@ -347,27 +352,62 @@ export function baseSettings(overrides: Partial<NudgeSettings> = {}): Partial<Nu
     messages: { delayTitles: [], delaySubtitles: [], hardBlockMessages: [] },
     strictMode: { enabled: false, challengeLength: 24 },
     emergencyPass: { enabled: true },
-    // Spread the REAL defaults so adding a settings field never breaks the whole suite.
-    youtube: { ...DEFAULT_SETTINGS.youtube },
     tempAllowMinutes: 10,
     ...overrides,
   };
 }
 
-/** A site rule with sensible defaults. */
+/**
+ * A site rule with sensible defaults.
+ *
+ * Built on `newSiteRule` rather than a literal, so a rule for a known platform
+ * automatically carries its (all-off) feature block exactly as the product's own "add a
+ * site" path produces it. A hand-written literal here would drift from the real shape the
+ * moment the schema grows, and e2e is the last place that should be testing a shape the
+ * product never actually stores.
+ */
 export function rule(domain: string, overrides: Partial<SiteRule> = {}): SiteRule {
   return {
+    ...newSiteRule({ domain, mode: 'HARD_BLOCK' }),
     id: `rule-${domain}`,
-    domain,
-    mode: 'HARD_BLOCK',
-    delaySeconds: 15,
-    dailyLimitMinutes: null,
-    enabled: true,
-    createdAt: 0,
-    showTimeRemaining: false,
-    schedule: null,
     ...overrides,
   };
+}
+
+/**
+ * A rule for a known platform with some of its feature surfaces configured.
+ *
+ * `gates`/`hides` are merged over the platform's defaults, so a test only names the
+ * surfaces it cares about and every other surface stays off.
+ */
+export function platformRule(
+  domain: string,
+  config: {
+    gates?: Record<string, Partial<GateSetting>>;
+    hides?: Record<string, boolean>;
+    youtube?: Partial<NonNullable<SiteFeatures['youtube']>>;
+  },
+  overrides: Partial<SiteRule> = {},
+): SiteRule {
+  const base = rule(domain, overrides);
+  const features = base.features;
+  if (features === null) {
+    throw new Error(`${domain} is not a known platform, so it has no features to configure`);
+  }
+  for (const [gateId, gate] of Object.entries(config.gates ?? {})) {
+    const existing = features.gates[gateId as keyof typeof features.gates];
+    if (existing === undefined) throw new Error(`${domain} has no gate "${gateId}"`);
+    features.gates[gateId as keyof typeof features.gates] = { ...existing, ...gate };
+  }
+  for (const [hideId, hidden] of Object.entries(config.hides ?? {})) {
+    if (!(hideId in features.hides)) throw new Error(`${domain} has no hide "${hideId}"`);
+    features.hides[hideId as keyof typeof features.hides] = hidden;
+  }
+  if (config.youtube !== undefined) {
+    if (features.youtube === undefined) throw new Error(`${domain} has no channel lists`);
+    features.youtube = { ...features.youtube, ...config.youtube };
+  }
+  return base;
 }
 
 export const expect = test.expect;

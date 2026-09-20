@@ -1,6 +1,11 @@
-import { baseSettings, expect, test } from './fixtures';
+import { baseSettings, expect, platformRule, test } from './fixtures';
 import type { Page } from '@playwright/test';
-import type { ChannelEntry, NudgeSettings } from '../src/core/settingsSchema';
+import type {
+  ChannelEntry,
+  ChannelListMode,
+  NudgeSettings,
+} from '../src/core/settingsSchema';
+import type { BlockMode } from '../src/core/types';
 
 /**
  * Phase 4 end to end, against a REAL Chrome with the extension loaded.
@@ -23,9 +28,67 @@ function watchUrl(channelId: string, name: string): string {
   return `https://www.youtube.com/watch?v=abc&channel=${channelId}&name=${encodeURIComponent(name)}`;
 }
 
-function withYoutube(overrides: Partial<NudgeSettings['youtube']>): Partial<NudgeSettings> {
-  const base = baseSettings();
-  return { ...base, youtube: { ...base.youtube!, ...overrides } };
+/**
+ * The v2 flat YouTube config, expressed as a v3 youtube.com rule.
+ *
+ * These specs are the shipped contract for channel filtering, the gray-screen colour
+ * reward and the hide toggles, and every one of them still has to hold — so they are
+ * TRANSLATED here rather than rewritten. Keeping the old argument shape means each `it`
+ * below reads exactly as it did when it was written against the behaviour it is pinning;
+ * rewriting ten call sites by hand is how a suite quietly loses a case.
+ *
+ * The site rule is `ALLOW` because v2 had no youtube.com site rule in these scenarios —
+ * only the feature config — so the site itself was never blocked and a disallowed channel
+ * fell to `channelBlockMode`. That is the same arrangement in v3.
+ */
+function withYoutube(overrides: {
+  channelMode?: ChannelListMode;
+  channels?: ChannelEntry[];
+  channelBlockMode?: BlockMode;
+  channelDelaySeconds?: number;
+  disableAutoplay?: boolean;
+  grayScreen?: boolean;
+  shortsMode?: 'OFF' | BlockMode;
+  shortsDelaySeconds?: number;
+  hideShortsShelf?: boolean;
+  hideHomeFeed?: boolean;
+  hideSidebarRecs?: boolean;
+  hideEndScreen?: boolean;
+  hideComments?: boolean;
+}): Partial<NudgeSettings> {
+  const hides: Record<string, boolean> = {};
+  if (overrides.hideShortsShelf !== undefined) hides.shortsShelf = overrides.hideShortsShelf;
+  if (overrides.hideHomeFeed !== undefined) hides.homeFeed = overrides.hideHomeFeed;
+  if (overrides.hideSidebarRecs !== undefined) hides.sidebarRecs = overrides.hideSidebarRecs;
+  if (overrides.hideEndScreen !== undefined) hides.endScreen = overrides.hideEndScreen;
+  if (overrides.hideComments !== undefined) hides.comments = overrides.hideComments;
+
+  const gates: Record<string, { mode?: 'OFF' | BlockMode; delaySeconds?: number }> = {};
+  if (overrides.shortsMode !== undefined || overrides.shortsDelaySeconds !== undefined) {
+    gates.shorts = { mode: overrides.shortsMode, delaySeconds: overrides.shortsDelaySeconds };
+  }
+
+  const youtube: Record<string, unknown> = {};
+  if (overrides.channelMode !== undefined) youtube.channelMode = overrides.channelMode;
+  if (overrides.channels !== undefined) youtube.channels = overrides.channels;
+  if (overrides.channelBlockMode !== undefined) {
+    youtube.channelBlockMode = overrides.channelBlockMode;
+  }
+  if (overrides.channelDelaySeconds !== undefined) {
+    youtube.channelDelaySeconds = overrides.channelDelaySeconds;
+  }
+  if (overrides.disableAutoplay !== undefined) youtube.disableAutoplay = overrides.disableAutoplay;
+
+  return {
+    ...baseSettings(),
+    rules: [
+      platformRule(
+        'youtube.com',
+        { gates, hides, youtube },
+        { mode: 'ALLOW', grayscale: overrides.grayScreen === true },
+      ),
+    ],
+  };
 }
 
 test.describe('YouTube channel lists', () => {
