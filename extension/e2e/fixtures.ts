@@ -69,12 +69,19 @@ function youtubePage(url: URL): string {
 
   // A real watch page also carries a channel byline in the DOM, which YouTube re-renders on
   // every navigation, that is the tier the staleness guard falls through to.
+  //
+  // `?handle=` makes that byline link `/@handle` instead of `/channel/UC…`, which is what
+  // YouTube actually ships: the inline player response gives the canonical id and no handle,
+  // the byline gives the handle and no id. Reproducing that split is the only way to serve a
+  // page carrying BOTH identifiers, which is what channel enrichment needs to observe.
   const domChannelId = url.searchParams.get('domChannel') ?? channelId;
+  const handle = url.searchParams.get('handle') ?? '';
+  const bylineHref = handle === '' ? `/channel/${domChannelId}` : `/@${handle}`;
   const byline =
-    domChannelId === ''
+    domChannelId === '' && handle === ''
       ? ''
       : `<ytd-channel-name id="channel-name"><a class="yt-formatted-string" ` +
-        `href="/channel/${domChannelId}" aria-label="Go to channel ${name}">${name}</a>` +
+        `href="${bylineHref}" aria-label="Go to channel ${name}">${name}</a>` +
         `</ytd-channel-name>`;
 
   return (
