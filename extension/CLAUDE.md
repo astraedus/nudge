@@ -78,7 +78,9 @@ src/
                              BOTH shared by all seven platform scripts, YouTube included
                 YouTube: selectors.ts (ALL selectors), youtube.ts, youtube.css,
                 channelDetection.ts (3-tier channel identification), channelFilter.ts
-                (feed filtering + watch gate + colour flip), unhook.ts (hide toggles)
+                (feed filtering + watch gate + colour flip), channelObserver.ts (reports a
+                CONFIRMED channel so the stored entry can learn its missing identifier),
+                unhook.ts (hide toggles)
                 <platform>/{selectors,index}.ts for instagram, tiktok, x, facebook,
                 reddit, linkedin -- same architecture, one CSS class per hide feature
   entrypoints/  WXT entrypoints: background, blocked/, popup/, dashboard/, onboarding/,
@@ -223,6 +225,18 @@ unit-testable, exactly as the Android domain layer is.
   silent no-op, and a fail-closed you cannot see is an unexplained block.
   Gray-screen takes the OPPOSITE bias throughout: an unidentified channel never earns
   colour, because staying gray is harmless.
+- **AN ENTRY CAN LEARN ITS MISSING IDENTIFIER, AND THAT IS ALL IT MAY EVER LEARN.** A stored
+  entry only holds the identifier the user typed, and `dnr.ts` can only carve out the
+  identifiers it holds — so a handle-only entry's own `/channel/UC…` page was redirected
+  despite being allowed, which no content script can fix. `CHANNEL_OBSERVED` closes that: a
+  CONFIRMED observation (never a settling one — persisting a stale byline would make the
+  reverse-direction P0 permanent) goes to `core/channels.enrichEntries`, which fills the null
+  axis, upgrades an `@handle`/id placeholder name, and merges two rows it proves are one
+  channel. THE INVARIANT: enrichment never adds a channel, never drops one, never overwrites a
+  non-null identifier, and refuses a contradiction on a shared axis outright. The covered set
+  is therefore unchanged, which is exactly what `strictMode.isWeakening` measures, so the
+  save goes through the normal gated `handleSave` and the Commitment Lock simply never fires.
+  Full reasoning and the rules in `core/channels.ts`; tests pin the invariant over a table.
 - **The channel gate bails BACKWARDS, not to the site root.** "I changed my mind" on the
   channel interstitial calls `history.back()` (`content/overlay.ts`'s `bailAwayFromGate`),
   and when there is no previous entry — a tab opened straight onto the gated video — asks

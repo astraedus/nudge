@@ -34,6 +34,7 @@ import { gateDefinition } from '../core/platforms';
 import type { BlockMode } from '../core/types';
 import { send } from '../ui/rpc';
 import { applyChannelFilter, applyGrayColor, watchChannelVerdict } from './channelFilter';
+import { createChannelObserver } from './channelObserver';
 import { channelKey, SETTLE_RECHECK_MS } from '../core/channelFreshness';
 import type { WatchGateVerdict } from '../core/channels';
 import { detectWatchChannel } from './channelDetection';
@@ -389,6 +390,8 @@ export function initYoutubeContentScript(
   let navAt = 0;
   /** Storm-proof re-checks scheduled after a navigation. */
   const settleTimers: number[] = [];
+  /** Reports confirmed channels to the worker; owns its own per-page-load dedupe. */
+  const channelObserver = createChannelObserver();
   let lastUrl = doc.location?.href ?? '';
   let stopped = false;
 
@@ -430,6 +433,10 @@ export function initYoutubeContentScript(
     applyChannelFilter(doc, config);
     applyGrayColor(doc, config, { url, previousKey: previousChannelKey, msSinceNav });
     applyAutoplayOff(doc, config);
+    // Read-only for the page, but it can WRITE the user's channel list, so it is gated on the
+    // same CONFIRMED detection the interstitial is — never on a settling one. See
+    // content/channelObserver.ts for why that rule lives there and not here.
+    channelObserver.observe(doc, config, { url, previousKey: previousChannelKey, msSinceNav });
 
     const resolvedShortsGate = resolveShortsGate(url, config);
     // A completed pause buys the rest of the Shorts session — but it cannot buy a budget

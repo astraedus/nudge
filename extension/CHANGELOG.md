@@ -8,6 +8,25 @@ namespaces were already split for exactly that reason.
 
 ## 0.3.0 — unreleased
 
+### Added
+
+- **A channel you added learns its other name.** A channel list entry only ever held the
+  identifier you typed — `@veritasium` stored a handle and no id, a pasted
+  `/channel/UC...` URL stored an id and no handle. Watching one of that channel's videos now
+  teaches the entry the identifier it was missing, and the real channel name in place of the
+  `@handle`/id placeholder. That closes a hole you could actually hit: until the entry had an
+  id, a full navigation to the channel's own `youtube.com/channel/UC...` page was redirected
+  to the block page even though you had explicitly allowed that channel, because the network
+  layer can only carve out the identifiers the entry holds. The same channel added twice by
+  two different routes is merged into one row. Nothing is ever added to your list and nothing
+  is ever removed from it, so this never weakens a rule and never asks for a Strict Mode
+  challenge; an observation that contradicts a stored entry is refused outright rather than
+  merged.
+- **The channel list shows what it actually knows.** Each row leads with the channel's name
+  and carries the identifiers known for it — the `@handle`, the `UC` id, or both — on a
+  quieter second line, so a list that used to read as a column of raw ids becomes legible.
+  A row never prints the same string twice.
+
 ### Changed
 
 - **"I changed my mind" on a blocked YouTube channel now takes you back where you came

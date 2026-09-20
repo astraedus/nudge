@@ -8,6 +8,7 @@ import { emptyDayUsage } from '../../src/core/stats';
 import { surfaceKey } from '../../src/core/surfaceKeys';
 import type {
   BlockContext,
+  ChannelObservedResult,
   PopupState,
   SaveResult,
   SiteConfig,
@@ -549,5 +550,194 @@ describe('the block page asking about a SUBDOMAIN whose limit is spent', () => {
     const day = await loadDay(localDayKey(NOW));
     expect(day['wikipedia.org']?.walkedAway).toBe(1);
     expect(day['en.wikipedia.org']).toBeUndefined();
+  });
+});
+
+describe('CHANNEL_OBSERVED', () => {
+  const VERITASIUM_ID = 'UCHnyfMqiRRG1u-2MsSQLbXA';
+
+  const whitelistOf = (channels: ChannelEntry[], overrides: Partial<NudgeSettings> = {}) =>
+    settings({
+      rules: [
+        siteRule({
+          domain: 'youtube.com',
+          mode: 'HARD_BLOCK',
+          features: featuresWith('youtube', {
+            youtube: { channelMode: 'WHITELIST', channels },
+          }),
+        }),
+      ],
+      ...overrides,
+    });
+
+  async function storedChannels(): Promise<ChannelEntry[]> {
+    const stored = await loadSettings();
+    return stored.rules[0]?.features?.youtube?.channels ?? [];
+  }
+
+  it('teaches a handle-only entry the channel id the watch page revealed', async () => {
+    await seed(whitelistOf([channel({ handle: 'veritasium', displayName: '@veritasium' })]));
+
+    const result = await ask<ChannelObservedResult>({
+      type: 'CHANNEL_OBSERVED',
+      channelId: VERITASIUM_ID,
+      handle: '@veritasium',
+      displayName: 'Veritasium',
+    });
+
+    expect(result).toEqual({ ok: true, changed: true, reason: 'enriched' });
+    expect(await storedChannels()).toEqual([
+      {
+        channelId: VERITASIUM_ID,
+        handle: 'veritasium',
+        displayName: 'Veritasium',
+        addedAt: 0,
+      },
+    ]);
+  });
+
+  it('recompiles the network rules, so the learned id takes effect without a restart', async () => {
+    const handleOnly = whitelistOf([
+      channel({ handle: 'veritasium', displayName: '@veritasium' }),
+    ]);
+    // Compile through the real path first, so "before" is a genuinely populated rule set in
+    // which the canonical channel URL simply has no carve-out — not an empty one.
+    await ask<SaveResult>({ type: 'SAVE_SETTINGS', settings: handleOnly });
+    const before = await chrome.declarativeNetRequest.getDynamicRules();
+    expect(before.length).toBeGreaterThan(0);
+    expect(
+      before.some((rule) => rule.condition.regexFilter?.includes('veritasium') === true),
+    ).toBe(true);
+    expect(
+      before.some((rule) => rule.condition.regexFilter?.includes(VERITASIUM_ID) === true),
+    ).toBe(false);
+
+    await ask({
+      type: 'CHANNEL_OBSERVED',
+      channelId: VERITASIUM_ID,
+      handle: '@veritasium',
+      displayName: 'Veritasium',
+    });
+
+    // Recompiled by the SAME path a user edit takes, which is the whole reason this handler
+    // goes through `handleSave` instead of writing settings itself.
+    const after = await chrome.declarativeNetRequest.getDynamicRules();
+    expect(
+      after.some(
+        (rule) =>
+          rule.action.type === 'allow' &&
+          rule.condition.regexFilter?.includes(VERITASIUM_ID) === true,
+      ),
+    ).toBe(true);
+  });
+
+  it('does nothing when the observation contradicts the stored entry', async () => {
+    const stored = channel({
+      channelId: VERITASIUM_ID,
+      handle: 'veritasium',
+      displayName: 'Veritasium',
+    });
+    await seed(whitelistOf([stored]));
+
+    const result = await ask<ChannelObservedResult>({
+      type: 'CHANNEL_OBSERVED',
+      channelId: 'UCsXVk37bltHxD1rDPwtNM8Q',
+      handle: '@veritasium',
+      displayName: 'Someone Else',
+    });
+
+    expect(result).toEqual({ ok: true, changed: false, reason: 'contradiction' });
+    expect(await storedChannels()).toEqual([stored]);
+  });
+
+  it('never adds a channel the user did not list', async () => {
+    await seed(whitelistOf([channel({ handle: 'kurzgesagt', displayName: 'Kurzgesagt' })]));
+
+    const result = await ask<ChannelObservedResult>({
+      type: 'CHANNEL_OBSERVED',
+      channelId: VERITASIUM_ID,
+      handle: '@veritasium',
+      displayName: 'Veritasium',
+    });
+
+    expect(result).toEqual({ ok: true, changed: false, reason: 'no-match' });
+    expect(await storedChannels()).toHaveLength(1);
+  });
+
+  it('is not refused by the Commitment Lock, in either list mode', async () => {
+    // Enrichment cannot weaken protection (it adds no channel and drops none), so it must
+    // not sit behind a Strict Mode challenge the user has no way to answer: the observation
+    // comes from watching a video, not from a settings screen.
+    for (const channelMode of ['WHITELIST', 'BLACKLIST'] as const) {
+      resetBrowser();
+      installDnr();
+      attention = installAttention();
+      await seed(
+        settings({
+          strictMode: { ...settings().strictMode, enabled: true },
+          rules: [
+            siteRule({
+              domain: 'youtube.com',
+              mode: 'HARD_BLOCK',
+              features: featuresWith('youtube', {
+                youtube: {
+                  channelMode,
+                  channels: [channel({ handle: 'veritasium', displayName: '@veritasium' })],
+                },
+              }),
+            }),
+          ],
+        }),
+      );
+
+      const result = await ask<ChannelObservedResult>({
+        type: 'CHANNEL_OBSERVED',
+        channelId: VERITASIUM_ID,
+        handle: '@veritasium',
+        displayName: 'Veritasium',
+      });
+
+      expect(result.changed).toBe(true);
+      expect((await storedChannels())[0]?.channelId).toBe(VERITASIUM_ID);
+    }
+  });
+
+  it('merges a channel the user added twice by different routes', async () => {
+    await seed(
+      whitelistOf([
+        channel({ handle: 'veritasium', displayName: '@veritasium', addedAt: 500 }),
+        channel({ channelId: VERITASIUM_ID, displayName: VERITASIUM_ID, addedAt: 100 }),
+      ]),
+    );
+
+    const result = await ask<ChannelObservedResult>({
+      type: 'CHANNEL_OBSERVED',
+      channelId: VERITASIUM_ID,
+      handle: '@veritasium',
+      displayName: 'Veritasium',
+    });
+
+    expect(result).toEqual({ ok: true, changed: true, reason: 'merged' });
+    expect(await storedChannels()).toEqual([
+      {
+        channelId: VERITASIUM_ID,
+        handle: 'veritasium',
+        displayName: 'Veritasium',
+        addedAt: 100,
+      },
+    ]);
+  });
+
+  it('shrugs when no rule covers YouTube at all', async () => {
+    await seed(settings({ rules: [siteRule({ domain: 'reddit.com', features: null })] }));
+
+    const result = await ask<ChannelObservedResult>({
+      type: 'CHANNEL_OBSERVED',
+      channelId: VERITASIUM_ID,
+      handle: '@veritasium',
+      displayName: 'Veritasium',
+    });
+
+    expect(result).toEqual({ ok: true, changed: false, reason: 'no-rule' });
   });
 });

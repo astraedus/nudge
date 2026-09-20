@@ -140,6 +140,26 @@ function channelKey(entry: ChannelEntry): string {
 }
 
 /**
+ * The secondary "what we actually know" line under a channel row's display name.
+ *
+ * Background: handle-entry enrichment learns the missing identifier and a real display
+ * name over time, so a row that starts as the `@handle`/id fallback for `displayName`
+ * eventually gets a real name plus both identifiers underneath. Returns null rather than
+ * an empty string when there is nothing to add beyond the primary line — a row must never
+ * show the same string twice, so a single known identifier that IS the (fallback)
+ * displayName is suppressed rather than repeated one line down.
+ */
+function channelIdentifierLine(entry: ChannelEntry): string | null {
+  const parts: string[] = [];
+  if (entry.handle !== null) parts.push(`@${entry.handle}`);
+  if (entry.channelId !== null) parts.push(entry.channelId);
+
+  if (parts.length === 0) return null;
+  if (parts.length === 1) return parts[0] === entry.displayName ? null : parts[0]!;
+  return parts.join(' · ');
+}
+
+/**
  * The YouTube channel allowlist/blocklist block of the youtube.com rule's features —
  * moved out of the old standalone YoutubePanel tab (ext-13 §5) into a component owned by
  * `RuleEditor`, since a channel list is a per-site-rule setting like everything else now.
@@ -310,39 +330,55 @@ export function ChannelListEditor({
             )
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {youtube.channels.map((entry) => (
-                <div
-                  key={channelKey(entry)}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    gap: 12,
-                    padding: '8px 12px',
-                    borderRadius: 'var(--nudge-radius-sm)',
-                    border: '1px solid var(--nudge-surface-variant)',
-                  }}
-                >
-                  <span
+              {youtube.channels.map((entry) => {
+                const identifierLine = channelIdentifierLine(entry);
+                return (
+                  <div
+                    key={channelKey(entry)}
                     style={{
-                      fontSize: 14,
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: 12,
+                      padding: '8px 12px',
+                      borderRadius: 'var(--nudge-radius-sm)',
+                      border: '1px solid var(--nudge-surface-variant)',
                     }}
                   >
-                    {entry.displayName}
-                  </span>
-                  <Button
-                    variant="muted"
-                    onClick={() => handleRemoveChannel(entry)}
-                    aria-label={`Remove ${entry.displayName}`}
-                    style={{ padding: '6px 12px', fontSize: 13, flexShrink: 0 }}
-                  >
-                    Remove
-                  </Button>
-                </div>
-              ))}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, flex: '1 1 auto' }}>
+                      <span
+                        style={{
+                          fontSize: 14,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {entry.displayName}
+                      </span>
+                      {identifierLine !== null && (
+                        <span
+                          style={{
+                            fontSize: 12,
+                            color: 'var(--nudge-on-surface-variant)',
+                            wordBreak: 'break-all',
+                          }}
+                        >
+                          {identifierLine}
+                        </span>
+                      )}
+                    </div>
+                    <Button
+                      variant="muted"
+                      onClick={() => handleRemoveChannel(entry)}
+                      aria-label={`Remove ${entry.displayName}`}
+                      style={{ padding: '6px 12px', fontSize: 13, flexShrink: 0 }}
+                    >
+                      Remove
+                    </Button>
+                  </div>
+                );
+              })}
             </div>
           )}
         </>
