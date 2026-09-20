@@ -25,6 +25,11 @@ on:
         type: boolean
         default: false
 
+# The release step needs write access; the default GITHUB_TOKEN is read-only on this repo
+# (first run failed with HTTP 403 "Resource not accessible by integration").
+permissions:
+  contents: write
+
 defaults:
   run:
     working-directory: extension
