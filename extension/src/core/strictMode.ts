@@ -15,8 +15,16 @@
  * No chrome.* imports — fully unit-testable under plain Node/vitest.
  */
 
-import type { NudgeSettings, SiteRule } from './settingsSchema';
-import type { BlockMode } from './types';
+import { gateModeStrength, type GateId, type HideId } from './platforms';
+import type {
+  ChannelEntry,
+  ChannelListMode,
+  NudgeSettings,
+  SiteFeatures,
+  SiteRule,
+  YoutubeFeatureSettings,
+} from './settingsSchema';
+import type { SiteMode } from './types';
 
 /**
  * Unambiguous charset: excludes visually-confusable glyphs (0/O, 1/l/I) so a user copying the
@@ -169,9 +177,104 @@ function modeStrength(mode: string | null | undefined): number {
   }
 }
 
-/** Same ordering as `modeStrength`, plus YouTube's 'INHERIT' as the weakest rung of all. */
-function youtubeModeStrength(mode: 'INHERIT' | BlockMode): number {
-  return mode === 'INHERIT' ? 0 : modeStrength(mode);
+/**
+ * Channel-list strength. WHITELIST is the strongest stance because it is default-DENY:
+ * anything not named is blocked. BLACKLIST is default-allow, so it only ever removes what
+ * is named. OFF is no stance at all.
+ *
+ * This ordering is what makes "switch my whitelist to a blacklist" a weakening even though
+ * both are "a channel list is configured" — and it is the switch a user reaches for at
+ * exactly the moment the whitelist is doing its job.
+ */
+function channelModeStrength(mode: ChannelListMode): number {
+  switch (mode) {
+    case 'WHITELIST':
+      return 2;
+    case 'BLACKLIST':
+      return 1;
+    default:
+      return 0;
+  }
+}
+
+/** A stable identity for a channel entry — either identifier matches (see ChannelEntry). */
+function channelMatches(a: ChannelEntry, b: ChannelEntry): boolean {
+  return (
+    (a.channelId !== null && a.channelId === b.channelId) ||
+    (a.handle !== null && a.handle === b.handle)
+  );
+}
+
+function hasChannel(list: readonly ChannelEntry[], entry: ChannelEntry): boolean {
+  return list.some((candidate) => channelMatches(candidate, entry));
+}
+
+/**
+ * Whether the YouTube channel configuration got weaker.
+ *
+ * The list itself weakens in OPPOSITE directions depending on the mode, which is the whole
+ * reason this cannot be a generic "did the array shrink" check: on a BLACKLIST, removing a
+ * channel un-blocks it; on a WHITELIST, ADDING a channel un-blocks it. A single
+ * length-based rule would gate the wrong half of the cases and wave the other half
+ * through — and the waved-through half is the one a user reaches for impulsively.
+ */
+function isYoutubeFeatureWeakened(
+  oldYt: YoutubeFeatureSettings,
+  newYt: YoutubeFeatureSettings,
+): boolean {
+  if (channelModeStrength(newYt.channelMode) < channelModeStrength(oldYt.channelMode)) {
+    return true;
+  }
+  if (modeStrength(newYt.channelBlockMode) < modeStrength(oldYt.channelBlockMode)) return true;
+  if (newYt.channelDelaySeconds < oldYt.channelDelaySeconds) return true;
+  if (oldYt.disableAutoplay && !newYt.disableAutoplay) return true;
+
+  // Only judge the list against the mode that is now in force; a mode CHANGE is already
+  // covered above, and re-judging the list under the old mode would double-gate it.
+  if (newYt.channelMode === 'BLACKLIST') {
+    for (const entry of oldYt.channels) {
+      if (!hasChannel(newYt.channels, entry)) return true; // un-blocked a blocked channel
+    }
+  }
+  if (newYt.channelMode === 'WHITELIST') {
+    for (const entry of newYt.channels) {
+      if (!hasChannel(oldYt.channels, entry)) return true; // allowed something new
+    }
+  }
+  return false;
+}
+
+/**
+ * Whether a site's feature block got weaker on any axis: a gate softened, a gate's budget
+ * raised or removed, a hide switched off, or the YouTube channel config weakened.
+ *
+ * Losing the features object entirely (non-null -> null) counts as weakening, because
+ * every gate and hide it carried stops being enforced.
+ */
+function areFeaturesWeakened(
+  oldFeatures: SiteFeatures | null,
+  newFeatures: SiteFeatures | null,
+): boolean {
+  if (oldFeatures === null) return false;
+  if (newFeatures === null) return true;
+
+  for (const [gateId, oldGate] of Object.entries(oldFeatures.gates)) {
+    const newGate = newFeatures.gates[gateId as GateId];
+    if (newGate === undefined) return true;
+    if (gateModeStrength(newGate.mode) < gateModeStrength(oldGate.mode)) return true;
+    if (newGate.delaySeconds < oldGate.delaySeconds) return true;
+    if (isDailyLimitWeakened(oldGate.dailyLimitMinutes, newGate.dailyLimitMinutes)) return true;
+  }
+
+  for (const [hideId, wasHidden] of Object.entries(oldFeatures.hides)) {
+    if (wasHidden === true && newFeatures.hides[hideId as HideId] !== true) return true;
+  }
+
+  if (oldFeatures.youtube !== undefined) {
+    if (newFeatures.youtube === undefined) return true;
+    if (isYoutubeFeatureWeakened(oldFeatures.youtube, newFeatures.youtube)) return true;
+  }
+  return false;
 }
 
 /**
@@ -195,7 +298,41 @@ function isRuleWeakened(oldRule: SiteRule, newRule: SiteRule): boolean {
   if (newRule.delaySeconds < oldRule.delaySeconds) return true;
   // Daily limit: removing it, or raising it, grants more usage.
   if (isDailyLimitWeakened(oldRule.dailyLimitMinutes, newRule.dailyLimitMinutes)) return true;
+  // Grayscale off is a weakening; grayscale on never is. (The popup exposes this as a
+  // one-tap toggle, so it is the single easiest weakening in the product to reach for.)
+  if (oldRule.grayscale && !newRule.grayscale) return true;
+  // The schedule window's own mode is a second, independent mode axis — softening what
+  // happens INSIDE the window is a weakening even when the default behaviour is untouched.
+  if (isScheduleWeakened(oldRule, newRule)) return true;
+  if (areFeaturesWeakened(oldRule.features, newRule.features)) return true;
   return false;
+}
+
+/**
+ * What actually happens INSIDE the schedule window: the override when one is active,
+ * otherwise the rule's own default behaviour.
+ *
+ * Collapsing "has a schedule" and "has no schedule" into one value is what makes DELETING
+ * a schedule comparable to softening one. Since v0.2 a schedule can go either way — an
+ * ALLOW rule with a Hard Block window is the "block only during work hours" shape — so
+ * removing a window is a weakening when the window was blocking and a STRENGTHENING when
+ * it was an allowance. A naive "the schedule disappeared, gate it" rule would burn a
+ * challenge on deleting a lunchtime exception, and users who are made to solve challenges
+ * for strengthening their own settings stop trusting the gate.
+ */
+function effectiveInWindow(rule: SiteRule): { mode: SiteMode; delaySeconds: number } {
+  const schedule = rule.schedule;
+  return schedule !== null && schedule.enabled
+    ? { mode: schedule.mode, delaySeconds: schedule.delaySeconds }
+    : { mode: rule.mode, delaySeconds: rule.delaySeconds };
+}
+
+function isScheduleWeakened(oldRule: SiteRule, newRule: SiteRule): boolean {
+  const before = effectiveInWindow(oldRule);
+  const after = effectiveInWindow(newRule);
+  if (modeStrength(after.mode) < modeStrength(before.mode)) return true;
+  if (modeStrength(after.mode) > modeStrength(before.mode)) return false;
+  return after.delaySeconds < before.delaySeconds;
 }
 
 /**
@@ -239,15 +376,6 @@ export function isWeakening(oldSettings: NudgeSettings, newSettings: NudgeSettin
 
   // Axis: a longer temporary-allow window grants more free access per Delay/Breathing pass.
   if (newSettings.tempAllowMinutes > oldSettings.tempAllowMinutes) return true;
-
-  // Axis: YouTube Shorts mode softened, including softening all the way to 'INHERIT' (deferring
-  // to the site rule, or to nothing if there is none, is the weakest possible stance).
-  if (
-    youtubeModeStrength(newSettings.youtube.shortsMode) <
-    youtubeModeStrength(oldSettings.youtube.shortsMode)
-  ) {
-    return true;
-  }
 
   return false;
 }

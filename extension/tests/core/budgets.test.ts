@@ -7,21 +7,7 @@ import {
   remainingMs,
   tightestLimit,
 } from '../../src/core/budgets';
-import type { SiteRule } from '../../src/core/settingsSchema';
-
-function makeRule(overrides: Partial<SiteRule> = {}): SiteRule {
-  return {
-    id: overrides.id ?? 'rule-1',
-    domain: overrides.domain ?? 'example.com',
-    mode: overrides.mode ?? 'HARD_BLOCK',
-    delaySeconds: overrides.delaySeconds ?? 15,
-    dailyLimitMinutes: overrides.dailyLimitMinutes ?? null,
-    enabled: overrides.enabled ?? true,
-    createdAt: overrides.createdAt ?? 0,
-    showTimeRemaining: overrides.showTimeRemaining ?? false,
-    schedule: overrides.schedule ?? null,
-  };
-}
+import { siteRule as makeRule } from '../helpers/rules';
 
 describe('limitMs', () => {
   it('converts minutes to milliseconds', () => {

@@ -12,7 +12,7 @@
  * pre-mirrored scheduled rows.)
  */
 
-import { isScheduleActiveAt } from './scheduleEvaluator';
+import { appliedBlockMode, siteRuleAppliesNow } from './applies';
 import type { SiteRule } from './settingsSchema';
 import type { ActiveRule } from './types';
 
@@ -24,26 +24,34 @@ export function rulesForDomain(
   return rules.filter((rule) => rule.enabled && rule.domain === domain);
 }
 
-/** Resolve one stored rule into the rule in effect at `now`. */
-export function resolveRule(rule: SiteRule, now: Date): ActiveRule {
-  const schedule = rule.schedule;
-  const scheduleActive =
-    schedule !== null &&
-    schedule.enabled &&
-    isScheduleActiveAt(
-      {
-        days: schedule.days,
-        startMinute: schedule.startMinute,
-        endMinute: schedule.endMinute,
-      },
-      now,
-    );
+/**
+ * Resolve one stored rule into the rule in effect at `now`, or `null` when it is not in
+ * force — an ALLOW rule still inside its daily budget, or a rule whose schedule has put it
+ * in an ALLOW window.
+ *
+ * Returning null (rather than an ActiveRule the engine would then have to reject) is what
+ * keeps the ENGINE INVARIANT true: the engine only ever receives rules that must produce a
+ * BLOCK, so "some rule applied but the verdict was ALLOW" remains impossible by
+ * construction rather than by an extra branch someone could forget to add.
+ *
+ * `usageMs` is a REQUIRED parameter with no default. An ALLOW rule's whole behaviour turns
+ * on it, so a default of 0 would silently mean "budget never exhausted" at any call site
+ * that forgot to pass it — a limit-only rule that quietly never blocks is precisely the
+ * failure this feature exists to avoid.
+ */
+export function resolveRule(rule: SiteRule, now: Date, usageMs: number): ActiveRule | null {
+  const verdict = siteRuleAppliesNow(rule, usageMs, now);
+  const mode = appliedBlockMode(verdict);
+  if (mode === null) return null;
 
   return {
-    mode: scheduleActive ? schedule.mode : rule.mode,
-    delaySeconds: scheduleActive ? schedule.delaySeconds : rule.delaySeconds,
+    mode,
+    delaySeconds: verdict.delaySeconds,
     dailyLimitMinutes: rule.dailyLimitMinutes,
     enabled: true,
+    // The schedule has already been applied by `siteRuleAppliesNow`, so the engine's own
+    // schedule filter trivially passes. (It stays in the engine because the engine is a
+    // faithful port of the Kotlin original, which is fed pre-mirrored scheduled rows.)
     scheduleDays: null,
     scheduleStartMinute: null,
     scheduleEndMinute: null,
@@ -51,11 +59,14 @@ export function resolveRule(rule: SiteRule, now: Date): ActiveRule {
   };
 }
 
-/** Resolve every rule matching `domain` into engine input. */
+/** Resolve every in-force rule matching `domain` into engine input. */
 export function resolveActiveRules(
   rules: readonly SiteRule[],
   domain: string,
   now: Date,
+  usageMs: number,
 ): ActiveRule[] {
-  return rulesForDomain(rules, domain).map((rule) => resolveRule(rule, now));
+  return rulesForDomain(rules, domain)
+    .map((rule) => resolveRule(rule, now, usageMs))
+    .filter((rule): rule is ActiveRule => rule !== null);
 }

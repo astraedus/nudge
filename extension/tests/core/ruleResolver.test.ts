@@ -1,46 +1,23 @@
 import { describe, expect, it } from 'vitest';
 
 import { resolveActiveRules, resolveRule, rulesForDomain } from '../../src/core/ruleResolver';
-import type { ScheduleOverride, SiteRule } from '../../src/core/settingsSchema';
-
-/**
- * ruleResolver bridges stored SiteRule settings to engine ActiveRule input. The core
- * semantic under test is "Scheduled Override": inside an active window the schedule's
- * mode+delay REPLACE the rule's default, even when the scheduled mode is weaker than the
- * default — that's deliberate (a user setting up "gentler at night" wants the gentler
- * mode to actually apply, not just be advisory).
- */
-
-function siteRule(overrides: Partial<SiteRule> = {}): SiteRule {
-  return {
-    id: 'rule-1',
-    domain: 'youtube.com',
-    mode: 'HARD_BLOCK',
-    delaySeconds: 15,
-    dailyLimitMinutes: null,
-    enabled: true,
-    createdAt: 0,
-    showTimeRemaining: false,
-    schedule: null,
-    ...overrides,
-  };
-}
-
-function scheduleOverride(overrides: Partial<ScheduleOverride> = {}): ScheduleOverride {
-  return {
-    enabled: true,
-    days: null,
-    startMinute: null,
-    endMinute: null,
-    mode: 'BREATHING',
-    delaySeconds: 20,
-    ...overrides,
-  };
-}
+import type { ActiveRule } from '../../src/core/types';
+import { scheduleOverride, siteRule } from '../helpers/rules';
 
 /** 1-based month, matching how humans read dates ("January" = 1), unlike raw `Date`. */
 function at(year: number, month: number, day: number, hour: number, minute: number): Date {
   return new Date(year, month - 1, day, hour, minute, 0, 0);
+}
+
+/**
+ * `resolveRule` returns null for a rule that is not in force. These cases all pass a rule
+ * that IS in force, so the null is a test-setup error, not an expected outcome, assert it
+ * away once here rather than at every call site.
+ */
+function resolved(rule: Parameters<typeof resolveRule>[0], now: Date, usageMs = 0): ActiveRule {
+  const active = resolveRule(rule, now, usageMs);
+  if (active === null) throw new Error('expected the rule to be in force');
+  return active;
 }
 
 describe('rulesForDomain', () => {
@@ -72,7 +49,7 @@ describe('resolveRule', () => {
       }),
     });
     const outsideWindow = at(2026, 1, 7, 10, 0); // 10:00, window is 22:00-23:00
-    const active = resolveRule(rule, outsideWindow);
+    const active = resolved(rule, outsideWindow);
     expect(active.mode).toBe('HARD_BLOCK');
     expect(active.delaySeconds).toBe(15);
   });
@@ -91,7 +68,7 @@ describe('resolveRule', () => {
       }),
     });
     const insideWindow = at(2026, 1, 7, 22, 30);
-    const active = resolveRule(rule, insideWindow);
+    const active = resolved(rule, insideWindow);
     expect(active.mode).toBe('BREATHING');
     expect(active.delaySeconds).toBe(45);
   });
@@ -109,7 +86,7 @@ describe('resolveRule', () => {
       }),
     });
     const insideWindow = at(2026, 1, 7, 22, 30);
-    const active = resolveRule(rule, insideWindow);
+    const active = resolved(rule, insideWindow);
     expect(active.mode).toBe('HARD_BLOCK');
     expect(active.delaySeconds).toBe(15);
   });
@@ -119,8 +96,8 @@ describe('resolveRule', () => {
       dailyLimitMinutes: 30,
       schedule: scheduleOverride({ startMinute: 22 * 60, endMinute: 23 * 60 }),
     });
-    const outside = resolveRule(rule, at(2026, 1, 7, 10, 0));
-    const inside = resolveRule(rule, at(2026, 1, 7, 22, 30));
+    const outside = resolved(rule, at(2026, 1, 7, 10, 0));
+    const inside = resolved(rule, at(2026, 1, 7, 22, 30));
     expect(outside.dailyLimitMinutes).toBe(30);
     expect(inside.dailyLimitMinutes).toBe(30);
   });
@@ -129,7 +106,7 @@ describe('resolveRule', () => {
     const rule = siteRule({
       schedule: scheduleOverride({ days: [1, 2], startMinute: 0, endMinute: 60 }),
     });
-    const active = resolveRule(rule, at(2026, 1, 7, 10, 0));
+    const active = resolved(rule, at(2026, 1, 7, 10, 0));
     expect(active.scheduleDays).toBeNull();
     expect(active.scheduleStartMinute).toBeNull();
     expect(active.scheduleEndMinute).toBeNull();
@@ -147,14 +124,14 @@ describe('resolveRule', () => {
       }),
     });
     const at2am = at(2026, 1, 7, 2, 0);
-    const active = resolveRule(rule, at2am);
+    const active = resolved(rule, at2am);
     expect(active.mode).toBe('DELAY');
     expect(active.delaySeconds).toBe(60);
   });
 
   it('a null schedule always resolves to the default, regardless of `now`', () => {
     const rule = siteRule({ mode: 'DELAY', delaySeconds: 25, schedule: null });
-    const active = resolveRule(rule, at(2026, 1, 7, 22, 30));
+    const active = resolved(rule, at(2026, 1, 7, 22, 30));
     expect(active.mode).toBe('DELAY');
     expect(active.delaySeconds).toBe(25);
   });
@@ -167,7 +144,7 @@ describe('resolveActiveRules', () => {
       siteRule({ id: 'b', domain: 'youtube.com', enabled: false }),
       siteRule({ id: 'c', domain: 'instagram.com' }),
     ];
-    const result = resolveActiveRules(rules, 'youtube.com', at(2026, 1, 7, 10, 0));
+    const result = resolveActiveRules(rules, 'youtube.com', at(2026, 1, 7, 10, 0), 0);
     expect(result).toHaveLength(1);
     expect(result[0]?.ruleName).toBe('youtube.com');
     expect(result[0]?.mode).toBe('HARD_BLOCK');

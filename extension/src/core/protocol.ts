@@ -7,7 +7,8 @@
  * shape is a compile error rather than a runtime surprise.
  */
 
-import type { BlockDecision, BlockMode } from './types';
+import type { BlockDecision, BlockMode, SiteMode } from './types';
+import type { GateId, HideId, Platform } from './platforms';
 import type {
   ChannelEntry,
   ChannelListMode,
@@ -31,6 +32,23 @@ export interface BlockContext {
   passNextAvailableMs: number;
   strictModeEnabled: boolean;
   tempAllowMinutes: number;
+  /**
+   * The feature gate the blocked URL landed on, when it was a gate rather than the whole
+   * site — so the page can say "Shorts" instead of "youtube.com".
+   */
+  gateId: GateId | null;
+  /** Human label for `gateId`. */
+  gateLabel: string | null;
+  /**
+   * The channels the user still wants to be able to reach, when a YouTube whitelist is
+   * active. Empty otherwise.
+   *
+   * Without this the "block YouTube except these channels" setup is technically correct
+   * and practically useless: every route into an allowed channel (the home feed, search,
+   * the subscriptions page) is blocked, so the user can only reach what they allowed by
+   * typing a URL from memory. The block page has to BE the way in.
+   */
+  allowedChannels: ChannelEntry[];
 }
 
 export interface PopupState {
@@ -45,6 +63,14 @@ export interface PopupState {
   currentRemainingMs: number | null;
   /** Active seconds spent on the current domain today. */
   currentUsageSeconds: number;
+  /** The current site's mode right now, schedule applied. null when no rule covers it. */
+  currentMode: SiteMode | null;
+  /** Whether that rule is in force right now (`core/applies.ts`). */
+  currentApplies: boolean;
+  /** Grayscale state for the current site — what the popup's quick toggle reflects. */
+  currentGrayscale: boolean;
+  /** One line summarising the site's active features, or null when there are none. */
+  currentFeatureSummary: string | null;
 }
 
 /** A per-domain daily rollup. Stored in storage.local, never transmitted anywhere. */
@@ -75,10 +101,22 @@ export type Request =
   | { type: 'USE_EMERGENCY_PASS'; target: string }
   | { type: 'GET_POPUP_STATE' }
   | { type: 'GET_DASHBOARD_STATE' }
-  | { type: 'ADD_SITE'; domain: string; mode: BlockMode; delaySeconds: number }
+  | { type: 'ADD_SITE'; domain: string; mode: SiteMode; delaySeconds: number }
   | { type: 'SAVE_SETTINGS'; settings: NudgeSettings; challengeResponse?: string }
   | { type: 'GET_SETTINGS' }
-  | { type: 'GET_YOUTUBE_CONFIG' };
+  /**
+   * Replaces GET_YOUTUBE_CONFIG. Every platform content script asks the same question —
+   * "what am I supposed to do on this page?" — and takes the page URL rather than a
+   * platform name so the worker resolves the domain, the rule and the gate exactly the way
+   * the network layer does, instead of each script carrying its own copy of that logic.
+   */
+  | { type: 'GET_SITE_CONFIG'; url: string }
+  /**
+   * The popup's grayscale quick toggle. It is a settings mutation like any other, so it
+   * goes through the worker and through the Strict Mode gate — turning grayscale ON is
+   * never a weakening, turning it OFF is.
+   */
+  | { type: 'SET_GRAYSCALE'; domain: string; grayscale: boolean; challengeResponse?: string };
 
 /** Granting temporary access, or refusing to. */
 export interface GrantResult {
@@ -97,28 +135,48 @@ export interface SaveResult {
   reason?: string;
 }
 
-export interface YoutubeConfig {
-  enabled: boolean;
-  hideShortsShelf: boolean;
-  /** The resolved mode for /shorts/*, already accounting for INHERIT. */
-  shortsMode: BlockMode | 'ALLOW';
-  shortsDelaySeconds: number;
+/** One gate, already resolved for "right now" by the worker. */
+export interface ResolvedGate {
+  id: GateId;
+  /** 'ALLOW' = this surface is not gated at the moment. */
+  mode: BlockMode | 'ALLOW';
+  delaySeconds: number;
+  /** True when this surface's own daily budget is spent. */
+  limitReached: boolean;
+}
 
-  // --- v1.1 ---
-  /** How `channels` is interpreted: off / listed-are-blocked / only-listed-are-allowed. */
-  channelMode: ChannelListMode;
-  /** The list itself. BOTH identifiers travel so the page can match on either. */
-  channels: ChannelEntry[];
-  /** Mode applied to a channel the list disallows. */
-  channelBlockMode: BlockMode;
-  channelDelaySeconds: number;
-  /** Grayscale all of YouTube; allowed channels flip back to colour. */
-  grayScreen: boolean;
-  hideHomeFeed: boolean;
-  hideSidebarRecs: boolean;
-  hideEndScreen: boolean;
-  hideComments: boolean;
-  disableAutoplay: boolean;
+/**
+ * Everything a platform content script needs, resolved by the worker in one round trip.
+ *
+ * Resolution happens in the WORKER, not the page: the page is the untrusted side (a user
+ * can open devtools on it) and, more practically, it is the side that would otherwise need
+ * a copy of the schedule evaluator, the budget math and the applies predicate. One
+ * resolved answer means the overlay a content script shows and the redirect DNR performs
+ * can never disagree about the same surface.
+ */
+export interface SiteConfig {
+  /** False when Nudge is off, or no enabled rule covers this domain. */
+  enabled: boolean;
+  domain: string;
+  platform: Platform | null;
+  /** The site's mode right now, schedule applied. */
+  siteMode: SiteMode;
+  siteDelaySeconds: number;
+  /** Whether the site rule itself is in force right now. */
+  siteApplies: boolean;
+  /** True when the site rule is in force only because its daily budget is spent. */
+  siteLimitReached: boolean;
+  grayscale: boolean;
+  gates: ResolvedGate[];
+  hides: Partial<Record<HideId, boolean>>;
+  /** YouTube's channel lists; null on every other platform. */
+  youtube: {
+    channelMode: ChannelListMode;
+    channels: ChannelEntry[];
+    channelBlockMode: BlockMode;
+    channelDelaySeconds: number;
+    disableAutoplay: boolean;
+  } | null;
 }
 
 export interface ResponseMap {
@@ -131,7 +189,8 @@ export interface ResponseMap {
   ADD_SITE: { ok: boolean; reason?: string };
   SAVE_SETTINGS: SaveResult;
   GET_SETTINGS: NudgeSettings;
-  GET_YOUTUBE_CONFIG: YoutubeConfig;
+  GET_SITE_CONFIG: SiteConfig;
+  SET_GRAYSCALE: SaveResult;
 }
 
 export type ResponseFor<T extends Request['type']> = ResponseMap[T];

@@ -10,7 +10,23 @@ import {
   SCHEMA_VERSION,
   TEMP_ALLOW_MAX_MINUTES,
   TEMP_ALLOW_MIN_MINUTES,
+  type NudgeSettings,
+  type SiteRule,
+  type YoutubeFeatureSettings,
 } from '../../src/core/settingsSchema';
+
+/** The youtube.com rule a migration produced. Throws loudly rather than returning undefined. */
+function youtubeRule(migrated: NudgeSettings): SiteRule {
+  const rule = migrated.rules.find((r) => r.domain === 'youtube.com');
+  if (rule === undefined) throw new Error('expected a youtube.com rule after migration');
+  return rule;
+}
+
+function youtubeFeatures(migrated: NudgeSettings): YoutubeFeatureSettings {
+  const yt = youtubeRule(migrated).features?.youtube;
+  if (yt === undefined) throw new Error('expected YouTube features on the youtube.com rule');
+  return yt;
+}
 
 /**
  * migrateSettings must be TOTAL (never throws) and LENIENT (corrupt input falls back to
@@ -219,7 +235,7 @@ describe('migrateSettings — idempotence', () => {
   });
 });
 
-describe('upgrading an existing user from schema v1 to v2', () => {
+describe('upgrading an existing user from schema v1', () => {
   /**
    * The realistic shape stored by the shipped v1 release: no channel list, no gray-screen,
    * no hide toggles, those fields simply did not exist yet.
@@ -267,24 +283,24 @@ describe('upgrading an existing user from schema v1 to v2', () => {
     expect(migrated.strictMode).toEqual({ enabled: true, challengeLength: 48 });
     expect(migrated.emergencyPass.enabled).toBe(false);
     expect(migrated.tempAllowMinutes).toBe(25);
-    expect(migrated.youtube).toMatchObject({
-      shortsMode: 'HARD_BLOCK',
-      hideShortsShelf: true,
-      shortsDelaySeconds: 20,
-    });
+    // The old top-level YouTube block now lives on the youtube.com rule as features.
+    const features = youtubeRule(migrated).features;
+    expect(features?.gates.shorts).toMatchObject({ mode: 'HARD_BLOCK', delaySeconds: 20 });
+    expect(features?.hides.shortsShelf).toBe(true);
   });
 
   it('leaves every new feature switched off, so upgrading changes nothing the user sees', () => {
     const migrated = migrateSettings(V1_SETTINGS);
 
-    expect(migrated.youtube.channelMode).toBe('OFF');
-    expect(migrated.youtube.channels).toEqual([]);
-    expect(migrated.youtube.grayScreen).toBe(false);
-    expect(migrated.youtube.hideHomeFeed).toBe(false);
-    expect(migrated.youtube.hideSidebarRecs).toBe(false);
-    expect(migrated.youtube.hideEndScreen).toBe(false);
-    expect(migrated.youtube.hideComments).toBe(false);
-    expect(migrated.youtube.disableAutoplay).toBe(false);
+    const rule = youtubeRule(migrated);
+    expect(youtubeFeatures(migrated).channelMode).toBe('OFF');
+    expect(youtubeFeatures(migrated).channels).toEqual([]);
+    expect(youtubeFeatures(migrated).disableAutoplay).toBe(false);
+    expect(rule.grayscale).toBe(false);
+    expect(rule.features?.hides.homeFeed).toBe(false);
+    expect(rule.features?.hides.sidebarRecs).toBe(false);
+    expect(rule.features?.hides.endScreen).toBe(false);
+    expect(rule.features?.hides.comments).toBe(false);
   });
 
   it('is stamped as the current schema version', () => {
@@ -308,7 +324,7 @@ describe('upgrading an existing user from schema v1 to v2', () => {
       },
     };
 
-    const channels = migrateSettings(withJunk).youtube.channels;
+    const channels = youtubeFeatures(migrateSettings(withJunk)).channels;
     expect(channels).toHaveLength(1);
     expect(channels[0]?.displayName).toBe('Real');
   });
@@ -325,7 +341,7 @@ describe('upgrading an existing user from schema v1 to v2', () => {
       },
     };
 
-    const channels = migrateSettings(duplicated).youtube.channels;
+    const channels = youtubeFeatures(migrateSettings(duplicated)).channels;
     expect(channels).toHaveLength(1);
     // The merge fills in the identifier the first copy was missing, and prefers a real name.
     expect(channels[0]).toMatchObject({

@@ -10,16 +10,7 @@
  * byte-identical field list.
  */
 
-import type { SiteRule } from '../core/settingsSchema';
-import type { NudgeSettings } from '../core/settingsSchema';
-import {
-  DAILY_LIMIT_MAX_MINUTES,
-  DAILY_LIMIT_MIN_MINUTES,
-  DELAY_MAX_SECONDS,
-  DELAY_MIN_SECONDS,
-  DEFAULT_DELAY_SECONDS,
-} from '../core/settingsSchema';
-import type { BlockMode } from '../core/types';
+import { coerceRule, type NudgeSettings, type SiteRule } from '../core/settingsSchema';
 
 export const EXPORT_VERSION = 1;
 
@@ -35,66 +26,25 @@ export interface ImportResult {
   error?: string;
 }
 
-function clamp(value: number, min: number, max: number): number {
-  if (!Number.isFinite(value)) return min;
-  return Math.min(max, Math.max(min, Math.round(value)));
-}
-
-const VALID_MODES: readonly BlockMode[] = ['HARD_BLOCK', 'DELAY', 'BREATHING'];
-
-function coerceMode(value: unknown, fallback: BlockMode): BlockMode {
-  return VALID_MODES.includes(value as BlockMode) ? (value as BlockMode) : fallback;
-}
-
-function coerceSchedule(value: unknown): SiteRule['schedule'] {
-  if (!value || typeof value !== 'object') return null;
-  const raw = value as Record<string, unknown>;
-  const days = Array.isArray(raw.days)
-    ? raw.days.filter((d): d is number => Number.isInteger(d) && d >= 1 && d <= 7)
-    : null;
-  return {
-    enabled: raw.enabled !== false,
-    days: days && days.length > 0 ? days : null,
-    startMinute: typeof raw.startMinute === 'number' ? clamp(raw.startMinute, 0, 1439) : null,
-    endMinute: typeof raw.endMinute === 'number' ? clamp(raw.endMinute, 0, 1439) : null,
-    mode: coerceMode(raw.mode, 'HARD_BLOCK'),
-    delaySeconds: clamp(
-      typeof raw.delaySeconds === 'number' ? raw.delaySeconds : DEFAULT_DELAY_SECONDS,
-      DELAY_MIN_SECONDS,
-      DELAY_MAX_SECONDS,
-    ),
-  };
-}
-
 /**
  * Parse one entry of the `rules` array. Returns null (never throws) for anything that
  * can't be salvaged into a usable rule — the caller filters nulls out, so one garbage
  * entry in a batch never poisons the rest of the import.
  */
 function coerceImportedRule(value: unknown): SiteRule | null {
-  if (!value || typeof value !== 'object') return null;
-  const raw = value as Record<string, unknown>;
-  if (typeof raw.domain !== 'string' || raw.domain.trim() === '') return null;
+  // Delegated to the schema so an import understands every field the storage path does —
+  // including `mode: 'ALLOW'`, `grayscale` and the whole `features` block. The only
+  // import-specific behaviour is the fallback id/timestamp: a file may legitimately have
+  // been hand-written without them, and two rules sharing the default id would collide.
+  const rule = coerceRule(value);
+  if (rule === null) return null;
 
-  const domain = raw.domain.trim().toLowerCase();
-  return {
-    id: typeof raw.id === 'string' && raw.id ? raw.id : `rule-${domain}-${Date.now()}`,
-    domain,
-    mode: coerceMode(raw.mode, 'HARD_BLOCK'),
-    delaySeconds: clamp(
-      typeof raw.delaySeconds === 'number' ? raw.delaySeconds : DEFAULT_DELAY_SECONDS,
-      DELAY_MIN_SECONDS,
-      DELAY_MAX_SECONDS,
-    ),
-    dailyLimitMinutes:
-      typeof raw.dailyLimitMinutes === 'number'
-        ? clamp(raw.dailyLimitMinutes, DAILY_LIMIT_MIN_MINUTES, DAILY_LIMIT_MAX_MINUTES)
-        : null,
-    enabled: raw.enabled !== false,
-    createdAt: typeof raw.createdAt === 'number' ? raw.createdAt : Date.now(),
-    showTimeRemaining: raw.showTimeRemaining === true,
-    schedule: coerceSchedule(raw.schedule),
-  };
+  const raw = value as Record<string, unknown>;
+  if (typeof raw.id !== 'string' || raw.id === '') {
+    rule.id = `rule-${rule.domain}-${Date.now()}`;
+  }
+  if (typeof raw.createdAt !== 'number') rule.createdAt = Date.now();
+  return rule;
 }
 
 /** Build the exportable envelope from current settings. */
