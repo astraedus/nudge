@@ -182,16 +182,47 @@ export function parseChannelInput(raw: string, now: number = Date.now()): Channe
 // ---------------------------------------------------------------------------------------
 
 /**
- * True when `a` and `b` describe the same channel — sharing EITHER identifier is enough,
- * because a single entry frequently only has one (captured from wherever the user added
- * it). Ids compare case-SENSITIVELY (YouTube ids are case-sensitive); handles compare
- * case-INSENSITIVELY regardless of how they happen to be cased on either side.
+ * The two identifiers, from anywhere: a stored entry, a probe, an observation. Every
+ * question this module asks about channel identity is asked of this shape.
  */
-export function sameChannel(a: ChannelEntry, b: ChannelEntry): boolean {
+interface ChannelIdentity {
+  channelId: string | null;
+  handle: string | null;
+}
+
+/**
+ * THE identity rule: two things describe the same channel when they share EITHER identifier.
+ * Sharing one is enough because an entry frequently only HAS one (captured from wherever the
+ * user added it). Ids compare case-SENSITIVELY (YouTube ids are case-sensitive); handles
+ * compare case-INSENSITIVELY however they happen to be cased on either side.
+ *
+ * One function, because four things ask it — `sameChannel`, `findChannel`, and both halves
+ * of enrichment — and a copy that drifted would mean a channel the whitelist recognises and
+ * the enricher does not, or the reverse.
+ */
+function matchesIdentity(a: ChannelIdentity, b: ChannelIdentity): boolean {
   const idMatch = a.channelId !== null && b.channelId !== null && a.channelId === b.channelId;
   const handleMatch =
     a.handle !== null && b.handle !== null && a.handle.toLowerCase() === b.handle.toLowerCase();
   return idMatch || handleMatch;
+}
+
+/**
+ * THE contradiction rule, the exact complement of `matchesIdentity`: only a SHARED axis can
+ * prove two things are DIFFERENT channels. An id here and a handle there overlap on nothing
+ * and prove nothing either way — combining exactly that pair is what enrichment is for. Same
+ * rule `assembleChannel` applies in the detection layer, one level up.
+ */
+function contradictsIdentity(a: ChannelIdentity, b: ChannelIdentity): boolean {
+  if (a.channelId !== null && b.channelId !== null && a.channelId !== b.channelId) return true;
+  return (
+    a.handle !== null && b.handle !== null && a.handle.toLowerCase() !== b.handle.toLowerCase()
+  );
+}
+
+/** True when `a` and `b` describe the same channel. See `matchesIdentity`. */
+export function sameChannel(a: ChannelEntry, b: ChannelEntry): boolean {
+  return matchesIdentity(a, b);
 }
 
 /**
@@ -222,17 +253,13 @@ export function findChannel(
   list: readonly ChannelEntry[],
   probe: ChannelProbe,
 ): ChannelEntry | null {
-  const probeId = probe.channelId ?? null;
-  const probeHandle = normalizeProbeHandle(probe.handle);
-  if (probeId === null && probeHandle === null) return null;
+  const identity: ChannelIdentity = {
+    channelId: probe.channelId ?? null,
+    handle: normalizeProbeHandle(probe.handle),
+  };
+  if (identity.channelId === null && identity.handle === null) return null;
 
-  for (const entry of list) {
-    const idMatch = probeId !== null && entry.channelId !== null && entry.channelId === probeId;
-    const handleMatch =
-      probeHandle !== null && entry.handle !== null && entry.handle === probeHandle;
-    if (idMatch || handleMatch) return entry;
-  }
-  return null;
+  return list.find((entry) => matchesIdentity(entry, identity)) ?? null;
 }
 
 export function isChannelListed(list: readonly ChannelEntry[], probe: ChannelProbe): boolean {
@@ -582,52 +609,6 @@ function isFallbackDisplayName(entry: ChannelEntry): boolean {
   return entry.handle !== null && name.toLowerCase() === `@${entry.handle.toLowerCase()}`;
 }
 
-/** Does this stored entry describe the observed channel? EITHER axis is enough. */
-function matchesObservation(entry: ChannelEntry, observed: NormalizedObservation): boolean {
-  const idMatch =
-    observed.channelId !== null &&
-    entry.channelId !== null &&
-    entry.channelId === observed.channelId;
-  const handleMatch =
-    observed.handle !== null &&
-    entry.handle !== null &&
-    entry.handle.toLowerCase() === observed.handle;
-  return idMatch || handleMatch;
-}
-
-/**
- * True when a stored entry and an observation cannot be the same channel.
- *
- * Only a SHARED axis can prove it — the same rule `assembleChannel` uses in the detection
- * layer. An id here and a handle there overlap on nothing, and combining exactly that pair
- * is the entire point of enrichment.
- */
-function contradictsObservation(
-  entry: ChannelEntry,
-  observed: NormalizedObservation,
-): boolean {
-  if (
-    entry.channelId !== null &&
-    observed.channelId !== null &&
-    entry.channelId !== observed.channelId
-  ) {
-    return true;
-  }
-  return (
-    entry.handle !== null &&
-    observed.handle !== null &&
-    entry.handle.toLowerCase() !== observed.handle
-  );
-}
-
-/** Two stored entries disagreeing on an axis they both hold. */
-function entriesContradict(a: ChannelEntry, b: ChannelEntry): boolean {
-  if (a.channelId !== null && b.channelId !== null && a.channelId !== b.channelId) return true;
-  return (
-    a.handle !== null && b.handle !== null && a.handle.toLowerCase() !== b.handle.toLowerCase()
-  );
-}
-
 /**
  * The display name to keep. Upgrades ONLY a fallback name, and never to another identifier:
  * swapping `@veritasium` for a bare `UCxxxx…` is a downgrade wearing an upgrade's clothes.
@@ -750,12 +731,12 @@ export function enrichEntries(
   // object identity holding across a list a caller may have built by hand.
   const matchedIndices: number[] = [];
   entries.forEach((entry, index) => {
-    if (matchesObservation(entry, observed)) matchedIndices.push(index);
+    if (matchesIdentity(entry, observed)) matchedIndices.push(index);
   });
   if (matchedIndices.length === 0) return unchanged('no-match');
 
   const matched = matchedIndices.map((index) => entries[index]!);
-  if (matched.some((entry) => contradictsObservation(entry, observed))) {
+  if (matched.some((entry) => contradictsIdentity(entry, observed))) {
     return unchanged('contradiction');
   }
   // Two entries that match the same observation but disagree with EACH OTHER on an axis the
@@ -763,7 +744,7 @@ export function enrichEntries(
   // unreachable for a list loaded through the schema, but a merge proves its own
   // precondition rather than trusting the caller.
   const mutuallyConsistent = matched.every((entry, index) =>
-    matched.slice(index + 1).every((other) => !entriesContradict(entry, other)),
+    matched.slice(index + 1).every((other) => !contradictsIdentity(entry, other)),
   );
   if (!mutuallyConsistent) return unchanged('contradiction');
 
