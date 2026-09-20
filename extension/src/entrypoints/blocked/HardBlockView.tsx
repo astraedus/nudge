@@ -28,6 +28,36 @@ function BlockGlyph() {
   );
 }
 
+/**
+ * The one line that says WHY there is no way through today.
+ *
+ * Three cases, and conflating any two of them sends the user to look for a setting they
+ * never made:
+ *
+ *  - the SITE's daily time limit: "Daily limit reached", unchanged.
+ *  - a GATE's time limit: "Daily Shorts limit reached". Unqualified, it claims YouTube is
+ *    out of time when only the Shorts budget is spent.
+ *  - a GATE's ITEM COUNT (v0.3): "You've watched 20 Shorts today". A count budget is the
+ *    one the user can actually picture, and it is the whole reason they chose it over
+ *    minutes, so the page has to say it back to them in the same unit. Telling someone who
+ *    set "20 Shorts" that they hit a "daily limit" makes them open the editor hunting for
+ *    a minutes cap that does not exist.
+ *
+ * `gateLimitKind` is resolved by the worker from the predicate that actually decided
+ * (`core/applies.ts`), never re-derived here from the numbers, so the sentence and the
+ * verdict can never describe different budgets.
+ */
+export function limitLabelFor(context: BlockContext): string {
+  if (context.gateLimitKind === 'count' && context.gateItemNoun !== null) {
+    const limit = context.gateCountLimit;
+    const shown = limit ?? context.gateItemsToday;
+    return `You've watched ${shown} ${context.gateItemNoun} today`;
+  }
+  return context.gateLabel === null
+    ? 'Daily limit reached'
+    : `Daily ${context.gateLabel} limit reached`;
+}
+
 export function HardBlockView({ context }: { context: BlockContext }) {
   const decision = context.decision;
   if (decision.type !== 'BLOCK') return null;
@@ -42,10 +72,7 @@ export function HardBlockView({ context }: { context: BlockContext }) {
    * non-null exactly when the acting rule is that gate rather than the whole site (see
    * `BlockContext`), so it is also the right thing to name here.
    */
-  const limitLabel =
-    context.gateLabel === null
-      ? 'Daily limit reached'
-      : `Daily ${context.gateLabel} limit reached`;
+  const limitLabel = limitLabelFor(context);
 
   /**
    * WHAT is off-limits, in the headline.

@@ -30,7 +30,8 @@ import {
   type Worker,
 } from '@playwright/test';
 import { SCHEMA_VERSION, migrateSettings, newSiteRule } from '../src/core/settingsSchema';
-import { compiledRuleCount, type UsageByKey } from '../src/background/dnr';
+import { compiledRuleCount } from '../src/background/dnr';
+import type { UsageSnapshot } from '../src/core/protocol';
 import type {
   GateSetting,
   NudgeSettings,
@@ -166,9 +167,12 @@ export interface ExtensionFixtures {
    * that limit is spent. Seed the usage first (`seedUsage`), then pass the same numbers
    * here so the wait expects the right rule set.
    */
-  setSettings: (settings: Partial<NudgeSettings>, usage?: UsageByKey) => Promise<void>;
-  /** Seed today's usage rollup for a domain. */
-  seedUsage: (domain: string, activeSec: number) => Promise<void>;
+  setSettings: (
+    settings: Partial<NudgeSettings>,
+    usage?: Partial<UsageSnapshot>,
+  ) => Promise<void>;
+  /** Seed today's usage rollup for a domain (or a `domain#gate` surface key). */
+  seedUsage: (domain: string, activeSec: number, items?: number) => Promise<void>;
   /** URL of a page on `host`, served locally. */
   siteUrl: (host: string, pathname?: string) => string;
 }
@@ -251,7 +255,7 @@ export const test = base.extend<ExtensionFixtures>({
   },
 
   setSettings: async ({ serviceWorker }, use) => {
-    await use(async (partial: Partial<NudgeSettings>, usage?: UsageByKey) => {
+    await use(async (partial: Partial<NudgeSettings>, usage?: Partial<UsageSnapshot>) => {
       await serviceWorker.evaluate(
         async ([key, patch]) => {
           const existing = await chrome.storage.local.get(key);
@@ -272,15 +276,19 @@ export const test = base.extend<ExtensionFixtures>({
       // YouTube whitelist adds one per allowed path. The old "one rule per enabled rule"
       // arithmetic was silently wrong in the permissive direction for all three, which
       // shows up as a flaky race rather than an honest failure.
-      const expected = compiledRuleCount(migrateSettings(partial), usage ?? {}, new Date());
+      const expected = compiledRuleCount(
+        migrateSettings(partial),
+        { ms: usage?.ms ?? {}, counts: usage?.counts ?? {} },
+        new Date(),
+      );
       await waitForRuleCount(serviceWorker, expected);
     });
   },
 
   seedUsage: async ({ serviceWorker }, use) => {
-    await use(async (domain: string, activeSec: number) => {
+    await use(async (domain: string, activeSec: number, items = 0) => {
       await serviceWorker.evaluate(
-        async ([key, dom, secs]) => {
+        async ([key, dom, secs, itemCount]) => {
           const stored = await chrome.storage.local.get(key);
           const day = (stored[key] ?? {}) as Record<string, unknown>;
           day[dom] = {
@@ -288,10 +296,11 @@ export const test = base.extend<ExtensionFixtures>({
             blocked: 0,
             walkedAway: 0,
             hourly: Array.from({ length: 24 }, () => 0),
+            items: itemCount,
           };
           await chrome.storage.local.set({ [key]: day });
         },
-        [todayUsageKey(), domain, activeSec] as const,
+        [todayUsageKey(), domain, activeSec, items] as const,
       );
     });
   },
@@ -373,17 +382,21 @@ export async function seedRawSettings(worker: Worker, blob: unknown): Promise<vo
 /** The dynamic rule count the worker should settle on for these settings. */
 export function expectedRuleCount(
   raw: unknown,
-  usage: UsageByKey = {},
+  usage: Partial<UsageSnapshot> = {},
   now: Date = new Date(),
 ): number {
-  return compiledRuleCount(migrateSettings(raw), usage, now);
+  return compiledRuleCount(
+    migrateSettings(raw),
+    { ms: usage.ms ?? {}, counts: usage.counts ?? {} },
+    now,
+  );
 }
 
 /** Read a counter out of today's rollup for one domain. */
 export async function readTodayCounter(
   worker: Worker,
   domain: string,
-  field: 'blocked' | 'walkedAway' | 'activeSec',
+  field: 'blocked' | 'walkedAway' | 'activeSec' | 'items',
 ): Promise<number> {
   return worker.evaluate(
     async ([key, dom, name]) => {

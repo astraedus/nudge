@@ -40,6 +40,23 @@ export interface BlockContext {
   /** Human label for `gateId`. */
   gateLabel: string | null;
   /**
+   * WHICH budget of that gate ran out, when one did: 'minutes' for the daily time limit,
+   * 'count' for the daily item count, null when the gate is in force for another reason
+   * (or no gate is involved).
+   *
+   * The page needs this because the two produce the same verdict and completely different
+   * copy: "Daily Shorts limit reached" is wrong, and actively confusing, for someone who
+   * set a count of 20 and has no time budget at all. They would go looking in the editor
+   * for a minutes limit they never set.
+   */
+  gateLimitKind: 'minutes' | 'count' | null;
+  /** Items of this surface viewed today; 0 when the surface has no item stream. */
+  gateItemsToday: number;
+  /** The gate's count budget, or null when it carries none. */
+  gateCountLimit: number | null;
+  /** Plural noun for one item of this gate's stream ("Shorts"), or null when it has none. */
+  gateItemNoun: string | null;
+  /**
    * The channels the user still wants to be able to reach, when a YouTube whitelist is
    * active. Empty otherwise.
    *
@@ -80,10 +97,42 @@ export interface DayUsage {
   walkedAway: number;
   /** 24 buckets of active seconds, indexed by local hour. */
   hourly: number[];
+  /**
+   * Distinct short-form ITEMS viewed today (v0.3), for the count budget.
+   *
+   * Only ever non-zero on a `domain#gate` SURFACE key (`core/surfaceKeys.ts`): "one item"
+   * is a property of a gate's stream, not of a whole site. It lives in the same rollup as
+   * the minutes rather than in a store of its own because it is the same measurement over
+   * the same day, and a second store would mean a second midnight reset and a second
+   * rollover bug.
+   *
+   * ABSENT on every rollup written before v0.3, so it is filled in on read
+   * (`core/stats.ts#coerceDayUsage`) rather than assumed present. Adding a numeric field
+   * and incrementing it straight off storage is how `undefined + 1` becomes NaN, and a
+   * NaN count is never over any limit: the budget would fail OPEN, silently.
+   */
+  items: number;
 }
 
 /** `yyyy-mm-dd` -> domain -> rollup. */
 export type UsageByDay = Record<string, Record<string, DayUsage>>;
+
+/**
+ * Today's usage on BOTH budget axes, keyed by usage key (plain domains AND `domain#gate`
+ * surface keys, see `core/surfaceKeys.ts`). A missing key means zero on both.
+ *
+ * One snapshot rather than two parameters, deliberately. The DNR compiler and every
+ * "is this in force right now" caller need both axes for the same instant, and a pair of
+ * separate arguments is a call site waiting to pass only the minutes: a rule set compiled
+ * with no counts is one in which a count budget is never spent, i.e. a count-only gate
+ * that silently never redirects.
+ */
+export interface UsageSnapshot {
+  /** Active milliseconds per usage key. */
+  ms: Readonly<Record<string, number>>;
+  /** Items viewed today per SURFACE key. */
+  counts: Readonly<Record<string, number>>;
+}
 
 export interface DashboardState {
   settings: NudgeSettings;
@@ -111,6 +160,18 @@ export type Request =
    * the network layer does, instead of each script carrying its own copy of that logic.
    */
   | { type: 'GET_SITE_CONFIG'; url: string }
+  /**
+   * "The page just moved onto one item of a gate's stream" (v0.3): one Short, one Reel,
+   * one For You video, observed by the content script via SPA navigation.
+   *
+   * The content script reports WHERE it is and nothing else. The worker owns the truth:
+   * it resolves the URL to a gate and an item id, de-duplicates against the day's seen
+   * set, increments the surface's rollup and fires the crossing. A content script that
+   * counted for itself would be a page the user can open devtools on deciding how much of
+   * its own budget it has spent, and six platform scripts each keeping their own tally is
+   * six chances to drift from the budget the block page reads.
+   */
+  | { type: 'ITEM_VIEWED'; url: string }
   /**
    * The popup's grayscale quick toggle. It is a settings mutation like any other, so it
    * goes through the worker and through the Strict Mode gate — turning grayscale ON is
@@ -141,8 +202,14 @@ export interface ResolvedGate {
   /** 'ALLOW' = this surface is not gated at the moment. */
   mode: BlockMode | 'ALLOW';
   delaySeconds: number;
-  /** True when this surface's own daily budget is spent. */
+  /** True when this surface's own daily TIME budget is spent. */
   limitReached: boolean;
+  /** True when this surface's own daily ITEM COUNT is spent (v0.3). */
+  countReached: boolean;
+  /** Items of this surface viewed today. 0 when it has no item stream. */
+  itemsToday: number;
+  /** This surface's count budget, or null when it carries none. */
+  countLimit: number | null;
 }
 
 /**
@@ -190,6 +257,8 @@ export interface ResponseMap {
   SAVE_SETTINGS: SaveResult;
   GET_SETTINGS: NudgeSettings;
   GET_SITE_CONFIG: SiteConfig;
+  /** `counted` is false for a URL that is not an item, or an item already seen today. */
+  ITEM_VIEWED: { ok: boolean; counted: boolean };
   SET_GRAYSCALE: SaveResult;
 }
 

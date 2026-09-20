@@ -160,7 +160,7 @@ test.describe('YouTube Hard Block with a channel whitelist', () => {
     // Under budget first: the allowed channel plays, so the block below is demonstrably
     // the budget and not the rule being broken all along.
     await seedUsage('youtube.com', 60);
-    await setSettings(settings, { 'youtube.com': 60_000 });
+    await setSettings(settings, { ms: { 'youtube.com': 60_000 } });
     const open = await context.newPage();
     await open.goto(watchUrl('abc123', ALLOWED, 'Allowed Channel'));
     await expect(open.locator('#player')).toBeVisible();
@@ -176,7 +176,7 @@ test.describe('YouTube Hard Block with a channel whitelist', () => {
     });
     await waitForRuleCount(
       serviceWorker,
-      expectedRuleCount(settings, { 'youtube.com': 10 * 60 * 1_000 }),
+      expectedRuleCount(settings, { ms: { 'youtube.com': 10 * 60 * 1_000 } }),
     );
 
     const spent = await context.newPage();

@@ -38,8 +38,17 @@ import type { BlockMode, SiteMode } from './types';
  * sync. The fold keys off the PRESENCE of the legacy shape, not off `schemaVersion`,
  * because a hand-edited or imported blob may carry the old data with any version number
  * on it (or none).
+ *
+ * 3 -> 4 (v0.3): COUNT budgets. `GateSetting` gains `dailyLimitCount` ("20 Shorts a day,
+ * then the gate"), independent of `dailyLimitMinutes`: either, both or neither may be set,
+ * and the gate applies once EITHER is spent. Purely additive and defaulting to null (no
+ * count limit), so a v3 blob round-trips into v4 with nothing switched on and a v4 blob
+ * synced back to a v3 browser simply loses a field it cannot enforce. Because
+ * `migrateSettings` is total (every field is rebuilt from whatever it is handed) there is
+ * still no per-version branch to keep in sync: `coerceGateSetting` reading a missing
+ * `dailyLimitCount` as null IS the v3 -> v4 step.
  */
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 /** Delay presets, seconds (Android parity). Custom range 1–300. */
 export const DELAY_PRESETS = [5, 15, 30, 60] as const;
@@ -51,6 +60,17 @@ export const DEFAULT_DELAY_SECONDS = 15;
 export const DAILY_LIMIT_PRESETS = [15, 30, 60, 120] as const;
 export const DAILY_LIMIT_MIN_MINUTES = 1;
 export const DAILY_LIMIT_MAX_MINUTES = 480;
+
+/**
+ * Daily COUNT presets, items (v0.3). "20 Shorts a day, then the gate."
+ *
+ * Deliberately smaller numbers than the minute presets: the unit is one short-form item,
+ * and the whole point of the feature is that a count is a budget a person can actually
+ * picture ("ten Reels") where "eight minutes" is not.
+ */
+export const DAILY_COUNT_PRESETS = [5, 10, 20, 50] as const;
+export const DAILY_COUNT_MIN_ITEMS = 1;
+export const DAILY_COUNT_MAX_ITEMS = 500;
 
 /**
  * Temporary access granted after completing a Delay/Breathing pause — the browser
@@ -76,6 +96,16 @@ export interface GateSetting {
   mode: 'OFF' | BlockMode;
   delaySeconds: number;
   dailyLimitMinutes: number | null;
+  /**
+   * How many ITEMS of this surface's stream are allowed today, or null for no count limit.
+   *
+   * Independent of `dailyLimitMinutes` on purpose: either, both or neither may be set, and
+   * when both are set the gate applies the moment EITHER is spent (whichever the user hits
+   * first is the one they meant). Only meaningful on a gate whose registry definition
+   * carries `itemPaths` (`core/platforms.ts`); a gate without an item stream never offers
+   * the control, because a count that can never increment is worse than no count.
+   */
+  dailyLimitCount: number | null;
 }
 
 /** YouTube's channel lists, which no other platform has an analog for. */
@@ -263,7 +293,12 @@ export const DEFAULT_SETTINGS: NudgeSettings = {
 
 /** A gate that does nothing: no gating, no budget. The default for every surface. */
 export function defaultGateSetting(): GateSetting {
-  return { mode: 'OFF', delaySeconds: DEFAULT_DELAY_SECONDS, dailyLimitMinutes: null };
+  return {
+    mode: 'OFF',
+    delaySeconds: DEFAULT_DELAY_SECONDS,
+    dailyLimitMinutes: null,
+    dailyLimitCount: null,
+  };
 }
 
 export function defaultYoutubeFeatureSettings(): YoutubeFeatureSettings {
@@ -358,6 +393,17 @@ function coerceDelay(value: unknown): number {
 function coerceDailyLimit(value: unknown): number | null {
   return typeof value === 'number'
     ? clamp(value, DAILY_LIMIT_MIN_MINUTES, DAILY_LIMIT_MAX_MINUTES)
+    : null;
+}
+
+/**
+ * A daily COUNT budget. Anything that is not a number reads as "no count limit", which is
+ * exactly what a v3 blob (where the field does not exist) must produce: the v3 -> v4 step
+ * is this line, and it can never invent a limit the user did not set.
+ */
+function coerceDailyCount(value: unknown): number | null {
+  return typeof value === 'number'
+    ? clamp(value, DAILY_COUNT_MIN_ITEMS, DAILY_COUNT_MAX_ITEMS)
     : null;
 }
 
@@ -472,6 +518,7 @@ function coerceGateSetting(value: unknown): GateSetting {
     mode: coerceGateMode(raw.mode),
     delaySeconds: coerceDelay(raw.delaySeconds),
     dailyLimitMinutes: coerceDailyLimit(raw.dailyLimitMinutes),
+    dailyLimitCount: coerceDailyCount(raw.dailyLimitCount),
   };
 }
 
@@ -546,12 +593,10 @@ function mergeFeatures(base: SiteFeatures, incoming: SiteFeatures): SiteFeatures
       mode: stronger.mode,
       delaySeconds: stronger.delaySeconds,
       // A tighter cap is stronger; "no cap" is the weakest, so any cap beats null.
-      dailyLimitMinutes:
-        a.dailyLimitMinutes === null
-          ? b.dailyLimitMinutes
-          : b.dailyLimitMinutes === null
-            ? a.dailyLimitMinutes
-            : Math.min(a.dailyLimitMinutes, b.dailyLimitMinutes),
+      dailyLimitMinutes: tighterCap(a.dailyLimitMinutes, b.dailyLimitMinutes),
+      // Same rule on the independent count axis. Merged per-axis rather than picking one
+      // gate wholesale, so a browser that set minutes and one that set a count keep both.
+      dailyLimitCount: tighterCap(a.dailyLimitCount, b.dailyLimitCount),
     };
   }
 
@@ -582,6 +627,13 @@ function mergeFeatures(base: SiteFeatures, incoming: SiteFeatures): SiteFeatures
     };
   }
   return merged;
+}
+
+/** The stronger of two optional caps: any cap beats "no cap", and the smaller cap wins. */
+function tighterCap(a: number | null, b: number | null): number | null {
+  if (a === null) return b;
+  if (b === null) return a;
+  return Math.min(a, b);
 }
 
 /** Local copy of strictMode's ordering — core/strictMode imports this file, so it cannot be the other way round. */
@@ -654,6 +706,8 @@ function legacyYoutubeAsFeatures(yt: Partial<LegacyYoutubeSettings>): SiteFeatur
     mode: shortsMode === 'INHERIT' ? 'OFF' : shortsMode,
     delaySeconds: coerceDelay(yt.shortsDelaySeconds),
     dailyLimitMinutes: null,
+    // v2 had neither budget axis, so both start unset. A v2 user loses nothing.
+    dailyLimitCount: null,
   };
   features.hides.shortsShelf = yt.hideShortsShelf === true;
   features.hides.homeFeed = yt.hideHomeFeed === true;

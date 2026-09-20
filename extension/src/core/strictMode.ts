@@ -245,8 +245,9 @@ function isYoutubeFeatureWeakened(
 }
 
 /**
- * Whether a site's feature block got weaker on any axis: a gate softened, a gate's budget
- * raised or removed, a hide switched off, or the YouTube channel config weakened.
+ * Whether a site's feature block got weaker on any axis: a gate softened, either of a
+ * gate's budgets (minutes or item count) raised or removed, a hide switched off, or the
+ * YouTube channel config weakened.
  *
  * Losing the features object entirely (non-null -> null) counts as weakening, because
  * every gate and hide it carried stops being enforced.
@@ -264,6 +265,12 @@ function areFeaturesWeakened(
     if (gateModeStrength(newGate.mode) < gateModeStrength(oldGate.mode)) return true;
     if (newGate.delaySeconds < oldGate.delaySeconds) return true;
     if (isDailyLimitWeakened(oldGate.dailyLimitMinutes, newGate.dailyLimitMinutes)) return true;
+    // The COUNT axis is independent of the minute one and weakens by exactly the same
+    // rule, so it gets its own comparison rather than being folded into the one above.
+    // Missing it would leave the whole feature ungated: "20 Shorts a day" is a commitment
+    // a user makes to themselves, and raising it to 200 in the editor is precisely the
+    // impulsive edit the Commitment Lock exists to put a price on.
+    if (isDailyLimitWeakened(oldGate.dailyLimitCount, newGate.dailyLimitCount)) return true;
   }
 
   for (const [hideId, wasHidden] of Object.entries(oldFeatures.hides)) {
@@ -281,6 +288,10 @@ function areFeaturesWeakened(
  * A daily limit is weakened when an existing cap is removed (null) or raised. Adding a cap where
  * none existed, or lowering an existing cap, is strengthening. Mirrors
  * RuleWeakening.kt's `isDailyLimitWeakened`.
+ *
+ * Unit-agnostic on purpose: minutes and item counts weaken identically (a bigger allowance
+ * is a weaker one), so both axes go through this rather than through two copies that could
+ * disagree about what "removed" means.
  */
 function isDailyLimitWeakened(oldLimit: number | null, newLimit: number | null): boolean {
   if (oldLimit === null) return false; // no cap before -> any new cap (or still none) is not weaker

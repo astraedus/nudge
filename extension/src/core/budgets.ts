@@ -10,6 +10,7 @@
  * limit already counts as over, it does not require usage to exceed the limit.
  */
 
+import type { GateId } from './platforms';
 import type { SiteRule } from './settingsSchema';
 
 const MS_PER_MINUTE = 60_000;
@@ -88,4 +89,90 @@ export function crossesLimit(
   const wasOver = isOverBudget(limitMinutes, previousUsedMs);
   const isOver = isOverBudget(limitMinutes, nextUsedMs);
   return !wasOver && isOver;
+}
+
+/* ============================================================ count budgets */
+
+/**
+ * The COUNT axis (v0.3): "20 Shorts a day, then the gate."
+ *
+ * Deliberately parallel functions rather than a generic one shared with the minute axis.
+ * The two units are not interchangeable (minutes arrive as minutes and are compared in
+ * milliseconds; items are already the unit they are compared in), and a single
+ * `isOverLimit(limit, used)` would have had exactly one caller each while inviting a call
+ * site to pass milliseconds where items were meant. The boundary convention IS shared and
+ * is the important part: `>=`, so reaching the limit already counts as over, matching
+ * `isOverBudget`.
+ */
+
+/** True once `usedCount` items have been viewed against a `limitCount` cap. */
+export function isOverCount(limitCount: number | null, usedCount: number): boolean {
+  if (limitCount === null) return false;
+  return usedCount >= limitCount;
+}
+
+/**
+ * Items still allowed today, floored at 0. `null` when no count limit is set (unlimited).
+ */
+export function remainingCount(limitCount: number | null, usedCount: number): number | null {
+  if (limitCount === null) return null;
+  return Math.max(0, limitCount - usedCount);
+}
+
+/**
+ * True only on the increment that pushes the count from under-limit to at-or-over-limit.
+ *
+ * The count sibling of `crossesLimit`, and it exists for the same reason: the transition is
+ * when the gate has to start redirecting and open tabs have to be pushed to the block page,
+ * and doing that work on every subsequent increment would re-redirect a user who is already
+ * looking at the block page.
+ */
+export function crossesCount(
+  limitCount: number | null,
+  previousCount: number,
+  nextCount: number,
+): boolean {
+  if (limitCount === null) return false;
+  return !isOverCount(limitCount, previousCount) && isOverCount(limitCount, nextCount);
+}
+
+/* ================================================== tightest gate cap lookup */
+
+/**
+ * The tightest cap one gate carries across every rule covering a domain.
+ *
+ * More than one rule can cover a host (`ruleResolver.rulesForDomain`), so "the Shorts
+ * budget" is the strictest one on offer, exactly as `tightestLimit` does for the site. One
+ * generic walker with a field selector rather than two near-identical loops: the axes
+ * differ only in which field they read, and a second copy is where the two would drift.
+ */
+function tightestGateCap(
+  rules: readonly SiteRule[],
+  gateId: GateId,
+  select: (gate: { dailyLimitMinutes: number | null; dailyLimitCount: number | null }) => number | null,
+): number | null {
+  let min: number | null = null;
+  for (const rule of rules) {
+    const gate = rule.features?.gates[gateId];
+    const cap = gate === undefined ? null : select(gate);
+    if (cap === null) continue;
+    if (min === null || cap < min) min = cap;
+  }
+  return min;
+}
+
+/** The tightest MINUTE budget configured for one gate across the rules covering a domain. */
+export function tightestGateMinutes(
+  rules: readonly SiteRule[],
+  gateId: GateId,
+): number | null {
+  return tightestGateCap(rules, gateId, (gate) => gate.dailyLimitMinutes);
+}
+
+/** The tightest COUNT budget configured for one gate across the rules covering a domain. */
+export function tightestGateCount(
+  rules: readonly SiteRule[],
+  gateId: GateId,
+): number | null {
+  return tightestGateCap(rules, gateId, (gate) => gate.dailyLimitCount);
 }
