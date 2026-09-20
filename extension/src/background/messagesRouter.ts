@@ -523,8 +523,34 @@ async function setGrayscale(
   return handleSave({ ...settings, rules }, challengeResponse, now);
 }
 
+/**
+ * Close the tab a message came from.
+ *
+ * The tab id comes from the SENDER and from nowhere else: a page gets to close ITSELF, and
+ * cannot name someone else's tab. `sender.tab` is undefined for a message from the popup,
+ * the dashboard or the worker, which is a refusal rather than an error.
+ */
+async function closeSenderTab(sender: chrome.runtime.MessageSender | undefined): Promise<{
+  ok: boolean;
+}> {
+  const tabId = sender?.tab?.id;
+  if (tabId === undefined) return { ok: false };
+  try {
+    await chrome.tabs.remove(tabId);
+    return { ok: true };
+  } catch {
+    // The tab can already be gone (the user closed it, or a navigation raced us). Nothing
+    // to recover, and the caller has its own fallback.
+    return { ok: false };
+  }
+}
+
 /** Dispatch one request. Throwing here would hang the caller, so it never throws. */
-export async function handleRequest(request: Request, now: Date = new Date()): Promise<unknown> {
+export async function handleRequest(
+  request: Request,
+  now: Date = new Date(),
+  sender?: chrome.runtime.MessageSender,
+): Promise<unknown> {
   switch (request.type) {
     case 'GET_BLOCK_CONTEXT': {
       const context = await buildBlockContext(request.target, now);
@@ -563,6 +589,8 @@ export async function handleRequest(request: Request, now: Date = new Date()): P
         request.challengeResponse,
         now,
       );
+    case 'CLOSE_TAB':
+      return closeSenderTab(sender);
     default:
       return { ok: false, reason: 'unknown-request' };
   }
@@ -576,8 +604,8 @@ export async function handleRequest(request: Request, now: Date = new Date()): P
  * bug. A rejected handler still sends a response so the caller never hangs.
  */
 export function registerMessageRouter(): void {
-  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    handleRequest(message as Request)
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    handleRequest(message as Request, new Date(), sender)
       .then(sendResponse)
       .catch((error: unknown) => {
         console.error('[nudge] message handler failed', error);
