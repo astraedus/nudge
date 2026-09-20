@@ -44,6 +44,18 @@ class BlockOverlayLaunchContractTest {
         read("main/java/com/astraedus/nudge/service/TimeRemainingHandler.kt")
     }
 
+    private val mainActivitySource: String by lazy {
+        read("main/java/com/astraedus/nudge/MainActivity.kt")
+    }
+
+    /** Not under `src/`, so it needs its own candidate search rather than [read]. */
+    private val appBuildGradle: String by lazy {
+        val candidates = listOf(File("app/build.gradle.kts"), File("build.gradle.kts"))
+        (candidates.firstOrNull { it.exists() }
+            ?: error("build.gradle.kts not found from ${File("").absolutePath}"))
+            .readText()
+    }
+
     private fun stripComments(text: String): String = text
         .replace(Regex("""/\*[\s\S]*?\*/"""), " ")
         .lines()
@@ -181,8 +193,197 @@ class BlockOverlayLaunchContractTest {
             onResume.contains("blockLaunchGuard.onOverlayShown()")
         )
         assertTrue(
-            "and a destroyed overlay must stop suppressing bypasses",
-            stripComments(overlay).contains("blockLaunchGuard.onOverlayDismissed()")
+            "and a destroyed overlay must stop suppressing bypasses, but only for the overlay " +
+                "instance it actually owns: a stale pending overlay cleared unconditionally would " +
+                "let a REPLACEMENT instance's bypass suppression be wiped out by the finish of the " +
+                "one it replaced, which is already on screen by the time the old one is destroyed",
+            stripComments(overlay).contains("blockLaunchGuard.onOverlayDismissed(overlayId)")
+        )
+    }
+
+    /**
+     * ISSUE #36'S ORDERING. `claimConfrontation` must sit between the launch and the row: a claim
+     * placed ABOVE the launch would refuse rows for blocks that were never shown (the overlay might
+     * still be gated by `guard.decide`, whose refusal is unrelated to "have we already counted this
+     * arrival"), and one placed BELOW the row -- or never reached at all -- would do nothing, the
+     * exact shape of the 2500-interventions-in-a-day report.
+     */
+    @Test
+    fun `the count is gated, and the gate is between the launch and the row`() {
+        val start = service.indexOf("private suspend fun handleDecision(")
+        assertTrue("handleDecision must exist", start >= 0)
+        val body = stripComments(service.substring(start))
+        val launch = index(body, "launchBlockOverlay(")
+        val claim = index(body, "claimConfrontation(")
+        val recorded = index(body, "wasBlocked = true")
+        assertTrue(
+            "the order must be launch, then claim, then row -- a claim above the launch drops " +
+                "rows for blocks nobody saw, a claim below (or missing) the row lets the storm " +
+                "keep inflating the count",
+            launch < claim && claim < recorded
+        )
+    }
+
+    /**
+     * The arrival invariant is allowed to refuse exactly one thing: the `UsageEvent` row. It must
+     * never be allowed to refuse the overlay itself, that would mean a storm SUPPRESSES the block
+     * the user is actually facing, not merely its bookkeeping -- the opposite of what issue #36
+     * asked for.
+     */
+    @Test
+    fun `the row is the only thing the arrival invariant may refuse`() {
+        val start = service.indexOf("private suspend fun handleDecision(")
+        assertTrue("handleDecision must exist", start >= 0)
+        val body = stripComments(service.substring(start))
+        val claim = index(body, "claimConfrontation(")
+        val recorded = index(body, "wasBlocked = true")
+        assertFalse(
+            "weakening enforcement here is the failure this forbids: when the invariant says " +
+                "'no row', the overlay must still already be shown, so no startActivity may sit " +
+                "between the claim and the row",
+            body.substring(claim, recorded).contains("startActivity")
+        )
+        assertEquals(
+            "launchBlockOverlay must be called exactly once in handleDecision, and unconditionally " +
+                "ahead of the claim -- gating the launch itself behind claimConfrontation would let " +
+                "the arrival invariant suppress the block, not just its row",
+            1,
+            Regex("""launchBlockOverlay\(""").findAll(body).count()
+        )
+    }
+
+    /**
+     * The `UsageEvent(..., wasBlocked = true, ...)` write is the thing the arrival invariant exists
+     * to gate. A second writer anywhere else in the service would be a second block path that
+     * bypasses `claimConfrontation` entirely, reopening issue #36 through a door the fix never
+     * looked at.
+     */
+    @Test
+    fun `exactly one wasBlocked writer exists in the service`() {
+        assertEquals(
+            "a new block path that writes its own UsageEvent(wasBlocked = true, ...) instead of " +
+                "going through handleDecision's gated write would bypass claimConfrontation " +
+                "entirely",
+            1,
+            Regex("""wasBlocked\s*=\s*true""").findAll(stripComments(service)).count()
+        )
+    }
+
+    /**
+     * THE STORM DIAGNOSTIC (issue #36). Before the arrival invariant, a launch loop showed up as an
+     * inflated all-time count with no mechanism attached, a device session's worth of guessing to
+     * explain. After it, the same loop produces no visible signal at all, which is worse: it now
+     * has to be logged on purpose, once per storm and at a level that survives a normal logcat
+     * filter, or the next field report starts from zero again.
+     */
+    @Test
+    fun `the storm diagnostic exists, is w-level, and is not per-event`() {
+        assertTrue(
+            "launchBlockOverlay must feed every attempt to the guard's storm diagnostic",
+            launchHelper.contains("guard.onLaunchAttempt(")
+        )
+        assertTrue(
+            "the storm line must be logged at .w() so it survives a normal logcat filter, and it " +
+                "must name what the storm actually was",
+            launchHelper.contains(".w(") && launchHelper.contains("block overlay launch storm")
+        )
+        assertEquals(
+            "the storm diagnostic must fire from guard.onLaunchAttempt's own per-storm gating, not " +
+                "from a second log call scattered elsewhere -- a log call for every ATTEMPT rather " +
+                "than every STORM is worse than no log at all: 2500 lines a day would push the " +
+                "surrounding evidence (what was actually in front, what the gate decided) out of " +
+                "logcat before anyone can read it",
+            1,
+            Regex(""""block overlay launch storm""").findAll(stripComments(service)).count()
+        )
+    }
+
+    /**
+     * BOTH UN-STREAMABLE DEPARTURES (issue #36). `EventClassifier` sees every accessibility event,
+     * but Nudge's own MAIN window is classified `OwnUi` exactly like the block overlay is, so only
+     * `isOwnAppWindowEvent` can tell the two apart, and a screen-off is a broadcast, never an
+     * accessibility event at all. Miss either report and the arrival invariant silently stops
+     * covering the case that mattered: a user leaving via one of these two paths and coming straight
+     * back would be read as the SAME arrival, and owed a fresh confrontation would get none.
+     */
+    @Test
+    fun `both un-streamable departures are reported`() {
+        val code = stripComments(service)
+        assertEquals(
+            "onDeparture must be called exactly twice: the accessibility stream cannot describe " +
+                "either of these departures on its own",
+            2,
+            Regex("""blockLaunchGuard\(\)\.onDeparture\(""").findAll(code).count()
+        )
+        val ownUiCheck = index(code, "isOwnAppWindowEvent(event)")
+        val screenOff = index(code, "Intent.ACTION_SCREEN_OFF) return")
+        val departures = Regex("""blockLaunchGuard\(\)\.onDeparture\(""")
+            .findAll(code).map { it.range.first }.toList()
+        assertTrue(
+            "one onDeparture must sit inside the isOwnAppWindowEvent(event) branch -- Nudge's own " +
+                "MAIN window is classified OwnUi exactly like our block overlay",
+            departures.any { it in ownUiCheck..(ownUiCheck + 400) }
+        )
+        assertTrue(
+            "the other onDeparture must sit inside the screen-off receiver -- a screen-off is a " +
+                "broadcast, not an accessibility event, so it cannot arrive through the signal " +
+                "pipeline at all",
+            departures.any { it in screenOff..(screenOff + 400) }
+        )
+    }
+
+    /**
+     * ISSUE #36'S CLASS-NAME PIN. `BlockLaunchGate.MAIN_APP_ACTIVITY_CLASS` is a hardcoded string
+     * literal, not `MainActivity::class.java.name` -- the gate is pure Kotlin with no Android
+     * imports, which is what makes the arrival model JVM-testable at all, and nothing in the
+     * compiler checks a string literal against a real class.
+     *
+     * `tasks/lessons.md` (2026-09-14) already records the exact failure mode this guards against:
+     * `shouldClearForOwnPackageEvent` was DEAD in production for months because its class-name
+     * predicate was compared against the wrong identity (applicationId `dev.astraedus.nudge` vs
+     * classes `com.astraedus.nudge.*`), and its OWN unit tests passed the whole time because they
+     * supplied their own value for the production constant instead of reading the real one. A
+     * silently-wrong `MAIN_APP_ACTIVITY_CLASS` would silently disable the "the user opened Nudge"
+     * departure -- the arrival would simply never close, and because the failure is an ABSENCE of a
+     * signal rather than a wrong one, nothing else would notice.
+     */
+    @Test
+    fun `MAIN_APP_ACTIVITY_CLASS names a real activity in the real package`() {
+        assertTrue(
+            "MainActivity.kt must actually declare the class this constant claims to name, not " +
+                "just be assumed to",
+            stripComments(mainActivitySource).contains("class MainActivity")
+        )
+        val namespace = Regex("""namespace\s*=\s*"([^"]+)"""")
+            .find(appBuildGradle)?.groupValues?.get(1)
+            ?: error("namespace not found in build.gradle.kts")
+        assertEquals(
+            "the constant must equal <namespace>.MainActivity, read from the build file, not a " +
+                "value someone typed once and never checked against the app's actual identity -- " +
+                "the same mismatch that left shouldClearForOwnPackageEvent dead for months",
+            "$namespace.MainActivity",
+            com.astraedus.nudge.domain.block.BlockLaunchGate.MAIN_APP_ACTIVITY_CLASS
+        )
+    }
+
+    /**
+     * ISSUE #26 AT THE FAIL-SAFE. The fail-safe finish deliberately reproduces the pop that used to
+     * reveal the blocked app underneath, so the walk-away window that suppresses the re-block it
+     * causes must be measured from the moment of THIS pop, not from the tap ~1200ms earlier -- a
+     * window armed only at the tap could run out before the pop the fail-safe itself causes lands.
+     */
+    @Test
+    fun `the walk-away fail-safe re-arms the window at the moment of the pop`() {
+        val body = stripComments(
+            overlay.substringAfter("private fun scheduleWalkAwayFinish() {").substringBefore("\n    }")
+        )
+        val arm = index(body, "blockLaunchGuard.onWalkAwayStarted(")
+        val finishCall = index(body, "finish()")
+        assertTrue(
+            "the fail-safe must re-arm the window immediately before its own finish(), that finish " +
+                "deliberately reproduces issue #26's pop, so the window must be measured from the " +
+                "pop and not from a tap 1200ms earlier",
+            arm < finishCall
         )
     }
 

@@ -10,6 +10,7 @@ import androidx.activity.compose.setContent
 import androidx.compose.runtime.key
 import androidx.lifecycle.Lifecycle
 import com.astraedus.nudge.data.preferences.NudgePreferences
+import com.astraedus.nudge.domain.block.BlockLaunchGate
 import com.astraedus.nudge.domain.emergency.EmergencyPass
 import com.astraedus.nudge.domain.logging.NudgeLog
 import com.astraedus.nudge.domain.model.BlockMode
@@ -65,6 +66,19 @@ class BlockOverlayActivity : ComponentActivity() {
      * *same* block is still a new attempt that must start from full.
      */
     private var renderToken = 0
+
+    /**
+     * Which pending overlay in [BlockLaunchGuard] this ACTIVITY INSTANCE is, read once per
+     * [render].
+     *
+     * [onDestroy] used to clear the guard's pending overlay unconditionally, which is wrong
+     * whenever this instance is not the one that is pending. An overlay that finishes itself from
+     * [onStop] while the service launches a replacement has its `onDestroy` run AFTER the new
+     * instance's `onResume` -- so the dying instance wiped the live one's state, and the newly
+     * blocked app's own start-up window events were read as the user getting past an overlay that
+     * had only just gone up. Part of issue #36.
+     */
+    private var overlayId: Long = BlockLaunchGate.NO_OVERLAY_ID
 
     companion object {
         const val EXTRA_BLOCK_MODE = "block_mode"
@@ -174,6 +188,10 @@ class BlockOverlayActivity : ComponentActivity() {
         // that to reason about this method.
         walkedAway.set(false)
         mainHandler.removeCallbacksAndMessages(null)
+        // Which pending overlay we are. Read here because render() runs synchronously from
+        // onCreate/onNewIntent, i.e. immediately after the service's startActivity, so the guard's
+        // current pending overlay IS this delivery's. See [overlayId].
+        overlayId = blockLaunchGuard.currentOverlayId()
 
         val modeName = intent.getStringExtra(EXTRA_BLOCK_MODE) ?: BlockMode.HARD_BLOCK.name
         val mode = try {
@@ -462,9 +480,24 @@ class BlockOverlayActivity : ComponentActivity() {
      */
     private fun scheduleWalkAwayFinish() {
         val tokenAtWalkAway = renderToken
+        val walkAwayPackage = passthroughPackage(intent)
         mainHandler.postDelayed({
             if (!isFinishing && !isDestroyed && renderToken == tokenAtWalkAway) {
                 nudgeLogger.w("walk-away go-home did not land, finishing overlay on the fail-safe")
+                // RE-ARM THE WINDOW AT THE MOMENT OF THE POP, not just at the moment of the tap.
+                //
+                // This finish is the old #26 bug reproduced deliberately: it pops the blocked app
+                // forward, that app fires a real window event, and the only thing that stops the
+                // service re-blocking an app the user just declined is the walk-away window. Armed
+                // once at the tap, the window had whatever was left of 1500ms minus the 1200ms
+                // spent waiting -- 300ms for the pop, the app's resume and its window event to all
+                // land, on precisely the slow devices that reported #26 in the first place. Past
+                // that, the block came back and (before issue #36's invariant) counted itself.
+                //
+                // Re-arming measures the window from the event it is actually about. The constants
+                // stay ordered as `BlockOverlayLaunchContractTest` pins them; this removes the need
+                // for the margin between them to also be big enough for a device nobody has.
+                blockLaunchGuard.onWalkAwayStarted(walkAwayPackage)
                 finish()
             }
         }, WALK_AWAY_FINISH_FAILSAFE_MS)
@@ -494,7 +527,9 @@ class BlockOverlayActivity : ComponentActivity() {
         mainHandler.removeCallbacksAndMessages(null)
         NudgeAccessibilityService.markOverlayInactive()
         // Nothing is pending once we are gone. Leaving a stale pending overlay behind would let it
-        // suppress a genuine bypass for the rest of its settle window.
-        blockLaunchGuard.onOverlayDismissed()
+        // suppress a genuine bypass for the rest of its settle window -- but only OUR pending
+        // overlay is ours to clear: a replacement instance is already on screen by the time a
+        // finished one is destroyed. See [overlayId].
+        blockLaunchGuard.onOverlayDismissed(overlayId)
     }
 }

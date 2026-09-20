@@ -2,6 +2,16 @@
 
 All notable changes to Nudge are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.17.2] - 2026-09-20
+
+### Fixed
+- **One trip into a blocked app is one intervention, however many times the nudge screen has to come back.** A user reported 2500 interventions on a single day against a usual couple of hundred ([#36](https://github.com/astraedus/nudge/issues/36)). Nothing was wrong with the blocking; the counting had no idea what it was counting. Nudge recorded an entry every time it put the nudge screen up, and there are several ways the screen can be taken down and put straight back with nobody touching the phone — the screen going off, an app whose own window pushes back to the front, the "I changed my mind" exit not landing on a slow phone. Each round cost you another entry, a second or two apart, for as long as it went on. Nudge now counts what you actually ran into: one entry per app you arrive in, per kind of block, until you genuinely leave — the home screen, another app, Nudge itself, or the screen going off. Coming back later counts again, the second blocked website in the same browser counts separately, and a Reels block after an app block is still its own entry. **Nothing about blocking changed**: when Nudge decides not to count, it still shows you the block.
+- **A block that was shown twice for one arrival can no longer be counted twice.** When a second block was delivered to a nudge screen that was already up, Nudge forgot it was on screen — so a few seconds later the app underneath looked like it had got past it, and the whole thing went round again. That loop is closed, and a nudge screen closing is no longer allowed to clear the state of the one that replaced it.
+- **"I changed my mind" on a phone where going home does not land.** If Android accepted the request and did nothing, Nudge closed the screen itself after 1.2 seconds, which brought the app you had just left back to the front. On a slow phone that arrived just outside the window Nudge uses to recognise its own exit, and the block came back. That window is now measured from the moment it happens rather than from your tap.
+
+### Changed
+- If Nudge is ever asked to show the same block five or more times in a minute with no sign of you leaving, it now writes one line to the log saying so, with what it believed was in front of you. The count is safe from these loops now, which also means they no longer announce themselves — so they say so directly instead.
+
 ## [1.17.1] - 2026-09-14
 
 ### Fixed
