@@ -9,25 +9,31 @@
  * confirmed by LeechBlockNG#17). The SPA detection below is that gap, closed.
  *
  * Two jobs:
- *  1. HIDE Shorts surfaces (`hideShortsShelf`) by toggling a CSS class — never by
+ *  1. HIDE Shorts surfaces (`hides.shortsShelf`) by toggling a CSS class — never by
  *     removing nodes, so flipping the setting off restores the page instantly and we
  *     never fight YouTube's virtual DOM over ownership of an element we deleted.
- *  2. GATE the `/shorts/*` player (`shortsMode` != 'ALLOW') with an in-page interstitial
- *     overlay. We do NOT navigate away: a redirect races YouTube's router, and the whole
- *     product thesis is friction-with-a-choice, not a wall.
+ *  2. GATE the `/shorts/*` player (the `shorts` gate) and the `/watch` page (the channel
+ *     list) with an in-page interstitial overlay. We do NOT navigate away: a redirect
+ *     races YouTube's router, and the whole product thesis is friction-with-a-choice,
+ *     not a wall.
  *
- * `shortsMode` arrives already resolved by the service worker (the 'INHERIT' case is
- * decided there by running the block engine against the youtube.com site rule) — this
- * module must never re-implement inheritance.
+ * EVERYTHING here arrives ALREADY RESOLVED, as a `SiteConfig` from the service worker:
+ * the schedule, the budget and the applies-predicate have all been evaluated there, so a
+ * gate's mode is the mode right now and nothing in this module re-derives it. That is what
+ * keeps the overlay this script shows and the redirect DNR performs from ever disagreeing
+ * about the same surface.
  */
 
-import type { YoutubeConfig } from '../core/protocol';
-import { MODE_LABELS } from '../core/types';
+import type { ResolvedGate, SiteConfig } from '../core/protocol';
+import { gateDefinition } from '../core/platforms';
+import { MODE_LABELS, type BlockMode } from '../core/types';
 import { send } from '../ui/rpc';
 import { applyChannelFilter, applyGrayColor, watchChannelVerdict } from './channelFilter';
 import { channelKey, SETTLE_RECHECK_MS } from '../core/channelFreshness';
+import type { WatchGateVerdict } from '../core/channels';
 import { detectWatchChannel } from './channelDetection';
 import { applyAutoplayOff, applyHideToggles } from './unhook';
+import { holdMediaPaused, type MediaHold } from './overlay';
 import {
   HIDDEN_CLASS,
   NUDGE_OVERLAY_ID,
@@ -76,6 +82,15 @@ export interface HidingResult {
   degradedSurfaces: string[];
 }
 
+/** Shorts hiding reads exactly one registry hide id, plus the master switch. */
+export type ShortsHidingConfig = Pick<SiteConfig, 'enabled' | 'hides'>;
+
+/** The slice the Shorts gate reads: the master switch and the resolved gate list. */
+export type ShortsGateConfig = Pick<SiteConfig, 'enabled' | 'gates'>;
+
+/** The gate id for YouTube's Shorts surface, as the platform registry defines it. */
+const SHORTS_GATE_ID = 'shorts' as const;
+
 /**
  * Add/remove the hidden class across every Shorts surface for this page type.
  *
@@ -84,13 +99,13 @@ export interface HidingResult {
  */
 export function applyShortsHiding(
   root: Document | Element,
-  config: Pick<YoutubeConfig, 'enabled' | 'hideShortsShelf'>,
+  config: ShortsHidingConfig,
   options: { pageType?: YoutubePageType; url?: string; warn?: WarnFn } = {},
 ): HidingResult {
   const { warn = defaultWarn } = options;
   const result: HidingResult = { hidden: 0, revealed: 0, degradedSurfaces: [] };
 
-  if (!config.enabled || !config.hideShortsShelf) {
+  if (!config.enabled || config.hides.shortsShelf !== true) {
     for (const element of Array.from(root.querySelectorAll(`.${HIDDEN_CLASS}`))) {
       element.classList.remove(HIDDEN_CLASS);
       result.revealed += 1;
@@ -146,14 +161,43 @@ export function applyShortsHiding(
   return result;
 }
 
-/** True when this URL is a Shorts surface AND the resolved mode is not 'ALLOW'. */
-export function shouldGateShorts(
+/**
+ * How the Shorts surface must be treated on this URL, or null when it must not be gated.
+ *
+ * Two independent reasons a gate is in force, and they need different endings:
+ *
+ *  - a GATE MODE (Hard Block / Delay / Breathing) — the user's standing rule for the
+ *    surface, and a Delay/Breathing pause can be waited out.
+ *  - LIMIT REACHED — the surface's own daily budget is spent. There is nothing left to
+ *    wait for until midnight, so a countdown would be a lie and the only honest rendering
+ *    is a Hard Block that says why. This is the same answer `core/applies.ts` gives an
+ *    exhausted site budget, reached independently here so the overlay and the block page
+ *    cannot drift apart.
+ *
+ * A gate carrying `limitReached` outranks its own mode: a Delay whose budget is gone is
+ * not a Delay any more.
+ */
+export interface ShortsGateVerdict {
+  mode: BlockMode;
+  delaySeconds: number;
+  limitReached: boolean;
+}
+
+export function resolveShortsGate(
   url: string,
-  config: Pick<YoutubeConfig, 'enabled' | 'shortsMode'>,
-): boolean {
-  if (!config.enabled) return false;
-  if (config.shortsMode === 'ALLOW') return false;
-  return pageTypeFor(url) === 'shorts';
+  config: ShortsGateConfig,
+): ShortsGateVerdict | null {
+  if (!config.enabled) return null;
+  if (pageTypeFor(url) !== 'shorts') return null;
+
+  const gate: ResolvedGate | undefined = config.gates.find((g) => g.id === SHORTS_GATE_ID);
+  if (gate === undefined) return null;
+
+  if (gate.limitReached) {
+    return { mode: 'HARD_BLOCK', delaySeconds: 0, limitReached: true };
+  }
+  if (gate.mode === 'ALLOW') return null;
+  return { mode: gate.mode, delaySeconds: gate.delaySeconds, limitReached: false };
 }
 
 /* ------------------------------------------------------------------ overlay */
@@ -164,22 +208,60 @@ interface OverlayHandle {
   dispose: () => void;
 }
 
+/** The human name of a gate surface, straight from the platform registry. */
+export function shortsGateLabel(): string {
+  return gateDefinition('youtube', SHORTS_GATE_ID)?.label ?? 'Shorts';
+}
+
+export interface GateCopy {
+  title: string;
+  subtitle: string;
+  /** What the "Rule: X" footer names. */
+  ruleLabel: string;
+}
+
+/**
+ * Copy for the Shorts interstitial.
+ *
+ * The exhausted-budget case gets its OWN wording rather than borrowing the Hard Block
+ * line. "You asked Nudge to keep you out of here" is false when the truth is "you had ten
+ * minutes and you have spent them" — and a user who reads the wrong reason goes looking
+ * for a rule they never wrote. It also names WHEN it comes back, because the one thing
+ * someone wants to know at that moment is whether this is for today or forever.
+ */
+export function shortsGateCopy(verdict: ShortsGateVerdict): GateCopy {
+  const label = shortsGateLabel();
+  const ruleLabel = `YouTube ${label}`;
+
+  if (verdict.limitReached) {
+    return {
+      title: `You're out of ${label} for today`,
+      subtitle: `Your daily ${label} limit is used up. It resets at midnight.`,
+      ruleLabel,
+    };
+  }
+  return { ...baseGateCopy(verdict.mode, label), ruleLabel };
+}
+
 /** Copy for the interstitial, mode by mode. Android microcopy parity. */
-function gateCopy(mode: Exclude<YoutubeConfig['shortsMode'], 'ALLOW'>): {
+function baseGateCopy(
+  mode: BlockMode,
+  label: string,
+): {
   title: string;
   subtitle: string;
 } {
   switch (mode) {
     case 'HARD_BLOCK':
       return {
-        title: 'Shorts is blocked',
+        title: `${label} is blocked`,
         subtitle: 'You asked Nudge to keep you out of here. Still true?',
       };
     case 'BREATHING':
-      return { title: 'Take a breath', subtitle: 'Follow the circle. Shorts will wait.' };
+      return { title: 'Take a breath', subtitle: `Follow the circle. ${label} will wait.` };
     case 'DELAY':
     default:
-      return { title: 'Hold on a second', subtitle: 'Still want to watch Shorts?' };
+      return { title: 'Hold on a second', subtitle: `Still want to watch ${label}?` };
   }
 }
 
@@ -187,26 +269,21 @@ function gateCopy(mode: Exclude<YoutubeConfig['shortsMode'], 'ALLOW'>): {
  * Build the interstitial. Markup is deliberately tiny and self-contained: styles live in
  * youtube.css (injected via the manifest, so it is on the page before YouTube paints).
  *
+ * ONE overlay serves every in-page gate — the Shorts surface, the channel list, and an
+ * exhausted surface budget — because they differ only in words. A second near-identical
+ * implementation is how two gates end up with two different bail buttons.
+ *
  * `onComplete` fires when a Delay/Breathing pause elapses. HARD_BLOCK never calls it —
- * its only exit is the bail button.
+ * its only exit is the bail button, which is also why an exhausted budget renders as one.
  */
-export function createShortsOverlay(
+export function createGateOverlay(
   doc: Document,
-  config: Pick<YoutubeConfig, 'shortsMode' | 'shortsDelaySeconds'>,
+  gate: { mode: BlockMode; delaySeconds: number },
   handlers: { onComplete: () => void; onBail: () => void },
-  /**
-   * Overrides for a gate that is not about Shorts. The channel gate is the same
-   * interstitial with different words, so it reuses this rather than growing a second
-   * near-identical overlay implementation that could drift.
-   */
-  override: { title?: string; subtitle?: string; ruleLabel?: string } = {},
+  copyIn: GateCopy,
 ): OverlayHandle {
-  const mode = config.shortsMode === 'ALLOW' ? 'HARD_BLOCK' : config.shortsMode;
-  const base = gateCopy(mode);
-  const copy = {
-    title: override.title ?? base.title,
-    subtitle: override.subtitle ?? base.subtitle,
-  };
+  const { mode } = gate;
+  const copy = { title: copyIn.title, subtitle: copyIn.subtitle };
   const timers: number[] = [];
 
   const overlay = doc.createElement('div');
@@ -230,7 +307,7 @@ export function createShortsOverlay(
   card.append(title, subtitle);
 
   if (mode === 'DELAY') {
-    const seconds = Math.max(1, Math.round(config.shortsDelaySeconds));
+    const seconds = Math.max(1, Math.round(gate.delaySeconds));
     const counter = doc.createElement('div');
     counter.className = 'nudge-overlay__count';
     counter.textContent = String(seconds);
@@ -255,7 +332,7 @@ export function createShortsOverlay(
     const remainingLabel = doc.createElement('div');
     remainingLabel.className = 'nudge-overlay__remaining';
 
-    const totalMs = Math.max(1, Math.round(config.shortsDelaySeconds)) * 1000;
+    const totalMs = Math.max(1, Math.round(gate.delaySeconds)) * 1000;
     const startedAt = Date.now();
     remainingLabel.textContent = `${Math.ceil(totalMs / 1000)}s remaining`;
 
@@ -296,7 +373,7 @@ export function createShortsOverlay(
 
   const footer = doc.createElement('p');
   footer.className = 'nudge-overlay__footer';
-  footer.textContent = `Rule: ${override.ruleLabel ?? 'YouTube Shorts'} · ${MODE_LABELS[mode]}`;
+  footer.textContent = `Rule: ${copyIn.ruleLabel} · ${MODE_LABELS[mode]}`;
   card.append(footer);
 
   overlay.append(card);
@@ -324,15 +401,42 @@ function overlayHost(doc: Document): Element {
   return elements[0] ?? doc.body;
 }
 
-/** Pause any playing media so the interstitial isn't just a lid over a running video. */
-function pauseMedia(doc: Document): void {
-  for (const video of Array.from(doc.querySelectorAll('video'))) {
-    try {
-      (video as HTMLVideoElement).pause();
-    } catch {
-      // jsdom and some embeds throw on pause(); the overlay still stands.
+/**
+ * Copy for the watch-page channel gate.
+ *
+ * The words have to say WHICH rule is holding the video, because the user's next move
+ * depends on it: a channel that is merely off a list is fixed by editing the list, while
+ * "the whole site is blocked and this channel is not one of your exceptions" is fixed by
+ * editing the site rule — and "we could not tell whose video this is" is not the user's
+ * mistake at all. One generic "this channel is off your list" for all three would send
+ * people to the wrong screen, and in the unknown case would accuse a channel that might
+ * well be on their list.
+ */
+export function channelGateCopy(verdict: Extract<WatchGateVerdict, { action: 'BLOCK' }>): GateCopy {
+  if (verdict.source === 'site-default') {
+    if (verdict.reason === 'unknown-channel') {
+      return {
+        title: 'YouTube is blocked right now',
+        subtitle:
+          "Nudge couldn't identify this video's channel, so YouTube's default rule applies.",
+        ruleLabel: 'YouTube',
+      };
     }
+    return {
+      title: 'This channel is off your list',
+      subtitle: "YouTube is blocked except the channels you picked. This one isn't one of them.",
+      ruleLabel: 'YouTube',
+    };
   }
+
+  return {
+    title: 'This channel is off your list',
+    subtitle:
+      verdict.reason === 'not-listed'
+        ? 'You chose to watch only channels you picked. Still want this one?'
+        : 'You asked Nudge to keep you away from this channel.',
+    ruleLabel: 'YouTube channels',
+  };
 }
 
 /* --------------------------------------------------------------- controller */
@@ -346,22 +450,25 @@ export interface YoutubeController {
   stop: () => void;
 }
 
-/** Everything off. What the script assumes until the worker answers. */
-const IDLE_CONFIG: YoutubeConfig = {
+/**
+ * Everything off. What the script assumes until the worker answers.
+ *
+ * `enabled: false` is the load-bearing field: every applier short-circuits on it, so a
+ * worker that is asleep, restarting or has no rule for this site leaves the page exactly
+ * as YouTube shipped it rather than half-enforcing a rule nobody has read yet.
+ */
+export const IDLE_SITE_CONFIG: SiteConfig = {
   enabled: false,
-  hideShortsShelf: false,
-  shortsMode: 'ALLOW',
-  shortsDelaySeconds: 15,
-  channelMode: 'OFF',
-  channels: [],
-  channelBlockMode: 'DELAY',
-  channelDelaySeconds: 15,
-  grayScreen: false,
-  hideHomeFeed: false,
-  hideSidebarRecs: false,
-  hideEndScreen: false,
-  hideComments: false,
-  disableAutoplay: false,
+  domain: 'youtube.com',
+  platform: 'youtube',
+  siteMode: 'ALLOW',
+  siteDelaySeconds: 15,
+  siteApplies: false,
+  siteLimitReached: false,
+  grayscale: false,
+  gates: [],
+  hides: {},
+  youtube: null,
 };
 
 /**
@@ -379,11 +486,14 @@ const IDLE_CONFIG: YoutubeConfig = {
  */
 export function initYoutubeContentScript(
   doc: Document = document,
-  fetchConfig: () => Promise<YoutubeConfig> = () => send({ type: 'GET_YOUTUBE_CONFIG' }),
+  fetchConfig: (url: string) => Promise<SiteConfig> = (url) =>
+    send({ type: 'GET_SITE_CONFIG', url }),
 ): YoutubeController {
   const view = doc.defaultView;
-  let config: YoutubeConfig = IDLE_CONFIG;
+  let config: SiteConfig = IDLE_SITE_CONFIG;
   let overlay: OverlayHandle | null = null;
+  /** Held only while an interstitial is up; see `holdMediaPaused`. */
+  let mediaHold: MediaHold | null = null;
   /** Set once a pause is completed; cleared as soon as we leave the Shorts surface. */
   let gateSatisfied = false;
   /** The watch URL whose channel gate the user has already completed, if any. */
@@ -405,6 +515,10 @@ export function initYoutubeContentScript(
   function teardownOverlay(): void {
     overlay?.dispose();
     overlay = null;
+    // Release BEFORE the overlay is forgotten, or the page's media stays un-playable with
+    // nothing on screen to explain why.
+    mediaHold?.release();
+    mediaHold = null;
   }
 
   function refresh(): void {
@@ -431,9 +545,16 @@ export function initYoutubeContentScript(
     applyHideToggles(doc, config, { url });
     applyChannelFilter(doc, config);
     applyGrayColor(doc, config, { url, previousKey: previousChannelKey, msSinceNav });
-    if (config.disableAutoplay) applyAutoplayOff(doc, config);
+    applyAutoplayOff(doc, config);
 
-    const shortsGated = shouldGateShorts(url, config) && !gateSatisfied;
+    const resolvedShortsGate = resolveShortsGate(url, config);
+    // A completed pause buys the rest of the Shorts session — but it cannot buy a budget
+    // that has run out since. There is nothing left today to have paid for, so an
+    // exhausted gate ignores the grant instead of being waived by it.
+    const shortsGate =
+      resolvedShortsGate !== null && gateSatisfied && !resolvedShortsGate.limitReached
+        ? null
+        : resolvedShortsGate;
 
     // The channel gate is scoped to the exact URL that satisfied it, so completing a pause
     // on one video does not buy access to the next. (Shorts keeps its own coarser grant:
@@ -448,31 +569,36 @@ export function initYoutubeContentScript(
           });
     const channelGate = channelVerdict?.action === 'BLOCK' ? channelVerdict : null;
 
-    if (!shortsGated && channelGate === null) {
+    if (shortsGate === null && channelGate === null) {
       teardownOverlay();
       return;
     }
     if (overlay?.element.isConnected) return;
 
     teardownOverlay();
-    pauseMedia(doc);
+    mediaHold = holdMediaPaused(doc);
 
-    if (shortsGated) {
-      overlay = createShortsOverlay(doc, config, {
-        onComplete: () => {
-          gateSatisfied = true;
-          teardownOverlay();
+    if (shortsGate !== null) {
+      overlay = createGateOverlay(
+        doc,
+        shortsGate,
+        {
+          onComplete: () => {
+            gateSatisfied = true;
+            teardownOverlay();
+          },
+          onBail: () => {
+            teardownOverlay();
+            doc.location.assign(BAIL_URL);
+          },
         },
-        onBail: () => {
-          teardownOverlay();
-          doc.location.assign(BAIL_URL);
-        },
-      });
+        shortsGateCopy(shortsGate),
+      );
     } else if (channelGate !== null) {
       const gatedUrl = url;
-      overlay = createShortsOverlay(
+      overlay = createGateOverlay(
         doc,
-        { shortsMode: channelGate.mode, shortsDelaySeconds: config.channelDelaySeconds },
+        channelGate,
         {
           onComplete: () => {
             channelGateSatisfiedFor = gatedUrl;
@@ -483,14 +609,7 @@ export function initYoutubeContentScript(
             doc.location.assign(BAIL_URL);
           },
         },
-        {
-          title: 'This channel is off your list',
-          subtitle:
-            config.channelMode === 'WHITELIST'
-              ? 'You chose to watch only channels you picked. Still want this one?'
-              : 'You asked Nudge to keep you away from this channel.',
-          ruleLabel: 'YouTube channels',
-        },
+        channelGateCopy(channelGate),
       );
     }
 
@@ -524,7 +643,10 @@ export function initYoutubeContentScript(
 
   async function reload(): Promise<void> {
     try {
-      config = await fetchConfig();
+      // The worker resolves the domain, the rule and the gates from the URL exactly the way
+      // the network layer does, so it is handed the page's own address rather than a
+      // platform name this script would otherwise have to guess at.
+      config = await fetchConfig(currentHref());
     } catch {
       // The service worker can be asleep or mid-reload. Stay in the last known state
       // rather than failing open on a transient messaging error.

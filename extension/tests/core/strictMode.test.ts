@@ -18,6 +18,7 @@ import {
   type NudgeSettings,
   type SiteRule,
 } from '../../src/core/settingsSchema';
+import { featuresWith, siteRule } from '../helpers/rules';
 
 // Confusable glyphs the charset must never contain, and generate() must never produce.
 const CONFUSABLE = ['0', 'O', '1', 'l', 'I'];
@@ -226,18 +227,7 @@ function baseSettings(overrides: Partial<NudgeSettings> = {}): NudgeSettings {
 }
 
 function makeRule(overrides: Partial<SiteRule> = {}): SiteRule {
-  return {
-    id: 'r1',
-    domain: 'example.com',
-    mode: 'DELAY',
-    delaySeconds: 15,
-    dailyLimitMinutes: null,
-    enabled: true,
-    createdAt: 0,
-    showTimeRemaining: false,
-    schedule: null,
-    ...overrides,
-  };
+  return siteRule({ id: 'r1', domain: 'example.com', mode: 'DELAY', ...overrides });
 }
 
 describe('strictMode: isWeakening() — globalEnabled axis', () => {
@@ -414,10 +404,22 @@ describe('strictMode: isWeakening() — tempAllowMinutes axis', () => {
   });
 });
 
-describe('strictMode: isWeakening() — youtube.shortsMode axis', () => {
-  function withShorts(mode: 'INHERIT' | 'HARD_BLOCK' | 'DELAY' | 'BREATHING'): NudgeSettings {
+describe('strictMode: isWeakening() — the Shorts gate axis', () => {
+  /**
+   * The Shorts control moved from a top-level `youtube.shortsMode` to the youtube.com
+   * rule's `shorts` gate in v0.2. The weakening SEMANTICS are unchanged and still have
+   * to hold, so these cases were translated rather than deleted: softening the gate is
+   * still gated, and 'OFF' is still the weakest rung (it is what 'INHERIT' became).
+   */
+  function withShorts(mode: 'OFF' | 'HARD_BLOCK' | 'DELAY' | 'BREATHING'): NudgeSettings {
     return baseSettings({
-      youtube: { ...DEFAULT_SETTINGS.youtube, shortsMode: mode },
+      rules: [
+        siteRule({
+          domain: 'youtube.com',
+          mode: 'ALLOW',
+          features: featuresWith('youtube', { gates: { shorts: { mode } } }),
+        }),
+      ],
     });
   }
 
@@ -437,16 +439,16 @@ describe('strictMode: isWeakening() — youtube.shortsMode axis', () => {
     expect(isWeakening(withShorts('BREATHING'), withShorts('DELAY'))).toBe(false);
   });
 
-  it('DELAY -> INHERIT is weakening (INHERIT is the weakest rung)', () => {
-    expect(isWeakening(withShorts('DELAY'), withShorts('INHERIT'))).toBe(true);
+  it('DELAY -> OFF is weakening (OFF is the weakest rung)', () => {
+    expect(isWeakening(withShorts('DELAY'), withShorts('OFF'))).toBe(true);
   });
 
-  it('INHERIT -> DELAY is not weakening', () => {
-    expect(isWeakening(withShorts('INHERIT'), withShorts('DELAY'))).toBe(false);
+  it('OFF -> DELAY is not weakening', () => {
+    expect(isWeakening(withShorts('OFF'), withShorts('DELAY'))).toBe(false);
   });
 
-  it('INHERIT -> INHERIT is not weakening', () => {
-    expect(isWeakening(withShorts('INHERIT'), withShorts('INHERIT'))).toBe(false);
+  it('OFF -> OFF is not weakening', () => {
+    expect(isWeakening(withShorts('OFF'), withShorts('OFF'))).toBe(false);
   });
 });
 

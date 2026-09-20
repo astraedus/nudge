@@ -8,6 +8,7 @@
 
 import { extractDomain } from '../core/domainMatcher';
 import { limitMs, remainingMs, tightestLimit } from '../core/budgets';
+import { rulesForDomain, usageKeyForHost } from '../core/ruleResolver';
 import { badgeColor, formatBadge } from '../ui/format';
 import { loadSettings, todayUsageMs } from './storage';
 
@@ -35,8 +36,9 @@ export async function refreshBadge(): Promise<void> {
     }
 
     const settings = await loadSettings();
-    const rules = settings.rules.filter(
-      (rule) => rule.enabled && rule.domain === domain && rule.showTimeRemaining,
+    // Subdomain-aware like every other reader of "which rule covers this page".
+    const rules = rulesForDomain(settings.rules, domain).filter(
+      (rule) => rule.showTimeRemaining,
     );
     const limit = settings.globalEnabled ? tightestLimit(rules) : null;
     if (limit === null) {
@@ -44,7 +46,8 @@ export async function refreshBadge(): Promise<void> {
       return;
     }
 
-    const usedMs = await todayUsageMs(domain, new Date());
+    // Same bucket the tracker fills, the matching rule's domain, not the host.
+    const usedMs = await todayUsageMs(usageKeyForHost(settings.rules, domain), new Date());
     const left = remainingMs(limit, usedMs) ?? 0;
     await chrome.action.setBadgeText({ tabId: tab.id, text: formatBadge(left) });
     await chrome.action.setBadgeBackgroundColor({

@@ -29,8 +29,14 @@ import {
   type BrowserContext,
   type Worker,
 } from '@playwright/test';
-import { DEFAULT_SETTINGS, SCHEMA_VERSION } from '../src/core/settingsSchema';
-import type { NudgeSettings, SiteRule } from '../src/core/settingsSchema';
+import { SCHEMA_VERSION, migrateSettings, newSiteRule } from '../src/core/settingsSchema';
+import { compiledRuleCount, type UsageByKey } from '../src/background/dnr';
+import type {
+  GateSetting,
+  NudgeSettings,
+  SiteFeatures,
+  SiteRule,
+} from '../src/core/settingsSchema';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const EXTENSION_PATH = path.resolve(here, '../.output/chrome-mv3');
@@ -87,7 +93,9 @@ function youtubePage(url: URL): string {
  *
  * Needed because youtube.com is in Chrome's HSTS PRELOAD list: `http://www.youtube.com/` is
  * force-upgraded to HTTPS before it ever reaches our resolver rule, so a plain-HTTP fixture
- * server answers with ERR_SSL_PROTOCOL_ERROR. Generated per-run into a temp dir rather than
+ * server answers with ERR_SSL_PROTOCOL_ERROR. instagram.com is preloaded too, which is why
+ * it shares this certificate rather than getting a plain-HTTP server of its own.
+ * Generated per-run into a temp dir rather than
  * committed - a private key in a public repo is a bad habit even when it is worthless - and
  * Chrome is launched with --ignore-certificate-errors so the cert never has to be trusted.
  */
@@ -102,14 +110,15 @@ function generateSelfSignedCert(): { key: Buffer; cert: Buffer } {
       '-days', '1',
       '-subj', '/CN=localhost',
       '-addext',
-      'subjectAltName=DNS:localhost,DNS:*.youtube.com,DNS:youtube.com,DNS:*.test,IP:127.0.0.1',
+      'subjectAltName=DNS:localhost,DNS:*.youtube.com,DNS:youtube.com,' +
+        'DNS:*.instagram.com,DNS:instagram.com,DNS:*.test,IP:127.0.0.1',
     ],
     { stdio: 'ignore' },
   );
   return { key: readFileSync(`${dir}/key.pem`), cert: readFileSync(`${dir}/cert.pem`) };
 }
 
-function startTestServer(): Promise<Server> {
+export function startTestServer(): Promise<Server> {
   const { key, cert } = generateSelfSignedCert();
   const server = createHttpsServer({ key, cert }, (req, res) => {
     const host = (req.headers.host ?? 'unknown').split(':')[0]!;
@@ -149,11 +158,69 @@ export interface ExtensionFixtures {
   extensionId: string;
   serviceWorker: Worker;
   /** Overwrite the extension's settings and wait until DNR has actually caught up. */
-  setSettings: (settings: Partial<NudgeSettings>) => Promise<void>;
+  /**
+   * Write settings and wait for the worker's DNR rule set to catch up.
+   *
+   * `usage` is today's usage as the worker will read it, and only matters when a rule's
+   * behaviour depends on it — an Allow rule with a daily limit compiles no redirect until
+   * that limit is spent. Seed the usage first (`seedUsage`), then pass the same numbers
+   * here so the wait expects the right rule set.
+   */
+  setSettings: (settings: Partial<NudgeSettings>, usage?: UsageByKey) => Promise<void>;
   /** Seed today's usage rollup for a domain. */
   seedUsage: (domain: string, activeSec: number) => Promise<void>;
   /** URL of a page on `host`, served locally. */
   siteUrl: (host: string, pathname?: string) => string;
+}
+
+/**
+ * Launch a Chrome carrying the extension, with every fixture host mapped onto `port`.
+ *
+ * `userDataDir` defaults to `''` (a throwaway profile Playwright manages). Pass a real
+ * directory to get a profile that OUTLIVES the browser — which is how `migration.spec.ts`
+ * restarts the extension on an existing install, the closest available stand-in for a Web
+ * Store auto-update. (`chrome.runtime.reload()` is not usable for that: on an extension
+ * loaded with `--load-extension` it tears the extension down and never brings it back, so
+ * every extension URL afterwards answers ERR_BLOCKED_BY_CLIENT.)
+ */
+export function launchExtensionContext(
+  port: number,
+  userDataDir = '',
+): Promise<BrowserContext> {
+  return chromium.launchPersistentContext(userDataDir, {
+    channel: 'chromium',
+    args: [
+      `--disable-extensions-except=${EXTENSION_PATH}`,
+      `--load-extension=${EXTENSION_PATH}`,
+      // Any *.test hostname resolves to the local server, so page URLs stay clean
+      // (`http://blocked.test/`) and domain matching is realistic.
+      // youtube.com is mapped too, so the YouTube content script (which only matches
+      // *.youtube.com) runs for real against a YouTube-shaped page, still zero network.
+      // instagram.com likewise, for the platform content script and its Reels gate.
+      `--host-resolver-rules=MAP *.test 127.0.0.1:${port}, MAP *.youtube.com 127.0.0.1:${port},` +
+        ` MAP *.instagram.com 127.0.0.1:${port}`,
+      // Keep each browser's footprint small. The suite launches one persistent context
+      // per test, and on a developer machine that is competing with a real browser for
+      // memory; a bloated test browser gets OOM-killed and surfaces as the confusing
+      // "Target page, context or browser has been closed" during fixture setup.
+      '--disable-gpu',
+      '--disable-dev-shm-usage',
+      '--disable-background-networking',
+      '--disable-features=Translate,MediaRouter,OptimizationHints',
+      '--no-first-run',
+      '--no-default-browser-check',
+      // The fixture server presents a throwaway self-signed cert (see above).
+      '--ignore-certificate-errors',
+    ],
+  });
+}
+
+/** The extension's service worker, waiting for it to register if it has not yet. */
+export async function extensionWorker(context: BrowserContext): Promise<Worker> {
+  const [existing] = context.serviceWorkers();
+  // An explicit timeout here turns "the whole test timed out in setup" into a specific,
+  // actionable failure when the worker never registers.
+  return existing ?? (await context.waitForEvent('serviceworker', { timeout: 20_000 }));
 }
 
 export const test = base.extend<ExtensionFixtures>({
@@ -162,30 +229,7 @@ export const test = base.extend<ExtensionFixtures>({
     const server = await startTestServer();
     const { port } = server.address() as AddressInfo;
 
-    const context = await chromium.launchPersistentContext('', {
-      channel: 'chromium',
-      args: [
-        `--disable-extensions-except=${EXTENSION_PATH}`,
-        `--load-extension=${EXTENSION_PATH}`,
-        // Any *.test hostname resolves to the local server, so page URLs stay clean
-        // (`http://blocked.test/`) and domain matching is realistic.
-        // youtube.com is mapped too, so the YouTube content script (which only matches
-        // *.youtube.com) runs for real against a YouTube-shaped page, still zero network.
-        `--host-resolver-rules=MAP *.test 127.0.0.1:${port}, MAP *.youtube.com 127.0.0.1:${port}`,
-        // Keep each browser's footprint small. The suite launches one persistent context
-        // per test, and on a developer machine that is competing with a real browser for
-        // memory; a bloated test browser gets OOM-killed and surfaces as the confusing
-        // "Target page, context or browser has been closed" during fixture setup.
-        '--disable-gpu',
-        '--disable-dev-shm-usage',
-        '--disable-background-networking',
-        '--disable-features=Translate,MediaRouter,OptimizationHints',
-        '--no-first-run',
-        '--no-default-browser-check',
-        // The fixture server presents a throwaway self-signed cert (see above).
-        '--ignore-certificate-errors',
-      ],
-    });
+    const context = await launchExtensionContext(port);
 
     await use(context);
 
@@ -194,11 +238,7 @@ export const test = base.extend<ExtensionFixtures>({
   },
 
   serviceWorker: async ({ context }, use) => {
-    let [worker] = context.serviceWorkers();
-    // An explicit timeout here turns "the whole test timed out in setup" into a specific,
-    // actionable failure when the worker never registers.
-    worker ??= await context.waitForEvent('serviceworker', { timeout: 20_000 });
-    await use(worker);
+    await use(await extensionWorker(context));
   },
 
   extensionId: async ({ serviceWorker }, use) => {
@@ -211,7 +251,7 @@ export const test = base.extend<ExtensionFixtures>({
   },
 
   setSettings: async ({ serviceWorker }, use) => {
-    await use(async (partial: Partial<NudgeSettings>) => {
+    await use(async (partial: Partial<NudgeSettings>, usage?: UsageByKey) => {
       await serviceWorker.evaluate(
         async ([key, patch]) => {
           const existing = await chrome.storage.local.get(key);
@@ -226,8 +266,13 @@ export const test = base.extend<ExtensionFixtures>({
 
       // Wait until the DNR rule set actually reflects the new settings rather than
       // sleeping and hoping.
-      const enabledRules = (partial.rules ?? []).filter((r) => r.enabled !== false).length;
-      const expected = partial.globalEnabled === false ? 0 : enabledRules;
+      //
+      // The expectation is DERIVED, never counted by hand: under schema v3 an Allow rule
+      // under its budget compiles no rule at all, one gate can compile several, and a
+      // YouTube whitelist adds one per allowed path. The old "one rule per enabled rule"
+      // arithmetic was silently wrong in the permissive direction for all three, which
+      // shows up as a flaky race rather than an honest failure.
+      const expected = compiledRuleCount(migrateSettings(partial), usage ?? {}, new Date());
       await waitForRuleCount(serviceWorker, expected);
     });
   },
@@ -265,6 +310,73 @@ export async function waitForRuleCount(worker: Worker, expected: number): Promis
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
+}
+
+/**
+ * Poll until the dynamically-registered grayscale stylesheet matches exactly `domains`.
+ *
+ * Needed because grayscale is registered OUT OF BAND from the DNR rule set: an Allow rule
+ * carrying nothing but `grayscale: true` compiles ZERO dynamic rules, so `setSettings`'
+ * rule-count wait returns instantly and a page opened immediately afterwards can load
+ * before `chrome.scripting.registerContentScripts` has run. Registered CSS is injected
+ * before first paint or not at all — polling `getComputedStyle` on an already-loaded page
+ * would never recover — so the wait has to happen BEFORE the navigation.
+ */
+export async function waitForGrayscaleDomains(
+  worker: Worker,
+  domains: readonly string[],
+): Promise<void> {
+  const expected = [...domains].map((domain) => `*://*.${domain}/*`).sort();
+  const deadline = Date.now() + 10_000;
+  for (;;) {
+    const current = await worker.evaluate(async () => {
+      try {
+        const scripts = await chrome.scripting.getRegisteredContentScripts({
+          ids: ['nudge-grayscale'],
+        });
+        return [...(scripts[0]?.matches ?? [])].sort();
+      } catch {
+        return [];
+      }
+    });
+    if (current.length === expected.length && current.every((m, i) => m === expected[i])) {
+      return;
+    }
+    if (Date.now() > deadline) {
+      throw new Error(
+        `grayscale registration settled at [${current.join(', ')}], expected [${expected.join(', ')}]`,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
+
+/**
+ * Write a RAW settings blob, exactly as an older version of the extension stored it.
+ *
+ * Deliberately not `setSettings`: that one normalizes nothing but does wait for the rule
+ * set, and the point of a legacy blob is that the WORKER must be the thing that migrates
+ * it on read. Both storage areas are written because a real v0.1.0 install has both (see
+ * `background/storage.ts`: sync is authoritative, local is the mirror) — seeding only one
+ * would prove the migration handles a half-populated profile nobody actually has.
+ */
+export async function seedRawSettings(worker: Worker, blob: unknown): Promise<void> {
+  await worker.evaluate(
+    async ([key, value]) => {
+      await chrome.storage.local.set({ [key]: value });
+      await chrome.storage.sync.set({ [key]: value });
+    },
+    [SETTINGS_KEY, blob] as const,
+  );
+}
+
+/** The dynamic rule count the worker should settle on for these settings. */
+export function expectedRuleCount(
+  raw: unknown,
+  usage: UsageByKey = {},
+  now: Date = new Date(),
+): number {
+  return compiledRuleCount(migrateSettings(raw), usage, now);
 }
 
 /** Read a counter out of today's rollup for one domain. */
@@ -347,27 +459,62 @@ export function baseSettings(overrides: Partial<NudgeSettings> = {}): Partial<Nu
     messages: { delayTitles: [], delaySubtitles: [], hardBlockMessages: [] },
     strictMode: { enabled: false, challengeLength: 24 },
     emergencyPass: { enabled: true },
-    // Spread the REAL defaults so adding a settings field never breaks the whole suite.
-    youtube: { ...DEFAULT_SETTINGS.youtube },
     tempAllowMinutes: 10,
     ...overrides,
   };
 }
 
-/** A site rule with sensible defaults. */
+/**
+ * A site rule with sensible defaults.
+ *
+ * Built on `newSiteRule` rather than a literal, so a rule for a known platform
+ * automatically carries its (all-off) feature block exactly as the product's own "add a
+ * site" path produces it. A hand-written literal here would drift from the real shape the
+ * moment the schema grows, and e2e is the last place that should be testing a shape the
+ * product never actually stores.
+ */
 export function rule(domain: string, overrides: Partial<SiteRule> = {}): SiteRule {
   return {
+    ...newSiteRule({ domain, mode: 'HARD_BLOCK' }),
     id: `rule-${domain}`,
-    domain,
-    mode: 'HARD_BLOCK',
-    delaySeconds: 15,
-    dailyLimitMinutes: null,
-    enabled: true,
-    createdAt: 0,
-    showTimeRemaining: false,
-    schedule: null,
     ...overrides,
   };
+}
+
+/**
+ * A rule for a known platform with some of its feature surfaces configured.
+ *
+ * `gates`/`hides` are merged over the platform's defaults, so a test only names the
+ * surfaces it cares about and every other surface stays off.
+ */
+export function platformRule(
+  domain: string,
+  config: {
+    gates?: Record<string, Partial<GateSetting>>;
+    hides?: Record<string, boolean>;
+    youtube?: Partial<NonNullable<SiteFeatures['youtube']>>;
+  },
+  overrides: Partial<SiteRule> = {},
+): SiteRule {
+  const base = rule(domain, overrides);
+  const features = base.features;
+  if (features === null) {
+    throw new Error(`${domain} is not a known platform, so it has no features to configure`);
+  }
+  for (const [gateId, gate] of Object.entries(config.gates ?? {})) {
+    const existing = features.gates[gateId as keyof typeof features.gates];
+    if (existing === undefined) throw new Error(`${domain} has no gate "${gateId}"`);
+    features.gates[gateId as keyof typeof features.gates] = { ...existing, ...gate };
+  }
+  for (const [hideId, hidden] of Object.entries(config.hides ?? {})) {
+    if (!(hideId in features.hides)) throw new Error(`${domain} has no hide "${hideId}"`);
+    features.hides[hideId as keyof typeof features.hides] = hidden;
+  }
+  if (config.youtube !== undefined) {
+    if (features.youtube === undefined) throw new Error(`${domain} has no channel lists`);
+    features.youtube = { ...features.youtube, ...config.youtube };
+  }
+  return base;
 }
 
 export const expect = test.expect;

@@ -9,10 +9,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { BlockContext } from '../../core/protocol';
+import type { ChannelEntry } from '../../core/settingsSchema';
+import { clearBounces, registerBounce } from '../../core/redirectLoopGuard';
 import { Button, NudgeMark, RuleFooter } from '../../ui/components';
 import { send } from '../../ui/rpc';
 import { BreathingView } from './BreathingView';
 import { DelayView } from './DelayView';
+import { EscapeHatch } from './EscapeHatch';
 import { HardBlockView } from './HardBlockView';
 
 /**
@@ -30,6 +33,170 @@ export function isNavigableTarget(raw: string | null | undefined): raw is string
     return false;
   }
   return url.protocol === 'http:' || url.protocol === 'https:';
+}
+
+/**
+ * The public page for one allowed channel, or null when the entry cannot name one safely.
+ *
+ * The identifier is percent-encoded before it becomes a path segment. These entries are
+ * user data — typed into the dashboard, or restored from an imported settings file — so a
+ * handle containing `/` or `?` would otherwise silently build a URL pointing somewhere
+ * else entirely. The result is then run through `isNavigableTarget` like every other
+ * navigation on this page, so a scheme that is not http(s) can never reach an `href`.
+ *
+ * A handle is preferred over an id purely because `youtube.com/@name` is the address the
+ * user recognises; both resolve to the same channel.
+ */
+export function channelHomeUrl(entry: ChannelEntry): string | null {
+  const handle = entry.handle?.trim() ?? '';
+  const id = entry.channelId?.trim() ?? '';
+
+  const path =
+    handle !== ''
+      ? `@${encodeURIComponent(handle.replace(/^@/, ''))}`
+      : id !== ''
+        ? `channel/${encodeURIComponent(id)}`
+        : null;
+  if (path === null) return null;
+
+  const url = `https://www.youtube.com/${path}`;
+  return isNavigableTarget(url) ? url : null;
+}
+
+/**
+ * "Your allowed channels" — the way back IN.
+ *
+ * Without this, "block YouTube except these channels" is technically correct and
+ * practically useless: every route to an allowed channel (the home feed, search, the
+ * subscriptions page) is blocked too, so the only way to reach what the user explicitly
+ * said they wanted is to type a URL from memory. A rule that punishes you for obeying it
+ * is a rule you turn off. The block page has to BE the door.
+ */
+/**
+ * A plain right-pointing arrow. Inline SVG, never an emoji glyph (repo rule): it has to
+ * inherit the link colour and it must not be announced, so it carries `aria-hidden`.
+ */
+function ChannelArrow() {
+  return (
+    <svg
+      className="nudge-channel-link-arrow"
+      width={16}
+      height={16}
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+      style={{ flexShrink: 0 }}
+    >
+      <path
+        d="M5 12h12M12 6l6 6-6 6"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function AllowedChannels({ channels }: { channels: ChannelEntry[] }) {
+  // `?? []` is not defensive typing theatre: this page's whole job is to appear when a
+  // site is blocked, and a worker that answers without this field (mid-update, or an old
+  // service worker still alive after a reload) would otherwise throw here and leave the
+  // user staring at a blank tab instead of a block page, failing open in the worst way.
+  const links = (channels ?? [])
+    .map((entry) => ({ entry, href: channelHomeUrl(entry) }))
+    .filter((row): row is { entry: ChannelEntry; href: string } => row.href !== null);
+
+  if (links.length === 0) return null;
+
+  return (
+    <section
+      style={{
+        width: '100%',
+        textAlign: 'left',
+        borderTop: '1px solid var(--nudge-surface-variant)',
+        paddingTop: 20,
+      }}
+    >
+      <h2
+        style={{
+          margin: '0 0 2px',
+          fontSize: 13,
+          fontWeight: 700,
+          letterSpacing: 0.3,
+          textTransform: 'uppercase',
+          color: 'var(--nudge-on-surface-variant)',
+        }}
+      >
+        Your allowed channels
+      </h2>
+      <p style={{ margin: '0 0 12px', fontSize: 13, color: 'var(--nudge-on-surface-variant)' }}>
+        These are still open. Pick one to carry on.
+      </p>
+      {/*
+        THESE ARE THE PRIMARY ACTION ON THIS PAGE, not a footnote.
+        When YouTube is Hard Blocked this list is the ONLY way into a channel the user
+        explicitly allowed, so it has to look like something you click: link-coloured,
+        weighted, with an affordance arrow and a real hover/focus state. Rendered as flat
+        grey pills it read as disabled metadata, which turns "block YouTube except these
+        channels" back into the dead end the list exists to prevent.
+      */}
+      <ul
+        style={{
+          listStyle: 'none',
+          margin: 0,
+          padding: 0,
+          display: 'grid',
+          // `minmax(0, 1fr)`, not the implicit `1fr`. A grid track's default floor is its
+          // MIN-CONTENT width, so one long channel name stretched the row, the card and the
+          // page: 106px of sideways scroll on a 420px window. The column has to be allowed
+          // to go narrower than its text before the ellipsis below can ever apply.
+          gridTemplateColumns: 'minmax(0, 1fr)',
+          gap: 8,
+        }}
+      >
+        {links.map(({ entry, href }) => (
+          <li key={href}>
+            <a
+              className="nudge-channel-link"
+              href={href}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 12,
+                padding: '11px 14px',
+                borderRadius: 'var(--nudge-radius-sm)',
+                // background/border deliberately absent: they live in .nudge-channel-link
+                // so the :hover rule can actually win. Inline always outranks a class.
+                color: 'var(--nudge-link)',
+                fontSize: 15,
+                fontWeight: 600,
+                textDecoration: 'none',
+              }}
+            >
+              <span
+                style={{
+                  // `minWidth: 0` is what makes the ellipsis work at all. A flex item's
+                  // default `min-width: auto` is its CONTENT width, so a nowrap span
+                  // refuses to shrink and pushes the whole card wider than the window
+                  // instead of truncating. One long channel name was enough to scroll the
+                  // block page sideways at 420px.
+                  minWidth: 0,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {entry.displayName}
+              </span>
+              <ChannelArrow />
+            </a>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
 }
 
 /** Where "I changed my mind" sends the user. Falls back to about:blank outside an extension context. */
@@ -135,46 +302,97 @@ function readTargetParam(): string | null {
   }
 }
 
-function PageShell({ ruleName, children }: { ruleName: string | null; children: ReactNode }) {
+/**
+ * What this page is about, in the user's words.
+ *
+ * A gate surface names itself ("Shorts") rather than the domain it lives on: someone who
+ * gated Shorts but left the rest of YouTube open is looking at a page that says "YouTube"
+ * and reasonably concludes the wrong rule fired. The bare domain is the right answer only
+ * when the whole site IS the subject.
+ */
+export function surfaceLabelFor(context: BlockContext): string {
+  return context.gateLabel ?? context.domain;
+}
+
+function PageShell({
+  ruleName,
+  surfaceLabel = null,
+  children,
+}: {
+  ruleName: string | null;
+  surfaceLabel?: string | null;
+  children: ReactNode;
+}) {
   return (
-    <div
-      style={{
-        minHeight: '100vh',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: '48px 24px',
-        gap: 32,
-        textAlign: 'center',
-      }}
-    >
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
-        <NudgeMark size={36} />
-        <p
-          style={{
-            margin: 0,
-            fontSize: 13,
-            fontWeight: 500,
-            color: 'var(--nudge-on-surface-variant)',
-            letterSpacing: 0.2,
-          }}
-        >
-          Break the scroll. Take back your time.
-        </p>
-      </div>
-      <div
+    <div style={{ minHeight: '100vh', display: 'flex', padding: '40px 24px' }}>
+      {/*
+        `margin: auto` on the card, NOT `justify-content`/`align-items: center` on the
+        flex parent. Both centre a card in a viewport taller than it; only auto margins
+        keep the card's TOP reachable when it is taller (a long allowed-channel list, an
+        error state under a pause). A centred flex item overflows in both directions and
+        the part above the scroll origin cannot be scrolled back to.
+      */}
+      <main
+        data-testid="block-card"
         style={{
+          margin: 'auto',
+          width: '100%',
+          maxWidth: 480,
+          minWidth: 0,
+          background: 'var(--nudge-surface-raised)',
+          border: '1px solid var(--nudge-surface-variant)',
+          borderRadius: 'var(--nudge-radius-lg)',
+          boxShadow: 'var(--nudge-shadow-card)',
+          padding: '40px 32px 32px',
           display: 'flex',
           flexDirection: 'column',
           alignItems: 'center',
-          maxWidth: 440,
-          width: '100%',
+          gap: 28,
+          textAlign: 'center',
         }}
       >
-        {children}
-      </div>
-      <RuleFooter ruleName={ruleName} />
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
+          <NudgeMark size={36} />
+          <p
+            style={{
+              margin: 0,
+              fontSize: 13,
+              fontWeight: 500,
+              color: 'var(--nudge-on-surface-variant)',
+              letterSpacing: 0.2,
+            }}
+          >
+            Break the scroll. Take back your time.
+          </p>
+          {surfaceLabel !== null && (
+            <p
+              style={{
+                margin: 0,
+                padding: '3px 10px',
+                borderRadius: 999,
+                background: 'var(--nudge-surface-variant)',
+                color: 'var(--nudge-on-surface)',
+                fontSize: 12,
+                fontWeight: 600,
+              }}
+            >
+              {surfaceLabel}
+            </p>
+          )}
+        </div>
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: 28,
+            width: '100%',
+          }}
+        >
+          {children}
+        </div>
+        <RuleFooter ruleName={ruleName} />
+      </main>
     </div>
   );
 }
@@ -207,13 +425,36 @@ export function BlockPage() {
 
   // ALLOW is unexpected on the block page (nothing to block) — send the user on rather
   // than trap them behind a dead interstitial.
+  //
+  // But bounce AT MOST ONCE per target. DNR has already redirected by the time this page
+  // runs, so if the engine answers ALLOW while a rule still applies, going back to the site
+  // walks straight into the redirect again: live QA measured 217 main-frame navigations in
+  // 8 seconds and a crashed renderer from exactly that. The guard cannot know whether the
+  // invariant is broken, only that this target has bounced before, which is enough to stop.
+  // It turns any future break into a visible error instead of a pegged CPU.
+  const [loopDetected, setLoopDetected] = useState(false);
   useEffect(() => {
     if (
-      state.status === 'ready' &&
-      state.context.decision.type === 'ALLOW' &&
-      isNavigableTarget(state.target)
+      state.status !== 'ready' ||
+      state.context.decision.type !== 'ALLOW' ||
+      !isNavigableTarget(state.target)
     ) {
-      window.location.replace(state.target);
+      return;
+    }
+    const { allowed } = registerBounce(window.sessionStorage, state.target, Date.now());
+    if (!allowed) {
+      console.error(`[nudge] redirect loop detected for ${state.target}`);
+      setLoopDetected(true);
+      return;
+    }
+    window.location.replace(state.target);
+  }, [state]);
+
+  // A real BLOCK rendering means there is no loop, so forget the history: an ordinary
+  // pause-and-continue later must never be mistaken for one.
+  useEffect(() => {
+    if (state.status === 'ready' && state.context.decision.type === 'BLOCK') {
+      clearBounces(window.sessionStorage);
     }
   }, [state]);
 
@@ -260,6 +501,25 @@ export function BlockPage() {
   const { context, target } = state;
 
   if (context.decision.type !== 'BLOCK') {
+    if (loopDetected) {
+      // Deliberately plain and honest: something inside Nudge is wrong, the user is not
+      // being blocked on purpose, and the link is here so they are not stranded.
+      return (
+        <PageShell ruleName={null}>
+          <p style={{ margin: '0 0 12px', fontSize: 15, color: 'var(--nudge-on-surface)' }}>
+            Nudge hit an internal error blocking this page.
+          </p>
+          <p
+            style={{ margin: '0 0 16px', fontSize: 14, color: 'var(--nudge-on-surface-variant)' }}
+          >
+            Reload to try again, or report it at github.com/astraedus/nudge/issues.
+          </p>
+          <a href={target} style={{ fontSize: 14, color: 'var(--nudge-link)', fontWeight: 600 }}>
+            {target}
+          </a>
+        </PageShell>
+      );
+    }
     // ALLOW — the redirect effect above handles it; render a neutral state meanwhile.
     return (
       <PageShell ruleName={null}>
@@ -272,11 +532,23 @@ export function BlockPage() {
 
   const ruleName = context.decision.ruleName;
 
+  /**
+   * ORDER IS THE POINT HERE, which is why the Escape Hatch lives on this page rather than
+   * inside each of the three views (where it used to be, rendered identically three times).
+   *
+   * The allowed-channels list is the FREE, intended way through: the user already said
+   * these channels are fine. The Escape Hatch is the costly one — a single two-minute pass
+   * a day that opens the whole site. Offering the expensive door first, on the very page
+   * where the cheap one exists, trains people to spend a pass on something they were never
+   * blocked from. Cheap route first, always.
+   */
   return (
-    <PageShell ruleName={ruleName}>
-      {context.decision.mode === 'HARD_BLOCK' && <HardBlockView context={context} target={target} />}
+    <PageShell ruleName={ruleName} surfaceLabel={surfaceLabelFor(context)}>
+      {context.decision.mode === 'HARD_BLOCK' && <HardBlockView context={context} />}
       {context.decision.mode === 'DELAY' && <DelayView context={context} target={target} />}
       {context.decision.mode === 'BREATHING' && <BreathingView context={context} target={target} />}
+      <AllowedChannels channels={context.allowedChannels} />
+      <EscapeHatch context={context} target={target} />
     </PageShell>
   );
 }

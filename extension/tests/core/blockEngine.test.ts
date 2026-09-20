@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import { evaluate, LIMIT_REACHED_SUFFIX } from '../../src/core/blockEngine';
-import type { ActiveRule } from '../../src/core/types';
+import { resolveActiveRules } from '../../src/core/ruleResolver';
+import type { ActiveRule, SiteMode } from '../../src/core/types';
+import { siteRule } from '../helpers/rules';
 
 /**
  * Port of app/src/test/java/.../BlockEngineTest.kt, plus the priority-ladder and
@@ -376,5 +378,87 @@ describe('evaluate — Android-parity sanity checks (ported from BlockEngineTest
       expect(decision.delaySeconds).toBe(10);
       expect(decision.ruleName).toBe('First');
     }
+  });
+});
+
+describe('evaluate — Allow mode, through the resolver', () => {
+  /**
+   * ALLOW is deliberately NOT a branch inside `evaluate`. It is filtered out by
+   * `core/applies.ts` before the engine ever sees the rule, which is what preserves the
+   * ENGINE INVARIANT: a non-empty rule list always yields a BLOCK. These cases therefore
+   * drive the engine THROUGH the resolver, because that pair is what the product
+   * actually runs — testing `evaluate` alone would prove nothing about Allow mode, and
+   * testing the resolver alone would not prove the pair still upholds the invariant.
+   *
+   * The outcome asserted is the user-visible one (the site opens / the site is blocked),
+   * never which branch produced it. The one time this repo wrote a test the other way
+   * round, two unit tests happily encoded an infinite redirect loop as correct.
+   */
+  const MS_PER_MINUTE = 60_000;
+  const NOON = at(2026, 1, 7, 12, 0);
+
+  function verdict(mode: SiteMode, dailyLimitMinutes: number | null, usedMinutes: number) {
+    const rules = [siteRule({ domain: 'example.com', mode, dailyLimitMinutes })];
+    const active = resolveActiveRules(rules, 'example.com', NOON, usedMinutes * MS_PER_MINUTE);
+    return evaluate(active, usedMinutes * MS_PER_MINUTE, NOON);
+  }
+
+  const modes: SiteMode[] = ['ALLOW', 'HARD_BLOCK', 'DELAY', 'BREATHING'];
+  const limits: (number | null)[] = [null, 30];
+  const usages = [0, 29, 30, 120];
+
+  for (const mode of modes) {
+    for (const limit of limits) {
+      for (const used of usages) {
+        const label = `${mode} / limit ${limit ?? 'none'} / used ${used}m`;
+        // An ALLOW rule blocks only once a limit exists AND is spent; every block mode
+        // blocks always. That single sentence is the whole feature.
+        const shouldBlock = mode !== 'ALLOW' || (limit !== null && used >= limit);
+
+        it(`${label} -> ${shouldBlock ? 'blocked' : 'opens normally'}`, () => {
+          const decision = verdict(mode, limit, used);
+          expect(decision.type).toBe(shouldBlock ? 'BLOCK' : 'ALLOW');
+        });
+      }
+    }
+  }
+
+  it('an exhausted Allow rule hard-blocks and says the limit was reached', () => {
+    const decision = verdict('ALLOW', 30, 45);
+    expect(decision.type).toBe('BLOCK');
+    if (decision.type === 'BLOCK') {
+      // Nothing is left to wait for today, so a countdown would be a lie.
+      expect(decision.mode).toBe('HARD_BLOCK');
+      expect(decision.limitReached).toBe(true);
+      expect(decision.ruleName).toBe(`example.com${LIMIT_REACHED_SUFFIX}`);
+    }
+  });
+
+  it('never returns ALLOW while a rule is still in force, at any usage', () => {
+    // The load-bearing invariant: DNR has already redirected by the time the engine runs,
+    // so an ALLOW here bounces the user back into the redirect — an infinite loop that
+    // also hammers the worker, not a harmless no-op.
+    for (const mode of ['HARD_BLOCK', 'DELAY', 'BREATHING'] as SiteMode[]) {
+      for (const limit of limits) {
+        for (const used of usages) {
+          const rules = [siteRule({ domain: 'example.com', mode, dailyLimitMinutes: limit })];
+          const active = resolveActiveRules(
+            rules, 'example.com', NOON, used * MS_PER_MINUTE,
+          );
+          expect(active.length, `${mode}/${limit}/${used}`).toBe(1);
+          expect(
+            evaluate(active, used * MS_PER_MINUTE, NOON).type,
+            `${mode}/${limit}/${used}`,
+          ).toBe('BLOCK');
+        }
+      }
+    }
+  });
+
+  it('hands the engine no rule at all when Allow mode is under budget', () => {
+    // The filter, not the engine, is what makes Allow safe — assert that directly so a
+    // future refactor cannot quietly move the decision into `evaluate`.
+    const rules = [siteRule({ domain: 'example.com', mode: 'ALLOW', dailyLimitMinutes: 30 })];
+    expect(resolveActiveRules(rules, 'example.com', NOON, 10 * MS_PER_MINUTE)).toEqual([]);
   });
 });

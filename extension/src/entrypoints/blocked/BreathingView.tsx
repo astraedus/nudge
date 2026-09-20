@@ -9,7 +9,6 @@ import type { BlockContext } from '../../core/protocol';
 import { Button } from '../../ui/components';
 import { send } from '../../ui/rpc';
 import { resolveDashboardUrl, useCompleteOnZero, useCountdownMs } from './BlockPage';
-import { EscapeHatch } from './EscapeHatch';
 
 const HALF_CYCLE_MS = 4000; // fixed 4s inhale / 4s exhale — exact Android timing
 const MIN_SCALE = 0.6;
@@ -103,8 +102,6 @@ export function BreathingView({ context, target }: { context: BlockContext; targ
       <Button variant="muted" onClick={handleWalkAway}>
         I changed my mind
       </Button>
-
-      <EscapeHatch context={context} target={target} />
     </div>
   );
 }

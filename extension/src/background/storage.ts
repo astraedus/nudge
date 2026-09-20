@@ -79,10 +79,31 @@ export async function updateDomainUsage(
   return next;
 }
 
-/** Active seconds spent on `domain` today. */
-export async function todayUsageMs(domain: string, now: Date): Promise<number> {
+/**
+ * Active milliseconds spent on one usage key today.
+ *
+ * The key is a base domain, or a `domain#gate` SURFACE key (`core/surfaceKeys.ts`) — both
+ * live in the same day map because they are the same number measured over the same day.
+ */
+export async function todayUsageMs(key: string, now: Date): Promise<number> {
   const day = await loadDay(localDayKey(now));
-  return (day[domain]?.activeSec ?? 0) * 1000;
+  return (day[key]?.activeSec ?? 0) * 1000;
+}
+
+/**
+ * Today's active milliseconds for EVERY usage key, sites and surfaces alike.
+ *
+ * The DNR compiler needs the whole map at once: it has to answer "is this rule in force"
+ * for every rule and "is this gate's budget spent" for every gate in a single pass, and
+ * reading storage once per rule would turn a recompile into dozens of round trips.
+ */
+export async function todayUsageMap(now: Date): Promise<Record<string, number>> {
+  const day = await loadDay(localDayKey(now));
+  const usage: Record<string, number> = {};
+  for (const [key, rollup] of Object.entries(day)) {
+    usage[key] = rollup.activeSec * 1000;
+  }
+  return usage;
 }
 
 /** Load every stored day, newest keys included. Used by the dashboard. */
@@ -108,9 +129,19 @@ export async function savePassLedger(raw: string): Promise<void> {
   await chrome.storage.local.set({ [PASS_LEDGER_KEY]: raw });
 }
 
-/** What the tracker was counting when it last woke. Ephemeral by design. */
+/**
+ * What the tracker was counting when it last woke. Ephemeral by design.
+ *
+ * `url` is carried alongside `domain` because a feature budget is measured per SURFACE
+ * ("10 minutes of Shorts"), and which surface a tab is on is a property of its path, not
+ * its host. Re-reading the tab at accounting time would answer for where the user is NOW,
+ * not for the interval being closed out — so the URL that earned the time has to be the
+ * one stored when the interval opened.
+ */
 export interface TrackerState {
   domain: string | null;
+  /** The full URL that was focused, or null when nothing trackable was. */
+  url: string | null;
   since: number;
 }
 
@@ -118,9 +149,14 @@ export async function loadTrackerState(): Promise<TrackerState> {
   const stored = await chrome.storage.session.get(TRACKER_STATE_KEY);
   const state = stored[TRACKER_STATE_KEY];
   if (state && typeof state === 'object' && typeof (state as TrackerState).since === 'number') {
-    return state as TrackerState;
+    const known = state as Partial<TrackerState>;
+    return {
+      domain: typeof known.domain === 'string' ? known.domain : null,
+      url: typeof known.url === 'string' ? known.url : null,
+      since: known.since as number,
+    };
   }
-  return { domain: null, since: Date.now() };
+  return { domain: null, url: null, since: Date.now() };
 }
 
 export async function saveTrackerState(state: TrackerState): Promise<void> {

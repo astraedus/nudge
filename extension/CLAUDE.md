@@ -2,10 +2,19 @@
 
 The browser sibling of the Nudge Android app. Same philosophy: **friction, not walls** —
 delay-to-open and breathing pauses instead of only hard blocks, plus daily time budgets,
-schedules, YouTube Shorts controls, and local-only usage stats.
+schedules, local-only usage stats, and per-site control of the feeds themselves.
+
+**The site RULE is the unit.** Everything about a site lives inside its rule: how the whole
+site behaves (Allow / Hard Block / Delay / Breathing), the pause length, the daily budget,
+the schedule override, whether the site is grayscaled, and — for the seven known platforms —
+that site's *features*: URL-addressable **gates** (YouTube Shorts, Instagram Reels, the X
+home timeline) each with their own mode, delay and budget, boolean **hides** for page
+elements, and YouTube's channel lists. There is no separate YouTube tab.
 
 Free, GPL-3.0, **no account, zero telemetry, zero network requests.**
 
+- Per-site rules design (v0.2): `~/ops/routes/nudge/research/ext-13-per-site-rules-design.md`
+- Platform selectors + per-platform strategy: `~/ops/routes/nudge/research/ext-12-reels-and-feeds-web-techniques.md`
 - Product spec: `~/ops/routes/nudge/research/ext-07-prd.md` (the MVP feature cut)
 - Architecture: `~/ops/routes/nudge/research/ext-08-architecture.md` (fixed decisions)
 - MV3 recipes: `~/ops/routes/nudge/research/ext-01-mv3-architecture.md`
@@ -49,6 +58,9 @@ src/
   core/         PURE TypeScript. ZERO chrome.* imports. Ported from Android's pure-Kotlin
                 domain layer, along with its test intent.
     types.ts, settingsSchema.ts, protocol.ts
+    platforms.ts        (the platform registry: which gates/hides exist per platform,
+                         their labels and their URL PATH PATTERNS)
+    applies.ts          (siteRuleAppliesNow / gateAppliesNow -- THE predicate)
     blockEngine.ts      <- domain/engine/BlockEngine.kt
     scheduleEvaluator.ts<- domain/engine/ScheduleEvaluator.kt
     domainMatcher.ts    <- domain/WebDomainMatcher.kt
@@ -56,18 +68,32 @@ src/
     emergencyPass.ts    <- domain/emergency/EmergencyPass.kt
     stats.ts            <- ui/screens/stats/StatsCalculator.kt
     channels.ts         (channel-list decision matrix; pure, no DOM)
-    budgets.ts, messages.ts, ruleResolver.ts
+    surfaceKeys.ts      ("domain#gateId" usage buckets for per-feature budgets)
+    featureSummary.ts   (the one "what is switched on for this site" line)
+    budgets.ts, messages.ts, ruleResolver.ts, channelFreshness.ts
   background/   The service worker: dnr, tracker, tempAllow, alarmsHub, badge,
-                messagesRouter, storage.
-  content/      YouTube: selectors.ts (ALL selectors), youtube.ts, youtube.css,
+                messagesRouter, storage, grayscale.
+  content/      spaNav.ts   (the generic SPA-navigation layer, shared by the platform
+                             scripts), overlay.ts (the shared in-page gate overlay)
+                YouTube: selectors.ts (ALL selectors), youtube.ts, youtube.css,
                 channelDetection.ts (3-tier channel identification), channelFilter.ts
                 (feed filtering + watch gate + colour flip), unhook.ts (hide toggles)
+                <platform>/{selectors,index}.ts for instagram, tiktok, x, facebook,
+                reddit, linkedin -- same architecture, one CSS class per hide feature
   entrypoints/  WXT entrypoints: background, blocked/, popup/, dashboard/, onboarding/,
-                youtube.content.ts
+                and one <platform>.content.ts per supported platform
   ui/           Shared React primitives + design tokens + typed rpc wrapper
-tests/          vitest (core/, ui/, content/ + DOM fixtures)
+tests/          vitest (core/, ui/, content/, background/ + DOM fixtures)
+                helpers/rules.ts is the ONE fixture builder -- add a schema field there,
+                not in each test file
 e2e/            Playwright against a real Chrome with the extension loaded
 ```
+
+**The registry owns URL shape; the content scripts own DOM shape.** A gate's path patterns
+live in `core/platforms.ts` because DNR (full page loads, typed URLs) and the in-SPA overlay
+must agree on what "the Reels surface" IS; two copies of that answer is how a feature ends
+up enforced on one path and wide open on the other. Selectors stay in
+`content/<platform>/selectors.ts` because they rot on a completely different schedule.
 
 **Dependency rule:** `core/` never imports from `background/`, `content/`, `ui/` or
 `chrome.*`. Everything else may import `core/`. That is what keeps the engine exhaustively
@@ -75,9 +101,41 @@ unit-testable, exactly as the Android domain layer is.
 
 ### How blocking actually works
 
-1. Settings change → `background/dnr.ts` recompiles **dynamic** DNR rules. Every enabled
-   rule becomes ONE `main_frame` redirect to `blocked.html`. Hard Block, Delay and Breathing
-   all start at the interstitial, so the network layer is mode-agnostic.
+0. **`core/applies.ts` decides whether a rule is in force, and nothing else does.**
+   `siteRuleAppliesNow(rule, usageMs, now)` is called by DNR compilation, the engine's rule
+   resolver, the popup and the badge. Before v0.2 "a rule exists" and "a rule is enforced"
+   were the same fact; Allow mode split them, and four consumers answering that question
+   separately is how a user gets a block page for a site the popup calls "Allowed".
+   A rule applies when it is enabled AND the resolved mode at `now` (schedule considered) is
+   a BlockMode, **or** the mode is ALLOW but the daily budget is spent.
+1. Settings change → `background/dnr.ts` recompiles **dynamic** DNR rules from
+   (settings, exhausted-budget set, now). Every rule that APPLIES becomes ONE `main_frame`
+   redirect to `blocked.html`; an Allow rule under budget compiles nothing. Hard Block,
+   Delay and Breathing all start at the interstitial, so the network layer is mode-agnostic.
+   Recompilation is triggered by a settings save, a worker wake, an accounting step that
+   crosses a limit, the midnight reset, and a schedule-boundary alarm.
+1b. **Gate surfaces** (`/shorts/`, `/reels/`, `/home`, ...) compile their own redirects at a
+   priority ABOVE the site rule, from the path patterns in `core/platforms.ts`. That is what
+   lets a site be Allowed while one of its surfaces is blocked. In-SPA navigation to the same
+   surface is the content script's job — DNR cannot see it.
+1c. **YouTube channel allow-rules.** When the youtube.com rule applies AND a whitelist with
+   ≥1 channel is on, `/watch` and each listed channel's `/@handle` and `/channel/UC…` get
+   `allow` rules above the site redirect, while `/`, `/feed/*`, `/results` and `/shorts/`
+   stay redirected. A channel identifier containing anything outside `[A-Za-z0-9_.-]` is
+   SKIPPED rather than interpolated, so a hand-edited settings blob cannot inject a pattern
+   that allows all of YouTube. **An EXHAUSTED daily limit compiles no allow-rules**: a limit
+   budgets how MUCH of the site, a channel list restricts WHAT, so once the budget is spent
+   there is no allowance left to carve out of — otherwise "1 hour of YouTube a day" would be
+   unlimited for allowed channels and the limit would only ever bite the content the user
+   asked for less of.
+1d. **The priority ladder**: site redirect 1 < gate redirect 2 < channel allow 3 < temp allow 4.
+   Rung 4 above rung 2 is deliberate — a pause completed ON a gate surface must not bounce
+   straight back into that gate's redirect. The cost is that a site-level grant also opens
+   the site's gate surfaces at the network layer for the grant window, which is acceptable
+   ONLY because every gate surface has a content script that gates it in-page on full loads
+   too. So `GET_SITE_CONFIG` must never resolve a gate to OFF because a site temp-allow is
+   live: the gate's own mode stands, and only a pause completed on the gate surface
+   satisfies the gate.
 2. The block page asks the worker (`GET_BLOCK_CONTEXT`); the **engine** decides which of the
    three to render. The page never decides.
 3. Completing a Delay/Breathing pause → `COMPLETE_PAUSE` → a **session** allow-rule at a
@@ -85,9 +143,22 @@ unit-testable, exactly as the Android domain layer is.
    navigation re-blocks (the open page is never yanked away mid-read).
 4. Crossing a Daily Time Limit inside an accounting step immediately revokes any grant and
    pushes open tabs on that domain to the block page.
-5. YouTube SPA navigation is invisible to DNR, so `content/youtube.ts` handles in-page
-   Shorts with 3-layer nav detection (`yt-navigate-finish` + `popstate` + debounced
-   observer).
+5. SPA navigation is invisible to DNR, so the content scripts handle in-page navigation to
+   a gated surface with layered nav detection (the site's own nav event where one exists,
+   `popstate`/`hashchange`, an href-diff poll, and a debounced observer as a re-apply safety
+   net). **Isolated-world content scripts cannot observe the page's own `history.pushState`**
+   — confirmed independently on YouTube, TikTok, X, Instagram and Facebook — which is why the
+   poll is not optional. `content/spaNav.ts` is that layer, shared by the platform scripts;
+   `content/youtube.ts` still carries its own copy because its nav handling is entangled with
+   the channel-freshness settle machinery (see Known gaps).
+6. **Grayscale is per site.** `background/grayscale.ts` derives one dynamic registration's
+   `matches` from the set of enabled rules with `grayscale: true`, compares it against what
+   is currently registered on every wake/save, and only re-registers when it differs.
+   Zero gray domains ⇒ unregistered.
+7. **Feature budgets.** The tracker attributes a focused tab's time to the site bucket and,
+   when the URL is on a gate surface, also to `domain#gateId` in the same `DayUsage` map.
+   Anything that LISTS sites must filter surface keys out (`core/surfaceKeys.ts`) or the
+   stats table grows a phantom "youtube.com#shorts" site.
 
 ### Channel lists, gray-screen and the hide toggles (v1.1)
 
@@ -133,12 +204,20 @@ unit-testable, exactly as the Android domain layer is.
 - **The decision is pure and separate from the DOM.** `core/channels.ts` answers "what does
   this channel mean" with no DOM at all; `content/channelFilter.ts` only applies the answer.
   That split is what let the full mode x listed x unknown matrix be tested exhaustively.
-- **The unknown-channel case FAILS OPEN, deliberately and observably.** If detection fails
-  (YouTube moved its DOM, the page hasn't hydrated), a hard whitelist that failed *shut*
-  would block ALL of YouTube the moment a selector rots. So an unidentified channel is
-  allowed, but with a distinct `reason: 'unknown-channel'`, so "we checked and it's fine" is
-  always distinguishable from "we couldn't tell". Gray-screen takes the OPPOSITE bias: an
-  unidentified channel never earns colour, because staying gray is harmless.
+- **The unknown-channel case resolves to the SITE'S DEFAULT (v0.2), and the two directions
+  are different on purpose.** If detection fails (YouTube moved its DOM, the page hasn't
+  hydrated), what should happen depends on what the user said about YouTube *as a site*:
+  - site mode **ALLOW** → fail OPEN, as before, with a distinct `reason: 'unknown-channel'`
+    so "we checked and it's fine" stays distinguishable from "we couldn't tell". A hard
+    whitelist that failed shut here would block ALL of YouTube the moment a selector rots.
+  - site in a **BlockMode** → fail CLOSED to that mode. The user's stated default for this
+    site is "blocked", so silently opening it on selector rot defeats the rule with no
+    signal — and unlike the ALLOW case there is no over-blocking risk, because the site was
+    already blocked. The pause and Escape Hatch still apply.
+  Keep the one-shot console canary in BOTH directions; a fail-open you cannot see is a
+  silent no-op, and a fail-closed you cannot see is an unexplained block.
+  Gray-screen takes the OPPOSITE bias throughout: an unidentified channel never earns
+  colour, because staying gray is harmless.
 - **Feed cards are matched per-card.** The channel chain is run SCOPED to each card; an
   unscoped query returns the first channel on the page for every card.
 - **A selector match that yields nothing is a MISS, not an answer.** `channelFromDom`
@@ -199,7 +278,9 @@ frame on every video you are trying not to be pulled into.
 
 Version lives in `extension/package.json` and is independent of the Android app's.
 Tag format is **`ext-v*`** (e.g. `ext-v0.1.0`) so it can never collide with the Android
-`v*` release flow.
+`v*` release flow. The changelog is **`extension/CHANGELOG.md`**, deliberately separate from
+the repo-root one: two independently-numbered products in one file invites the reader to
+match an Android `v1.17.0` against an extension `0.2.0` and conclude something about both.
 
 **No `ext-v*` tag exists yet and none should be created until the extension is ready to
 publish.** CI does not currently build releases from tags — wire that up together with the
@@ -240,9 +321,14 @@ xvfb), scoped with `paths: ['extension/**']`. The Android workflow carries the m
   HSTS preload list, so `http://` is force-upgraded before the resolver rule applies and a
   plain-HTTP server answers ERR_SSL_PROTOCOL_ERROR. The fixture generates a throwaway
   self-signed cert per run (never committed) and Chrome runs with --ignore-certificate-errors.
-- **Each hiding feature owns its own CSS class.** Shorts hiding, the Unhook toggles and the
-  channel filter use three different classes: with one shared class, turning any of them
-  off would un-hide the others' elements.
+- **Each hiding feature owns its own CSS class — OR one reconcile pass, proven by test.**
+  Shorts hiding, the Unhook toggles and the channel filter use three different classes:
+  with one shared class, turning any of them off would un-hide the others' elements. The
+  platform scripts take the equivalent route (`hideClassFor(id)`, one class per hide id)
+  and additionally recompute the FULL desired set every pass, so a toggle flipped off is
+  revealed on the next pass without anyone tracking what was hidden. Either design is fine;
+  what is not optional is an explicit test that turning one feature off leaves the others
+  hidden.
 - **ENGINE INVARIANT: if any rule applies, the verdict is a BLOCK.** ALLOW means "no rule
   applies here" and nothing else. DNR has already redirected by the time the engine runs, so
   an ALLOW while a rule still applies is not a harmless no-op — it bounces the user back to
@@ -266,9 +352,32 @@ xvfb), scoped with `paths: ['extension/**']`. The Android workflow carries the m
 - **e2e needs real hostnames without a network.** `--host-resolver-rules=MAP *.test
   127.0.0.1:<port>` maps arbitrary hosts onto a local server, so DNR sees ordinary
   navigations. Extensions load only via `launchPersistentContext` + `--load-extension`.
+- **`chrome.runtime.reload()` UNLOADS a `--load-extension` extension permanently** — it does
+  not restart it. No replacement `serviceworker` event ever fires, `context.serviceWorkers()`
+  stays at 0, and every extension URL then answers `ERR_BLOCKED_BY_CLIENT`, so there is
+  nothing to rebind to. Test a restart with TWO browsers over ONE `userDataDir` instead — and
+  **clear the state the first one derived** (dynamic DNR rules and any
+  `persistAcrossSessions` registration both survive), or the second browser inherits a
+  correct rule set it never had to rebuild and the spec passes vacuously.
+- **`chrome.storage.set` with an UNCHANGED value fires no `onChanged`.** "Re-save the same
+  settings so the worker recompiles" is a silent no-op, and it fails later and somewhere
+  else. Drive a recompile through the real production path (`SAVE_SETTINGS`), which
+  recompiles unconditionally.
 - **"Browser has been closed" in an e2e fixture usually means OOM**, not a code bug — this
   machine runs `earlyoom` with `--prefer ^chrome$`. The lean Chrome flags in `e2e/fixtures.ts`
   exist for that reason.
+- **A LOCKED desktop makes `chrome.idle` report `locked`, so no usage accrues at all** — any
+  budget test then sits there and silently never fires, looking exactly like a broken limit.
+  Run device/QA sessions under a private D-Bus session bus so the screen state is the
+  harness's, not the machine's.
+- **A full `/tmp` (tmpfs) crashes Chrome renderers at random**, with failures that move
+  around between runs and implicate innocent specs. Put Playwright profiles somewhere else
+  before believing a flaky e2e result.
+- **A fake chrome.* API that is more forgiving than the real one hides real bugs.** The
+  scripting fake used to shrug at `unregisterContentScripts` for an id it did not hold;
+  real Chrome REJECTS it, and that gap is exactly why a red console error on a plain
+  grayscale-off reached live QA with the unit suite green. When a fake and the real API
+  disagree about an error, the fake is wrong.
 - **A `<button>` inside `role="tablist"` is exposed as role `tab`, not `button`.** The
   dashboard's Stats/Settings tabs are invisible to `getByRole('button')` and only match
   `getByRole('tab')`. Correct behaviour, surprising in tests — when a locator finds nothing
@@ -276,22 +385,87 @@ xvfb), scoped with `paths: ['extension/**']`. The Android workflow carries the m
 - **The dashboard paints a loading state first** and fills in when `GET_DASHBOARD_STATE`
   resolves, which is slower when the worker was asleep. e2e must wait for loaded content,
   not assume an instant render.
+- **One question, one function, when more than one layer answers it.** "Is this rule in
+  force right now?" is read by DNR, the engine's resolver, the popup and the badge; four
+  copies means a block page for a site the popup calls "Allowed". `core/applies.ts` is that
+  function, and it is also what let Allow mode exist WITHOUT touching `blockEngine.evaluate`
+  — filter before the engine, never add a branch inside it.
+- **Routing SOME consumers through a new resolver is worse than routing none.** Subdomain
+  matching was added to the popup, badge, grayscale and tracker and MISSED the block page,
+  which then found the rule correctly but read usage under the host while the tracker filled
+  the rule's bucket — so a spent limit looked unspent and the engine answered ALLOW for a
+  URL DNR had just redirected. 217 navigations in 8s and a crashed renderer. When a lookup
+  gains a new rule, ENUMERATE every caller (`grep` the primitive, not the helper) and
+  justify each one you leave alone; a half-migrated resolver breaks the invariant that the
+  un-migrated half used to satisfy by accident.
+- **Give an invariant a structural backstop, not just a fix.** The ENGINE INVARIANT is now
+  also enforced at the point it would hurt: `core/redirectLoopGuard.ts` lets the block page
+  bounce a target once and then stops, logs, and renders a plain error. Any FUTURE break of
+  that invariant costs a visible message instead of a pegged CPU.
+- **A URL pattern shared by DNR and a content script must be ONE string.** RE2 (DNR) has no
+  lookaround or backreferences, so a pattern that works in the page can be silently dropped
+  by the network layer, leaving a surface gated in-SPA and wide open on a full page load.
+  `tests/core/platforms.test.ts` guards the whole registry against that class.
+- **A guard built by composing the thing under test can be circular.** The registry's
+  path-pattern check builds its test URL FROM the pattern, so a pattern missing its leading
+  `/` produced the bogus URL `https://www.youtube.comshorts/x` and matched it happily. Found
+  by planting the defect rather than assuming; leading-slash is now a separate structural
+  assertion. Plant a defect in every guard you write.
+- **A migration that MOVES data must merge, not assign.** v2→v3 folds the top-level YouTube
+  block into the youtube.com rule; taking the stronger value per axis makes it idempotent
+  and safe when a browser that has upgraded syncs against one that has not. The first
+  version dropped a channel list stored with `channelMode: 'OFF'` — a list is data the user
+  typed, not a stance to choose between.
+- **A list can weaken in opposite directions depending on its mode.** Adding to a WHITELIST
+  and REMOVING from a BLACKLIST are both weakenings; no "did the array shrink" rule
+  expresses that, and getting it backwards leaves half the cases ungated.
+- **Isolated-world content scripts cannot see the page's own `history.pushState`** —
+  confirmed on YouTube, TikTok, X, Instagram and Facebook. An href-diff poll is mandatory,
+  not a fallback.
 - The React Compiler advisory lint rules (`set-state-in-effect`,
   `preserve-manual-memoization`, `use-memo`) are deliberately **off**; `rules-of-hooks` is
   deliberately **on** and has already earned its keep.
 
 ## Known gaps (MVP)
 
-- **A rule always blocks in some mode; there is no "allow by default, block only during the
-  window" schedule.** Outside a Scheduled Override the rule's own "Default Behavior" applies
-  — faithful to Android, but users asking for "block only during work hours" cannot express
-  it yet. Likely the first schedule follow-up.
+- **"I changed my mind" on the CHANNEL overlay lands on the site's block page**, not back
+  where the user came from: the bail navigates to the site root, which the site rule is
+  still redirecting. Mildly confusing rather than wrong (they did ask to be kept out), and
+  accepted for v0.2.0. The fix is for the channel gate to bail somewhere the site rule does
+  not govern, or to close the tab.
 - Strict Mode cannot stop removal from `chrome://extensions`. The dashboard says so plainly
   rather than pretending; honesty is the differentiator (ext-02).
 - YouTube fixtures in `tests/content/fixtures/` are hand-authored from the ext-03 taxonomy,
   not live DOM captures. Refresh them from real YouTube DOM when possible.
-- Instagram / TikTok / X reel surfaces are specified in the PRD's v1.1 section but NOT built
-, this phase covered the YouTube half only.
+- **Reels mixed INTO a feed cannot be filtered out.** No OSS implementation anywhere does
+  per-card filtering of reels/short videos in a mixed feed (ext-12), so Nudge ships
+  whole-surface control only: the Reels/For You/Explore *pages* are gated by URL, and whole
+  containers (stories tray, nav entries, suggested blocks) are hidden. Each platform in
+  `core/platforms.ts` carries a `note` saying so, and the dashboard prints it — an honest
+  limitation beats a feature the code does not actually deliver. Reel tiles on a profile
+  grid are likewise out of reach.
+- **YouTube does not yet share the platform modules.** `content/youtube.ts` keeps its own
+  copy of the SPA-navigation layer (`content/spaNav.ts`), the interstitial builder
+  (`content/overlay.ts`, including `BAIL_LABEL` / `BREATH_IN_MS`), and `IDLE_SITE_CONFIG`.
+  The overlay migration was attempted during this release and backed out deliberately: the
+  overlay itself is pure DOM and the swap was byte-identical and green, but YouTube's
+  *caller* is entangled with the channel-freshness settle window that exists to stop a
+  documented P0 (a false interstitial on a channel the user explicitly allowed, for 3-5s
+  after a watch→watch hop), and that regression is LIVE-ONLY — no fixture reproduces the
+  mutation storm that causes it. The risk is not worth a refactor with zero user-visible
+  gain. Do it as its own isolated change, gated on `e2e/youtubeAdvanced.spec.ts`, which is
+  the only automated guard for the settle window.
+- **Five sourced YouTube hides are researched but unshipped**: merch shelf, live-chat
+  sidebar, subscribe button, annotations, and mix/radio playlists (ext-12 §F has an
+  ImprovedTube selector for each). They need registry ids and selector rungs; nothing about
+  them is hard, they were simply out of scope for v0.2.0.
+- Reddit ships no hide toggles: the only sourced technique is a generic whole-`main`
+  container hide, which is what the home gate already does properly. LinkedIn ships one.
+  Shipping a toggle we cannot implement reliably would be a promise the code does not keep.
+- The new platforms' selectors are hand-authored from ext-12's sourced tables, not live DOM
+  captures — same caveat as the YouTube fixtures below. X in particular ships breaking UI
+  changes every 2-6 weeks, though `data-testid` values themselves are stable; the rot is in
+  positional selectors, so keep those to a last-resort rung.
 - **Disabling autoplay is best-effort.** There is no API for it, so we click the player's
   own switch when it reads `aria-checked="true"`. YouTube re-renders the player and can
   restore its own state, so it is re-applied on every SPA navigation and is not a guarantee.

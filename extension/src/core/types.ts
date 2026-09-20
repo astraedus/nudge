@@ -16,6 +16,28 @@ export const MODE_LABELS: Record<BlockMode, string> = {
 };
 
 /**
+ * What a site rule's "Default behaviour" can be.
+ *
+ * 'ALLOW' is NOT a block mode and never reaches the engine: it means "this site opens
+ * normally — the rule exists only to carry a daily limit, grayscale, or feature gates".
+ * `core/applies.ts` is what decides whether such a rule is currently in force, and the
+ * engine only ever sees rules that are. See the ENGINE INVARIANT note in blockEngine.ts:
+ * an ALLOW verdict from the engine while DNR still redirects the domain is an infinite
+ * loop, not a no-op, which is exactly why ALLOW lives out here instead of in there.
+ */
+export type SiteMode = 'ALLOW' | BlockMode;
+
+export const SITE_MODE_LABELS: Record<SiteMode, string> = {
+  ALLOW: 'Allow',
+  ...MODE_LABELS,
+};
+
+/** Helper narrowing a `SiteMode` to the three real block modes. */
+export function isBlockMode(mode: SiteMode): mode is BlockMode {
+  return mode !== 'ALLOW';
+}
+
+/**
  * A rule resolved for "right now" — schedule already applied — and handed to the
  * BlockEngine. Mirrors Android's `ActiveRule`.
  */

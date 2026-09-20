@@ -1,0 +1,31 @@
+/*
+ * Static CSS for the Instagram content script's hide toggles.
+ *
+ * WHY STATIC, AND WHY THE MANIFEST: the entrypoint imports this file (alongside the shared
+ * `platformOverlay.css`) with `cssInjectionMode: 'manifest'`, so WXT emits it into this
+ * content script's `css` array. Chrome injects manifest CSS "before any DOM is
+ * constructed", regardless of `run_at` — the only FOUC-safe mechanism available (same
+ * rationale as `content/youtube.css`).
+ *
+ * One class PER HIDE ID (`hideClassFor` in `content/platformGate.ts`), never a shared
+ * class — repo Lesson "Each hiding feature owns its own CSS class": with one shared class,
+ * turning any single toggle off would un-hide every other feature's elements too.
+ *
+ * ZERO NETWORK, forever: this file ships in the bundle; nothing about it is fetched.
+ */
+
+.nudge-hide-stories {
+  display: none !important;
+}
+
+.nudge-hide-suggested {
+  display: none !important;
+}
+
+.nudge-hide-reelsNav {
+  display: none !important;
+}
+
+.nudge-hide-exploreNav {
+  display: none !important;
+}

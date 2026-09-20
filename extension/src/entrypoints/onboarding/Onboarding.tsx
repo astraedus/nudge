@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import { normalizeUserInput } from '../../core/domainMatcher';
-import { DEFAULT_DELAY_SECONDS } from '../../core/settingsSchema';
+import { quickAddPlatforms } from '../../core/platforms';
+import { DEFAULT_DELAY_SECONDS, newSiteRule } from '../../core/settingsSchema';
 import type { NudgeSettings, SiteRule } from '../../core/settingsSchema';
 import type { BlockMode } from '../../core/types';
 import { MODE_LABELS } from '../../core/types';
 import { send } from '../../ui/rpc';
-import { Button, Card, NudgeMark } from '../../ui/components';
+import { Button, Card, Chip, NudgeMark } from '../../ui/components';
 
 const MODES: BlockMode[] = ['HARD_BLOCK', 'DELAY', 'BREATHING'];
 
@@ -69,6 +70,9 @@ export function Onboarding() {
   const [customDomain, setCustomDomain] = useState('');
   const [customError, setCustomError] = useState<string | null>(null);
   const [mode, setMode] = useState<BlockMode>('DELAY');
+  /** "Trim the feeds" quick picks — platform domains seeded as ALLOW rules (ext-13 §5),
+   * kept separate from `selected` because they carry a different default mode. */
+  const [selectedFeeds, setSelectedFeeds] = useState<string[]>([]);
   const [finishing, setFinishing] = useState(false);
   const [finishError, setFinishError] = useState<string | null>(null);
 
@@ -87,6 +91,12 @@ export function Onboarding() {
 
   function toggleSite(domain: string) {
     setSelected((current) =>
+      current.includes(domain) ? current.filter((d) => d !== domain) : [...current, domain],
+    );
+  }
+
+  function toggleFeed(domain: string) {
+    setSelectedFeeds((current) =>
       current.includes(domain) ? current.filter((d) => d !== domain) : [...current, domain],
     );
   }
@@ -112,24 +122,25 @@ export function Onboarding() {
     const now = Date.now();
     const newRules: SiteRule[] = selected
       .filter((domain) => !existingDomains.has(domain))
-      .map((domain, index) => ({
-        id: `rule-${domain}-${now + index}`,
-        domain,
-        mode,
-        delaySeconds: DEFAULT_DELAY_SECONDS,
-        dailyLimitMinutes: null,
-        enabled: true,
-        createdAt: now,
-        showTimeRemaining: false,
-        schedule: null,
-      }));
+      .map((domain, index) =>
+        newSiteRule({ domain, mode, delaySeconds: DEFAULT_DELAY_SECONDS, createdAt: now + index }),
+      );
+
+    // "Trim the feeds": platform domains seeded as ALLOW rules so their features (Shorts,
+    // Reels, channel lists, ...) are ready to configure later without blocking the site
+    // outright. Skipped for anything already covered by `selected` or an existing rule —
+    // a domain never gets two rules.
+    const coveredDomains = new Set([...existingDomains, ...selected]);
+    const feedRules: SiteRule[] = selectedFeeds
+      .filter((domain) => !coveredDomains.has(domain))
+      .map((domain, index) => newSiteRule({ domain, mode: 'ALLOW', createdAt: now + 1000 + index }));
 
     send({
       type: 'SAVE_SETTINGS',
       settings: {
         ...settings,
         onboardingComplete: true,
-        rules: [...settings.rules, ...newRules],
+        rules: [...settings.rules, ...newRules, ...feedRules],
       },
     })
       .then((result) => {
@@ -144,7 +155,7 @@ export function Onboarding() {
         setFinishing(false);
         setFinishError(e instanceof Error ? e.message : 'Could not reach the extension.');
       });
-  }, [settings, selected, mode]);
+  }, [settings, selected, mode, selectedFeeds]);
 
   return (
     <div
@@ -337,6 +348,22 @@ export function Onboarding() {
                     </span>
                   </span>
                 </label>
+              ))}
+            </div>
+
+            <h2 style={{ margin: '28px 0 10px', fontSize: 16, fontWeight: 600 }}>Trim the feeds</h2>
+            <p style={{ margin: '0 0 14px', fontSize: 14, color: 'var(--nudge-on-surface-variant)' }}>
+              These open normally — no block, no countdown. Pick any you'd like to shape later
+              (Shorts, Reels, channel lists, and more) from the site's rule in the dashboard.
+            </p>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 28 }}>
+              {quickAddPlatforms().map(({ platform, label, domain }) => (
+                <Chip
+                  key={platform}
+                  label={label}
+                  active={selectedFeeds.includes(domain)}
+                  onClick={() => toggleFeed(domain)}
+                />
               ))}
             </div>
 

@@ -9,7 +9,6 @@ import type { BlockContext } from '../../core/protocol';
 import { Button } from '../../ui/components';
 import { send } from '../../ui/rpc';
 import { resolveDashboardUrl, useCompleteOnZero, useCountdownMs } from './BlockPage';
-import { EscapeHatch } from './EscapeHatch';
 
 const RING_SIZE = 160;
 const RING_STROKE = 10;
@@ -97,8 +96,6 @@ export function DelayView({ context, target }: { context: BlockContext; target: 
       <Button variant="muted" onClick={handleWalkAway}>
         I changed my mind
       </Button>
-
-      <EscapeHatch context={context} target={target} />
     </div>
   );
 }

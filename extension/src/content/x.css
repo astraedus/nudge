@@ -1,0 +1,29 @@
+/*
+ * X (Twitter) hide-toggle styling — one class per hide surface (extension/CLAUDE.md
+ * lesson: "Each hiding feature owns its own CSS class"). The classes are computed by
+ * `hideClassFor` (src/content/platformGate.ts) as `nudge-hide-<id>` and toggled by
+ * `applyPlatformHides`; this file only says what wearing that class looks like.
+ *
+ * Imported by `src/entrypoints/x.content.ts` alongside the shared `platformOverlay.css`,
+ * both with `cssInjectionMode: 'manifest'` so Chrome injects them before first paint.
+ */
+
+.nudge-hide-trends {
+  display: none !important;
+}
+
+.nudge-hide-whoToFollow {
+  display: none !important;
+}
+
+.nudge-hide-promoted {
+  display: none !important;
+}
+
+.nudge-hide-grok {
+  display: none !important;
+}
+
+.nudge-hide-exploreNav {
+  display: none !important;
+}

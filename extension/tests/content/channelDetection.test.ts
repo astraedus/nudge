@@ -39,6 +39,11 @@ import {
   WATCH_RENAMED_WRAPPERS_HTML,
   WATCH_SPA_STALE_INLINE_HTML,
   WATCH_TRICKY_JSON_HTML,
+  WATCH_FIXTURE_VIDEO_ID,
+  WATCH_ID_INLINE_HANDLE_DOM_HTML,
+  CARD_BOTH_AXES_HTML,
+  REAL_WATCH_ID_INLINE_HANDLE_DOM_CHANNEL_ID,
+  REAL_WATCH_ID_INLINE_HANDLE_DOM_HANDLE,
 } from './fixtures/watchPage';
 import {
   EMPTY_FEED_HTML,
@@ -302,5 +307,41 @@ describe('a card whose first channel anchor is an empty placeholder', () => {
     const detected = detectCardChannel(card);
 
     expect(detected?.handle).toBe('@bigthink');
+  });
+});
+
+describe('a healthy watch page whose identifiers live in different places', () => {
+  /**
+   * The live-QA regression (2026-09-20). This is what a real watch page IS: the canonical
+   * id only in `ytInitialPlayerResponse`, the handle only in the owner byline. Detection
+   * has to come back carrying BOTH, because the stored entry may hold either one alone.
+   */
+  const url = `https://www.youtube.com/watch?v=${WATCH_FIXTURE_VIDEO_ID}`;
+
+  it('reports the id AND the handle, not whichever tier answered first', () => {
+    mount(WATCH_ID_INLINE_HANDLE_DOM_HTML);
+    const detected = detectWatchChannel(document, { url });
+
+    expect(detected?.channelId).toBe(REAL_WATCH_ID_INLINE_HANDLE_DOM_CHANNEL_ID);
+    expect(detected?.handle).toBe(`@${REAL_WATCH_ID_INLINE_HANDLE_DOM_HANDLE}`);
+  });
+
+  it('still refuses to merge two observations that cannot be the same channel', () => {
+    // The existing fixture gives every tier a DIFFERENT channel on purpose. Assembly must
+    // not weld them together into something that matches neither.
+    mount(WATCH_PLAYER_RESPONSE_HTML);
+    const detected = detectWatchChannel(document, { url });
+
+    expect(detected?.channelId).toBe('UCplayerresponse00000001');
+    expect(detected?.handle).toBeNull();
+  });
+
+  it('reads both axes off one feed card that carries both links', () => {
+    const root = mount(CARD_BOTH_AXES_HTML);
+    const card = feedCards(root)[0];
+    const detected = detectCardChannel(card!);
+
+    expect(detected?.channelId).toBe(REAL_WATCH_ID_INLINE_HANDLE_DOM_CHANNEL_ID);
+    expect(detected?.handle).toBe(`@${REAL_WATCH_ID_INLINE_HANDLE_DOM_HANDLE}`);
   });
 });

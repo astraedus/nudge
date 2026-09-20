@@ -19,6 +19,8 @@ function makeRule(overrides: Partial<SiteRule> = {}): SiteRule {
     createdAt: 1700000000000,
     showTimeRemaining: true,
     schedule: null,
+    grayscale: false,
+    features: null,
     ...overrides,
   };
 }

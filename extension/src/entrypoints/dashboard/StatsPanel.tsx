@@ -1,12 +1,22 @@
 import type { DashboardState, UsageByDay } from '../../core/protocol';
+import { gateDefinition, platformForDomain } from '../../core/platforms';
+import type { GateId } from '../../core/platforms';
+import { domainKeysOnly, isSurfaceKey, parseSurfaceKey } from '../../core/surfaceKeys';
 import { formatDuration } from '../../ui/format';
 import { Card } from '../../ui/components';
 
-/** Sum active seconds for every domain on `day`; 0 when the day has no rollup yet. */
+/**
+ * Sum active seconds for every SITE on `day`; 0 when the day has no rollup yet.
+ *
+ * A gate's time is attributed to BOTH its site key and its own surface key
+ * (`core/surfaceKeys.ts`) so a per-surface budget can be checked — summing every key in
+ * the map here would double-count that time. `domainKeysOnly` is what keeps a rollup
+ * total honest.
+ */
 function dayActiveSeconds(usage: UsageByDay, day: string): number {
   const dayUsage = usage[day];
   if (!dayUsage) return 0;
-  return Object.values(dayUsage).reduce((sum, d) => sum + d.activeSec, 0);
+  return domainKeysOnly(Object.keys(dayUsage)).reduce((sum, key) => sum + dayUsage[key]!.activeSec, 0);
 }
 
 function dayCounts(usage: UsageByDay, day: string): { blocked: number; walkedAway: number } {
@@ -14,9 +24,9 @@ function dayCounts(usage: UsageByDay, day: string): { blocked: number; walkedAwa
   if (!dayUsage) return { blocked: 0, walkedAway: 0 };
   let blocked = 0;
   let walkedAway = 0;
-  for (const d of Object.values(dayUsage)) {
-    blocked += d.blocked;
-    walkedAway += d.walkedAway;
+  for (const key of domainKeysOnly(Object.keys(dayUsage))) {
+    blocked += dayUsage[key]!.blocked;
+    walkedAway += dayUsage[key]!.walkedAway;
   }
   return { blocked, walkedAway };
 }
@@ -26,8 +36,8 @@ function hourlyTotals(usage: UsageByDay, days: string[]): number[] {
   for (const day of days) {
     const dayUsage = usage[day];
     if (!dayUsage) continue;
-    for (const d of Object.values(dayUsage)) {
-      d.hourly.forEach((v, h) => {
+    for (const key of domainKeysOnly(Object.keys(dayUsage))) {
+      dayUsage[key]!.hourly.forEach((v, h) => {
         hours[h] = (hours[h] ?? 0) + v;
       });
     }
@@ -40,12 +50,49 @@ function domainTotals(usage: UsageByDay, days: string[]): { domain: string; acti
   for (const day of days) {
     const dayUsage = usage[day];
     if (!dayUsage) continue;
-    for (const [domain, d] of Object.entries(dayUsage)) {
-      totals[domain] = (totals[domain] ?? 0) + d.activeSec;
+    for (const key of domainKeysOnly(Object.keys(dayUsage))) {
+      totals[key] = (totals[key] ?? 0) + dayUsage[key]!.activeSec;
     }
   }
   return Object.entries(totals)
     .map(([domain, activeSec]) => ({ domain, activeSec }))
+    .sort((a, b) => b.activeSec - a.activeSec);
+}
+
+/** Every surface bucket's active-second total over `days`, keyed by its full surface key
+ * (e.g. "youtube.com#shorts") so a site row can find just its own gates. */
+function surfaceTotals(usage: UsageByDay, days: string[]): Record<string, number> {
+  const totals: Record<string, number> = {};
+  for (const day of days) {
+    const dayUsage = usage[day];
+    if (!dayUsage) continue;
+    for (const [key, d] of Object.entries(dayUsage)) {
+      if (!isSurfaceKey(key)) continue;
+      totals[key] = (totals[key] ?? 0) + d.activeSec;
+    }
+  }
+  return totals;
+}
+
+/** The registry label for a gate on `domain` ("Shorts"), falling back to the raw id when
+ * the domain isn't a known platform or the id isn't one of its gates. */
+function surfaceLabel(domain: string, gateId: string): string {
+  const platform = platformForDomain(domain);
+  if (platform === null) return gateId;
+  return gateDefinition(platform.id, gateId as GateId)?.label ?? gateId;
+}
+
+/** The surface rows belonging to one site, sorted by time descending. */
+function surfaceRowsFor(
+  surfaces: Record<string, number>,
+  domain: string,
+): { label: string; activeSec: number }[] {
+  return Object.entries(surfaces)
+    .map(([key, activeSec]) => ({ key, activeSec, parsed: parseSurfaceKey(key) }))
+    .filter((row): row is typeof row & { parsed: NonNullable<typeof row.parsed> } =>
+      row.parsed !== null && row.parsed.domain === domain,
+    )
+    .map((row) => ({ label: surfaceLabel(domain, row.parsed.gateId), activeSec: row.activeSec }))
     .sort((a, b) => b.activeSec - a.activeSec);
 }
 
@@ -74,6 +121,7 @@ export function StatsPanel({ data }: { data: DashboardState }) {
 
   const topSites = domainTotals(usage, recentDays).slice(0, 8);
   const maxSite = Math.max(1, ...topSites.map((s) => s.activeSec));
+  const surfaces = surfaceTotals(usage, recentDays);
 
   const isAllZero = todayActive === 0 && maxDay === 1 && topSites.length === 0;
 
@@ -192,40 +240,57 @@ export function StatsPanel({ data }: { data: DashboardState }) {
           </p>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {topSites.map((s) => (
-              <div key={s.domain}>
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    fontSize: 13,
-                    marginBottom: 4,
-                  }}
-                >
-                  <span>{s.domain}</span>
-                  <span style={{ color: 'var(--nudge-on-surface-variant)' }}>
-                    {formatDuration(s.activeSec)}
-                  </span>
-                </div>
-                <div
-                  style={{
-                    height: 6,
-                    borderRadius: 3,
-                    background: 'var(--nudge-surface-variant)',
-                    overflow: 'hidden',
-                  }}
-                >
+            {topSites.map((s) => {
+              const surfaceRows = surfaceRowsFor(surfaces, s.domain);
+              return (
+                <div key={s.domain}>
                   <div
                     style={{
-                      height: '100%',
-                      width: `${Math.max(2, (s.activeSec / maxSite) * 100)}%`,
-                      background: 'var(--nudge-primary)',
-                      borderRadius: 3,
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      fontSize: 13,
+                      marginBottom: 4,
                     }}
-                  />
+                  >
+                    <span>{s.domain}</span>
+                    <span style={{ color: 'var(--nudge-on-surface-variant)' }}>
+                      {formatDuration(s.activeSec)}
+                    </span>
+                  </div>
+                  <div
+                    style={{
+                      height: 6,
+                      borderRadius: 3,
+                      background: 'var(--nudge-surface-variant)',
+                      overflow: 'hidden',
+                    }}
+                  >
+                    <div
+                      style={{
+                        height: '100%',
+                        width: `${Math.max(2, (s.activeSec / maxSite) * 100)}%`,
+                        background: 'var(--nudge-primary)',
+                        borderRadius: 3,
+                      }}
+                    />
+                  </div>
+                  {surfaceRows.length > 0 && (
+                    <p
+                      style={{
+                        margin: '4px 0 0',
+                        fontSize: 11,
+                        color: 'var(--nudge-on-surface-variant)',
+                      }}
+                    >
+                      of which{' '}
+                      {surfaceRows
+                        .map((row) => `${row.label}: ${formatDuration(row.activeSec)}`)
+                        .join(' · ')}
+                    </p>
+                  )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </Card>

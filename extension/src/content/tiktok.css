@@ -1,0 +1,33 @@
+/*
+ * TikTok hide-toggle styling — one class per hide surface (extension/CLAUDE.md lesson:
+ * "Each hiding feature owns its own CSS class"). The classes themselves are computed by
+ * `hideClassFor` (src/content/platformGate.ts) as `nudge-hide-<id>` and toggled by
+ * `applyPlatformHides`; this file only says what wearing that class looks like.
+ *
+ * Imported by `src/entrypoints/tiktok.content.ts` alongside the shared
+ * `platformOverlay.css`, both with `cssInjectionMode: 'manifest'` so Chrome injects them
+ * before first paint (no flash of the surface before it's hidden).
+ *
+ * `!important` because TikTok, like YouTube, sets its own inline/computed display on
+ * these elements.
+ */
+
+.nudge-hide-comments {
+  display: none !important;
+}
+
+.nudge-hide-search {
+  display: none !important;
+}
+
+.nudge-hide-liveNav {
+  display: none !important;
+}
+
+.nudge-hide-exploreNav {
+  display: none !important;
+}
+
+.nudge-hide-suggestedAccounts {
+  display: none !important;
+}

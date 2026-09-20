@@ -2,11 +2,17 @@
  * Gray-screen mode.
  *
  * NOT listed in the manifest. The service worker registers this file as a DYNAMIC content
- * script (chrome.scripting.registerContentScripts) only while the feature is on, and
- * unregisters it when off. That is what makes the feature gateable with ZERO colour flash:
- * the docs guarantee registered CSS is injected "before any DOM is constructed or displayed",
- * whereas a manifest entry is static (always on) and anything JS-driven has to wait for an
- * async storage read and therefore paints in colour first.
+ * script (chrome.scripting.registerContentScripts), matched against exactly the set of
+ * sites whose rule has `grayscale: true`, and unregisters it when that set is empty. That
+ * is what makes the feature gateable with ZERO colour flash: the docs guarantee registered
+ * CSS is injected "before any DOM is constructed or displayed", whereas a manifest entry is
+ * static (always on) and anything JS-driven has to wait for an async storage read and
+ * therefore paints in colour first.
+ *
+ * Since v0.2 grayscale is PER SITE, so this stylesheet can be live on several unrelated
+ * domains at once. The colour reward below is still YouTube's alone — it is the channel
+ * list that earns it, and no other platform has one. Every other grayscaled site is simply
+ * gray, which is the whole feature there.
  *
  * See src/background/grayscale.ts and the CLAUDE.md note on the flash tradeoff.
  */

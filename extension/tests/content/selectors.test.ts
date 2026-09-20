@@ -29,9 +29,12 @@ import {
 import {
   BAIL_LABEL,
   applyShortsHiding,
-  createShortsOverlay,
-  shouldGateShorts,
+  createGateOverlay,
+  resolveShortsGate,
+  shortsGateCopy,
+  type ShortsGateVerdict,
 } from '../../src/content/youtube';
+import type { ResolvedGate } from '../../src/core/protocol';
 import {
   HOME_FEED_HTML,
   HOME_FEED_RENAMED_HTML,
@@ -59,6 +62,19 @@ function surface(pageType: keyof typeof SHORTS_SURFACES, id: string) {
 /** Every normal (non-Shorts) card in the fixture. These must never be touched. */
 function normalCards(root: HTMLElement): Element[] {
   return Array.from(root.querySelectorAll('.normal-video'));
+}
+
+/** A resolved gate for YouTube's Shorts surface, the shape `resolveShortsGate` reads. */
+function shortsResolvedGate(
+  mode: ResolvedGate['mode'],
+  opts: { delaySeconds?: number; limitReached?: boolean } = {},
+): ResolvedGate {
+  return {
+    id: 'shorts',
+    mode,
+    delaySeconds: opts.delaySeconds ?? 5,
+    limitReached: opts.limitReached ?? false,
+  };
 }
 
 beforeEach(() => {
@@ -264,7 +280,7 @@ describe('fallback path (the upstream-churn scenario)', () => {
       const root = mount(html);
       const result = applyShortsHiding(
         root,
-        { enabled: true, hideShortsShelf: true },
+        { enabled: true, hides: { shortsShelf: true } },
         { pageType, warn },
       );
       expect(result.degradedSurfaces).toEqual([]);
@@ -297,7 +313,7 @@ describe('fallback path (the upstream-churn scenario)', () => {
 
     const result = applyShortsHiding(
       root,
-      { enabled: true, hideShortsShelf: true },
+      { enabled: true, hides: { shortsShelf: true } },
       { pageType: 'home', warn },
     );
 
@@ -319,7 +335,11 @@ describe('fallback path (the upstream-churn scenario)', () => {
     const spy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
       for (let i = 0; i < 5; i += 1) {
-        applyShortsHiding(root, { enabled: true, hideShortsShelf: true }, { pageType: 'home' });
+        applyShortsHiding(
+          root,
+          { enabled: true, hides: { shortsShelf: true } },
+          { pageType: 'home' },
+        );
       }
       expect(spy).toHaveBeenCalledTimes(1);
     } finally {
@@ -334,7 +354,7 @@ describe('applyShortsHiding', () => {
 
     const result = applyShortsHiding(
       root,
-      { enabled: true, hideShortsShelf: true },
+      { enabled: true, hides: { shortsShelf: true } },
       { pageType: 'home', warn: () => {} },
     );
 
@@ -354,14 +374,14 @@ describe('applyShortsHiding', () => {
 
     applyShortsHiding(
       root,
-      { enabled: true, hideShortsShelf: true },
+      { enabled: true, hides: { shortsShelf: true } },
       { pageType: 'home', warn: () => {} },
     );
     expect(root.querySelectorAll(`.${HIDDEN_CLASS}`).length).toBeGreaterThan(0);
 
     const off = applyShortsHiding(
       root,
-      { enabled: true, hideShortsShelf: false },
+      { enabled: true, hides: { shortsShelf: false } },
       { pageType: 'home', warn: () => {} },
     );
 
@@ -374,8 +394,9 @@ describe('applyShortsHiding', () => {
   it('is idempotent — a second pass hides nothing new', () => {
     const root = mount(SUBSCRIPTIONS_FEED_HTML);
     const opts = { pageType: 'subscriptions' as const, warn: () => {} };
-    const first = applyShortsHiding(root, { enabled: true, hideShortsShelf: true }, opts);
-    const second = applyShortsHiding(root, { enabled: true, hideShortsShelf: true }, opts);
+    const config = { enabled: true, hides: { shortsShelf: true } };
+    const first = applyShortsHiding(root, config, opts);
+    const second = applyShortsHiding(root, config, opts);
 
     expect(first.hidden).toBeGreaterThan(0);
     expect(second.hidden).toBe(0);
@@ -385,13 +406,13 @@ describe('applyShortsHiding', () => {
     const root = mount(HOME_FEED_HTML);
     applyShortsHiding(
       root,
-      { enabled: true, hideShortsShelf: true },
+      { enabled: true, hides: { shortsShelf: true } },
       { pageType: 'home', warn: () => {} },
     );
 
     const result = applyShortsHiding(
       root,
-      { enabled: false, hideShortsShelf: true },
+      { enabled: false, hides: { shortsShelf: true } },
       { pageType: 'home', warn: () => {} },
     );
 
@@ -404,7 +425,7 @@ describe('applyShortsHiding', () => {
     const root = mount(SEARCH_RESULTS_HTML);
     const result = applyShortsHiding(
       root,
-      { enabled: true, hideShortsShelf: true },
+      { enabled: true, hides: { shortsShelf: true } },
       { url: 'https://www.youtube.com/results?search_query=cats', warn: () => {} },
     );
 
@@ -416,40 +437,130 @@ describe('applyShortsHiding', () => {
   });
 });
 
-describe('shouldGateShorts', () => {
+describe('resolveShortsGate', () => {
   const shortsUrl = 'https://www.youtube.com/shorts/abc123XYZ';
   const watchUrl = 'https://www.youtube.com/watch?v=abc123XYZ';
   const homeUrl = 'https://www.youtube.com/';
 
-  it('gates /shorts/* in every blocking mode', () => {
+  it('gates /shorts/* in every blocking mode, returning that mode and delay verbatim', () => {
     for (const mode of ['HARD_BLOCK', 'DELAY', 'BREATHING'] as const) {
-      expect(shouldGateShorts(shortsUrl, { enabled: true, shortsMode: mode })).toBe(true);
+      const verdict = resolveShortsGate(shortsUrl, {
+        enabled: true,
+        gates: [shortsResolvedGate(mode, { delaySeconds: 7 })],
+      });
+      expect(verdict).toEqual<ShortsGateVerdict>({
+        mode,
+        delaySeconds: 7,
+        limitReached: false,
+      });
     }
   });
 
   it('never gates when the resolved mode is ALLOW', () => {
-    expect(shouldGateShorts(shortsUrl, { enabled: true, shortsMode: 'ALLOW' })).toBe(false);
+    const verdict = resolveShortsGate(shortsUrl, {
+      enabled: true,
+      gates: [shortsResolvedGate('ALLOW')],
+    });
+    expect(verdict).toBeNull();
   });
 
   it('never gates when Nudge is globally disabled', () => {
     for (const mode of ['HARD_BLOCK', 'DELAY', 'BREATHING'] as const) {
-      expect(shouldGateShorts(shortsUrl, { enabled: false, shortsMode: mode })).toBe(false);
+      const verdict = resolveShortsGate(shortsUrl, {
+        enabled: false,
+        gates: [shortsResolvedGate(mode)],
+      });
+      expect(verdict).toBeNull();
     }
   });
 
   it('never gates a non-Shorts surface, whatever the mode', () => {
     for (const url of [watchUrl, homeUrl, 'https://www.youtube.com/results?search_query=shorts']) {
-      expect(shouldGateShorts(url, { enabled: true, shortsMode: 'HARD_BLOCK' })).toBe(false);
+      const verdict = resolveShortsGate(url, {
+        enabled: true,
+        gates: [shortsResolvedGate('HARD_BLOCK')],
+      });
+      expect(verdict).toBeNull();
     }
   });
 
   it('never gates a non-YouTube page', () => {
-    expect(
-      shouldGateShorts('https://example.com/shorts/abc', {
-        enabled: true,
-        shortsMode: 'HARD_BLOCK',
-      }),
-    ).toBe(false);
+    const verdict = resolveShortsGate('https://example.com/shorts/abc', {
+      enabled: true,
+      gates: [shortsResolvedGate('HARD_BLOCK')],
+    });
+    expect(verdict).toBeNull();
+  });
+
+  it('is not gated at all when the config carries no gate for this surface', () => {
+    const verdict = resolveShortsGate(shortsUrl, { enabled: true, gates: [] });
+    expect(verdict).toBeNull();
+  });
+
+  it('an exhausted daily budget still gates as a Hard Block with no delay, even under ALLOW', () => {
+    const verdict = resolveShortsGate(shortsUrl, {
+      enabled: true,
+      gates: [shortsResolvedGate('ALLOW', { limitReached: true, delaySeconds: 20 })],
+    });
+    expect(verdict).toEqual<ShortsGateVerdict>({
+      mode: 'HARD_BLOCK',
+      delaySeconds: 0,
+      limitReached: true,
+    });
+  });
+
+  it('an exhausted daily budget outranks a DELAY mode too — nothing left to wait out', () => {
+    const verdict = resolveShortsGate(shortsUrl, {
+      enabled: true,
+      gates: [shortsResolvedGate('DELAY', { limitReached: true, delaySeconds: 10 })],
+    });
+    expect(verdict).toEqual<ShortsGateVerdict>({
+      mode: 'HARD_BLOCK',
+      delaySeconds: 0,
+      limitReached: true,
+    });
+  });
+});
+
+describe('shortsGateCopy for an exhausted daily budget', () => {
+  it('names the daily limit and the midnight reset instead of promising a countdown', () => {
+    const verdict = resolveShortsGate('https://www.youtube.com/shorts/abc123XYZ', {
+      enabled: true,
+      gates: [shortsResolvedGate('DELAY', { limitReached: true, delaySeconds: 10 })],
+    });
+    if (verdict === null) throw new Error('expected the exhausted budget to still gate');
+
+    const copy = shortsGateCopy(verdict);
+
+    expect(copy.title.toLowerCase()).toContain('out of');
+    expect(copy.subtitle.toLowerCase()).toContain('limit');
+    expect(copy.subtitle.toLowerCase()).toContain('midnight');
+  });
+
+  it('renders as a Hard Block overlay with no countdown, and never self-releases', () => {
+    vi.useFakeTimers();
+    mount(SHORTS_PLAYER_HTML);
+    const onComplete = vi.fn();
+
+    const verdict = resolveShortsGate('https://www.youtube.com/shorts/abc123XYZ', {
+      enabled: true,
+      gates: [shortsResolvedGate('DELAY', { limitReached: true, delaySeconds: 10 })],
+    });
+    if (verdict === null) throw new Error('expected the exhausted budget to still gate');
+
+    const overlay = createGateOverlay(
+      document,
+      { mode: verdict.mode, delaySeconds: verdict.delaySeconds },
+      { onComplete, onBail: () => {} },
+      shortsGateCopy(verdict),
+    );
+
+    expect(overlay.element.querySelector('.nudge-overlay__count')).toBeNull();
+    vi.advanceTimersByTime(60_000);
+    expect(onComplete).not.toHaveBeenCalled();
+
+    overlay.dispose();
+    vi.useRealTimers();
   });
 });
 
@@ -462,11 +573,13 @@ describe('the /shorts/* interstitial overlay', () => {
     mount(SHORTS_PLAYER_HTML);
 
     for (const mode of ['HARD_BLOCK', 'DELAY', 'BREATHING'] as const) {
-      const overlay = createShortsOverlay(
-        document,
-        { shortsMode: mode, shortsDelaySeconds: 5 },
-        { onComplete: () => {}, onBail: () => {} },
-      );
+      const verdict: ShortsGateVerdict = { mode, delaySeconds: 5, limitReached: false };
+      const overlay = createGateOverlay(
+      document,
+      { mode: mode, delaySeconds: 5 },
+      { onComplete: () => {}, onBail: () => {} },
+      shortsGateCopy(verdict),
+    );
       const bail = overlay.element.querySelector('button');
       // Exact wording, not "Nevermind" or "Go back" — it matches the Android app.
       expect(bail?.textContent).toBe('I changed my mind');
@@ -479,11 +592,13 @@ describe('the /shorts/* interstitial overlay', () => {
     vi.useFakeTimers();
     mount(SHORTS_PLAYER_HTML);
     const onComplete = vi.fn();
+    const verdict: ShortsGateVerdict = { mode: 'DELAY', delaySeconds: 3, limitReached: false };
 
-    const overlay = createShortsOverlay(
+    const overlay = createGateOverlay(
       document,
-      { shortsMode: 'DELAY', shortsDelaySeconds: 3 },
+      { mode: 'DELAY', delaySeconds: 3 },
       { onComplete, onBail: () => {} },
+      shortsGateCopy(verdict),
     );
     document.body.append(overlay.element);
 
@@ -505,11 +620,13 @@ describe('the /shorts/* interstitial overlay', () => {
     vi.useFakeTimers();
     mount(SHORTS_PLAYER_HTML);
     const onComplete = vi.fn();
+    const verdict: ShortsGateVerdict = { mode: 'HARD_BLOCK', delaySeconds: 3, limitReached: false };
 
-    const overlay = createShortsOverlay(
+    const overlay = createGateOverlay(
       document,
-      { shortsMode: 'HARD_BLOCK', shortsDelaySeconds: 3 },
+      { mode: 'HARD_BLOCK', delaySeconds: 3 },
       { onComplete, onBail: () => {} },
+      shortsGateCopy(verdict),
     );
 
     expect(overlay.element.querySelector('.nudge-overlay__count')).toBeNull();
@@ -527,11 +644,13 @@ describe('the /shorts/* interstitial overlay', () => {
     vi.useFakeTimers();
     mount(SHORTS_PLAYER_HTML);
     const onComplete = vi.fn();
+    const verdict: ShortsGateVerdict = { mode: 'BREATHING', delaySeconds: 16, limitReached: false };
 
-    const overlay = createShortsOverlay(
+    const overlay = createGateOverlay(
       document,
-      { shortsMode: 'BREATHING', shortsDelaySeconds: 16 },
+      { mode: 'BREATHING', delaySeconds: 16 },
       { onComplete, onBail: () => {} },
+      shortsGateCopy(verdict),
     );
     const phase = overlay.element.querySelector('.nudge-overlay__phase');
     const remaining = overlay.element.querySelector('.nudge-overlay__remaining');
@@ -552,10 +671,12 @@ describe('the /shorts/* interstitial overlay', () => {
   it('the bail button fires onBail and never hides itself as a Shorts surface', () => {
     const root = mount(SHORTS_PLAYER_HTML);
     const onBail = vi.fn();
-    const overlay = createShortsOverlay(
+    const verdict: ShortsGateVerdict = { mode: 'HARD_BLOCK', delaySeconds: 5, limitReached: false };
+    const overlay = createGateOverlay(
       document,
-      { shortsMode: 'HARD_BLOCK', shortsDelaySeconds: 5 },
+      { mode: 'HARD_BLOCK', delaySeconds: 5 },
       { onComplete: () => {}, onBail },
+      shortsGateCopy(verdict),
     );
     root.append(overlay.element);
 
@@ -565,7 +686,7 @@ describe('the /shorts/* interstitial overlay', () => {
     root.append(overlay.element);
     applyShortsHiding(
       root,
-      { enabled: true, hideShortsShelf: true },
+      { enabled: true, hides: { shortsShelf: true } },
       { pageType: 'shorts', warn: () => {} },
     );
     expect(overlay.element.classList.contains(HIDDEN_CLASS)).toBe(false);

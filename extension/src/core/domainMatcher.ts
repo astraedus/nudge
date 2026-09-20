@@ -86,6 +86,29 @@ export function extractDomain(url: string): string | null {
 }
 
 /**
+ * True when `host` is covered by a rule written for `ruleDomain` — the host itself, or ANY
+ * subdomain of it.
+ *
+ * This is the semantics the NETWORK layer has always had: `dnrUrlFilter` compiles
+ * `||domain^` and `domainRegexFilter` compiles `([^/:@?#]*\.)?domain`, both of which match
+ * every subdomain. `normalizeToBaseDomain` only strips a known www./m./mobile. prefix, so
+ * everything ELSE that reads a rule by exact string ("en.wikipedia.org" vs a rule on
+ * "wikipedia.org") silently disagreed with what DNR was doing.
+ *
+ * Live QA 2026-09-20 found all four consequences at once on en.wikipedia.org: the daily
+ * limit never fired because usage accrued under one key while the budget was read from
+ * another, the popup reported "Not blocked" and offered to block a site that was already
+ * ruled, the grayscale toggle failed with `no-rule`, and the badge showed nothing.
+ */
+export function hostMatchesRuleDomain(host: string, ruleDomain: string): boolean {
+  const normalizedHost = normalizeToBaseDomain(host);
+  const normalizedRule = normalizeToBaseDomain(ruleDomain);
+  if (normalizedRule === '' || normalizedHost === '') return false;
+  if (normalizedHost === normalizedRule) return true;
+  return normalizedHost.endsWith(`.${normalizedRule}`);
+}
+
+/**
  * True when `url` belongs to `ruleDomain` — exact base-domain match after normalizing
  * both sides, so "https://www.youtube.com/feed" matches a rule on "youtube.com".
  */

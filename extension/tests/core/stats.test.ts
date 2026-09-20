@@ -8,6 +8,7 @@ import {
   lastNDayKeys,
   recordBlocked,
   recordWalkedAway,
+  surfaceActiveSeconds,
   topSites,
   totalActiveSeconds,
   weeklySeries,
@@ -420,5 +421,67 @@ describe('calculateStreak', () => {
       usage[keyForDaysAgo(now, i)] = buildDay({ a: { blocked: 1 } });
     }
     expect(calculateStreak(usage, now)).toBe(7);
+  });
+});
+
+/**
+ * Feature-surface buckets live in the SAME day map as sites, keyed `domain#gate`, and the
+ * seconds in them are a SUBSET of the site's — the same minute of Shorts is recorded twice.
+ * So every aggregation that treats the map's keys as "the sites" has to exclude them, or
+ * the day total silently runs high and the stats table grows a site the user does not have.
+ *
+ * These cases cover the whole class rather than one instance: every exported aggregation
+ * gets the same mixed day, because the ones that would forget the filter fail quietly, with
+ * numbers that merely look a bit too large.
+ */
+describe('feature-surface buckets are not sites', () => {
+  const SHORTS_KEY = 'youtube.com#shorts';
+
+  function hourAt(hour: number, seconds: number): number[] {
+    const hourly = new Array<number>(24).fill(0);
+    hourly[hour] = seconds;
+    return hourly;
+  }
+
+  /** 10 minutes on YouTube, 4 of which were Shorts, plus 2 minutes on Reddit. */
+  const mixedDay = (): Record<string, DayUsage> =>
+    buildDay({
+      'youtube.com': { activeSec: 600, blocked: 2, hourly: hourAt(9, 600) },
+      [SHORTS_KEY]: { activeSec: 240, hourly: hourAt(9, 240) },
+      'reddit.com': { activeSec: 120, hourly: hourAt(10, 120) },
+    });
+
+  it('counts the day’s time once, not once per bucket', () => {
+    expect(totalActiveSeconds(mixedDay())).toBe(720);
+  });
+
+  it('keeps them out of the sites table', () => {
+    expect(topSites(mixedDay()).map((site) => site.domain)).toEqual([
+      'youtube.com',
+      'reddit.com',
+    ]);
+  });
+
+  it('keeps them out of the weekly series and the hourly heatmap', () => {
+    const usage: UsageByDay = { '2026-09-20': mixedDay() };
+    expect(weeklySeries(usage, ['2026-09-20'])[0]?.activeSec).toBe(720);
+    expect(hourlyHeatmap(usage, '2026-09-20')[9]).toBe(600);
+  });
+
+  it('keeps them out of the all-time totals', () => {
+    expect(allTimeTotals({ '2026-09-20': mixedDay() }).blocked).toBe(2);
+  });
+
+  it('never lets a surface bucket alone extend the streak', () => {
+    const now = new Date(2026, 8, 20, 9, 0);
+    const surfaceOnly: UsageByDay = {
+      [localDayKey(now)]: buildDay({ [SHORTS_KEY]: { activeSec: 240 } }),
+    };
+    expect(calculateStreak(surfaceOnly, now)).toBe(0);
+  });
+
+  it('still reads one surface’s own total, which is what the dashboard shows', () => {
+    expect(surfaceActiveSeconds(mixedDay(), 'youtube.com', 'shorts')).toBe(240);
+    expect(surfaceActiveSeconds(mixedDay(), 'youtube.com', 'home')).toBe(0);
   });
 });

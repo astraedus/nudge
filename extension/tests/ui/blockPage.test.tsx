@@ -3,8 +3,9 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BlockContext } from '../../src/core/protocol';
 import type { BlockDecision } from '../../src/core/types';
+import type { ChannelEntry } from '../../src/core/settingsSchema';
 import { formatNextPass } from '../../src/ui/format';
-import { BlockPage, isNavigableTarget } from '../../src/entrypoints/blocked/BlockPage';
+import { BlockPage, channelHomeUrl, isNavigableTarget } from '../../src/entrypoints/blocked/BlockPage';
 
 const TARGET = 'https://distracting.example/feed';
 
@@ -34,6 +35,19 @@ function makeContext(overrides: Partial<BlockContext> = {}): BlockContext {
     passNextAvailableMs: 0,
     strictModeEnabled: false,
     tempAllowMinutes: 10,
+    gateId: null,
+    gateLabel: null,
+    allowedChannels: [],
+    ...overrides,
+  };
+}
+
+function channel(overrides: Partial<ChannelEntry> = {}): ChannelEntry {
+  return {
+    channelId: null,
+    handle: null,
+    displayName: 'Some Channel',
+    addedAt: 0,
     ...overrides,
   };
 }
@@ -442,5 +456,531 @@ describe('Escape Hatch', () => {
 
     expect(screen.queryByText(/use for 2 minutes/i)).toBeNull();
     expect(screen.queryByText(/daily pass used/i)).toBeNull();
+  });
+});
+
+describe('channelHomeUrl', () => {
+  it('prefers a handle, building the @handle youtube.com URL', () => {
+    expect(channelHomeUrl(channel({ handle: 'someuser', channelId: 'UC123' }))).toBe(
+      'https://www.youtube.com/@someuser',
+    );
+  });
+
+  it('falls back to the channel id when there is no handle', () => {
+    expect(channelHomeUrl(channel({ channelId: 'UC123' }))).toBe(
+      'https://www.youtube.com/channel/UC123',
+    );
+  });
+
+  it('returns null when the entry names neither a handle nor an id', () => {
+    expect(channelHomeUrl(channel())).toBeNull();
+  });
+
+  // Regression: a hand-edited settings import can carry a handle containing '/' or '?'.
+  // The identifier must still land in exactly ONE path segment on youtube.com — never a
+  // URL that escapes the channel path onto a different host or route.
+  it('keeps a handle containing "/" confined to one youtube.com path segment', () => {
+    const href = channelHomeUrl(channel({ handle: 'evil/../other' }));
+    expect(href).not.toBeNull();
+    expect(href).toMatch(/^https:\/\/www\.youtube\.com\/@[^/]+$/);
+  });
+
+  it('keeps a handle containing "?" from starting a query string', () => {
+    const href = channelHomeUrl(channel({ handle: 'name?redirect=evil.example' }));
+    expect(href).not.toBeNull();
+    expect(href).toMatch(/^https:\/\/www\.youtube\.com\/@[^/?]+$/);
+  });
+});
+
+describe('BlockPage — allowed channels (the way back in)', () => {
+  it('shows a heading and one working link per allowed channel, labelled and addressed correctly', async () => {
+    setTarget(TARGET);
+    const context = makeContext({
+      allowedChannels: [
+        channel({ handle: 'coolchannel', displayName: 'Cool Channel' }),
+        channel({ channelId: 'UC999', displayName: 'Other Channel' }),
+      ],
+    });
+    sendMessageMock.mockResolvedValueOnce(context);
+    render(<BlockPage />);
+    await flush();
+
+    expect(screen.getByText('Your allowed channels')).toBeTruthy();
+
+    const first = screen.getByRole('link', { name: 'Cool Channel' });
+    expect(first.getAttribute('href')).toBe('https://www.youtube.com/@coolchannel');
+
+    const second = screen.getByRole('link', { name: 'Other Channel' });
+    expect(second.getAttribute('href')).toBe('https://www.youtube.com/channel/UC999');
+  });
+
+  it('shows no allowed-channels section when the list is empty', async () => {
+    setTarget(TARGET);
+    const context = makeContext({ allowedChannels: [] });
+    sendMessageMock.mockResolvedValueOnce(context);
+    render(<BlockPage />);
+    await flush();
+
+    expect(screen.queryByText('Your allowed channels')).toBeNull();
+  });
+
+  it('skips an entry that names neither a handle nor an id, rather than rendering a broken link', async () => {
+    setTarget(TARGET);
+    const context = makeContext({
+      allowedChannels: [
+        channel({ displayName: 'Nameless Channel' }),
+        channel({ handle: 'realchannel', displayName: 'Real Channel' }),
+      ],
+    });
+    sendMessageMock.mockResolvedValueOnce(context);
+    render(<BlockPage />);
+    await flush();
+
+    expect(screen.getByText('Your allowed channels')).toBeTruthy();
+    expect(screen.queryByText('Nameless Channel')).toBeNull();
+    expect(screen.getByRole('link', { name: 'Real Channel' })).toBeTruthy();
+  });
+});
+
+describe('BlockPage — surface label', () => {
+  it('names the gate surface (e.g. "Shorts"), not the bare domain, when a gate was hit', async () => {
+    setTarget(TARGET);
+    const context = makeContext({ domain: 'youtube.com', gateId: 'shorts', gateLabel: 'Shorts' });
+    sendMessageMock.mockResolvedValueOnce(context);
+    render(<BlockPage />);
+    await flush();
+
+    expect(screen.getByText('Shorts')).toBeTruthy();
+    expect(screen.queryByText('youtube.com')).toBeNull();
+  });
+
+  it('falls back to the domain when the whole site was blocked, not a gate', async () => {
+    setTarget(TARGET);
+    const context = makeContext({ domain: 'youtube.com', gateId: null, gateLabel: null });
+    sendMessageMock.mockResolvedValueOnce(context);
+    render(<BlockPage />);
+    await flush();
+
+    expect(screen.getByText('youtube.com')).toBeTruthy();
+  });
+});
+
+/**
+ * The Hard Block path is where "block YouTube except these channels" actually lands, and
+ * it is the case with no other route in: home, search and subscriptions are all blocked
+ * too. These are the tests that stop that combination shipping as a dead end.
+ */
+describe('BlockPage — Hard Block with an active channel whitelist', () => {
+  const WHITELIST = [
+    channel({ handle: 'veritasium', displayName: 'Veritasium' }),
+    channel({ channelId: 'UCallowed0000000000000', displayName: 'Kurzgesagt' }),
+  ];
+
+  it('offers the allowed channels as working links on a Hard Block, not only on a pause', async () => {
+    setTarget(TARGET);
+    sendMessageMock.mockResolvedValueOnce(
+      makeContext({
+        domain: 'youtube.com',
+        decision: hardBlockDecision({ ruleName: 'youtube.com' }),
+        allowedChannels: WHITELIST,
+      }),
+    );
+    render(<BlockPage />);
+    await flush();
+
+    expect(screen.getByText('Your allowed channels')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Veritasium' }).getAttribute('href')).toBe(
+      'https://www.youtube.com/@veritasium',
+    );
+    expect(screen.getByRole('link', { name: 'Kurzgesagt' }).getAttribute('href')).toBe(
+      'https://www.youtube.com/channel/UCallowed0000000000000',
+    );
+  });
+
+  it('offers the free way in BEFORE the daily pass, so nobody burns a pass to reach a channel they allowed', async () => {
+    setTarget(TARGET);
+    sendMessageMock.mockResolvedValueOnce(
+      makeContext({
+        domain: 'youtube.com',
+        decision: hardBlockDecision({ ruleName: 'youtube.com' }),
+        allowedChannels: WHITELIST,
+        passEnabled: true,
+        passAvailable: true,
+      }),
+    );
+    const { container } = render(<BlockPage />);
+    await flush();
+
+    const channelLink = screen.getByRole('link', { name: 'Veritasium' });
+    const dailyPass = screen.getByRole('button', { name: /Use for 2 minutes/ });
+    // DOCUMENT_POSITION_FOLLOWING: the pass comes after the channel list in reading order.
+    expect(
+      channelLink.compareDocumentPosition(dailyPass) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(container.textContent).toContain('Your allowed channels');
+  });
+});
+
+describe('BlockPage — whose daily limit ran out', () => {
+  const exhausted = hardBlockDecision({
+    ruleName: 'youtube.com (limit reached)',
+    dailyTimeRemainingMs: 0,
+    dailyLimitMinutes: 10,
+    limitReached: true,
+  });
+
+  it('names the SURFACE when a gate budget is spent — saying YouTube is out of time would be false', async () => {
+    setTarget(TARGET);
+    sendMessageMock.mockResolvedValueOnce(
+      makeContext({
+        domain: 'youtube.com',
+        gateId: 'shorts',
+        gateLabel: 'Shorts',
+        decision: exhausted,
+      }),
+    );
+    render(<BlockPage />);
+    await flush();
+
+    expect(screen.getByText('Daily Shorts limit reached')).toBeTruthy();
+    // The unqualified wording would send the user hunting for a site limit they never set.
+    expect(screen.queryByText('Daily limit reached')).toBeNull();
+  });
+
+  it('keeps the plain Android wording when the whole SITE budget is what ran out', async () => {
+    setTarget(TARGET);
+    sendMessageMock.mockResolvedValueOnce(
+      makeContext({ domain: 'youtube.com', gateId: null, gateLabel: null, decision: exhausted }),
+    );
+    render(<BlockPage />);
+    await flush();
+
+    expect(screen.getByText('Daily limit reached')).toBeTruthy();
+  });
+});
+
+describe('BlockPage — what is off-limits, in the headline', () => {
+  const spentGateBudget = hardBlockDecision({
+    ruleName: 'youtube.com · Shorts (limit reached)',
+    dailyTimeRemainingMs: 0,
+    dailyLimitMinutes: 10,
+    limitReached: true,
+  });
+
+  it('names the SURFACE in the headline when a gate is what blocked the page', async () => {
+    // The page contradicted itself: the biggest text said the whole site was off-limits
+    // while the line under it said only the Shorts budget was spent. Someone reading the
+    // headline goes hunting for a site block they never set.
+    setTarget(TARGET);
+    sendMessageMock.mockResolvedValueOnce(
+      makeContext({
+        domain: 'youtube.com',
+        gateId: 'shorts',
+        gateLabel: 'Shorts',
+        hardBlockMessage: 'This site is off-limits right now.',
+        decision: spentGateBudget,
+      }),
+    );
+    render(<BlockPage />);
+    await flush();
+
+    expect(screen.getByText('Shorts is off-limits right now')).toBeTruthy();
+    expect(screen.queryByText('This site is off-limits right now.')).toBeNull();
+    expect(screen.getByText('Daily Shorts limit reached')).toBeTruthy();
+  });
+
+  it('does the same for a gate set to Hard Block outright, not only a spent budget', async () => {
+    // The whole class: every gate block had the site-level headline, the spent budget was
+    // just the case QA happened to walk.
+    setTarget(TARGET);
+    sendMessageMock.mockResolvedValueOnce(
+      makeContext({
+        domain: 'instagram.com',
+        gateId: 'reels',
+        gateLabel: 'Reels',
+        hardBlockMessage: "You've blocked access to this site",
+        decision: hardBlockDecision({ ruleName: 'instagram.com · Reels' }),
+      }),
+    );
+    render(<BlockPage />);
+    await flush();
+
+    expect(screen.getByText('Reels is off-limits right now')).toBeTruthy();
+    expect(screen.queryByText("You've blocked access to this site")).toBeNull();
+  });
+
+  it('keeps the rotating site message when the whole SITE is what was blocked', async () => {
+    setTarget(TARGET);
+    sendMessageMock.mockResolvedValueOnce(
+      makeContext({
+        domain: 'youtube.com',
+        gateId: null,
+        gateLabel: null,
+        hardBlockMessage: 'You set this boundary for a reason',
+      }),
+    );
+    render(<BlockPage />);
+    await flush();
+
+    expect(screen.getByText('You set this boundary for a reason')).toBeTruthy();
+  });
+});
+
+describe('BlockPage — layout', () => {
+  it('puts the whole interstitial in ONE card that stays centred and never clips its own top', async () => {
+    setTarget(TARGET);
+    sendMessageMock.mockResolvedValueOnce(
+      makeContext({
+        domain: 'youtube.com',
+        decision: hardBlockDecision({ ruleName: 'youtube.com' }),
+        allowedChannels: [channel({ handle: 'veritasium', displayName: 'Veritasium' })],
+        passEnabled: true,
+        passAvailable: true,
+      }),
+    );
+    render(<BlockPage />);
+    await flush();
+
+    const card = screen.getByTestId('block-card');
+    // Everything the user reads or acts on belongs to the same object, rather than three
+    // loose stacks floating on the page background.
+    expect(card.contains(screen.getByRole('button', { name: 'Go Back' }))).toBe(true);
+    expect(card.contains(screen.getByRole('link', { name: 'Veritasium' }))).toBe(true);
+    expect(card.contains(screen.getByRole('button', { name: /Use for 2 minutes/ }))).toBe(true);
+    expect(card.contains(screen.getByText('Rule: youtube.com'))).toBe(true);
+
+    // Auto margins, not `justify-content: center`. Both centre a card in a tall viewport;
+    // only auto margins keep the TOP reachable once the card outgrows it (a long channel
+    // list, an error state under a pause), because a centred flex item overflows in both
+    // directions and the part above the scroll origin cannot be scrolled back to.
+    expect(card.style.margin).toBe('auto');
+    const page = card.parentElement as HTMLElement;
+    expect(page.style.minHeight).toBe('100vh');
+    expect(page.style.justifyContent).toBe('');
+    expect(page.style.alignItems).toBe('');
+  });
+
+  it('centres the card on the loading and error states too, not just the block itself', async () => {
+    setTarget(TARGET);
+    sendMessageMock.mockImplementationOnce(() => new Promise(() => {}));
+    render(<BlockPage />);
+
+    const card = screen.getByTestId('block-card');
+    expect(card.contains(screen.getByText('Loading…'))).toBe(true);
+    expect(card.style.margin).toBe('auto');
+  });
+});
+
+describe('BlockPage — allowed channels look like the way in', () => {
+  it('renders each channel as a teal link with an affordance, not a flat grey pill', async () => {
+    // This list is the ONLY route into a channel the user explicitly allowed while the site
+    // is Hard Blocked, so it is the primary action on the page. Rendered as grey pills it
+    // read as disabled metadata, which turns the whole feature back into a dead end.
+    setTarget(TARGET);
+    sendMessageMock.mockResolvedValueOnce(
+      makeContext({
+        domain: 'youtube.com',
+        allowedChannels: [channel({ handle: 'veritasium', displayName: 'Veritasium' })],
+      }),
+    );
+    render(<BlockPage />);
+    await flush();
+
+    const link = screen.getByRole('link', { name: 'Veritasium' });
+    expect(link.getAttribute('href')).toBe('https://www.youtube.com/@veritasium');
+    expect(link.style.color).toBe('var(--nudge-link)');
+    expect(link.style.fontWeight).toBe('600');
+    // The fill comes from the CLASS, not from here. This assertion used to require the
+    // inline background, which is precisely what made the hover rule unreachable (QA R3):
+    // an inline declaration outranks any class rule, so the test was pinning the bug.
+    expect(link.style.background).toBe('');
+    // The hover/focus states live in a stylesheet, since inline styles cannot express them.
+    expect(link.className).toContain('nudge-channel-link');
+    // Inline SVG arrow, never an emoji glyph (repo rule), and never announced.
+    const arrow = link.querySelector('svg');
+    expect(arrow).not.toBeNull();
+    expect(arrow!.getAttribute('aria-hidden')).toBe('true');
+  });
+
+  it('lets a long channel name truncate instead of widening the whole page', async () => {
+    // Regression, introduced by this very restyle and caught by measuring a real 420px
+    // render: a grid track and a flex item both default their minimum size to MIN-CONTENT,
+    // so one long name refused to shrink and pushed the card 106px past the window edge.
+    // `ellipsis` can never fire until both floors are lifted, so both are pinned here.
+    setTarget(TARGET);
+    sendMessageMock.mockResolvedValueOnce(
+      makeContext({
+        domain: 'youtube.com',
+        allowedChannels: [
+          channel({ handle: 'longone', displayName: 'A Very Very Very Long Channel Name' }),
+        ],
+      }),
+    );
+    render(<BlockPage />);
+    await flush();
+
+    const link = screen.getByRole('link', { name: 'A Very Very Very Long Channel Name' });
+    const label = link.querySelector('span') as HTMLElement;
+    expect(label.style.textOverflow).toBe('ellipsis');
+    expect(label.style.minWidth).toBe('0px');
+
+    const list = link.closest('ul') as HTMLElement;
+    expect(list.style.gridTemplateColumns).toBe('minmax(0, 1fr)');
+  });
+
+  it('keeps the accessible name to the channel name, so the arrow is not read out', async () => {
+    setTarget(TARGET);
+    sendMessageMock.mockResolvedValueOnce(
+      makeContext({
+        domain: 'youtube.com',
+        allowedChannels: [channel({ channelId: 'UC999', displayName: 'Other Channel' })],
+      }),
+    );
+    render(<BlockPage />);
+    await flush();
+
+    expect(screen.getByRole('link', { name: 'Other Channel' })).toBeTruthy();
+  });
+
+  it('still refuses to build a link for an unsafe identifier', async () => {
+    // The https-only guard is unchanged by the restyle: prove it still holds here, not only
+    // in channelHomeUrl's own unit tests.
+    setTarget(TARGET);
+    sendMessageMock.mockResolvedValueOnce(
+      makeContext({
+        domain: 'youtube.com',
+        allowedChannels: [
+          channel({ displayName: 'Nameless Channel' }),
+          channel({ handle: 'evil/../other', displayName: 'Sneaky' }),
+        ],
+      }),
+    );
+    render(<BlockPage />);
+    await flush();
+
+    expect(screen.queryByText('Nameless Channel')).toBeNull();
+    expect(screen.getByRole('link', { name: 'Sneaky' }).getAttribute('href')).toMatch(
+      /^https:\/\/www\.youtube\.com\/@[^/]+$/,
+    );
+  });
+});
+
+describe('the redirect-loop backstop', () => {
+  /**
+   * QA R2 (2026-09-20): the block page was told ALLOW for a URL DNR had just redirected,
+   * bounced to the site, got redirected back, and did it 217 times in 8 seconds until the
+   * renderer crashed. The cause is fixed; this is the structural guarantee that the next
+   * invariant break shows the user an error instead of eating their CPU.
+   */
+  beforeEach(() => {
+    window.sessionStorage.clear();
+    setTarget(TARGET);
+  });
+
+  it('sends the user on the first time, because that is the normal case', async () => {
+    sendMessageMock.mockResolvedValue(makeContext({ decision: { type: 'ALLOW' } }));
+    render(<BlockPage />);
+    await flush();
+
+    expect(replaceMock).toHaveBeenCalledWith(TARGET);
+  });
+
+  it('stops instead of bouncing the same target a second time', async () => {
+    sendMessageMock.mockResolvedValue(makeContext({ decision: { type: 'ALLOW' } }));
+
+    render(<BlockPage />);
+    await flush();
+    cleanup();
+    replaceMock.mockClear();
+
+    // The loop: the site redirected us straight back to the same target.
+    render(<BlockPage />);
+    await flush();
+
+    expect(replaceMock).not.toHaveBeenCalled();
+  });
+
+  it('says plainly that Nudge is at fault, and still offers the link', async () => {
+    sendMessageMock.mockResolvedValue(makeContext({ decision: { type: 'ALLOW' } }));
+    render(<BlockPage />);
+    await flush();
+    cleanup();
+
+    render(<BlockPage />);
+    await flush();
+
+    expect(screen.getByText(/internal error/i)).toBeDefined();
+    const link = screen.getByText(TARGET) as HTMLAnchorElement;
+    expect(link.getAttribute('href')).toBe(TARGET);
+  });
+
+  it('logs the loop so it is visible in devtools, naming the target', async () => {
+    const errors: string[] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => errors.push(String(args[0]));
+    try {
+      sendMessageMock.mockResolvedValue(makeContext({ decision: { type: 'ALLOW' } }));
+      render(<BlockPage />);
+      await flush();
+      cleanup();
+      render(<BlockPage />);
+      await flush();
+    } finally {
+      console.error = original;
+    }
+
+    expect(errors.some((line) => line.includes('redirect loop detected'))).toBe(true);
+    expect(errors.some((line) => line.includes(TARGET))).toBe(true);
+  });
+
+  it('a real block clears the history, so a later pause-and-continue still works', async () => {
+    // Bounce once, then get genuinely blocked, then bounce again later: that is an ordinary
+    // day and must not be mistaken for a loop.
+    sendMessageMock.mockResolvedValue(makeContext({ decision: { type: 'ALLOW' } }));
+    render(<BlockPage />);
+    await flush();
+    cleanup();
+
+    sendMessageMock.mockResolvedValue(makeContext());
+    render(<BlockPage />);
+    await flush();
+    cleanup();
+
+    replaceMock.mockClear();
+    sendMessageMock.mockResolvedValue(makeContext({ decision: { type: 'ALLOW' } }));
+    render(<BlockPage />);
+    await flush();
+
+    expect(replaceMock).toHaveBeenCalledWith(TARGET);
+  });
+});
+
+describe('the allowed-channel link hover state', () => {
+  /**
+   * QA R3: the hover background and border were dead because the anchor set `background`
+   * and `border` INLINE, and an inline declaration outranks any class rule, so
+   * `.nudge-channel-link:hover` could never win. It looked like hover worked, because the
+   * arrow nudge (a transform on a child) was unaffected and still moved.
+   *
+   * Asserted as "the inline style does not claim these properties", which is the thing that
+   * has to stay true; jsdom applies no stylesheet, so the hover itself cannot be observed
+   * here and asserting a computed colour would be theatre.
+   */
+  it('leaves background and border to the stylesheet so :hover can win', async () => {
+    setTarget(TARGET);
+    sendMessageMock.mockResolvedValue(
+      makeContext({
+        allowedChannels: [channel({ handle: 'veritasium', displayName: 'Veritasium' })],
+      }),
+    );
+    render(<BlockPage />);
+    await flush();
+
+    const link = screen.getByRole('link', { name: 'Veritasium' }) as HTMLAnchorElement;
+    expect(link.className).toContain('nudge-channel-link');
+    expect(link.style.background).toBe('');
+    expect(link.style.backgroundColor).toBe('');
+    expect(link.style.border).toBe('');
+    expect(link.style.borderColor).toBe('');
   });
 });

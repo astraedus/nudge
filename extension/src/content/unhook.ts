@@ -10,7 +10,7 @@
  * (eventually) wired into the content script separately from the Shorts gate/hide logic.
  */
 
-import type { YoutubeConfig } from '../core/protocol';
+import type { SiteConfig } from '../core/protocol';
 import {
   AUTOPLAY_TOGGLE,
   NUDGE_OVERLAY_ID,
@@ -42,11 +42,19 @@ export interface HideResult {
   degradedSurfaces: string[];
 }
 
-/** The four independent hide toggles, plus the master switch. */
-type HideToggleConfig = Pick<
-  YoutubeConfig,
-  'enabled' | 'hideHomeFeed' | 'hideSidebarRecs' | 'hideEndScreen' | 'hideComments'
->;
+/**
+ * The slice of the worker's answer this module needs: the master switch plus the resolved
+ * hide map, keyed by the platform registry's own `HideId`s.
+ *
+ * A PARTIAL map on purpose. An id that is absent (an older stored blob, a hide the registry
+ * gained after this profile was written) reads as "off", which is the only safe default for
+ * a switch nobody has touched — and it means adding a hide to the registry can never
+ * retroactively start hiding things on an existing install.
+ */
+export type HideToggleConfig = Pick<SiteConfig, 'enabled' | 'hides'>;
+
+/** The slice needed for the autoplay click — a YouTube-only setting. */
+export type AutoplayConfig = Pick<SiteConfig, 'enabled' | 'youtube'>;
 
 /** The URL of whatever document `root` belongs to. Mirrors youtube.ts's private helper. */
 function documentUrl(root: Document | Element): string {
@@ -83,7 +91,7 @@ export function applyHideToggles(
       // a watch-only surface (sidebar recs, comments, end screen) must never be considered
       // on home/search/etc., whatever a selector might coincidentally match there.
       if (!surface.pages.includes(pageType)) continue;
-      if (!config[surface.toggle]) continue;
+      if (config.hides[surface.toggle] !== true) continue;
 
       // `matchAll` surfaces are made of DIFFERENT elements that appear together (the
       // end-screen grid AND the creator's end-cards), so every rung has to be collected.
@@ -156,10 +164,12 @@ export function applyHideToggles(
  */
 export function applyAutoplayOff(
   root: Document | Element,
-  config: Pick<YoutubeConfig, 'enabled' | 'disableAutoplay'>,
+  config: AutoplayConfig,
   options: { warn?: WarnFn } = {},
 ): boolean {
-  if (!config.enabled || !config.disableAutoplay) return false;
+  // `youtube` is null on every other platform, and on a YouTube page where no rule covers
+  // the site — both mean "nobody asked for this", so there is nothing to click.
+  if (!config.enabled || config.youtube?.disableAutoplay !== true) return false;
 
   const { warn = defaultWarn } = options;
   const { elements } = queryWithFallback(root, AUTOPLAY_TOGGLE, {

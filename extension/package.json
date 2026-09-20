@@ -1,7 +1,7 @@
 {
   "name": "nudge-extension",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "Nudge for Chrome — website blocker with delay-to-open, breathing pauses, daily limits and local-only stats.",
   "license": "GPL-3.0-only",

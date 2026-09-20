@@ -331,3 +331,50 @@ export const WATCH_INLINE_MATCHES_URL_HTML = `
     </ytd-watch-flexy>
   </div>
 `;
+
+/**
+ * THE REAL WATCH PAGE, and the one that broke the whitelist in live QA (2026-09-20).
+ *
+ * `ytInitialPlayerResponse` carries the canonical `UC…` id and an `author` NAME, no handle,
+ * because YouTube does not put one there. The owner byline in the DOM carries `/@handle` and
+ * no id. Both describe the SAME channel, and the inline tier's videoId matches the URL, so
+ * nothing here is stale: this is simply what a healthy watch page looks like.
+ *
+ * Detection used to return the first tier carrying any identifier, so the probe was
+ * `{channelId, handle: null}`, and an entry the user added by typing `@veritasium` is
+ * `{channelId: null, handle}`. No shared axis, no match, and the verdict was "off your list"
+ * for a channel they had explicitly allowed.
+ */
+export const REAL_WATCH_ID_INLINE_HANDLE_DOM_CHANNEL_ID = 'UCHnyfMqiRRG1u-2MsSQLbXA';
+export const REAL_WATCH_ID_INLINE_HANDLE_DOM_HANDLE = 'veritasium';
+
+export const WATCH_ID_INLINE_HANDLE_DOM_HTML = `
+  <div id="page-manager">
+    ${MINI_NAV}
+    ${playerResponseScript(REAL_WATCH_ID_INLINE_HANDLE_DOM_CHANNEL_ID, 'Veritasium')}
+    <ytd-watch-flexy>
+      <div id="primary">
+        ${PLAYER}
+        ${standardChannelDom({
+          href: `/@${REAL_WATCH_ID_INLINE_HANDLE_DOM_HANDLE}`,
+          name: 'Veritasium',
+          ariaLabel: 'Go to channel Veritasium',
+        })}
+      </div>
+    </ytd-watch-flexy>
+  </div>
+`;
+
+/**
+ * The mirror on a feed card: one card carrying BOTH a `/channel/UC…` link and a `/@handle`
+ * link for the same uploader, which real cards routinely do. Whichever anchor the selector
+ * chain happened to reach first used to be the whole answer.
+ */
+export const CARD_BOTH_AXES_HTML = `
+  <ytd-rich-item-renderer>
+    <a href="/channel/${REAL_WATCH_ID_INLINE_HANDLE_DOM_CHANNEL_ID}">Veritasium</a>
+    <ytd-channel-name id="channel-name">
+      <a class="yt-formatted-string" href="/@${REAL_WATCH_ID_INLINE_HANDLE_DOM_HANDLE}">Veritasium</a>
+    </ytd-channel-name>
+  </ytd-rich-item-renderer>
+`;

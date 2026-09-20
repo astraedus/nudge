@@ -21,7 +21,7 @@ export function EscapeHatch({ context, target }: { context: BlockContext; target
 
   if (!context.passAvailable) {
     return (
-      <Button variant="muted" disabled style={{ marginTop: 16 }}>
+      <Button variant="muted" disabled>
         Daily pass used · next in {formatNextPass(context.passNextAvailableMs)}
       </Button>
     );
@@ -44,7 +44,7 @@ export function EscapeHatch({ context, target }: { context: BlockContext; target
   };
 
   return (
-    <Button variant="muted" onClick={handleUsePass} disabled={pending} style={{ marginTop: 16 }}>
+    <Button variant="muted" onClick={handleUsePass} disabled={pending}>
       Use for 2 minutes · once a day
     </Button>
   );

@@ -18,6 +18,9 @@ import {
   WATCH_FIXTURE_VIDEO_ID,
   WATCH_NOTHING_HTML,
   WATCH_PLAYER_RESPONSE_HTML,
+  WATCH_ID_INLINE_HANDLE_DOM_HTML,
+  REAL_WATCH_ID_INLINE_HANDLE_DOM_CHANNEL_ID,
+  REAL_WATCH_ID_INLINE_HANDLE_DOM_HANDLE,
 } from './fixtures/watchPage';
 
 /**
@@ -40,14 +43,46 @@ function channel(overrides: Partial<ChannelEntry>): ChannelEntry {
   };
 }
 
+/**
+ * `ChannelConfig` since v0.2: the flat `YoutubeConfig` is gone, the channel-list fields
+ * live nested under `youtube` (null behaves exactly like `channelMode: 'OFF'`), and the
+ * config now also carries the SITE's resolved state, because the site rule stands behind
+ * the whitelist once it is in force (`decideWatchGate`). `siteApplies: false` here is the
+ * "no site rule in the picture" default that every pre-existing test in this file assumed
+ * implicitly before that concept existed.
+ */
 function config(overrides: Partial<ChannelConfig> = {}): ChannelConfig {
   return {
     enabled: true,
-    channelMode: 'OFF',
-    channels: [],
-    channelBlockMode: 'DELAY',
-    grayScreen: false,
+    siteMode: 'ALLOW',
+    siteApplies: false,
+    siteDelaySeconds: 15,
+    grayscale: false,
+    youtube: {
+      channelMode: 'OFF',
+      channels: [],
+      channelBlockMode: 'DELAY',
+      channelDelaySeconds: 15,
+      disableAutoplay: false,
+    },
     ...overrides,
+  };
+}
+
+/**
+ * Second helper for the common case: overriding only the nested `youtube` block (and,
+ * optionally, a few top-level site fields alongside it) without clobbering the rest of
+ * `config()`'s defaults — a plain `config({ channelMode: ... })` would silently do nothing
+ * useful now that those fields live one level down.
+ */
+function withYoutube(
+  youtubeOverrides: Partial<NonNullable<ChannelConfig['youtube']>>,
+  configOverrides: Partial<ChannelConfig> = {},
+): ChannelConfig {
+  const base = config(configOverrides);
+  return {
+    ...base,
+    youtube: { ...(base.youtube as NonNullable<ChannelConfig['youtube']>), ...youtubeOverrides },
   };
 }
 
@@ -85,7 +120,10 @@ beforeEach(() => {
 describe('the feed with channel lists off', () => {
   it('shows every video, whatever is on the list', () => {
     loadFeed();
-    applyChannelFilter(document, config({ channelMode: 'OFF', channels: [channel({ channelId: ALPHA })] }));
+    applyChannelFilter(
+      document,
+      withYoutube({ channelMode: 'OFF', channels: [channel({ channelId: ALPHA })] }),
+    );
 
     expect(isHidden('card-alpha')).toBe(false);
     expect(isHidden('card-bravo')).toBe(false);
@@ -98,7 +136,7 @@ describe('the feed in "block these channels" mode', () => {
     loadFeed();
     applyChannelFilter(
       document,
-      config({ channelMode: 'BLACKLIST', channels: [channel({ channelId: ALPHA })] }),
+      withYoutube({ channelMode: 'BLACKLIST', channels: [channel({ channelId: ALPHA })] }),
     );
 
     expect(isHidden('card-alpha')).toBe(true);
@@ -110,7 +148,7 @@ describe('the feed in "block these channels" mode', () => {
     loadFeed();
     applyChannelFilter(
       document,
-      config({ channelMode: 'BLACKLIST', channels: [channel({ handle: 'bravochannel' })] }),
+      withYoutube({ channelMode: 'BLACKLIST', channels: [channel({ handle: 'bravochannel' })] }),
     );
 
     expect(isHidden('card-bravo')).toBe(true);
@@ -123,7 +161,7 @@ describe('the feed in "only allow these channels" mode', () => {
     loadFeed();
     applyChannelFilter(
       document,
-      config({ channelMode: 'WHITELIST', channels: [channel({ channelId: ALPHA })] }),
+      withYoutube({ channelMode: 'WHITELIST', channels: [channel({ channelId: ALPHA })] }),
     );
 
     expect(isHidden('card-alpha')).toBe(false);
@@ -133,11 +171,30 @@ describe('the feed in "only allow these channels" mode', () => {
 
   it('leaves a video visible when its channel cannot be identified at all', () => {
     // Fail OPEN: a detection failure must look like normal YouTube, never like an empty
-    // feed the user cannot explain. Documented in core/channels.ts decideChannel.
+    // feed the user cannot explain. Documented in core/channels.ts decideChannel. Feed
+    // composition always uses this fail-open decision, never the watch gate's site-default
+    // one — see the "feed keeps the fail-open decision" test below.
     loadFeed();
     const result = applyChannelFilter(
       document,
-      config({ channelMode: 'WHITELIST', channels: [channel({ channelId: ALPHA })] }),
+      withYoutube({ channelMode: 'WHITELIST', channels: [channel({ channelId: ALPHA })] }),
+    );
+
+    expect(isHidden('card-no-channel')).toBe(false);
+    expect(result.unidentified).toBeGreaterThan(0);
+  });
+
+  it('keeps the fail-open feed decision even while the site rule is in force', () => {
+    // Feed composition is not the watch gate: hiding a card is not refusing to play a
+    // video, so it never adopts decideWatchGate's fail-CLOSED behaviour even once the
+    // youtube.com rule is in force.
+    loadFeed();
+    const result = applyChannelFilter(
+      document,
+      withYoutube(
+        { channelMode: 'WHITELIST', channels: [channel({ channelId: ALPHA })] },
+        { siteApplies: true, siteMode: 'HARD_BLOCK' },
+      ),
     );
 
     expect(isHidden('card-no-channel')).toBe(false);
@@ -148,11 +205,14 @@ describe('the feed in "only allow these channels" mode', () => {
 describe('turning the channel filter off', () => {
   it('brings the hidden videos back without a reload', () => {
     loadFeed();
-    const blocking = config({ channelMode: 'WHITELIST', channels: [channel({ channelId: ALPHA })] });
+    const blocking = withYoutube({
+      channelMode: 'WHITELIST',
+      channels: [channel({ channelId: ALPHA })],
+    });
     applyChannelFilter(document, blocking);
     expect(isHidden('card-bravo')).toBe(true);
 
-    applyChannelFilter(document, config({ channelMode: 'OFF' }));
+    applyChannelFilter(document, withYoutube({ channelMode: 'OFF' }));
 
     expect(isHidden('card-bravo')).toBe(false);
     expect(isHidden('card-charlie')).toBe(false);
@@ -162,13 +222,16 @@ describe('turning the channel filter off', () => {
     loadFeed();
     applyChannelFilter(
       document,
-      config({ channelMode: 'WHITELIST', channels: [channel({ channelId: ALPHA })] }),
+      withYoutube({ channelMode: 'WHITELIST', channels: [channel({ channelId: ALPHA })] }),
     );
     expect(isHidden('card-bravo')).toBe(true);
 
     applyChannelFilter(
       document,
-      config({ enabled: false, channelMode: 'WHITELIST', channels: [channel({ channelId: ALPHA })] }),
+      withYoutube(
+        { channelMode: 'WHITELIST', channels: [channel({ channelId: ALPHA })] },
+        { enabled: false },
+      ),
     );
 
     expect(isHidden('card-bravo')).toBe(false);
@@ -180,7 +243,7 @@ describe('opening a video', () => {
     document.body.innerHTML = WATCH_PLAYER_RESPONSE_HTML;
     const verdict = watchChannelVerdict(
       document,
-      config({
+      withYoutube({
         channelMode: 'BLACKLIST',
         channels: [channel({ channelId: PLAYER_RESPONSE_CHANNEL })],
         channelBlockMode: 'BREATHING',
@@ -188,14 +251,20 @@ describe('opening a video', () => {
       { url: WATCH_URL },
     );
 
-    expect(verdict).toEqual({ action: 'BLOCK', mode: 'BREATHING' });
+    expect(verdict).toEqual({
+      action: 'BLOCK',
+      mode: 'BREATHING',
+      delaySeconds: 15,
+      source: 'channel-rule',
+      reason: 'listed',
+    });
   });
 
   it('plays a video from a channel on the allow list', () => {
     document.body.innerHTML = WATCH_PLAYER_RESPONSE_HTML;
     const verdict = watchChannelVerdict(
       document,
-      config({
+      withYoutube({
         channelMode: 'WHITELIST',
         channels: [channel({ channelId: PLAYER_RESPONSE_CHANNEL })],
       }),
@@ -209,7 +278,7 @@ describe('opening a video', () => {
     document.body.innerHTML = WATCH_NOTHING_HTML;
     const verdict = watchChannelVerdict(
       document,
-      config({ channelMode: 'WHITELIST', channels: [channel({ channelId: ALPHA })] }),
+      withYoutube({ channelMode: 'WHITELIST', channels: [channel({ channelId: ALPHA })] }),
       { url: WATCH_URL },
     );
 
@@ -218,7 +287,83 @@ describe('opening a video', () => {
 
   it('is not interrupted at all while channel lists are off', () => {
     document.body.innerHTML = WATCH_PLAYER_RESPONSE_HTML;
-    expect(watchChannelVerdict(document, config({ channelMode: 'OFF' }), { url: WATCH_URL })).toBeNull();
+    expect(
+      watchChannelVerdict(document, withYoutube({ channelMode: 'OFF' }), { url: WATCH_URL }),
+    ).toBeNull();
+  });
+});
+
+describe('the watch gate when the youtube.com site rule is in force', () => {
+  /**
+   * `decideWatchGate` itself is exhaustively covered in tests/core/channels.test.ts; these
+   * only prove the WIRING — that `watchChannelVerdict` actually plugs the resolved site
+   * fields through to it, using a real watch-page fixture instead of a hand-built input
+   * object. Site and channel rule are deliberately given DIFFERENT modes/delays so a value
+   * leaking from the wrong rule would be caught rather than accidentally matching.
+   */
+  const SITE_MODE = 'BREATHING';
+  const SITE_DELAY_SECONDS = 40;
+
+  function siteInForceConfig(overrides: Partial<ChannelConfig> = {}): ChannelConfig {
+    return withYoutube(
+      { channelMode: 'WHITELIST', channels: [channel({ channelId: ALPHA })] },
+      { siteApplies: true, siteMode: SITE_MODE, siteDelaySeconds: SITE_DELAY_SECONDS, ...overrides },
+    );
+  }
+
+  it('still lets an allowed channel play, even though the site rule is in force', () => {
+    document.body.innerHTML = WATCH_PLAYER_RESPONSE_HTML;
+    const verdict = watchChannelVerdict(
+      document,
+      withYoutube(
+        { channelMode: 'WHITELIST', channels: [channel({ channelId: PLAYER_RESPONSE_CHANNEL })] },
+        { siteApplies: true, siteMode: SITE_MODE, siteDelaySeconds: SITE_DELAY_SECONDS },
+      ),
+      { url: WATCH_URL },
+    );
+
+    expect(verdict).toEqual({ action: 'ALLOW', reason: 'listed' });
+  });
+
+  it("holds a video from a channel not on the list behind the SITE's mode and delay, not the channel rule's", () => {
+    // Fixture's channel is PLAYER_RESPONSE_CHANNEL, which is NOT on the whitelist below.
+    document.body.innerHTML = WATCH_PLAYER_RESPONSE_HTML;
+    const verdict = watchChannelVerdict(document, siteInForceConfig(), { url: WATCH_URL });
+
+    expect(verdict).toEqual({
+      action: 'BLOCK',
+      mode: SITE_MODE,
+      delaySeconds: SITE_DELAY_SECONDS,
+      source: 'site-default',
+      reason: 'not-listed',
+    });
+  });
+
+  it("holds an unidentifiable video behind the site's own rule instead of letting it through", () => {
+    document.body.innerHTML = WATCH_NOTHING_HTML;
+    const verdict = watchChannelVerdict(document, siteInForceConfig(), { url: WATCH_URL });
+
+    expect(verdict).toEqual({
+      action: 'BLOCK',
+      mode: SITE_MODE,
+      delaySeconds: SITE_DELAY_SECONDS,
+      source: 'site-default',
+      reason: 'unknown-channel',
+    });
+  });
+
+  it('lets an unidentifiable video through when the site rule is NOT in force (the mirror case)', () => {
+    document.body.innerHTML = WATCH_NOTHING_HTML;
+    const verdict = watchChannelVerdict(
+      document,
+      withYoutube(
+        { channelMode: 'WHITELIST', channels: [channel({ channelId: ALPHA })] },
+        { siteApplies: false },
+      ),
+      { url: WATCH_URL },
+    );
+
+    expect(verdict).toEqual({ action: 'ALLOW', reason: 'unknown-channel' });
   });
 });
 
@@ -227,11 +372,10 @@ describe('gray-screen mode', () => {
     document.body.innerHTML = WATCH_PLAYER_RESPONSE_HTML;
     applyGrayColor(
       document,
-      config({
-        grayScreen: true,
-        channelMode: 'WHITELIST',
-        channels: [channel({ channelId: PLAYER_RESPONSE_CHANNEL })],
-      }),
+      withYoutube(
+        { channelMode: 'WHITELIST', channels: [channel({ channelId: PLAYER_RESPONSE_CHANNEL })] },
+        { grayscale: true },
+      ),
       { url: WATCH_URL },
     );
 
@@ -242,11 +386,10 @@ describe('gray-screen mode', () => {
     document.body.innerHTML = WATCH_PLAYER_RESPONSE_HTML;
     applyGrayColor(
       document,
-      config({
-        grayScreen: true,
-        channelMode: 'WHITELIST',
-        channels: [channel({ channelId: ALPHA })],
-      }),
+      withYoutube(
+        { channelMode: 'WHITELIST', channels: [channel({ channelId: ALPHA })] },
+        { grayscale: true },
+      ),
       { url: WATCH_URL },
     );
 
@@ -259,7 +402,10 @@ describe('gray-screen mode', () => {
     document.body.innerHTML = WATCH_NOTHING_HTML;
     applyGrayColor(
       document,
-      config({ grayScreen: true, channelMode: 'WHITELIST', channels: [channel({ channelId: ALPHA })] }),
+      withYoutube(
+        { channelMode: 'WHITELIST', channels: [channel({ channelId: ALPHA })] },
+        { grayscale: true },
+      ),
       { url: WATCH_URL },
     );
 
@@ -271,11 +417,10 @@ describe('gray-screen mode', () => {
     const feedUrl = HOME_URL;
     applyGrayColor(
       document,
-      config({
-        grayScreen: true,
-        channelMode: 'WHITELIST',
-        channels: [channel({ channelId: ALPHA })],
-      }),
+      withYoutube(
+        { channelMode: 'WHITELIST', channels: [channel({ channelId: ALPHA })] },
+        { grayscale: true },
+      ),
       { url: feedUrl },
     );
 
@@ -284,15 +429,14 @@ describe('gray-screen mode', () => {
 
   it('restores full colour everywhere once the mode is switched off', () => {
     document.body.innerHTML = WATCH_PLAYER_RESPONSE_HTML;
-    const on = config({
-      grayScreen: true,
-      channelMode: 'WHITELIST',
-      channels: [channel({ channelId: PLAYER_RESPONSE_CHANNEL })],
-    });
+    const on = withYoutube(
+      { channelMode: 'WHITELIST', channels: [channel({ channelId: PLAYER_RESPONSE_CHANNEL })] },
+      { grayscale: true },
+    );
     applyGrayColor(document, on, { url: WATCH_URL });
     expect(document.documentElement.classList.contains(COLOR_CLASS)).toBe(true);
 
-    applyGrayColor(document, { ...on, grayScreen: false }, { url: WATCH_URL });
+    applyGrayColor(document, { ...on, grayscale: false }, { url: WATCH_URL });
 
     // The grayscale stylesheet is unregistered by the worker; this only has to make sure no
     // stale colour class is left behind to fight the next enable.
@@ -311,7 +455,7 @@ describe('when YouTube changes its DOM and channels stop being identifiable', ()
 
     applyChannelFilter(
       document,
-      config({ channelMode: 'WHITELIST', channels: [channel({ channelId: ALPHA })] }),
+      withYoutube({ channelMode: 'WHITELIST', channels: [channel({ channelId: ALPHA })] }),
       { warn: (message) => warnings.push(message) },
     );
 
@@ -327,7 +471,7 @@ describe('when YouTube changes its DOM and channels stop being identifiable', ()
 
     applyChannelFilter(
       document,
-      config({ channelMode: 'WHITELIST', channels: [channel({ channelId: ALPHA })] }),
+      withYoutube({ channelMode: 'WHITELIST', channels: [channel({ channelId: ALPHA })] }),
       { warn: (message) => warnings.push(message) },
     );
 
@@ -338,7 +482,7 @@ describe('when YouTube changes its DOM and channels stop being identifiable', ()
     loadFeed();
     const warnings: string[] = [];
 
-    applyChannelFilter(document, config({ channelMode: 'OFF' }), {
+    applyChannelFilter(document, withYoutube({ channelMode: 'OFF' }), {
       warn: (message) => warnings.push(message),
     });
 
@@ -358,7 +502,7 @@ describe('the degraded-detection canary on an ordinary feed', () => {
     const warnings: string[] = [];
     const result = applyChannelFilter(
       document,
-      config({ channelMode: 'WHITELIST', channels: [channel({ channelId: ALPHA })] }),
+      withYoutube({ channelMode: 'WHITELIST', channels: [channel({ channelId: ALPHA })] }),
       { warn: (message) => warnings.push(message) },
     );
     return { warnings, unidentified: result.unidentified };
@@ -386,10 +530,72 @@ describe('the degraded-detection canary on an ordinary feed', () => {
     const warnings: string[] = [];
     applyChannelFilter(
       document,
-      config({ channelMode: 'WHITELIST', channels: [channel({ channelId: ALPHA })] }),
+      withYoutube({ channelMode: 'WHITELIST', channels: [channel({ channelId: ALPHA })] }),
       { warn: (message) => warnings.push(message) },
     );
 
     expect(warnings).toEqual([]);
+  });
+});
+
+describe('a channel the user added by @handle, on a real watch page', () => {
+  /**
+   * The flagship feature inverted in live QA (2026-09-20). Typing `@veritasium` into the
+   * channel list stores `{channelId: null, handle: "veritasium"}`, but a watch page's inline
+   * data only ever yields the canonical `UC…` id, so the probe and the entry shared no axis
+   * and matched on neither. A whitelist blocked the one channel the user allowed; a
+   * blacklist blocked nothing at all.
+   */
+  const HANDLE_ONLY = channel({ handle: REAL_WATCH_ID_INLINE_HANDLE_DOM_HANDLE });
+
+  beforeEach(() => {
+    document.body.innerHTML = WATCH_ID_INLINE_HANDLE_DOM_HTML;
+  });
+
+  it('plays when the whitelist holds only its handle', () => {
+    const verdict = watchChannelVerdict(
+      document,
+      withYoutube({ channelMode: 'WHITELIST', channels: [HANDLE_ONLY] }),
+      { url: WATCH_URL },
+    );
+    expect(verdict).toEqual({ action: 'ALLOW', reason: 'listed' });
+  });
+
+  it('is interrupted when the blacklist holds only its handle', () => {
+    const verdict = watchChannelVerdict(
+      document,
+      withYoutube({
+        channelMode: 'BLACKLIST',
+        channels: [HANDLE_ONLY],
+        channelBlockMode: 'HARD_BLOCK',
+      }),
+      { url: WATCH_URL },
+    );
+    expect(verdict).toMatchObject({ action: 'BLOCK', reason: 'listed' });
+  });
+
+  it('still blocks a DIFFERENT handle under a whitelist, so the fix did not just open everything', () => {
+    const verdict = watchChannelVerdict(
+      document,
+      withYoutube({
+        channelMode: 'WHITELIST',
+        channels: [channel({ handle: 'someoneelse' })],
+        channelBlockMode: 'HARD_BLOCK',
+      }),
+      { url: WATCH_URL },
+    );
+    expect(verdict).toMatchObject({ action: 'BLOCK', reason: 'not-listed' });
+  });
+
+  it('matches by id too, so an entry added from a watch page keeps working', () => {
+    const verdict = watchChannelVerdict(
+      document,
+      withYoutube({
+        channelMode: 'WHITELIST',
+        channels: [channel({ channelId: REAL_WATCH_ID_INLINE_HANDLE_DOM_CHANNEL_ID })],
+      }),
+      { url: WATCH_URL },
+    );
+    expect(verdict).toEqual({ action: 'ALLOW', reason: 'listed' });
   });
 });

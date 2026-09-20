@@ -1,5 +1,7 @@
 import { useState } from 'react';
-import type { ScheduleOverride, SiteRule } from '../../core/settingsSchema';
+import { gateDefinition, platformForDomain } from '../../core/platforms';
+import type { GateId, HideId, Platform } from '../../core/platforms';
+import type { GateSetting, ScheduleOverride, SiteRule } from '../../core/settingsSchema';
 import {
   DAILY_LIMIT_MAX_MINUTES,
   DAILY_LIMIT_MIN_MINUTES,
@@ -8,12 +10,14 @@ import {
   DELAY_MIN_SECONDS,
   DELAY_PRESETS,
 } from '../../core/settingsSchema';
-import type { BlockMode } from '../../core/types';
-import { MODE_LABELS } from '../../core/types';
+import type { BlockMode, SiteMode } from '../../core/types';
+import { isBlockMode, MODE_LABELS, SITE_MODE_LABELS } from '../../core/types';
 import { formatMinuteOfDay } from '../../ui/format';
-import { Button, Card, Toggle } from '../../ui/components';
+import { Button, Card, Chip, Toggle } from '../../ui/components';
+import { ChannelListEditor } from './ChannelListEditor';
 
-const MODES: BlockMode[] = ['HARD_BLOCK', 'DELAY', 'BREATHING'];
+const SITE_MODES: SiteMode[] = ['ALLOW', 'HARD_BLOCK', 'DELAY', 'BREATHING'];
+const GATE_BLOCK_MODES: BlockMode[] = ['HARD_BLOCK', 'DELAY', 'BREATHING'];
 const DAY_LABELS: { iso: number; label: string }[] = [
   { iso: 1, label: 'Mon' },
   { iso: 2, label: 'Tue' },
@@ -42,11 +46,11 @@ function timeValueToMinutes(value: string): number | null {
   return clamp(h * 60 + m, 0, 1439);
 }
 
-function modePicker(value: BlockMode, onChange: (mode: BlockMode) => void, idPrefix: string) {
+function sitePicker(value: SiteMode, onChange: (mode: SiteMode) => void, idPrefix: string) {
   return (
     <select
       value={value}
-      onChange={(e) => onChange(e.target.value as BlockMode)}
+      onChange={(e) => onChange(e.target.value as SiteMode)}
       aria-label={`${idPrefix} mode`}
       style={{
         padding: '8px 10px',
@@ -57,40 +61,21 @@ function modePicker(value: BlockMode, onChange: (mode: BlockMode) => void, idPre
         fontSize: 13,
       }}
     >
-      {MODES.map((m) => (
+      {SITE_MODES.map((m) => (
         <option key={m} value={m}>
-          {MODE_LABELS[m]}
+          {SITE_MODE_LABELS[m]}
         </option>
       ))}
     </select>
   );
 }
 
-function delayPicker(
-  value: number,
-  onChange: (seconds: number) => void,
-  idPrefix: string,
-) {
+function delayPicker(value: number, onChange: (seconds: number) => void, idPrefix: string) {
   const isPreset = (DELAY_PRESETS as readonly number[]).includes(value);
   return (
     <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
       {DELAY_PRESETS.map((preset) => (
-        <button
-          key={preset}
-          type="button"
-          onClick={() => onChange(preset)}
-          style={{
-            padding: '6px 12px',
-            borderRadius: 999,
-            border: '1px solid var(--nudge-outline)',
-            background: value === preset ? 'var(--nudge-primary)' : 'transparent',
-            color: value === preset ? 'var(--nudge-on-primary)' : 'var(--nudge-on-surface)',
-            fontSize: 12,
-            cursor: 'pointer',
-          }}
-        >
-          {preset}s
-        </button>
+        <Chip key={preset} label={`${preset}s`} active={value === preset} onClick={() => onChange(preset)} />
       ))}
       <label style={{ fontSize: 12, color: 'var(--nudge-on-surface-variant)' }}>
         Custom
@@ -122,6 +107,143 @@ function delayPicker(
   );
 }
 
+/**
+ * A daily-minutes budget: "No limit" + presets + a custom field. Shared by the site's own
+ * Daily Time Limit and every feature gate's budget — one visual/behavioural pattern
+ * instead of duplicating it once per gate.
+ */
+function LimitPicker({
+  value,
+  onChange,
+  idPrefix,
+}: {
+  value: number | null;
+  onChange: (minutes: number | null) => void;
+  idPrefix: string;
+}) {
+  const isPreset = (DAILY_LIMIT_PRESETS as readonly number[]).includes(value ?? -1);
+  return (
+    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+      <Chip label="No limit" active={value === null} onClick={() => onChange(null)} />
+      {DAILY_LIMIT_PRESETS.map((preset) => (
+        <Chip
+          key={preset}
+          label={preset < 60 ? `${preset}m` : `${preset / 60}h`}
+          active={value === preset}
+          onClick={() => onChange(preset)}
+        />
+      ))}
+      <label style={{ fontSize: 12, color: 'var(--nudge-on-surface-variant)' }}>
+        Custom
+        <input
+          type="number"
+          aria-label={`${idPrefix} custom daily limit minutes`}
+          min={DAILY_LIMIT_MIN_MINUTES}
+          max={DAILY_LIMIT_MAX_MINUTES}
+          value={isPreset || value === null ? '' : value}
+          placeholder={value === null ? '—' : String(value)}
+          onChange={(e) => {
+            const parsed = Number(e.target.value);
+            if (e.target.value !== '' && Number.isFinite(parsed)) {
+              onChange(clamp(parsed, DAILY_LIMIT_MIN_MINUTES, DAILY_LIMIT_MAX_MINUTES));
+            }
+          }}
+          style={{
+            width: 64,
+            marginLeft: 6,
+            padding: '6px 8px',
+            borderRadius: 8,
+            border: '1px solid var(--nudge-outline)',
+            background: 'var(--nudge-background)',
+            color: 'var(--nudge-on-surface)',
+          }}
+        />
+      </label>
+    </div>
+  );
+}
+
+/**
+ * One feature gate row: name + description from the registry, a mode select (incl. Off),
+ * a delay picker shown only for Delay/Breathing, and a daily budget — everything a gate
+ * carries per the ext-13 §2 `GateSetting` shape. Rendered generically off
+ * `platformById(platform).gates` so a new platform/gate needs no new UI code.
+ */
+function GateRow({
+  platform,
+  gateId,
+  gate,
+  onChange,
+}: {
+  platform: Platform;
+  gateId: GateId;
+  gate: GateSetting;
+  onChange: (next: GateSetting) => void;
+}) {
+  const definition = gateDefinition(platform, gateId);
+  if (definition === null) return null;
+
+  const showDelay = gate.mode === 'DELAY' || gate.mode === 'BREATHING';
+  const showBudget = gate.mode !== 'HARD_BLOCK';
+
+  return (
+    <div
+      style={{
+        padding: '12px 0',
+        borderTop: '1px solid var(--nudge-surface-variant)',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 10,
+      }}
+    >
+      <div>
+        <p style={{ margin: 0, fontSize: 14, fontWeight: 600 }}>{definition.label}</p>
+        <p style={{ margin: '2px 0 0', fontSize: 12, color: 'var(--nudge-on-surface-variant)' }}>
+          {definition.description}
+        </p>
+      </div>
+
+      <select
+        value={gate.mode}
+        aria-label={`${definition.label} mode`}
+        onChange={(e) =>
+          onChange({ ...gate, mode: e.target.value as GateSetting['mode'] })
+        }
+        style={{
+          alignSelf: 'flex-start',
+          padding: '8px 10px',
+          borderRadius: 8,
+          border: '1px solid var(--nudge-outline)',
+          background: 'var(--nudge-background)',
+          color: 'var(--nudge-on-surface)',
+          fontSize: 13,
+        }}
+      >
+        <option value="OFF">Off</option>
+        {GATE_BLOCK_MODES.map((m) => (
+          <option key={m} value={m}>
+            {MODE_LABELS[m]}
+          </option>
+        ))}
+      </select>
+
+      {showDelay && delayPicker(gate.delaySeconds, (delaySeconds) => onChange({ ...gate, delaySeconds }), definition.id)}
+
+      {showBudget ? (
+        <LimitPicker
+          value={gate.dailyLimitMinutes}
+          onChange={(dailyLimitMinutes) => onChange({ ...gate, dailyLimitMinutes })}
+          idPrefix={definition.id}
+        />
+      ) : (
+        <p style={{ margin: 0, fontSize: 12, color: 'var(--nudge-on-surface-variant)' }}>
+          Not used with Hard Block — always gated, so there is no time to budget.
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function RuleEditor({
   rule,
   onSave,
@@ -135,11 +257,8 @@ export function RuleEditor({
 }) {
   const [draft, setDraft] = useState<SiteRule>(rule);
 
-  const limitPreset = (DAILY_LIMIT_PRESETS as readonly number[]).includes(
-    draft.dailyLimitMinutes ?? -1,
-  );
-
   const schedule: ScheduleOverride | null = draft.schedule;
+  const platform = platformForDomain(draft.domain);
 
   function setSchedule(patch: Partial<ScheduleOverride>) {
     setDraft((d) => ({
@@ -172,6 +291,22 @@ export function RuleEditor({
         ? schedule.days.filter((d) => d !== iso)
         : [...(schedule?.days ?? []), iso],
     });
+  }
+
+  function setGate(gateId: GateId, next: GateSetting) {
+    setDraft((d) =>
+      d.features === null
+        ? d
+        : { ...d, features: { ...d.features, gates: { ...d.features.gates, [gateId]: next } } },
+    );
+  }
+
+  function setHide(hideId: HideId, hidden: boolean) {
+    setDraft((d) =>
+      d.features === null
+        ? d
+        : { ...d, features: { ...d.features, hides: { ...d.features.hides, [hideId]: hidden } } },
+    );
   }
 
   return (
@@ -212,9 +347,26 @@ export function RuleEditor({
           />
         </div>
 
-        <Card title="Mode">{modePicker(draft.mode, (mode) => setDraft((d) => ({ ...d, mode })), 'default')}</Card>
+        <Card title="Default behaviour">
+          {sitePicker(draft.mode, (mode) => setDraft((d) => ({ ...d, mode })), 'default')}
+          {draft.mode === 'ALLOW' && (
+            <p style={{ margin: '10px 0 0', fontSize: 12, color: 'var(--nudge-on-surface-variant)' }}>
+              The site opens normally. Use a daily limit, grayscale or site features to shape it.
+            </p>
+          )}
+        </Card>
 
-        <Card title="Delay">{delayPicker(draft.delaySeconds, (delaySeconds) => setDraft((d) => ({ ...d, delaySeconds })), 'default')}</Card>
+        <Card title="Pause length">
+          {isBlockMode(draft.mode) && draft.mode !== 'HARD_BLOCK' ? (
+            delayPicker(draft.delaySeconds, (delaySeconds) => setDraft((d) => ({ ...d, delaySeconds })), 'default')
+          ) : (
+            <p style={{ margin: 0, fontSize: 13, color: 'var(--nudge-on-surface-variant)' }}>
+              {draft.mode === 'HARD_BLOCK'
+                ? 'Not used with Hard Block — the site never opens, so there is nothing to pause before.'
+                : 'Not used with Allow — the site opens normally. Switch to Delay or Breathing to set a pause.'}
+            </p>
+          )}
+        </Card>
 
         <Card title="Daily Time Limit">
           {draft.mode === 'HARD_BLOCK' ? (
@@ -224,90 +376,25 @@ export function RuleEditor({
             // minutes", which is not what it does.
             <p style={{ margin: 0, fontSize: 13, color: 'var(--nudge-on-surface-variant)' }}>
               Not used with Hard Block — the site is always blocked, so there is no time to
-              budget. Switch to Delay or Breathing to set a daily limit.
+              budget. Switch to Allow, Delay or Breathing to set a daily limit.
             </p>
           ) : (
-          <>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-            <button
-              type="button"
-              onClick={() => setDraft((d) => ({ ...d, dailyLimitMinutes: null }))}
-              style={{
-                padding: '6px 12px',
-                borderRadius: 999,
-                border: '1px solid var(--nudge-outline)',
-                background: draft.dailyLimitMinutes === null ? 'var(--nudge-primary)' : 'transparent',
-                color:
-                  draft.dailyLimitMinutes === null
-                    ? 'var(--nudge-on-primary)'
-                    : 'var(--nudge-on-surface)',
-                fontSize: 12,
-                cursor: 'pointer',
-              }}
-            >
-              No limit
-            </button>
-            {DAILY_LIMIT_PRESETS.map((preset) => (
-              <button
-                key={preset}
-                type="button"
-                onClick={() => setDraft((d) => ({ ...d, dailyLimitMinutes: preset }))}
-                style={{
-                  padding: '6px 12px',
-                  borderRadius: 999,
-                  border: '1px solid var(--nudge-outline)',
-                  background: draft.dailyLimitMinutes === preset ? 'var(--nudge-primary)' : 'transparent',
-                  color:
-                    draft.dailyLimitMinutes === preset
-                      ? 'var(--nudge-on-primary)'
-                      : 'var(--nudge-on-surface)',
-                  fontSize: 12,
-                  cursor: 'pointer',
-                }}
-              >
-                {preset < 60 ? `${preset}m` : `${preset / 60}h`}
-              </button>
-            ))}
-            <label style={{ fontSize: 12, color: 'var(--nudge-on-surface-variant)' }}>
-              Custom
-              <input
-                type="number"
-                aria-label="Custom daily limit minutes"
-                min={DAILY_LIMIT_MIN_MINUTES}
-                max={DAILY_LIMIT_MAX_MINUTES}
-                value={limitPreset || draft.dailyLimitMinutes === null ? '' : draft.dailyLimitMinutes}
-                placeholder={draft.dailyLimitMinutes === null ? '—' : String(draft.dailyLimitMinutes)}
-                onChange={(e) => {
-                  const parsed = Number(e.target.value);
-                  if (e.target.value !== '' && Number.isFinite(parsed)) {
-                    setDraft((d) => ({
-                      ...d,
-                      dailyLimitMinutes: clamp(parsed, DAILY_LIMIT_MIN_MINUTES, DAILY_LIMIT_MAX_MINUTES),
-                    }));
-                  }
-                }}
-                style={{
-                  width: 64,
-                  marginLeft: 6,
-                  padding: '6px 8px',
-                  borderRadius: 8,
-                  border: '1px solid var(--nudge-outline)',
-                  background: 'var(--nudge-background)',
-                  color: 'var(--nudge-on-surface)',
-                }}
+            <>
+              <LimitPicker
+                value={draft.dailyLimitMinutes}
+                onChange={(dailyLimitMinutes) => setDraft((d) => ({ ...d, dailyLimitMinutes }))}
+                idPrefix="default"
               />
-            </label>
-          </div>
-          {draft.dailyLimitMinutes !== null && (
-            <div style={{ marginTop: 12 }}>
-              <Toggle
-                checked={draft.showTimeRemaining}
-                onChange={(showTimeRemaining) => setDraft((d) => ({ ...d, showTimeRemaining }))}
-                label="Show time remaining"
-              />
-            </div>
-          )}
-          </>
+              {draft.dailyLimitMinutes !== null && (
+                <div style={{ marginTop: 12 }}>
+                  <Toggle
+                    checked={draft.showTimeRemaining}
+                    onChange={(showTimeRemaining) => setDraft((d) => ({ ...d, showTimeRemaining }))}
+                    label="Show time remaining"
+                  />
+                </div>
+              )}
+            </>
           )}
         </Card>
 
@@ -399,13 +486,90 @@ export function RuleEditor({
                   Mode + delay inside the window
                 </p>
                 <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
-                  {modePicker(schedule.mode, (mode) => setSchedule({ mode }), 'scheduled')}
-                  {delayPicker(schedule.delaySeconds, (delaySeconds) => setSchedule({ delaySeconds }), 'scheduled')}
+                  {sitePicker(schedule.mode, (mode) => setSchedule({ mode }), 'scheduled')}
+                  {isBlockMode(schedule.mode) &&
+                    schedule.mode !== 'HARD_BLOCK' &&
+                    delayPicker(schedule.delaySeconds, (delaySeconds) => setSchedule({ delaySeconds }), 'scheduled')}
                 </div>
               </div>
             </div>
           )}
         </Card>
+
+        <Card title="Grayscale this site">
+          <Toggle
+            checked={draft.grayscale}
+            onChange={(grayscale) => setDraft((d) => ({ ...d, grayscale }))}
+            label="Turn on grayscale"
+          />
+          <p style={{ margin: '8px 0 0', fontSize: 13, color: 'var(--nudge-on-surface-variant)' }}>
+            Flash-free, all pages of this site.
+          </p>
+        </Card>
+
+        {draft.features !== null && platform !== null && (
+          <Card title="Site features">
+            {platform.note !== null && (
+              <p style={{ margin: '0 0 14px', fontSize: 13, color: 'var(--nudge-on-surface-variant)' }}>
+                {platform.note}
+              </p>
+            )}
+
+            {platform.gates.length > 0 && (
+              <div style={{ marginBottom: platform.hides.length > 0 ? 18 : 0 }}>
+                {platform.gates.map((gateDef) => {
+                  const gate = draft.features!.gates[gateDef.id];
+                  if (gate === undefined) return null;
+                  return (
+                    <GateRow
+                      key={gateDef.id}
+                      platform={platform.id}
+                      gateId={gateDef.id}
+                      gate={gate}
+                      onChange={(next) => setGate(gateDef.id, next)}
+                    />
+                  );
+                })}
+              </div>
+            )}
+
+            {platform.hides.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {platform.hides.map((hideDef) => {
+                  const hidden = draft.features!.hides[hideDef.id] ?? false;
+                  return (
+                    <div key={hideDef.id}>
+                      <Toggle
+                        checked={hidden}
+                        onChange={(next) => setHide(hideDef.id, next)}
+                        label={hideDef.label}
+                      />
+                      <p
+                        style={{
+                          margin: '4px 0 0 30px',
+                          fontSize: 12,
+                          color: 'var(--nudge-on-surface-variant)',
+                        }}
+                      >
+                        {hideDef.description}
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </Card>
+        )}
+
+        {draft.features?.youtube !== undefined && (
+          <ChannelListEditor
+            youtube={draft.features.youtube}
+            siteMode={draft.mode}
+            onChange={(youtube) =>
+              setDraft((d) => (d.features === null ? d : { ...d, features: { ...d.features, youtube } }))
+            }
+          />
+        )}
 
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           {onDelete ? (
