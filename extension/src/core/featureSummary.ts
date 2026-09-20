@@ -15,7 +15,7 @@
  */
 
 import { MODE_LABELS } from './types';
-import { gateDefinition, platformById, type HideId } from './platforms';
+import { platformById, type HideId } from './platforms';
 import type { SiteRule } from './settingsSchema';
 
 /** Shown on a card whose rule has no effect whatsoever. */

@@ -27,6 +27,8 @@
  * fails CI rather than users (ext-03 §6 pattern 4).
  */
 
+import type { HideId } from '../core/platforms';
+
 /** YouTube surfaces that get their own selector map — one breaking doesn't break the rest. */
 export type YoutubePageType =
   | 'home'
@@ -425,16 +427,28 @@ export const CHANNEL_HIDDEN_CLASS = 'nudge-channel-hidden';
 
 /* ====================================================== v1.1: hide toggles */
 
-/** The independent Unhook-parity toggles (settings keys, so they can be looked up directly). */
-export type HideToggle =
-  | 'hideHomeFeed'
-  | 'hideSidebarRecs'
-  | 'hideEndScreen'
-  | 'hideComments';
+/**
+ * The independent Unhook-parity toggles, named by their id in the PLATFORM REGISTRY
+ * (`core/platforms.ts`) rather than by a settings key of their own.
+ *
+ * The registry is what the rule editor renders from and what validates a stored settings
+ * blob, so anchoring the selector table to the same ids is what guarantees a toggle the
+ * user can see is a toggle this file can actually enforce — a surface here with an id the
+ * registry does not define would be unreachable, and an id the registry defines with no
+ * surface here would be a switch wired to nothing.
+ *
+ * `shortsShelf` is deliberately absent: Shorts hiding has its own per-page-type surface
+ * maps and its own degraded-mode canary (`SHORTS_SURFACES`), applied by
+ * `youtube.ts#applyShortsHiding`.
+ */
+export type HideToggle = Extract<
+  HideId,
+  'homeFeed' | 'sidebarRecs' | 'endScreen' | 'comments'
+>;
 
 export interface HideSurface {
   id: string;
-  /** The settings flag that turns this surface off. */
+  /** The registry hide id that turns this surface on. */
   toggle: HideToggle;
   /** Page types the surface exists on; elsewhere we don't even look for it. */
   pages: YoutubePageType[];
@@ -452,13 +466,18 @@ export interface HideSurface {
 }
 
 /**
- * Selector sets from ext-03 §5 (`tobiasdalhof/sanersocialmedia` + DF Tube), per page type
- * so one breaking upstream doesn't take the others with it.
+ * Selector sets from ext-03 §5 (`tobiasdalhof/sanersocialmedia` + DF Tube), strengthened
+ * with the ImprovedTube (`code-charity/youtube`) rungs catalogued in ext-12 §F, per page
+ * type so one breaking upstream doesn't take the others with it.
+ *
+ * A rung is only worth adding when it can match something the existing chain cannot —
+ * a second spelling of the same node is noise that makes the chain harder to audit and
+ * slower to fall through. Every addition below names the surface it rescues.
  */
 export const HIDE_SURFACES: HideSurface[] = [
   {
     id: 'home-feed',
-    toggle: 'hideHomeFeed',
+    toggle: 'homeFeed',
     pages: ['home'],
     chain: [
       {
@@ -467,33 +486,56 @@ export const HIDE_SURFACES: HideSurface[] = [
       },
       { selector: 'ytd-browse[page-subtype="home"] #primary' },
       { selector: '#feed', note: 'DF Tube hide_feed.css target.' },
+      {
+        selector: 'ytd-browse[page-subtype="home"] #content',
+        note:
+          "ImprovedTube general.css (ext-12 §F) hides `#content` gated on pathname '/'. " +
+          'Our `pages: [home]` scoping IS that gate, so this is the same rung — last, ' +
+          'because it takes the page wrapper rather than just the grid inside it.',
+      },
     ],
   },
   {
     id: 'sidebar-recs',
-    toggle: 'hideSidebarRecs',
+    toggle: 'sidebarRecs',
     pages: ['watch'],
     chain: [
       { selector: '#secondary #related', note: 'Watch-page sidebar recommendations.' },
       { selector: '#related' },
+      {
+        selector: 'ytd-watch-next-secondary-results-renderer #items',
+        note:
+          'ImprovedTube sidebar.css (ext-12 §F). Element-anchored, so it survives the day ' +
+          'the `#related` id is renamed — which the two rungs above both depend on.',
+      },
     ],
   },
   {
     id: 'end-screen',
-    toggle: 'hideEndScreen',
+    toggle: 'endScreen',
     pages: ['watch', 'shorts'],
     // These are DIFFERENT elements shown at the same time, not alternatives: the grid of
-    // suggested videos AND the creator's own end-cards. First-match-wins left the cards
-    // on screen (live QA, 2026-07-26).
+    // suggested videos AND the creator's own end-cards AND the info-cards button.
+    // First-match-wins left the cards on screen (live QA, 2026-07-26).
     matchAll: true,
     chain: [
       { selector: '.ytp-endscreen-content', note: 'End-of-video suggestion grid (DF Tube).' },
+      {
+        selector: '.html5-endscreen',
+        note: 'ImprovedTube player.css (ext-12 §F): the end-screen container itself.',
+      },
       { selector: '.ytp-ce-element', note: 'Creator end-cards; coexists with the grid.' },
+      {
+        selector: '.ytp-cards-button',
+        note:
+          'ImprovedTube player.css (ext-12 §F): the in-player info-cards teaser. A third ' +
+          'element of the same surface, not a spelling of the other two.',
+      },
     ],
   },
   {
     id: 'comments',
-    toggle: 'hideComments',
+    toggle: 'comments',
     pages: ['watch', 'shorts'],
     chain: [
       {
@@ -501,6 +543,12 @@ export const HIDE_SURFACES: HideSurface[] = [
         note:
           'The WHOLE section. Targeting only `#comments #contents` left the "N Comments / ' +
           'Sort by" header behind as ~109px of dead chrome (live QA, 2026-07-26).',
+      },
+      {
+        selector: 'ytd-comments',
+        note:
+          'ImprovedTube comments.css (ext-12 §F) anchors on this element. Tag-anchored, so ' +
+          'it outlives a rename of the `#comments` id the rung above needs.',
       },
       { selector: '#watch-discussion', note: 'DF Tube hide_comments.css target.' },
       { selector: '#comments #contents', note: 'Last resort: the list without its header.' },

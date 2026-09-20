@@ -5,11 +5,12 @@
  * `ChannelEntry` (`parseChannelInput`), matching a channel the content script observed
  * against the stored list (`findChannel`/`isChannelListed`/`sameChannel`), and the actual
  * ALLOW/BLOCK decision for a channel-mode rule (`decideChannel`) plus its gray-screen
- * cousin (`shouldShowInColor`). Spec: ext-03-youtube-techniques.md §3 (channel detection)
- * and §4 (whitelist/blacklist modes).
+ * cousin (`shouldShowInColor`) and the watch-page gate that layers the SITE rule behind
+ * them (`decideWatchGate`). Spec: ext-03-youtube-techniques.md §3 (channel detection) and
+ * §4 (whitelist/blacklist modes); ext-13 §3 (channel allowlist as a site default).
  */
 
-import type { BlockMode } from './types';
+import { isBlockMode, type BlockMode, type SiteMode } from './types';
 import type { ChannelEntry, ChannelListMode } from './settingsSchema';
 
 // ---------------------------------------------------------------------------------------
@@ -366,4 +367,133 @@ export function removeChannel(
   entry: ChannelEntry,
 ): ChannelEntry[] {
   return list.filter((existing) => !sameChannel(existing, entry));
+}
+
+// ---------------------------------------------------------------------------------------
+// The watch-page gate: the channel list AS A SITE DEFAULT
+// ---------------------------------------------------------------------------------------
+
+/**
+ * The block mode a site rule resolves to when it is in force, or null when it is not.
+ *
+ * Mirrors `applies.appliedBlockMode` for callers that hold the already-resolved pair
+ * (`siteMode`, `siteApplies`) rather than a whole `AppliesResult` — the content script is
+ * exactly that caller, because the worker resolves the rule and sends it the answer. The
+ * ALLOW-but-applicable case can only be an exhausted daily budget, which cannot be waited
+ * out before midnight and is therefore a Hard Block, same as everywhere else.
+ */
+export function siteFallbackMode(siteMode: SiteMode, siteApplies: boolean): BlockMode | null {
+  if (!siteApplies) return null;
+  return isBlockMode(siteMode) ? siteMode : 'HARD_BLOCK';
+}
+
+/** Which rule supplied the mode a gated video is held behind. Drives the copy. */
+export type WatchGateSource = 'channel-rule' | 'site-default';
+
+export type WatchGateVerdict =
+  | {
+      action: 'ALLOW';
+      reason: 'mode-off' | 'not-listed' | 'listed' | 'unknown-channel';
+    }
+  | {
+      action: 'BLOCK';
+      mode: BlockMode;
+      delaySeconds: number;
+      source: WatchGateSource;
+      /** Why: a channel we identified and disallowed, or one we could not identify at all. */
+      reason: 'listed' | 'not-listed' | 'unknown-channel';
+    };
+
+export interface WatchGateInput {
+  mode: ChannelListMode;
+  channels: readonly ChannelEntry[];
+  probe: ChannelProbe;
+  /** The site rule's mode right now, schedule already applied. */
+  siteMode: SiteMode;
+  /** Whether the site rule is in force right now (`core/applies.ts`). */
+  siteApplies: boolean;
+  siteDelaySeconds: number;
+  /** The mode a disallowed channel gets when the SITE rule is not in force. */
+  channelBlockMode: BlockMode;
+  channelDelaySeconds: number;
+}
+
+/**
+ * The verdict for one watch page — `decideChannel` plus the site rule standing behind it.
+ *
+ * This is the "block YouTube, except these channels" case, and the only place where the
+ * channel list stops being a standalone feature and becomes the site's exception list.
+ * Two things change once the youtube.com rule is IN FORCE and the list is a WHITELIST:
+ *
+ *  1. A disallowed channel is held behind the SITE's mode and delay, not the channel
+ *     rule's. The user already answered "what does blocked mean for this site"; a second,
+ *     quieter answer to the same question is how a whitelist ends up weaker than the rule
+ *     its owner thought they wrote.
+ *
+ *  2. AN UNIDENTIFIED CHANNEL FAILS **CLOSED**, and only here.
+ *     Everywhere else — including this module's `decideChannel` — an unknown channel is
+ *     allowed, because a hard whitelist that fails shut turns one rotted selector into
+ *     "all of YouTube is blocked". That reasoning does not survive contact with this case:
+ *     the user's stated default for this site is ALREADY "blocked", so "all of YouTube is
+ *     blocked" is not a regression, it is the rule. Failing OPEN here would instead let a
+ *     rotted selector silently defeat the rule with no signal at all — the site someone
+ *     asked to be kept out of quietly opens. The pause and the Escape Hatch both still
+ *     exist, so being wrong costs seconds, not a locked door, and the console canary is
+ *     still emitted either way so detection rot stays observable.
+ *
+ * When the site rule is NOT in force (an ALLOW site still under budget) nothing changes:
+ * the channel rule supplies the mode, and an unknown channel is allowed with its own
+ * distinct `unknown-channel` reason.
+ */
+export function decideWatchGate(input: WatchGateInput): WatchGateVerdict {
+  const {
+    mode,
+    channels,
+    probe,
+    siteMode,
+    siteApplies,
+    siteDelaySeconds,
+    channelBlockMode,
+    channelDelaySeconds,
+  } = input;
+
+  if (mode === 'OFF') return { action: 'ALLOW', reason: 'mode-off' };
+
+  const fallbackMode = siteFallbackMode(siteMode, siteApplies);
+  // The site default only takes over for a WHITELIST. A blacklist names what to keep OUT,
+  // so it has no opinion about a video it does not name and cannot stand in for the site's
+  // own rule.
+  const siteDefault = mode === 'WHITELIST' && fallbackMode !== null;
+
+  const blockBySite = (reason: 'not-listed' | 'unknown-channel'): WatchGateVerdict => ({
+    action: 'BLOCK',
+    mode: fallbackMode as BlockMode,
+    delaySeconds: siteDelaySeconds,
+    source: 'site-default',
+    reason,
+  });
+
+  const blockByChannelRule = (reason: 'listed' | 'not-listed'): WatchGateVerdict => ({
+    action: 'BLOCK',
+    mode: channelBlockMode,
+    delaySeconds: channelDelaySeconds,
+    source: 'channel-rule',
+    reason,
+  });
+
+  if (!probeHasIdentifier(probe)) {
+    return siteDefault
+      ? blockBySite('unknown-channel')
+      : { action: 'ALLOW', reason: 'unknown-channel' };
+  }
+
+  const listed = isChannelListed(channels, probe);
+
+  if (mode === 'BLACKLIST') {
+    return listed ? blockByChannelRule('listed') : { action: 'ALLOW', reason: 'not-listed' };
+  }
+
+  // mode === 'WHITELIST'
+  if (listed) return { action: 'ALLOW', reason: 'listed' };
+  return siteDefault ? blockBySite('not-listed') : blockByChannelRule('not-listed');
 }

@@ -123,7 +123,19 @@ unit-testable, exactly as the Android domain layer is.
    `allow` rules above the site redirect, while `/`, `/feed/*`, `/results` and `/shorts/`
    stay redirected. A channel identifier containing anything outside `[A-Za-z0-9_.-]` is
    SKIPPED rather than interpolated, so a hand-edited settings blob cannot inject a pattern
-   that allows all of YouTube.
+   that allows all of YouTube. **An EXHAUSTED daily limit compiles no allow-rules**: a limit
+   budgets how MUCH of the site, a channel list restricts WHAT, so once the budget is spent
+   there is no allowance left to carve out of — otherwise "1 hour of YouTube a day" would be
+   unlimited for allowed channels and the limit would only ever bite the content the user
+   asked for less of.
+1d. **The priority ladder**: site redirect 1 < gate redirect 2 < channel allow 3 < temp allow 4.
+   Rung 4 above rung 2 is deliberate — a pause completed ON a gate surface must not bounce
+   straight back into that gate's redirect. The cost is that a site-level grant also opens
+   the site's gate surfaces at the network layer for the grant window, which is acceptable
+   ONLY because every gate surface has a content script that gates it in-page on full loads
+   too. So `GET_SITE_CONFIG` must never resolve a gate to OFF because a site temp-allow is
+   live: the gate's own mode stands, and only a pause completed on the gate surface
+   satisfies the gate.
 2. The block page asks the worker (`GET_BLOCK_CONTEXT`); the **engine** decides which of the
    three to render. The page never decides.
 3. Completing a Delay/Breathing pause → `COMPLETE_PAUSE` → a **session** allow-rule at a
@@ -309,9 +321,14 @@ xvfb), scoped with `paths: ['extension/**']`. The Android workflow carries the m
   HSTS preload list, so `http://` is force-upgraded before the resolver rule applies and a
   plain-HTTP server answers ERR_SSL_PROTOCOL_ERROR. The fixture generates a throwaway
   self-signed cert per run (never committed) and Chrome runs with --ignore-certificate-errors.
-- **Each hiding feature owns its own CSS class.** Shorts hiding, the Unhook toggles and the
-  channel filter use three different classes: with one shared class, turning any of them
-  off would un-hide the others' elements.
+- **Each hiding feature owns its own CSS class — OR one reconcile pass, proven by test.**
+  Shorts hiding, the Unhook toggles and the channel filter use three different classes:
+  with one shared class, turning any of them off would un-hide the others' elements. The
+  platform scripts take the equivalent route (`hideClassFor(id)`, one class per hide id)
+  and additionally recompute the FULL desired set every pass, so a toggle flipped off is
+  revealed on the next pass without anyone tracking what was hidden. Either design is fine;
+  what is not optional is an explicit test that turning one feature off leaves the others
+  hidden.
 - **ENGINE INVARIANT: if any rule applies, the verdict is a BLOCK.** ALLOW means "no rule
   applies here" and nothing else. DNR has already redirected by the time the engine runs, so
   an ALLOW while a rule still applies is not a harmless no-op — it bounces the user back to
@@ -387,11 +404,21 @@ xvfb), scoped with `paths: ['extension/**']`. The Android workflow carries the m
   `core/platforms.ts` carries a `note` saying so, and the dashboard prints it — an honest
   limitation beats a feature the code does not actually deliver. Reel tiles on a profile
   grid are likewise out of reach.
-- **`content/youtube.ts` has not been migrated onto `content/spaNav.ts`.** It predates the
-  shared module and its nav handling is entangled with the channel-freshness settle
-  machinery (the stale-inline-data and settle-window fixes below); migrating it would risk
-  regressing a P0-class bug for no user-visible gain. Do it as its own change, with the
-  YouTube e2e specs as the gate.
+- **YouTube does not yet share the platform modules.** `content/youtube.ts` keeps its own
+  copy of the SPA-navigation layer (`content/spaNav.ts`), the interstitial builder
+  (`content/overlay.ts`, including `BAIL_LABEL` / `BREATH_IN_MS`), and `IDLE_SITE_CONFIG`.
+  The overlay migration was attempted during this release and backed out deliberately: the
+  overlay itself is pure DOM and the swap was byte-identical and green, but YouTube's
+  *caller* is entangled with the channel-freshness settle window that exists to stop a
+  documented P0 (a false interstitial on a channel the user explicitly allowed, for 3-5s
+  after a watch→watch hop), and that regression is LIVE-ONLY — no fixture reproduces the
+  mutation storm that causes it. The risk is not worth a refactor with zero user-visible
+  gain. Do it as its own isolated change, gated on `e2e/youtubeAdvanced.spec.ts`, which is
+  the only automated guard for the settle window.
+- **Five sourced YouTube hides are researched but unshipped**: merch shelf, live-chat
+  sidebar, subscribe button, annotations, and mix/radio playlists (ext-12 §F has an
+  ImprovedTube selector for each). They need registry ids and selector rungs; nothing about
+  them is hard, they were simply out of scope for v0.2.0.
 - Reddit ships no hide toggles: the only sourced technique is a generic whole-`main`
   container hide, which is what the home gate already does properly. LinkedIn ships one.
   Shipping a toggle we cannot implement reliably would be a promise the code does not keep.

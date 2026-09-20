@@ -3,8 +3,9 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BlockContext } from '../../src/core/protocol';
 import type { BlockDecision } from '../../src/core/types';
+import type { ChannelEntry } from '../../src/core/settingsSchema';
 import { formatNextPass } from '../../src/ui/format';
-import { BlockPage, isNavigableTarget } from '../../src/entrypoints/blocked/BlockPage';
+import { BlockPage, channelHomeUrl, isNavigableTarget } from '../../src/entrypoints/blocked/BlockPage';
 
 const TARGET = 'https://distracting.example/feed';
 
@@ -34,6 +35,19 @@ function makeContext(overrides: Partial<BlockContext> = {}): BlockContext {
     passNextAvailableMs: 0,
     strictModeEnabled: false,
     tempAllowMinutes: 10,
+    gateId: null,
+    gateLabel: null,
+    allowedChannels: [],
+    ...overrides,
+  };
+}
+
+function channel(overrides: Partial<ChannelEntry> = {}): ChannelEntry {
+  return {
+    channelId: null,
+    handle: null,
+    displayName: 'Some Channel',
+    addedAt: 0,
     ...overrides,
   };
 }
@@ -442,5 +456,205 @@ describe('Escape Hatch', () => {
 
     expect(screen.queryByText(/use for 2 minutes/i)).toBeNull();
     expect(screen.queryByText(/daily pass used/i)).toBeNull();
+  });
+});
+
+describe('channelHomeUrl', () => {
+  it('prefers a handle, building the @handle youtube.com URL', () => {
+    expect(channelHomeUrl(channel({ handle: 'someuser', channelId: 'UC123' }))).toBe(
+      'https://www.youtube.com/@someuser',
+    );
+  });
+
+  it('falls back to the channel id when there is no handle', () => {
+    expect(channelHomeUrl(channel({ channelId: 'UC123' }))).toBe(
+      'https://www.youtube.com/channel/UC123',
+    );
+  });
+
+  it('returns null when the entry names neither a handle nor an id', () => {
+    expect(channelHomeUrl(channel())).toBeNull();
+  });
+
+  // Regression: a hand-edited settings import can carry a handle containing '/' or '?'.
+  // The identifier must still land in exactly ONE path segment on youtube.com — never a
+  // URL that escapes the channel path onto a different host or route.
+  it('keeps a handle containing "/" confined to one youtube.com path segment', () => {
+    const href = channelHomeUrl(channel({ handle: 'evil/../other' }));
+    expect(href).not.toBeNull();
+    expect(href).toMatch(/^https:\/\/www\.youtube\.com\/@[^/]+$/);
+  });
+
+  it('keeps a handle containing "?" from starting a query string', () => {
+    const href = channelHomeUrl(channel({ handle: 'name?redirect=evil.example' }));
+    expect(href).not.toBeNull();
+    expect(href).toMatch(/^https:\/\/www\.youtube\.com\/@[^/?]+$/);
+  });
+});
+
+describe('BlockPage — allowed channels (the way back in)', () => {
+  it('shows a heading and one working link per allowed channel, labelled and addressed correctly', async () => {
+    setTarget(TARGET);
+    const context = makeContext({
+      allowedChannels: [
+        channel({ handle: 'coolchannel', displayName: 'Cool Channel' }),
+        channel({ channelId: 'UC999', displayName: 'Other Channel' }),
+      ],
+    });
+    sendMessageMock.mockResolvedValueOnce(context);
+    render(<BlockPage />);
+    await flush();
+
+    expect(screen.getByText('Your allowed channels')).toBeTruthy();
+
+    const first = screen.getByRole('link', { name: 'Cool Channel' });
+    expect(first.getAttribute('href')).toBe('https://www.youtube.com/@coolchannel');
+
+    const second = screen.getByRole('link', { name: 'Other Channel' });
+    expect(second.getAttribute('href')).toBe('https://www.youtube.com/channel/UC999');
+  });
+
+  it('shows no allowed-channels section when the list is empty', async () => {
+    setTarget(TARGET);
+    const context = makeContext({ allowedChannels: [] });
+    sendMessageMock.mockResolvedValueOnce(context);
+    render(<BlockPage />);
+    await flush();
+
+    expect(screen.queryByText('Your allowed channels')).toBeNull();
+  });
+
+  it('skips an entry that names neither a handle nor an id, rather than rendering a broken link', async () => {
+    setTarget(TARGET);
+    const context = makeContext({
+      allowedChannels: [
+        channel({ displayName: 'Nameless Channel' }),
+        channel({ handle: 'realchannel', displayName: 'Real Channel' }),
+      ],
+    });
+    sendMessageMock.mockResolvedValueOnce(context);
+    render(<BlockPage />);
+    await flush();
+
+    expect(screen.getByText('Your allowed channels')).toBeTruthy();
+    expect(screen.queryByText('Nameless Channel')).toBeNull();
+    expect(screen.getByRole('link', { name: 'Real Channel' })).toBeTruthy();
+  });
+});
+
+describe('BlockPage — surface label', () => {
+  it('names the gate surface (e.g. "Shorts"), not the bare domain, when a gate was hit', async () => {
+    setTarget(TARGET);
+    const context = makeContext({ domain: 'youtube.com', gateId: 'shorts', gateLabel: 'Shorts' });
+    sendMessageMock.mockResolvedValueOnce(context);
+    render(<BlockPage />);
+    await flush();
+
+    expect(screen.getByText('Shorts')).toBeTruthy();
+    expect(screen.queryByText('youtube.com')).toBeNull();
+  });
+
+  it('falls back to the domain when the whole site was blocked, not a gate', async () => {
+    setTarget(TARGET);
+    const context = makeContext({ domain: 'youtube.com', gateId: null, gateLabel: null });
+    sendMessageMock.mockResolvedValueOnce(context);
+    render(<BlockPage />);
+    await flush();
+
+    expect(screen.getByText('youtube.com')).toBeTruthy();
+  });
+});
+
+/**
+ * The Hard Block path is where "block YouTube except these channels" actually lands, and
+ * it is the case with no other route in: home, search and subscriptions are all blocked
+ * too. These are the tests that stop that combination shipping as a dead end.
+ */
+describe('BlockPage — Hard Block with an active channel whitelist', () => {
+  const WHITELIST = [
+    channel({ handle: 'veritasium', displayName: 'Veritasium' }),
+    channel({ channelId: 'UCallowed0000000000000', displayName: 'Kurzgesagt' }),
+  ];
+
+  it('offers the allowed channels as working links on a Hard Block, not only on a pause', async () => {
+    setTarget(TARGET);
+    sendMessageMock.mockResolvedValueOnce(
+      makeContext({
+        domain: 'youtube.com',
+        decision: hardBlockDecision({ ruleName: 'youtube.com' }),
+        allowedChannels: WHITELIST,
+      }),
+    );
+    render(<BlockPage />);
+    await flush();
+
+    expect(screen.getByText('Your allowed channels')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Veritasium' }).getAttribute('href')).toBe(
+      'https://www.youtube.com/@veritasium',
+    );
+    expect(screen.getByRole('link', { name: 'Kurzgesagt' }).getAttribute('href')).toBe(
+      'https://www.youtube.com/channel/UCallowed0000000000000',
+    );
+  });
+
+  it('offers the free way in BEFORE the daily pass, so nobody burns a pass to reach a channel they allowed', async () => {
+    setTarget(TARGET);
+    sendMessageMock.mockResolvedValueOnce(
+      makeContext({
+        domain: 'youtube.com',
+        decision: hardBlockDecision({ ruleName: 'youtube.com' }),
+        allowedChannels: WHITELIST,
+        passEnabled: true,
+        passAvailable: true,
+      }),
+    );
+    const { container } = render(<BlockPage />);
+    await flush();
+
+    const channelLink = screen.getByRole('link', { name: 'Veritasium' });
+    const dailyPass = screen.getByRole('button', { name: /Use for 2 minutes/ });
+    // DOCUMENT_POSITION_FOLLOWING: the pass comes after the channel list in reading order.
+    expect(
+      channelLink.compareDocumentPosition(dailyPass) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(container.textContent).toContain('Your allowed channels');
+  });
+});
+
+describe('BlockPage — whose daily limit ran out', () => {
+  const exhausted = hardBlockDecision({
+    ruleName: 'youtube.com (limit reached)',
+    dailyTimeRemainingMs: 0,
+    dailyLimitMinutes: 10,
+    limitReached: true,
+  });
+
+  it('names the SURFACE when a gate budget is spent — saying YouTube is out of time would be false', async () => {
+    setTarget(TARGET);
+    sendMessageMock.mockResolvedValueOnce(
+      makeContext({
+        domain: 'youtube.com',
+        gateId: 'shorts',
+        gateLabel: 'Shorts',
+        decision: exhausted,
+      }),
+    );
+    render(<BlockPage />);
+    await flush();
+
+    expect(screen.getByText('Daily Shorts limit reached')).toBeTruthy();
+    // The unqualified wording would send the user hunting for a site limit they never set.
+    expect(screen.queryByText('Daily limit reached')).toBeNull();
+  });
+
+  it('keeps the plain Android wording when the whole SITE budget is what ran out', async () => {
+    setTarget(TARGET);
+    sendMessageMock.mockResolvedValueOnce(
+      makeContext({ domain: 'youtube.com', gateId: null, gateLabel: null, decision: exhausted }),
+    );
+    render(<BlockPage />);
+    await flush();
+
+    expect(screen.getByText('Daily limit reached')).toBeTruthy();
   });
 });

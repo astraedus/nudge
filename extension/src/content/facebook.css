@@ -1,0 +1,19 @@
+/*
+ * Static CSS for the Facebook content script's hide toggles. Same rationale as
+ * `content/instagram.css` — manifest-injected so hiding is FOUC-safe, one class PER HIDE
+ * ID (`hideClassFor`) so turning one toggle off never un-hides another feature.
+ *
+ * ZERO NETWORK, forever: this file ships in the bundle; nothing about it is fetched.
+ */
+
+.nudge-hide-stories {
+  display: none !important;
+}
+
+.nudge-hide-reelsNav {
+  display: none !important;
+}
+
+.nudge-hide-peopleYouMayKnow {
+  display: none !important;
+}

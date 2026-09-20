@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   addChannel,
   decideChannel,
+  decideWatchGate,
   findChannel,
   isChannelListed,
   parseChannelInput,
@@ -10,6 +11,8 @@ import {
   sameChannel,
   shouldShowInColor,
   type ChannelProbe,
+  type WatchGateInput,
+  type WatchGateVerdict,
 } from '../../src/core/channels';
 import type { ChannelEntry, ChannelListMode } from '../../src/core/settingsSchema';
 
@@ -466,5 +469,242 @@ describe('removeChannel', () => {
     const result = removeChannel(list, entry({ handle: 'veritasium' }));
     expect(list).toEqual(snapshot);
     expect(result).not.toBe(list);
+  });
+});
+
+// -----------------------------------------------------------------------------------
+// decideWatchGate — decideChannel PLUS the site rule standing behind it.
+//
+// Full cross-product: channelMode (OFF / BLACKLIST / WHITELIST) x probe (listed /
+// not-listed / unidentified) x siteApplies (true / false) x siteMode (ALLOW / HARD_BLOCK /
+// DELAY / BREATHING, where the site rule actually has an opinion). Every BLOCK assertion
+// checks the FULL returned object — mode, delaySeconds, source, reason — so a value
+// leaking in from the wrong rule (channel rule vs. site rule) is caught, not just whether
+// the video was blocked at all.
+// -----------------------------------------------------------------------------------
+
+describe('decideWatchGate', () => {
+  const LISTED_HANDLE = 'veritasium';
+  const listedProbe: ChannelProbe = { handle: LISTED_HANDLE };
+  const notListedProbe: ChannelProbe = { handle: 'someoneelse' };
+  const unknownProbe: ChannelProbe = {};
+  const channels: ChannelEntry[] = [entry({ handle: LISTED_HANDLE })];
+
+  // Deliberately different from every site-rule value used below, so a test that expects
+  // the CHANNEL rule's mode/delay cannot pass by accident from the site rule's value (or
+  // vice versa).
+  const CHANNEL_BLOCK_MODE = 'DELAY';
+  const CHANNEL_DELAY_SECONDS = 15;
+  const SITE_DELAY_SECONDS = 45;
+
+  function gate(overrides: Partial<WatchGateInput> = {}): WatchGateVerdict {
+    return decideWatchGate({
+      mode: 'WHITELIST',
+      channels,
+      probe: listedProbe,
+      siteMode: 'ALLOW',
+      siteApplies: false,
+      siteDelaySeconds: SITE_DELAY_SECONDS,
+      channelBlockMode: CHANNEL_BLOCK_MODE,
+      channelDelaySeconds: CHANNEL_DELAY_SECONDS,
+      ...overrides,
+    });
+  }
+
+  describe('mode OFF — always allowed, whatever the site rule says', () => {
+    it('allows a listed channel even while a site block is in force', () => {
+      expect(
+        gate({ mode: 'OFF', probe: listedProbe, siteApplies: true, siteMode: 'HARD_BLOCK' }),
+      ).toEqual({ action: 'ALLOW', reason: 'mode-off' });
+    });
+
+    it('allows an unidentified channel even while a site block is in force', () => {
+      expect(
+        gate({ mode: 'OFF', probe: unknownProbe, siteApplies: true, siteMode: 'HARD_BLOCK' }),
+      ).toEqual({ action: 'ALLOW', reason: 'mode-off' });
+    });
+  });
+
+  describe('mode BLACKLIST — names what to keep OUT, so it never borrows the site default', () => {
+    it('blocks a listed channel using the CHANNEL rule, not the site rule, even while the site is in force', () => {
+      expect(
+        gate({
+          mode: 'BLACKLIST',
+          probe: listedProbe,
+          siteApplies: true,
+          siteMode: 'BREATHING',
+          siteDelaySeconds: SITE_DELAY_SECONDS,
+        }),
+      ).toEqual({
+        action: 'BLOCK',
+        mode: CHANNEL_BLOCK_MODE,
+        delaySeconds: CHANNEL_DELAY_SECONDS,
+        source: 'channel-rule',
+        reason: 'listed',
+      });
+    });
+
+    it('allows an unlisted channel even while the site is in force', () => {
+      expect(
+        gate({
+          mode: 'BLACKLIST',
+          probe: notListedProbe,
+          siteApplies: true,
+          siteMode: 'HARD_BLOCK',
+        }),
+      ).toEqual({ action: 'ALLOW', reason: 'not-listed' });
+    });
+
+    it('FAILS OPEN on an unidentified channel — a blacklist can never prove a channel it cannot see is on it', () => {
+      expect(
+        gate({
+          mode: 'BLACKLIST',
+          probe: unknownProbe,
+          siteApplies: true,
+          siteMode: 'HARD_BLOCK',
+        }),
+      ).toEqual({ action: 'ALLOW', reason: 'unknown-channel' });
+    });
+
+    it('behaves identically to the site rule not being in force at all', () => {
+      expect(gate({ mode: 'BLACKLIST', probe: listedProbe, siteApplies: false })).toEqual({
+        action: 'BLOCK',
+        mode: CHANNEL_BLOCK_MODE,
+        delaySeconds: CHANNEL_DELAY_SECONDS,
+        source: 'channel-rule',
+        reason: 'listed',
+      });
+    });
+  });
+
+  describe('mode WHITELIST, site rule NOT in force — identical to the standalone channel rule', () => {
+    it('allows a listed channel', () => {
+      expect(gate({ mode: 'WHITELIST', probe: listedProbe, siteApplies: false })).toEqual({
+        action: 'ALLOW',
+        reason: 'listed',
+      });
+    });
+
+    it('blocks an unlisted channel using the CHANNEL rule mode and delay', () => {
+      expect(gate({ mode: 'WHITELIST', probe: notListedProbe, siteApplies: false })).toEqual({
+        action: 'BLOCK',
+        mode: CHANNEL_BLOCK_MODE,
+        delaySeconds: CHANNEL_DELAY_SECONDS,
+        source: 'channel-rule',
+        reason: 'not-listed',
+      });
+    });
+
+    it('FAILS OPEN on an unidentified channel — the long-standing fail-open doctrine, unchanged here', () => {
+      expect(gate({ mode: 'WHITELIST', probe: unknownProbe, siteApplies: false })).toEqual({
+        action: 'ALLOW',
+        reason: 'unknown-channel',
+      });
+    });
+  });
+
+  describe('mode WHITELIST, site rule IN FORCE — the list becomes the site\'s exception list', () => {
+    it('still allows a listed channel — this is the entire point of the feature', () => {
+      expect(
+        gate({ mode: 'WHITELIST', probe: listedProbe, siteApplies: true, siteMode: 'HARD_BLOCK' }),
+      ).toEqual({ action: 'ALLOW', reason: 'listed' });
+    });
+
+    it("blocks an unlisted channel in the SITE's mode and delay, not the channel rule's (site mode BREATHING)", () => {
+      expect(
+        gate({
+          mode: 'WHITELIST',
+          probe: notListedProbe,
+          siteApplies: true,
+          siteMode: 'BREATHING',
+          siteDelaySeconds: SITE_DELAY_SECONDS,
+        }),
+      ).toEqual({
+        action: 'BLOCK',
+        mode: 'BREATHING',
+        delaySeconds: SITE_DELAY_SECONDS,
+        source: 'site-default',
+        reason: 'not-listed',
+      });
+    });
+
+    it("blocks an unlisted channel in the SITE's mode and delay when the site mode is DELAY", () => {
+      expect(
+        gate({
+          mode: 'WHITELIST',
+          probe: notListedProbe,
+          siteApplies: true,
+          siteMode: 'DELAY',
+          siteDelaySeconds: 10,
+        }),
+      ).toEqual({
+        action: 'BLOCK',
+        mode: 'DELAY',
+        delaySeconds: 10,
+        source: 'site-default',
+        reason: 'not-listed',
+      });
+    });
+
+    it('resolves an exhausted-budget site rule (siteMode ALLOW while siteApplies) to HARD_BLOCK for an unlisted channel', () => {
+      // The only way `siteApplies` is true while `siteMode` is 'ALLOW' is an exhausted
+      // daily budget — it cannot be waited out, so `siteFallbackMode` resolves it to
+      // HARD_BLOCK, same as everywhere else that fallback is used.
+      expect(
+        gate({
+          mode: 'WHITELIST',
+          probe: notListedProbe,
+          siteApplies: true,
+          siteMode: 'ALLOW',
+          siteDelaySeconds: SITE_DELAY_SECONDS,
+        }),
+      ).toEqual({
+        action: 'BLOCK',
+        mode: 'HARD_BLOCK',
+        delaySeconds: SITE_DELAY_SECONDS,
+        source: 'site-default',
+        reason: 'not-listed',
+      });
+    });
+
+    it('FAILS CLOSED on an unidentified channel — the ONE place in this module an unknown channel is blocked', () => {
+      // Everywhere else (decideChannel, and WHITELIST/BLACKLIST above with no site rule in
+      // force) an unidentified channel is allowed through. This is the deliberate exception:
+      // the site's OWN default is already "blocked", so failing open here would let a
+      // rotted selector silently defeat the very rule the user asked for.
+      expect(
+        gate({
+          mode: 'WHITELIST',
+          probe: unknownProbe,
+          siteApplies: true,
+          siteMode: 'HARD_BLOCK',
+          siteDelaySeconds: SITE_DELAY_SECONDS,
+        }),
+      ).toEqual({
+        action: 'BLOCK',
+        mode: 'HARD_BLOCK',
+        delaySeconds: SITE_DELAY_SECONDS,
+        source: 'site-default',
+        reason: 'unknown-channel',
+      });
+    });
+
+    it('resolves an exhausted-budget site rule to HARD_BLOCK for an unidentified channel too', () => {
+      expect(
+        gate({
+          mode: 'WHITELIST',
+          probe: unknownProbe,
+          siteApplies: true,
+          siteMode: 'ALLOW',
+          siteDelaySeconds: SITE_DELAY_SECONDS,
+        }),
+      ).toEqual({
+        action: 'BLOCK',
+        mode: 'HARD_BLOCK',
+        delaySeconds: SITE_DELAY_SECONDS,
+        source: 'site-default',
+        reason: 'unknown-channel',
+      });
+    });
   });
 });

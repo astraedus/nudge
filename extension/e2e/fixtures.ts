@@ -29,7 +29,8 @@ import {
   type BrowserContext,
   type Worker,
 } from '@playwright/test';
-import { SCHEMA_VERSION, newSiteRule } from '../src/core/settingsSchema';
+import { SCHEMA_VERSION, migrateSettings, newSiteRule } from '../src/core/settingsSchema';
+import { compiledRuleCount, type UsageByKey } from '../src/background/dnr';
 import type {
   GateSetting,
   NudgeSettings,
@@ -154,7 +155,15 @@ export interface ExtensionFixtures {
   extensionId: string;
   serviceWorker: Worker;
   /** Overwrite the extension's settings and wait until DNR has actually caught up. */
-  setSettings: (settings: Partial<NudgeSettings>) => Promise<void>;
+  /**
+   * Write settings and wait for the worker's DNR rule set to catch up.
+   *
+   * `usage` is today's usage as the worker will read it, and only matters when a rule's
+   * behaviour depends on it — an Allow rule with a daily limit compiles no redirect until
+   * that limit is spent. Seed the usage first (`seedUsage`), then pass the same numbers
+   * here so the wait expects the right rule set.
+   */
+  setSettings: (settings: Partial<NudgeSettings>, usage?: UsageByKey) => Promise<void>;
   /** Seed today's usage rollup for a domain. */
   seedUsage: (domain: string, activeSec: number) => Promise<void>;
   /** URL of a page on `host`, served locally. */
@@ -216,7 +225,7 @@ export const test = base.extend<ExtensionFixtures>({
   },
 
   setSettings: async ({ serviceWorker }, use) => {
-    await use(async (partial: Partial<NudgeSettings>) => {
+    await use(async (partial: Partial<NudgeSettings>, usage?: UsageByKey) => {
       await serviceWorker.evaluate(
         async ([key, patch]) => {
           const existing = await chrome.storage.local.get(key);
@@ -231,8 +240,13 @@ export const test = base.extend<ExtensionFixtures>({
 
       // Wait until the DNR rule set actually reflects the new settings rather than
       // sleeping and hoping.
-      const enabledRules = (partial.rules ?? []).filter((r) => r.enabled !== false).length;
-      const expected = partial.globalEnabled === false ? 0 : enabledRules;
+      //
+      // The expectation is DERIVED, never counted by hand: under schema v3 an Allow rule
+      // under its budget compiles no rule at all, one gate can compile several, and a
+      // YouTube whitelist adds one per allowed path. The old "one rule per enabled rule"
+      // arithmetic was silently wrong in the permissive direction for all three, which
+      // shows up as a flaky race rather than an honest failure.
+      const expected = compiledRuleCount(migrateSettings(partial), usage ?? {}, new Date());
       await waitForRuleCount(serviceWorker, expected);
     });
   },

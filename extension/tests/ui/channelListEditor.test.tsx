@@ -2,33 +2,32 @@
 import { useState } from 'react';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { DEFAULT_SETTINGS } from '../../src/core/settingsSchema';
-import type { YoutubeSettings } from '../../src/core/settingsSchema';
-import { YoutubePanel } from '../../src/entrypoints/dashboard/YoutubePanel';
+import { defaultYoutubeFeatureSettings } from '../../src/core/settingsSchema';
+import type { YoutubeFeatureSettings } from '../../src/core/settingsSchema';
+import { ChannelListEditor } from '../../src/entrypoints/dashboard/ChannelListEditor';
 
-function makeYoutubeSettings(overrides: Partial<YoutubeSettings> = {}): YoutubeSettings {
-  return {
-    ...DEFAULT_SETTINGS.youtube,
-    channels: [...DEFAULT_SETTINGS.youtube.channels],
-    ...overrides,
-  };
+function makeYoutubeSettings(overrides: Partial<YoutubeFeatureSettings> = {}): YoutubeFeatureSettings {
+  return { ...defaultYoutubeFeatureSettings(), ...overrides };
 }
 
-/** Renders YoutubePanel as a controlled component so interactive flows (add/remove a
+/** Renders ChannelListEditor as a controlled component so interactive flows (add/remove a
  * channel, flip a toggle) are actually visible in the DOM after the change, the same way
- * the real Dashboard/SettingsPanel controls it. `onEmit` lets tests additionally inspect
- * exactly what was emitted on a given change without having to diff DOM state. */
+ * RuleEditor controls it. `onEmit` lets tests additionally inspect exactly what was
+ * emitted on a given change without having to diff DOM state. */
 function Harness({
   initial,
+  isBlocked = false,
   onEmit,
 }: {
-  initial: YoutubeSettings;
-  onEmit?: (next: YoutubeSettings) => void;
+  initial: YoutubeFeatureSettings;
+  isBlocked?: boolean;
+  onEmit?: (next: YoutubeFeatureSettings) => void;
 }) {
   const [settings, setSettings] = useState(initial);
   return (
-    <YoutubePanel
-      settings={settings}
+    <ChannelListEditor
+      youtube={settings}
+      isBlocked={isBlocked}
       onChange={(next) => {
         onEmit?.(next);
         setSettings(next);
@@ -46,7 +45,21 @@ afterEach(() => {
   cleanup();
 });
 
-describe('YoutubePanel — channel list', () => {
+describe('ChannelListEditor — copy changes with the site\'s block state', () => {
+  it('explains the whitelist-as-exception-list framing when the site is blocked', () => {
+    render(<Harness initial={makeYoutubeSettings()} isBlocked />);
+    expect(
+      screen.getByText('YouTube is blocked; videos and pages from these channels are still allowed.'),
+    ).toBeDefined();
+  });
+
+  it('explains the generic filter framing when the site is not blocked', () => {
+    render(<Harness initial={makeYoutubeSettings()} isBlocked={false} />);
+    expect(screen.getByText(/Filter YouTube by channel/i)).toBeDefined();
+  });
+});
+
+describe('ChannelListEditor — channel list', () => {
   it('adds a channel by @handle to the list', () => {
     render(<Harness initial={makeYoutubeSettings({ channelMode: 'BLACKLIST' })} />);
 
@@ -110,66 +123,24 @@ describe('YoutubePanel — channel list', () => {
   });
 });
 
-describe('YoutubePanel — hide toggles', () => {
-  const HIDE_TOGGLES: { label: string; key: keyof YoutubeSettings }[] = [
-    { label: 'Hide home feed', key: 'hideHomeFeed' },
-    { label: 'Hide sidebar recommendations', key: 'hideSidebarRecs' },
-    { label: 'Hide end-screen suggestions', key: 'hideEndScreen' },
-    { label: 'Hide comments', key: 'hideComments' },
-    { label: 'Disable autoplay', key: 'disableAutoplay' },
-  ];
-
-  for (const { label, key } of HIDE_TOGGLES) {
-    it(`flipping "${label}" changes only that setting in the emitted settings object`, () => {
-      const initial = makeYoutubeSettings();
-      const onEmit = vi.fn();
-      render(<Harness initial={initial} onEmit={onEmit} />);
-
-      fireEvent.click(screen.getByLabelText(label));
-
-      expect(onEmit).toHaveBeenCalledTimes(1);
-      const emitted = onEmit.mock.calls[0]![0] as YoutubeSettings;
-      expect(emitted[key]).toBe(true);
-      for (const other of HIDE_TOGGLES) {
-        if (other.key === key) continue;
-        expect(emitted[other.key]).toBe(initial[other.key]);
-      }
-      // Untouched fields outside the hide-toggle group stay untouched too.
-      expect(emitted.grayScreen).toBe(initial.grayScreen);
-      expect(emitted.channelMode).toBe(initial.channelMode);
-      expect(emitted.shortsMode).toBe(initial.shortsMode);
-    });
-  }
-});
-
-describe('YoutubePanel — gray-screen mode', () => {
-  it('flipping the gray-screen toggle changes only grayScreen', () => {
+describe('ChannelListEditor — disable autoplay', () => {
+  it('flips only disableAutoplay, leaving everything else untouched', () => {
     const initial = makeYoutubeSettings();
     const onEmit = vi.fn();
     render(<Harness initial={initial} onEmit={onEmit} />);
 
-    fireEvent.click(screen.getByLabelText('Turn YouTube grayscale'));
+    fireEvent.click(screen.getByLabelText('Disable autoplay'));
 
     expect(onEmit).toHaveBeenCalledTimes(1);
-    const emitted = onEmit.mock.calls[0]![0] as YoutubeSettings;
-    expect(emitted.grayScreen).toBe(true);
-    expect(emitted.hideHomeFeed).toBe(initial.hideHomeFeed);
-    expect(emitted.hideSidebarRecs).toBe(initial.hideSidebarRecs);
-    expect(emitted.hideEndScreen).toBe(initial.hideEndScreen);
-    expect(emitted.hideComments).toBe(initial.hideComments);
-    expect(emitted.disableAutoplay).toBe(initial.disableAutoplay);
+    const emitted = onEmit.mock.calls[0]![0] as YoutubeFeatureSettings;
+    expect(emitted.disableAutoplay).toBe(true);
     expect(emitted.channelMode).toBe(initial.channelMode);
-    expect(emitted.shortsMode).toBe(initial.shortsMode);
+    expect(emitted.channels).toEqual(initial.channels);
+    expect(emitted.channelBlockMode).toBe(initial.channelBlockMode);
+    expect(emitted.channelDelaySeconds).toBe(initial.channelDelaySeconds);
   });
 
-  it('states honestly that gray-screen depends on the channel list', () => {
-    render(<Harness initial={makeYoutubeSettings()} />);
-    expect(screen.getByText(/depends on the channel list/i)).toBeDefined();
-  });
-});
-
-describe('YoutubePanel — autoplay caveat', () => {
-  it('shows the best-effort caveat for disable autoplay', () => {
+  it('shows the best-effort caveat', () => {
     render(<Harness initial={makeYoutubeSettings()} />);
     expect(screen.getByText(/best-effort/i)).toBeDefined();
     expect(screen.getByText(/YouTube can restore its own player state/i)).toBeDefined();

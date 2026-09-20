@@ -11,9 +11,16 @@
  * matrix — including the fail-open unknown-channel case — be tested without any DOM at all.
  */
 
-import { decideChannel, shouldShowInColor, type ChannelProbe } from '../core/channels';
+import {
+  decideChannel,
+  decideWatchGate,
+  shouldShowInColor,
+  type ChannelProbe,
+  type WatchGateVerdict,
+} from '../core/channels';
 import { channelFreshness, channelKey, SETTLE_COLOR_MS } from '../core/channelFreshness';
-import type { YoutubeConfig } from '../core/protocol';
+import type { SiteConfig } from '../core/protocol';
+import { DEFAULT_DELAY_SECONDS } from '../core/settingsSchema';
 import {
   detectCardChannel,
   detectWatchChannel,
@@ -29,11 +36,37 @@ import {
   pageTypeFor,
 } from './selectors';
 
-/** The slice of config this module needs. */
+/**
+ * The slice of the worker's resolved answer this module needs.
+ *
+ * It carries the SITE's state (`siteMode`, `siteApplies`, `siteDelaySeconds`) as well as
+ * the channel lists, because since v0.2 the channel list is not only a feature of its own —
+ * when the youtube.com rule is in force it becomes that rule's exception list, and the
+ * mode a disallowed video is held behind comes from the SITE. See `decideWatchGate`.
+ */
 export type ChannelConfig = Pick<
-  YoutubeConfig,
-  'enabled' | 'channelMode' | 'channels' | 'channelBlockMode' | 'grayScreen'
+  SiteConfig,
+  'enabled' | 'siteMode' | 'siteApplies' | 'siteDelaySeconds' | 'grayscale' | 'youtube'
 >;
+
+/** Channel lists switched fully off — what a page with no YouTube rule behaves like. */
+const NO_CHANNEL_LISTS: NonNullable<SiteConfig['youtube']> = {
+  channelMode: 'OFF',
+  channels: [],
+  channelBlockMode: 'DELAY',
+  channelDelaySeconds: DEFAULT_DELAY_SECONDS,
+  disableAutoplay: false,
+};
+
+/**
+ * `SiteConfig.youtube` is null on every platform but YouTube (and on a YouTube page no rule
+ * covers). Normalising it once here keeps every call site below free of the same null check,
+ * and makes "no rule" behave identically to "rule with the lists switched off" rather than
+ * being a second, subtly different code path.
+ */
+function channelSettings(config: ChannelConfig): NonNullable<SiteConfig['youtube']> {
+  return config.youtube ?? NO_CHANNEL_LISTS;
+}
 
 export interface ChannelFilterResult {
   /** Cards newly hidden this pass. */
@@ -68,7 +101,8 @@ export function applyChannelFilter(
   options: { warn?: (message: string) => void } = {},
 ): ChannelFilterResult {
   const result: ChannelFilterResult = { hidden: 0, revealed: 0, unidentified: 0 };
-  const active = config.enabled && config.channelMode !== 'OFF';
+  const channels = channelSettings(config);
+  const active = config.enabled && channels.channelMode !== 'OFF';
 
   const shouldHide = new Set<Element>();
   if (active) {
@@ -81,11 +115,16 @@ export function applyChannelFilter(
         if (!isChannellessCard(card)) result.unidentified += 1;
         continue;
       }
+      // Feed composition keeps the ORIGINAL fail-open decision (`decideChannel`), not the
+      // watch gate's site-default version. Hiding a card is not the same act as refusing to
+      // play a video: the card is a link, the site rule still stands behind it, and a feed
+      // that empties itself because a selector rotted looks like a broken extension rather
+      // than an enforced rule.
       const verdict = decideChannel({
-        mode: config.channelMode,
-        channels: config.channels,
+        mode: channels.channelMode,
+        channels: channels.channels,
         probe: probeOf(detected),
-        blockMode: config.channelBlockMode,
+        blockMode: channels.channelBlockMode,
       });
       if (verdict.action === 'BLOCK') shouldHide.add(card);
     }
@@ -151,15 +190,20 @@ function warnIfDetectionDegraded(
 }
 
 /**
- * The channel verdict for the CURRENT watch page, or null when channel lists are off or
- * this is not a watch page.
+ * The gate verdict for the CURRENT watch page, or null when channel lists are off, this is
+ * not a watch page, or the detection has not settled yet.
+ *
+ * The mode a BLOCK carries comes from `decideWatchGate`, which is where the site rule and
+ * the channel rule are reconciled — this function's only jobs are finding the channel and
+ * refusing to answer while the byline may still describe the previous video.
  */
 export function watchChannelVerdict(
   doc: Document,
   config: ChannelConfig,
   options: { url?: string; previousKey?: string | null; msSinceNav?: number } = {},
-): ReturnType<typeof decideChannel> | null {
-  if (!config.enabled || config.channelMode === 'OFF') return null;
+): WatchGateVerdict | null {
+  const channels = channelSettings(config);
+  if (!config.enabled || channels.channelMode === 'OFF') return null;
   const url = options.url ?? doc.location?.href ?? '';
   if (pageTypeFor(url) !== 'watch') return null;
 
@@ -178,11 +222,15 @@ export function watchChannelVerdict(
   });
   if (freshness === 'SETTLING') return null;
 
-  return decideChannel({
-    mode: config.channelMode,
-    channels: config.channels,
+  return decideWatchGate({
+    mode: channels.channelMode,
+    channels: channels.channels,
     probe: probeOf(detected),
-    blockMode: config.channelBlockMode,
+    siteMode: config.siteMode,
+    siteApplies: config.siteApplies,
+    siteDelaySeconds: config.siteDelaySeconds,
+    channelBlockMode: channels.channelBlockMode,
+    channelDelaySeconds: channels.channelDelaySeconds,
   });
 }
 
@@ -205,7 +253,13 @@ export function applyGrayColor(
   const root = doc.documentElement;
   if (root === null) return false;
 
-  if (!config.enabled || !config.grayScreen) {
+  const channels = channelSettings(config);
+
+  // `grayscale` is a PER-SITE toggle since v0.2 (it was a YouTube-only global before), and
+  // the worker registers the stylesheet only for sites that have it on. The colour REWARD
+  // below stays YouTube-only, because it is the channel list that earns it — every other
+  // grayscaled site is simply gray.
+  if (!config.enabled || !config.grayscale) {
     root.classList.remove(COLOR_CLASS);
     return false;
   }
@@ -234,8 +288,8 @@ export function applyGrayColor(
   const inColor =
     !settling &&
     shouldShowInColor({
-      mode: config.channelMode,
-      channels: config.channels,
+      mode: channels.channelMode,
+      channels: channels.channels,
       probe: probeOf(detected),
     });
 

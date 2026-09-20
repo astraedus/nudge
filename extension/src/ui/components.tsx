@@ -150,6 +150,43 @@ export function Toggle({
   );
 }
 
+/**
+ * A small pill-shaped selectable chip. Shared by the sites list (quick-add platforms),
+ * RuleEditor (mode/delay presets) and ChannelListEditor — one visual pattern instead of
+ * three near-identical local copies.
+ */
+export function Chip({
+  label,
+  active,
+  onClick,
+  style,
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+  style?: CSSProperties;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      style={{
+        padding: '6px 14px',
+        borderRadius: 999,
+        border: '1px solid var(--nudge-outline)',
+        background: active ? 'var(--nudge-primary)' : 'transparent',
+        color: active ? 'var(--nudge-on-primary)' : 'var(--nudge-on-surface)',
+        fontSize: 13,
+        cursor: 'pointer',
+        ...style,
+      }}
+    >
+      {label}
+    </button>
+  );
+}
+
 /** Nudge wordmark: the two-bar "pause" glyph from the Android launcher icon. */
 export function NudgeMark({ size = 28 }: { size?: number }) {
   return (

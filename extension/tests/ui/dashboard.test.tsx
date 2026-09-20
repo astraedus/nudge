@@ -2,13 +2,13 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DashboardState, DayUsage } from '../../src/core/protocol';
+import { NOTHING_ACTIVE } from '../../src/core/featureSummary';
 import { DEFAULT_SETTINGS, structuredCloneSettings } from '../../src/core/settingsSchema';
 import type { NudgeSettings, SiteRule } from '../../src/core/settingsSchema';
 import { forDisplay } from '../../src/core/strictMode';
 import { Dashboard } from '../../src/entrypoints/dashboard/Dashboard';
 import { ChallengeDialog } from '../../src/entrypoints/dashboard/ChallengeDialog';
 import { StatsPanel } from '../../src/entrypoints/dashboard/StatsPanel';
-import { RuleEditor } from '../../src/entrypoints/dashboard/RuleEditor';
 
 let sendMessageMock: ReturnType<typeof vi.fn>;
 
@@ -27,6 +27,8 @@ function makeRule(overrides: Partial<SiteRule> = {}): SiteRule {
     createdAt: 1700000000000,
     showTimeRemaining: true,
     schedule: null,
+    grayscale: false,
+    features: null,
     ...overrides,
   };
 }
@@ -224,14 +226,14 @@ describe('Dashboard', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
 
-    for (const label of [
-      'Hard Block',
-      'Delay',
-      'Breathing',
-      'Daily Time Limit',
-      'Commitment Lock',
-      'Escape Hatch',
-    ]) {
+    for (const label of ['Daily Time Limit', 'Commitment Lock', 'Escape Hatch']) {
+      expect(screen.getAllByText(new RegExp(label)).length).toBeGreaterThan(0);
+    }
+
+    // "Hard Block" / "Delay" / "Breathing" live inside a rule's editor (ext-13 §5 moved the
+    // mode picker off the bare sites list), so open one to check the naming parity there.
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    for (const label of ['Hard Block', 'Delay', 'Breathing']) {
       expect(screen.getAllByText(new RegExp(label)).length).toBeGreaterThan(0);
     }
   });
@@ -343,43 +345,84 @@ describe('Dashboard', () => {
   });
 });
 
-describe('RuleEditor, Daily Time Limit is not offered for Hard Block', () => {
-  /**
-   * Companion to the engine fix: a daily limit is meaningless on a Hard Block (the site is
-   * barred outright, so there is no browsing time to budget). Offering the control invited
-   * the exact combination that used to produce an infinite redirect loop, and still reads to
-   * a user as "blocked, but only after 30 minutes".
-   */
-  const noop = () => {};
+describe('SettingsPanel — sites list (ext-13 §5)', () => {
+  it('renders quick-add chips for every platform in the registry, not a hardcoded list', async () => {
+    sendMessageMock.mockResolvedValue(makeState({ settings: makeSettings({ rules: [] }) }));
+    render(<Dashboard />);
+    await flush();
+    fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
 
-  function renderEditor(mode: SiteRule['mode']) {
-    return render(<RuleEditor rule={makeRule({ mode })} onSave={noop} onCancel={noop} />);
-  }
-
-  it('explains why, instead of showing the limit controls, when mode is Hard Block', () => {
-    renderEditor('HARD_BLOCK');
-
-    expect(screen.getByText(/not used with hard block/i)).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'No limit' })).toBeNull();
-    expect(screen.queryByRole('button', { name: '30m' })).toBeNull();
+    for (const label of ['YouTube', 'Instagram', 'TikTok', 'X (Twitter)', 'Facebook', 'Reddit', 'LinkedIn']) {
+      expect(screen.getByRole('button', { name: label })).toBeDefined();
+    }
   });
 
-  it('offers the limit controls for Delay', () => {
-    renderEditor('DELAY');
+  it('a quick-add chip seeds an ALLOW rule with default features and opens the editor', async () => {
+    let saved: NudgeSettings | null = null;
+    sendMessageMock.mockImplementation((request: { type: string; settings?: NudgeSettings }) => {
+      if (request.type === 'GET_DASHBOARD_STATE') {
+        return Promise.resolve(makeState({ settings: saved ?? makeSettings({ rules: [] }) }));
+      }
+      saved = request.settings ?? null;
+      return Promise.resolve({ ok: true });
+    });
 
-    expect(screen.getByRole('button', { name: 'No limit' })).toBeTruthy();
-    expect(screen.queryByText(/not used with hard block/i)).toBeNull();
+    render(<Dashboard />);
+    await flush();
+    fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Instagram' }));
+    await flush();
+
+    expect(saved).not.toBeNull();
+    const created = saved!.rules.find((r) => r.domain === 'instagram.com');
+    expect(created).toBeDefined();
+    expect(created!.mode).toBe('ALLOW');
+    expect(created!.features).not.toBeNull();
+    expect(created!.features!.platform).toBe('instagram');
+    // The editor for the newly-created rule opens immediately.
+    expect(screen.getByRole('dialog', { name: /instagram\.com/i })).toBeDefined();
   });
 
-  it('offers the limit controls for Breathing', () => {
-    renderEditor('BREATHING');
+  it('shows "Nothing active" for an ALLOW rule with no limit, grayscale or feature on', async () => {
+    const rule = makeRule({
+      domain: 'example.com',
+      mode: 'ALLOW',
+      dailyLimitMinutes: null,
+      grayscale: false,
+      features: null,
+    });
+    sendMessageMock.mockResolvedValue(makeState({ settings: makeSettings({ rules: [rule] }) }));
+    render(<Dashboard />);
+    await flush();
+    fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
 
-    expect(screen.getByRole('button', { name: 'No limit' })).toBeTruthy();
-    expect(screen.queryByText(/not used with hard block/i)).toBeNull();
+    // Assert the RENDERED state via the canonical constant, not a re-typed string — the
+    // decision itself is core/featureSummary's, tested there (17 cases); this only checks
+    // SettingsPanel actually shows it.
+    expect(screen.getByText(NOTHING_ACTIVE)).toBeDefined();
   });
 
-  it('keeps the Daily Time Limit section itself present in every mode', () => {
-    renderEditor('HARD_BLOCK');
-    expect(screen.getByText('Daily Time Limit')).toBeTruthy();
+  it('shows the mode chip, including "Allow", on every rule card', async () => {
+    const allowRule = makeRule({ domain: 'allow.example', mode: 'ALLOW', dailyLimitMinutes: 30 });
+    const blockRule = makeRule({ domain: 'block.example', mode: 'HARD_BLOCK' });
+    sendMessageMock.mockResolvedValue(
+      makeState({ settings: makeSettings({ rules: [allowRule, blockRule] }) }),
+    );
+    render(<Dashboard />);
+    await flush();
+    fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
+
+    expect(screen.getAllByText('Allow').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Hard Block').length).toBeGreaterThan(0);
+  });
+
+  it('shows a grayscale badge on a rule with grayscale on', async () => {
+    const rule = makeRule({ domain: 'gray.example', mode: 'ALLOW', grayscale: true });
+    sendMessageMock.mockResolvedValue(makeState({ settings: makeSettings({ rules: [rule] }) }));
+    render(<Dashboard />);
+    await flush();
+    fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
+
+    expect(screen.getByText('Grayscale')).toBeDefined();
   });
 });

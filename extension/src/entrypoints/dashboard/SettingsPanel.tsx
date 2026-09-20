@@ -5,6 +5,8 @@ import {
   DEFAULT_DELAY_TITLES,
   DEFAULT_HARD_BLOCK_MESSAGES,
 } from '../../core/messages';
+import { quickAddPlatforms } from '../../core/platforms';
+import { featureSummary, isNothingActive, NOTHING_ACTIVE } from '../../core/featureSummary';
 import {
   CHALLENGE_LENGTH_EASY,
   CHALLENGE_LENGTH_HARD,
@@ -12,20 +14,19 @@ import {
   DAILY_LIMIT_MAX_MINUTES,
   DAILY_LIMIT_MIN_MINUTES,
   DAILY_LIMIT_PRESETS,
-  DEFAULT_DELAY_SECONDS,
   DELAY_MAX_SECONDS,
   DELAY_MIN_SECONDS,
   DELAY_PRESETS,
   TEMP_ALLOW_MAX_MINUTES,
   TEMP_ALLOW_MIN_MINUTES,
+  newSiteRule,
 } from '../../core/settingsSchema';
 import type { NudgeSettings, SiteRule } from '../../core/settingsSchema';
-import { MODE_LABELS } from '../../core/types';
+import { isBlockMode, SITE_MODE_LABELS } from '../../core/types';
 import { buildExport, dedupeImportedRules, parseImport } from '../../ui/exportImport';
 import { formatMinuteOfDay } from '../../ui/format';
-import { Button, Card, Toggle } from '../../ui/components';
+import { Button, Card, Chip, Toggle } from '../../ui/components';
 import { RuleEditor } from './RuleEditor';
-import { YoutubePanel } from './YoutubePanel';
 
 const DIFFICULTIES: { label: string; length: number }[] = [
   { label: 'Easy', length: CHALLENGE_LENGTH_EASY },
@@ -36,35 +37,6 @@ const DIFFICULTIES: { label: string; length: number }[] = [
 function clamp(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return min;
   return Math.min(max, Math.max(min, Math.round(value)));
-}
-
-function Chip({
-  label,
-  active,
-  onClick,
-}: {
-  label: string;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      style={{
-        padding: '6px 14px',
-        borderRadius: 999,
-        border: '1px solid var(--nudge-outline)',
-        background: active ? 'var(--nudge-primary)' : 'transparent',
-        color: active ? 'var(--nudge-on-primary)' : 'var(--nudge-on-surface)',
-        fontSize: 13,
-        cursor: 'pointer',
-      }}
-    >
-      {label}
-    </button>
-  );
 }
 
 function minuteLabel(minutes: number): string {
@@ -139,11 +111,20 @@ function MessageField({
   );
 }
 
-/** A compact summary line for a rule row: "Delay · 15s · 30m/day · Scheduled 23:00–06:00". */
+/**
+ * A compact summary line for a rule row: "Delay · 15s · Scheduled 23:00–06:00 · 30m/day ·
+ * Shorts: Delay 15s". The feature half (daily limit, grayscale, gates, hides, YouTube
+ * channels) and the "does this rule do anything at all" decision are NOT re-derived here —
+ * `core/featureSummary.ts` is the single source of truth every surface (popup, sites list,
+ * rule editor) reads, so the same rule can never describe itself two different ways
+ * depending on where it's shown. This function only adds what genuinely belongs to the
+ * ROW (the mode, its pause, the schedule window, the enabled state).
+ */
 function ruleSummary(rule: SiteRule): string {
-  const parts: string[] = [MODE_LABELS[rule.mode]];
-  if (rule.mode !== 'HARD_BLOCK') parts.push(`${rule.delaySeconds}s`);
-  if (rule.dailyLimitMinutes !== null) parts.push(`${minuteLabel(rule.dailyLimitMinutes)}/day`);
+  if (isNothingActive(rule)) return NOTHING_ACTIVE;
+
+  const parts: string[] = [SITE_MODE_LABELS[rule.mode]];
+  if (isBlockMode(rule.mode) && rule.mode !== 'HARD_BLOCK') parts.push(`${rule.delaySeconds}s`);
   if (rule.schedule?.enabled) {
     const start = rule.schedule.startMinute;
     const end = rule.schedule.endMinute;
@@ -154,7 +135,10 @@ function ruleSummary(rule: SiteRule): string {
     );
   }
   if (!rule.enabled) parts.push('disabled');
-  return parts.join(' · ');
+
+  const features = featureSummary(rule);
+  const base = parts.join(' · ');
+  return features === null ? base : `${base} · ${features}`;
 }
 
 export function SettingsPanel({
@@ -191,22 +175,35 @@ export function SettingsPanel({
     }
     setNewDomainError(null);
     setNewDomain('');
-    patch({
-      rules: [
-        ...settings.rules,
-        {
-          id: `rule-${normalized}-${Date.now()}`,
-          domain: normalized,
-          mode: 'DELAY',
-          delaySeconds: DEFAULT_DELAY_SECONDS,
-          dailyLimitMinutes: null,
-          enabled: true,
-          createdAt: Date.now(),
-          showTimeRemaining: false,
-          schedule: null,
-        },
-      ],
-    });
+    const created = newSiteRule({ domain: normalized, mode: 'DELAY', createdAt: Date.now() });
+    patch({ rules: [...settings.rules, created] });
+  }
+
+  /**
+   * A quick-add chip (StayFree's "block parts of a site" entry point — ext-13 §5). Seeds
+   * an ALLOW rule with default features and opens the editor immediately, since an ALLOW
+   * rule with nothing else set does nothing on its own — the user is expected to turn on
+   * a limit, grayscale or a feature gate right away. Re-using an existing rule for the
+   * domain (rather than creating a second one) keeps "one rule per domain" true.
+   */
+  /**
+   * Curried so JSX can pass the returned closure directly as `onClick` rather than
+   * wrapping it in an inline arrow — an inline `onClick={() => handleQuickAdd(domain)}`
+   * reads to the React Compiler's purity check as "might run during render" (it cannot
+   * see that only an event ever calls it), which flags the `Date.now()` inside as unsafe.
+   * A direct handler reference is the pattern the check recognizes as event-only.
+   */
+  function handleQuickAdd(domain: string) {
+    return () => {
+      const existing = settings.rules.find((r) => r.domain === domain);
+      if (existing !== undefined) {
+        setEditingRuleId(existing.id);
+        return;
+      }
+      const created = newSiteRule({ domain, mode: 'ALLOW', createdAt: Date.now() });
+      patch({ rules: [...settings.rules, created] });
+      setEditingRuleId(created.id);
+    };
   }
 
   function handleExport() {
@@ -261,7 +258,18 @@ export function SettingsPanel({
         </p>
       </Card>
 
-      <Card title="Blocked sites">
+      <Card title="Sites">
+        <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+          {quickAddPlatforms().map(({ platform, label, domain }) => (
+            <Chip
+              key={platform}
+              label={label}
+              active={settings.rules.some((r) => r.domain === domain)}
+              onClick={handleQuickAdd(domain)}
+            />
+          ))}
+        </div>
+
         <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
           <input
             type="text"
@@ -313,18 +321,48 @@ export function SettingsPanel({
                 }}
               >
                 <div style={{ minWidth: 0 }}>
-                  <p
-                    style={{
-                      margin: 0,
-                      fontSize: 14,
-                      fontWeight: 600,
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    {rule.domain}
-                  </p>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <p
+                      style={{
+                        margin: 0,
+                        fontSize: 14,
+                        fontWeight: 600,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {rule.domain}
+                    </p>
+                    <span
+                      style={{
+                        flexShrink: 0,
+                        fontSize: 11,
+                        fontWeight: 700,
+                        padding: '2px 8px',
+                        borderRadius: 999,
+                        color: rule.mode === 'ALLOW' ? 'var(--nudge-on-primary-container)' : 'var(--nudge-on-error)',
+                        background: rule.mode === 'ALLOW' ? 'var(--nudge-primary-container)' : 'var(--nudge-error)',
+                      }}
+                    >
+                      {SITE_MODE_LABELS[rule.mode]}
+                    </span>
+                    {rule.grayscale && (
+                      <span
+                        style={{
+                          flexShrink: 0,
+                          fontSize: 11,
+                          fontWeight: 600,
+                          padding: '2px 8px',
+                          borderRadius: 999,
+                          border: '1px solid var(--nudge-outline)',
+                          color: 'var(--nudge-on-surface-variant)',
+                        }}
+                      >
+                        Grayscale
+                      </span>
+                    )}
+                  </div>
                   <p style={{ margin: '2px 0 0', fontSize: 12, color: 'var(--nudge-on-surface-variant)' }}>
                     {ruleSummary(rule)}
                   </p>
@@ -452,8 +490,6 @@ export function SettingsPanel({
           One message per line. Nudge picks one at random each time.
         </p>
       </Card>
-
-      <YoutubePanel settings={settings.youtube} onChange={(youtube) => patch({ youtube })} />
 
       <Card title="Escape Hatch">
         <Toggle

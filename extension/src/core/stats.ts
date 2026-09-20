@@ -10,8 +10,43 @@
 
 import { localDayKey } from './scheduleEvaluator';
 import type { DayUsage, UsageByDay } from './protocol';
+import { isSurfaceKey, surfaceKey } from './surfaceKeys';
+import type { GateId } from './platforms';
 
 const HOURS_PER_DAY = 24;
+
+/**
+ * The SITE rollups of one day, with feature-surface buckets filtered out.
+ *
+ * A gate budget is measured in a bucket keyed `domain#gate` that lives in the same day map
+ * as the sites (see `core/surfaceKeys.ts`), and the time in it is a SUBSET of the site's —
+ * the same minute of Shorts is counted in `youtube.com` and in `youtube.com#shorts`. So
+ * anything that lists or sums "domains" has to go through here, or the day's total silently
+ * double-counts gated browsing and the stats table grows a phantom "youtube.com#shorts"
+ * site.
+ *
+ * It is a shared helper rather than a filter repeated at each call site precisely because
+ * "which aggregations are domain-shaped" is not obvious from the outside: `hourlyHeatmap`
+ * and `calculateStreak` need it just as much as `topSites` does, and the ones that miss it
+ * fail silently, with numbers that merely look a bit high.
+ */
+function siteEntries(day: Record<string, DayUsage>): [string, DayUsage][] {
+  return Object.entries(day).filter(([key]) => !isSurfaceKey(key));
+}
+
+/**
+ * One feature surface's active seconds for a day, or 0 when nothing was recorded.
+ *
+ * The dashboard's "of which Shorts: 12m" line. Exported so the UI reads the bucket through
+ * the same key builder the tracker writes it with, rather than assembling the string itself.
+ */
+export function surfaceActiveSeconds(
+  day: Record<string, DayUsage>,
+  domain: string,
+  gateId: GateId,
+): number {
+  return day[surfaceKey(domain, gateId)]?.activeSec ?? 0;
+}
 
 function cloneHourly(hourly: readonly number[]): number[] {
   return [...hourly];
@@ -51,10 +86,10 @@ export function recordWalkedAway(usage: DayUsage): DayUsage {
   return { ...usage, walkedAway: usage.walkedAway + 1, hourly: cloneHourly(usage.hourly) };
 }
 
-/** Sum of active seconds across every domain rolled up for one day. */
+/** Sum of active seconds across every SITE rolled up for one day. */
 export function totalActiveSeconds(day: Record<string, DayUsage>): number {
   let total = 0;
-  for (const usage of Object.values(day)) {
+  for (const [, usage] of siteEntries(day)) {
     total += usage.activeSec;
   }
   return total;
@@ -74,7 +109,7 @@ export interface TopSite {
  */
 export function topSites(day: Record<string, DayUsage>, limit?: number): TopSite[] {
   const total = totalActiveSeconds(day);
-  const entries: TopSite[] = Object.entries(day).map(([domain, usage]) => ({
+  const entries: TopSite[] = siteEntries(day).map(([domain, usage]) => ({
     domain,
     activeSec: usage.activeSec,
     fraction: total > 0 ? usage.activeSec / total : 0,
@@ -122,7 +157,7 @@ export function weeklySeries(usage: UsageByDay, dayKeys: readonly string[]): Wee
     let activeSec = 0;
     let blocked = 0;
     let walkedAway = 0;
-    for (const usageForDomain of Object.values(domains)) {
+    for (const [, usageForDomain] of siteEntries(domains)) {
       activeSec += usageForDomain.activeSec;
       blocked += usageForDomain.blocked;
       walkedAway += usageForDomain.walkedAway;
@@ -136,7 +171,7 @@ export function hourlyHeatmap(usage: UsageByDay, dayKey: string): number[] {
   const hourly = new Array<number>(HOURS_PER_DAY).fill(0);
   const domains = usage[dayKey];
   if (!domains) return hourly;
-  for (const usageForDomain of Object.values(domains)) {
+  for (const [, usageForDomain] of siteEntries(domains)) {
     for (let h = 0; h < HOURS_PER_DAY; h++) {
       hourly[h] = (hourly[h] ?? 0) + (usageForDomain.hourly[h] ?? 0);
     }
@@ -192,7 +227,7 @@ export function calculateStreak(usage: UsageByDay, now: Date): number {
     const day = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
     const key = localDayKey(day);
     const domainsRecord = usage[key];
-    const domains = domainsRecord ? Object.values(domainsRecord) : [];
+    const domains = domainsRecord ? siteEntries(domainsRecord).map(([, u]) => u) : [];
 
     const hadBlocked = domains.some((d) => d.blocked > 0);
     const hadWalkedAway = domains.some((d) => d.walkedAway > 0);
@@ -214,7 +249,7 @@ export function allTimeTotals(usage: UsageByDay): { blocked: number; walkedAway:
   let blocked = 0;
   let walkedAway = 0;
   for (const domains of Object.values(usage)) {
-    for (const usageForDomain of Object.values(domains)) {
+    for (const [, usageForDomain] of siteEntries(domains)) {
       blocked += usageForDomain.blocked;
       walkedAway += usageForDomain.walkedAway;
     }

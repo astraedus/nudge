@@ -1,30 +1,55 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { PopupState } from '../../core/protocol';
-import type { SiteRule } from '../../core/settingsSchema';
 import { DEFAULT_DELAY_SECONDS } from '../../core/settingsSchema';
 import type { BlockMode } from '../../core/types';
-import { MODE_LABELS } from '../../core/types';
+import { MODE_LABELS, SITE_MODE_LABELS } from '../../core/types';
 import { send } from '../../ui/rpc';
 import { formatDuration } from '../../ui/format';
-import { Button, NudgeMark } from '../../ui/components';
+import { Button, NudgeMark, Toggle } from '../../ui/components';
+import { ChallengeDialog } from '../dashboard/ChallengeDialog';
 
 const MODES: BlockMode[] = ['HARD_BLOCK', 'DELAY', 'BREATHING'];
 
-type SiteStatus = 'blocked' | 'limited' | 'not-blocked';
-
-function computeSiteStatus(rule: SiteRule | null, remainingMs: number | null): SiteStatus {
-  if (!rule || !rule.enabled) return 'not-blocked';
-  const limitExhausted =
-    rule.dailyLimitMinutes !== null && remainingMs !== null && remainingMs <= 0;
-  if (rule.mode === 'HARD_BLOCK' || limitExhausted) return 'blocked';
-  if (rule.dailyLimitMinutes !== null) return 'limited';
-  return 'blocked';
+/** A grayscale save the Commitment Lock intercepted — same pattern as the dashboard's
+ * `PendingChallenge`, held locally because the popup has its own short-lived RPC flow. */
+interface PendingGrayscale {
+  challenge: string;
+  domain: string;
+  grayscale: boolean;
+  incorrect: boolean;
 }
 
-function statusColor(status: SiteStatus): string {
-  if (status === 'not-blocked') return 'var(--nudge-on-surface-variant)';
-  if (status === 'limited') return 'var(--nudge-warn)';
-  return 'var(--nudge-danger)';
+function errorText(e: unknown): string {
+  return e instanceof Error ? e.message : 'Could not reach the extension.';
+}
+
+/**
+ * The current site's status line, using the WORKER's already-resolved mode/applies
+ * fields (`core/applies.ts`, schedule and budget already accounted for) rather than
+ * re-deriving them from the raw rule — the popup is the untrusted side and must never
+ * disagree with what the network layer is actually doing.
+ */
+function statusLine(state: PopupState): { text: string; color: string } {
+  if (state.currentRule === null || !state.currentRule.enabled || state.currentMode === null) {
+    return { text: 'Not blocked', color: 'var(--nudge-on-surface-variant)' };
+  }
+
+  if (!state.currentApplies) {
+    if (state.currentRemainingMs !== null) {
+      return {
+        text: `Allowed · ${formatDuration(Math.floor(state.currentRemainingMs / 1000))} left`,
+        color: 'var(--nudge-ok)',
+      };
+    }
+    return { text: 'Allowed', color: 'var(--nudge-ok)' };
+  }
+
+  // Applies now: the mode may still read 'ALLOW' when it is only in force because the
+  // daily budget ran out (the resolved default behaviour never changed) — that reads to
+  // the user as "Blocked · limit reached", not "Allow".
+  const label =
+    state.currentMode === 'ALLOW' ? 'Blocked · limit reached' : SITE_MODE_LABELS[state.currentMode];
+  return { text: label, color: 'var(--nudge-danger)' };
 }
 
 function openDashboard() {
@@ -39,6 +64,9 @@ export function Popup() {
   const [mode, setMode] = useState<BlockMode>('DELAY');
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
+  const [pending, setPending] = useState<PendingGrayscale | null>(null);
+  const [grayscaleSubmitting, setGrayscaleSubmitting] = useState(false);
+  const [grayscaleError, setGrayscaleError] = useState<string | null>(null);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -49,7 +77,7 @@ export function Popup() {
         setLoading(false);
       })
       .catch((e) => {
-        setError(e instanceof Error ? e.message : 'Could not reach the extension.');
+        setError(errorText(e));
         setLoading(false);
       });
   }, []);
@@ -78,9 +106,47 @@ export function Popup() {
       })
       .catch((e) => {
         setAdding(false);
-        setAddError(e instanceof Error ? e.message : 'Could not reach the extension.');
+        setAddError(errorText(e));
       });
   }, [state?.currentDomain, mode, load]);
+
+  /**
+   * The popup's grayscale quick toggle. It is an ordinary settings mutation, so it goes
+   * through the worker exactly like SAVE_SETTINGS — the worker decides whether it needs a
+   * Strict Mode challenge (turning grayscale OFF is a weakening; turning it ON never is),
+   * this component just renders whatever comes back.
+   */
+  const setGrayscale = useCallback(
+    (domain: string, grayscale: boolean, challengeResponse?: string) => {
+      setGrayscaleError(null);
+      setGrayscaleSubmitting(challengeResponse !== undefined);
+      send({ type: 'SET_GRAYSCALE', domain, grayscale, challengeResponse })
+        .then((result) => {
+          setGrayscaleSubmitting(false);
+          if (result.ok) {
+            setPending(null);
+            load();
+            return;
+          }
+          if (result.challenge !== undefined) {
+            setPending({
+              challenge: result.challenge,
+              domain,
+              grayscale,
+              incorrect: result.reason === 'challenge-incorrect',
+            });
+            return;
+          }
+          setPending(null);
+          setGrayscaleError(result.reason ?? 'Could not update grayscale.');
+        })
+        .catch((e: unknown) => {
+          setGrayscaleSubmitting(false);
+          setGrayscaleError(errorText(e));
+        });
+    },
+    [load],
+  );
 
   return (
     <div
@@ -173,26 +239,39 @@ export function Popup() {
                 </p>
 
                 {(() => {
-                  const status = computeSiteStatus(state.currentRule, state.currentRemainingMs);
-                  const rule = state.currentRule;
+                  const status = statusLine(state);
                   return (
-                    <div style={{ marginTop: 6 }}>
-                      <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: statusColor(status) }}>
-                        {status === 'not-blocked' ? 'Not blocked' : MODE_LABELS[rule!.mode]}
-                      </p>
-                      {rule?.dailyLimitMinutes !== null &&
-                        rule !== null &&
-                        rule !== undefined &&
-                        state.currentRemainingMs !== null && (
-                          <p style={{ margin: '2px 0 0', fontSize: 12, color: 'var(--nudge-on-surface-variant)' }}>
-                            {state.currentRemainingMs > 0
-                              ? `${formatDuration(Math.floor(state.currentRemainingMs / 1000))} left today`
-                              : 'Daily limit reached'}
-                          </p>
-                        )}
-                    </div>
+                    <p style={{ margin: '6px 0 0', fontSize: 13, fontWeight: 600, color: status.color }}>
+                      {status.text}
+                    </p>
                   );
                 })()}
+
+                {state.currentFeatureSummary !== null && (
+                  <p style={{ margin: '2px 0 0', fontSize: 12, color: 'var(--nudge-on-surface-variant)' }}>
+                    {state.currentFeatureSummary}
+                  </p>
+                )}
+
+                <div
+                  style={{
+                    marginTop: 10,
+                    paddingTop: 10,
+                    borderTop: '1px solid var(--nudge-surface-variant)',
+                  }}
+                >
+                  <Toggle
+                    checked={state.currentGrayscale}
+                    onChange={(next) => setGrayscale(state.currentDomain!, next)}
+                    label="Grayscale this site"
+                    disabled={grayscaleSubmitting}
+                  />
+                  {grayscaleError && (
+                    <p style={{ margin: '6px 0 0', fontSize: 12, color: 'var(--nudge-danger)' }}>
+                      {grayscaleError}
+                    </p>
+                  )}
+                </div>
 
                 {state.currentRule === null && (
                   <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -236,6 +315,19 @@ export function Popup() {
             Open dashboard →
           </Button>
         </div>
+      )}
+
+      {pending && (
+        <ChallengeDialog
+          challenge={pending.challenge}
+          submitting={grayscaleSubmitting}
+          error={pending.incorrect ? "That code doesn't match. Try again." : null}
+          onCancel={() => {
+            setPending(null);
+            setGrayscaleError(null);
+          }}
+          onSubmit={(typed) => setGrayscale(pending.domain, pending.grayscale, typed)}
+        />
       )}
     </div>
   );

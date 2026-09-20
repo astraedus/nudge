@@ -8,12 +8,24 @@
  *    lives HERE, in the worker, not in the UI — a gate a page could skip is not a gate.
  *  - Handlers are total: an unknown message and a thrown handler both produce a defined
  *    response rather than a hung sendMessage promise.
+ *
+ * v0.2 adds `GET_SITE_CONFIG` (which replaced the YouTube-only config message) and
+ * `SET_GRAYSCALE`, and teaches the block page about feature gates. The resolution work all
+ * happens here rather than in the pages for the same reason it always did: a content script
+ * that carried its own copy of the schedule evaluator, the budget math and the applies
+ * predicate would eventually disagree with the network layer about the same surface, and
+ * the user would see an overlay on a page DNR had already let through (or the reverse).
  */
 
+import { appliedBlockMode, gateAppliesNow, siteRuleAppliesNow } from '../core/applies';
 import { evaluate } from '../core/blockEngine';
 import { remainingMs, tightestLimit } from '../core/budgets';
 import { extractDomain, normalizeUserInput } from '../core/domainMatcher';
 import * as pass from '../core/emergencyPass';
+// Shared with the dashboard's rule card and the rule editor. One implementation on purpose:
+// the worker resolves the popup's copy while the dashboard renders its own from settings,
+// so a second string builder here would eventually describe the same rule two ways.
+import { featureSummary } from '../core/featureSummary';
 import {
   DEFAULT_DELAY_SUBTITLES,
   DEFAULT_DELAY_TITLES,
@@ -21,26 +33,39 @@ import {
   pickRandom,
   resolvePool,
 } from '../core/messages';
+import {
+  gateForUrl,
+  platformById,
+  platformForDomain,
+  type GateDefinition,
+  type GateId,
+} from '../core/platforms';
 import type {
   BlockContext,
   DashboardState,
   GrantResult,
   PopupState,
   Request,
+  ResolvedGate,
   SaveResult,
-  YoutubeConfig,
+  SiteConfig,
 } from '../core/protocol';
 import { resolveActiveRules } from '../core/ruleResolver';
 import { localDayKey } from '../core/scheduleEvaluator';
 import {
   DEFAULT_DELAY_SECONDS,
   migrateSettings,
+  newSiteRule,
+  type ChannelEntry,
+  type GateSetting,
   type NudgeSettings,
   type SiteRule,
 } from '../core/settingsSchema';
 import { allTimeTotals, lastNDayKeys, totalActiveSeconds } from '../core/stats';
 import * as strict from '../core/strictMode';
-import type { BlockMode } from '../core/types';
+import { surfaceKey } from '../core/surfaceKeys';
+import type { ActiveRule, BlockDecision, SiteMode } from '../core/types';
+import { ensureScheduleAlarm } from './alarmsHub';
 import { applyRules } from './dnr';
 import {
   loadAllUsage,
@@ -70,14 +95,89 @@ async function setPendingChallenge(challenge: string | null): Promise<void> {
   }
 }
 
+/** The enabled rule covering `domain`, or null. */
+function ruleForDomain(settings: NudgeSettings, domain: string): SiteRule | null {
+  if (domain === '') return null;
+  return settings.rules.find((rule) => rule.enabled && rule.domain === domain) ?? null;
+}
+
+/** The gate a URL lands on, together with its stored settings. */
+interface GateOnPage {
+  definition: GateDefinition;
+  setting: GateSetting;
+}
+
+function gateForPage(rule: SiteRule | null, url: string): GateOnPage | null {
+  const features = rule?.features;
+  if (features === undefined || features === null) return null;
+  const gateId = gateForUrl(features.platform, url);
+  if (gateId === null) return null;
+  const setting = features.gates[gateId];
+  if (setting === undefined) return null;
+  const definition = platformById(features.platform).gates.find((g) => g.id === gateId);
+  return definition === undefined ? null : { definition, setting };
+}
+
+/**
+ * The gate's verdict expressed as engine input.
+ *
+ * A gate behaves like a mini site rule, so it goes through the SAME engine rather than
+ * having the block page special-case it: that is what gives a gated surface the identical
+ * "limit reached" copy, remaining-time readout and Hard-Block-vs-Delay resolution that a
+ * site rule gets, without a second implementation to keep in step.
+ */
+function gateAsActiveRule(
+  rule: SiteRule,
+  gate: GateOnPage,
+  delaySeconds: number,
+  mode: NonNullable<ReturnType<typeof appliedBlockMode>>,
+): ActiveRule {
+  return {
+    mode,
+    delaySeconds,
+    dailyLimitMinutes: gate.setting.dailyLimitMinutes,
+    enabled: true,
+    scheduleDays: null,
+    scheduleStartMinute: null,
+    scheduleEndMinute: null,
+    ruleName: `${rule.domain} · ${gate.definition.label}`,
+  };
+}
+
 async function buildBlockContext(target: string, now: Date): Promise<BlockContext> {
   const settings = await loadSettings();
   const domain = extractDomain(target) ?? '';
   const usedMs = domain === '' ? 0 : await todayUsageMs(domain, now);
+  const rule = ruleForDomain(settings, domain);
 
-  const decision = settings.globalEnabled
-    ? evaluate(resolveActiveRules(settings.rules, domain, now), usedMs, now)
-    : { type: 'ALLOW' as const };
+  let decision: BlockDecision = { type: 'ALLOW' };
+  let gateId: GateId | null = null;
+  let gateLabel: string | null = null;
+
+  if (settings.globalEnabled) {
+    // The gate is asked FIRST because the gate redirect outranks the site redirect at the
+    // network layer (see dnr.ts priorities). If the block page resolved the site instead,
+    // a Shorts gate on an otherwise-ALLOWed YouTube would render as "no rule applies" and
+    // send the user straight back into the redirect.
+    const gate = rule === null ? null : gateForPage(rule, target);
+    if (gate !== null) {
+      const surfaceMs = await todayUsageMs(surfaceKey(domain, gate.definition.id), now);
+      const verdict = gateAppliesNow(gate.setting, surfaceMs);
+      const mode = appliedBlockMode(verdict);
+      if (mode !== null && rule !== null) {
+        gateId = gate.definition.id;
+        gateLabel = gate.definition.label;
+        decision = evaluate(
+          [gateAsActiveRule(rule, gate, verdict.delaySeconds, mode)],
+          surfaceMs,
+          now,
+        );
+      }
+    }
+    if (gateId === null) {
+      decision = evaluate(resolveActiveRules(settings.rules, domain, now, usedMs), usedMs, now);
+    }
+  }
 
   const ledger = pass.parse(await loadPassLedger());
   const passAvailable = pass.canUseGlobal(ledger, now.getTime(), pass.LOCKOUT_MS);
@@ -104,7 +204,24 @@ async function buildBlockContext(target: string, now: Date): Promise<BlockContex
     ),
     strictModeEnabled: settings.strictMode.enabled,
     tempAllowMinutes: settings.tempAllowMinutes,
+    gateId,
+    gateLabel,
+    allowedChannels: allowedChannelsFor(rule),
   };
+}
+
+/**
+ * The channels a YouTube whitelist still lets through, for the block page to link to.
+ *
+ * Without these links "block YouTube except these channels" is technically correct and
+ * practically useless: the home feed, search and subscriptions are all redirected, so the
+ * only way into an allowed channel is typing a URL from memory. The block page has to BE
+ * the way in.
+ */
+function allowedChannelsFor(rule: SiteRule | null): ChannelEntry[] {
+  const youtube = rule?.features?.youtube;
+  if (youtube === undefined || youtube.channelMode !== 'WHITELIST') return [];
+  return youtube.channels;
 }
 
 /**
@@ -175,13 +292,23 @@ async function buildPopupState(now: Date): Promise<PopupState> {
   const limit = tightestLimit(rules.filter((rule) => rule.enabled));
   const usedMs = currentDomain === null ? 0 : (day[currentDomain]?.activeSec ?? 0) * 1000;
 
+  const currentRule = rules[0] ?? null;
+  const verdict =
+    currentRule === null ? null : siteRuleAppliesNow(currentRule, usedMs, now);
+
   return {
     globalEnabled: settings.globalEnabled,
     todayTotalSeconds: totalActiveSeconds(day),
     currentDomain,
-    currentRule: rules[0] ?? null,
+    currentRule,
     currentRemainingMs: remainingMs(limit, usedMs),
     currentUsageSeconds: Math.floor(usedMs / 1000),
+    currentMode: verdict?.mode ?? null,
+    // The master toggle means "behave as if uninstalled", so nothing is in force under it
+    // — the popup must not count down a budget the network layer is ignoring.
+    currentApplies: settings.globalEnabled && (verdict?.applies ?? false),
+    currentGrayscale: currentRule?.grayscale ?? false,
+    currentFeatureSummary: currentRule === null ? null : featureSummary(currentRule),
   };
 }
 
@@ -194,6 +321,80 @@ async function buildDashboardState(now: Date): Promise<DashboardState> {
     usage,
     allTimeBlocked: totals.blocked,
     allTimeWalkedAway: totals.walkedAway,
+  };
+}
+
+/**
+ * Everything a platform content script needs for the page it is on.
+ *
+ * Replaces GET_YOUTUBE_CONFIG. The script sends a URL rather than a platform name so the
+ * worker resolves domain -> rule -> platform -> gate exactly the way the network layer
+ * does; a script that named its own platform would still have to be told which gate the
+ * current path is, and that answer would then exist twice.
+ */
+async function buildSiteConfig(url: string, now: Date): Promise<SiteConfig> {
+  const settings = await loadSettings();
+  const domain = extractDomain(url) ?? '';
+  const rule = ruleForDomain(settings, domain);
+  const knownPlatform = domain === '' ? null : platformForDomain(domain);
+
+  if (!settings.globalEnabled || rule === null) {
+    // "Behave as if uninstalled": every feature off, not just blocking. Otherwise a
+    // disabled Nudge would still be hiding comments and greying pages out.
+    return {
+      enabled: false,
+      domain,
+      platform: knownPlatform?.id ?? null,
+      siteMode: 'ALLOW',
+      siteDelaySeconds: DEFAULT_DELAY_SECONDS,
+      siteApplies: false,
+      siteLimitReached: false,
+      grayscale: false,
+      gates: [],
+      hides: {},
+      youtube: null,
+    };
+  }
+
+  const usedMs = await todayUsageMs(domain, now);
+  const verdict = siteRuleAppliesNow(rule, usedMs, now);
+
+  // A live temp-allow grant is DELIBERATELY not consulted here, and must never be: a
+  // completed pause on the SITE opens the site's gate surfaces at the network layer too
+  // (temp-allow outranks the gate redirect, which is what stops a pause completed on a gate
+  // from bouncing back into its own redirect — see the priority ladder in dnr.ts). The
+  // in-page gate is the only thing standing between that grant and an ungated Shorts feed,
+  // so it keeps enforcing the gate's own mode; only a pause completed ON the gate surface
+  // satisfies the gate.
+  const gates: ResolvedGate[] = [];
+  const features = rule.features;
+  if (features !== null) {
+    for (const definition of platformById(features.platform).gates) {
+      const setting = features.gates[definition.id];
+      if (setting === undefined) continue;
+      const surfaceMs = await todayUsageMs(surfaceKey(domain, definition.id), now);
+      const gateVerdict = gateAppliesNow(setting, surfaceMs);
+      gates.push({
+        id: definition.id,
+        mode: appliedBlockMode(gateVerdict) ?? 'ALLOW',
+        delaySeconds: gateVerdict.delaySeconds,
+        limitReached: gateVerdict.reason === 'limit-exhausted',
+      });
+    }
+  }
+
+  return {
+    enabled: true,
+    domain,
+    platform: features?.platform ?? knownPlatform?.id ?? null,
+    siteMode: verdict.mode,
+    siteDelaySeconds: verdict.delaySeconds,
+    siteApplies: verdict.applies,
+    siteLimitReached: verdict.reason === 'limit-exhausted',
+    grayscale: rule.grayscale,
+    gates,
+    hides: features?.hides ?? {},
+    youtube: features?.youtube ?? null,
   };
 }
 
@@ -228,14 +429,15 @@ async function handleSave(
 
   await setPendingChallenge(null);
   await saveSettings(normalized);
-  await applyRules(normalized);
+  await applyRules(normalized, now);
+  await ensureScheduleAlarm(normalized, now);
   await onActivityEvent(now.getTime());
   return { ok: true };
 }
 
 async function addSite(
   domain: string,
-  mode: BlockMode,
+  mode: SiteMode,
   delaySeconds: number,
   now: Date,
 ): Promise<{ ok: boolean; reason?: string }> {
@@ -247,92 +449,49 @@ async function addSite(
     return { ok: false, reason: 'already-blocked' };
   }
 
-  const rule: SiteRule = {
-    id: `rule-${normalizedDomain}-${now.getTime()}`,
+  // `newSiteRule` seeds the features block for a known platform, so a quick-add chip for
+  // YouTube lands on a rule whose surfaces the editor can render immediately — building the
+  // literal here instead is how the seeding would silently not happen on this path.
+  const rule = newSiteRule({
     domain: normalizedDomain,
     mode,
     delaySeconds: delaySeconds > 0 ? delaySeconds : DEFAULT_DELAY_SECONDS,
-    dailyLimitMinutes: null,
-    enabled: true,
     createdAt: now.getTime(),
-    showTimeRemaining: false,
-    schedule: null,
-  };
+  });
 
   // Adding a rule STRENGTHENS protection, so it is never gated by Strict Mode.
   const updated = migrateSettings({ ...settings, rules: [...settings.rules, rule] });
   await saveSettings(updated);
-  await applyRules(updated);
+  await applyRules(updated, now);
+  await ensureScheduleAlarm(updated, now);
   return { ok: true };
 }
 
 /**
- * The v1.1 YouTube feature fields, passed through verbatim.
+ * The popup's grayscale quick toggle.
  *
- * Kept as one helper so the "globally disabled" branch and the live branch can never drift
- * apart — a field added to one and forgotten in the other is exactly how a toggle ends up
- * silently dead on one path.
+ * Routed through `handleSave` rather than writing settings directly, so it inherits the
+ * Strict Mode gate unchanged: turning grayscale OFF is a weakening and is challenged,
+ * turning it ON is not. A shortcut that wrote the rule itself would be a hole in the
+ * commitment lock reachable from a one-tap control, which is the worst possible place for
+ * one.
  */
-function youtubeFeatureFields(
-  settings: NudgeSettings,
-): Omit<YoutubeConfig, 'enabled' | 'hideShortsShelf' | 'shortsMode' | 'shortsDelaySeconds'> {
-  const yt = settings.youtube;
-  return {
-    channelMode: yt.channelMode,
-    channels: yt.channels,
-    channelBlockMode: yt.channelBlockMode,
-    channelDelaySeconds: yt.channelDelaySeconds,
-    grayScreen: yt.grayScreen,
-    hideHomeFeed: yt.hideHomeFeed,
-    hideSidebarRecs: yt.hideSidebarRecs,
-    hideEndScreen: yt.hideEndScreen,
-    hideComments: yt.hideComments,
-    disableAutoplay: yt.disableAutoplay,
-  };
-}
-
-async function buildYoutubeConfig(now: Date): Promise<YoutubeConfig> {
+async function setGrayscale(
+  domain: string,
+  grayscale: boolean,
+  challengeResponse: string | undefined,
+  now: Date,
+): Promise<SaveResult> {
+  const normalizedDomain = normalizeUserInput(domain) ?? domain;
   const settings = await loadSettings();
-  if (!settings.globalEnabled) {
-    // The master toggle means "behave as if uninstalled": every feature off, not just
-    // blocking. Otherwise a disabled Nudge would still be greying YouTube out.
-    return {
-      enabled: false,
-      hideShortsShelf: false,
-      shortsMode: 'ALLOW',
-      shortsDelaySeconds: settings.youtube.shortsDelaySeconds,
-      ...youtubeFeatureFields(settings),
-      channelMode: 'OFF',
-      grayScreen: false,
-      hideHomeFeed: false,
-      hideSidebarRecs: false,
-      hideEndScreen: false,
-      hideComments: false,
-      disableAutoplay: false,
-    };
-  }
+  const target = settings.rules.find((rule) => rule.domain === normalizedDomain);
+  if (target === undefined) return { ok: false, reason: 'no-rule' };
+  if (target.grayscale === grayscale) return { ok: true };
 
-  let shortsMode: BlockMode | 'ALLOW';
-  if (settings.youtube.shortsMode === 'INHERIT') {
-    // Defer to whatever the site rule for youtube.com decides right now.
-    const usedMs = await todayUsageMs('youtube.com', now);
-    const decision = evaluate(
-      resolveActiveRules(settings.rules, 'youtube.com', now),
-      usedMs,
-      now,
-    );
-    shortsMode = decision.type === 'ALLOW' ? 'ALLOW' : decision.mode;
-  } else {
-    shortsMode = settings.youtube.shortsMode;
-  }
-
-  return {
-    enabled: true,
-    hideShortsShelf: settings.youtube.hideShortsShelf,
-    shortsMode,
-    shortsDelaySeconds: settings.youtube.shortsDelaySeconds,
-    ...youtubeFeatureFields(settings),
-  };
+  const rules = settings.rules.map((rule) =>
+    rule.id === target.id ? { ...rule, grayscale } : rule,
+  );
+  return handleSave({ ...settings, rules }, challengeResponse, now);
 }
 
 /** Dispatch one request. Throwing here would hang the caller, so it never throws. */
@@ -365,8 +524,15 @@ export async function handleRequest(request: Request, now: Date = new Date()): P
       return handleSave(request.settings, request.challengeResponse, now);
     case 'GET_SETTINGS':
       return loadSettings();
-    case 'GET_YOUTUBE_CONFIG':
-      return buildYoutubeConfig(now);
+    case 'GET_SITE_CONFIG':
+      return buildSiteConfig(request.url, now);
+    case 'SET_GRAYSCALE':
+      return setGrayscale(
+        request.domain,
+        request.grayscale,
+        request.challengeResponse,
+        now,
+      );
     default:
       return { ok: false, reason: 'unknown-request' };
   }
