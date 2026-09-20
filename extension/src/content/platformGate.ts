@@ -54,8 +54,9 @@ import {
   createGateOverlay,
   isOwnOverlay,
   overlayIdFor,
-  pauseMedia,
+  holdMediaPaused,
   type GateCopy,
+  type MediaHold,
   type OverlayHandle,
 } from './overlay';
 import { observeNavigation } from './spaNav';
@@ -243,6 +244,8 @@ export function initPlatformContentScript(
   const overlayId = overlayIdFor(options.platform);
   let config: SiteConfig = IDLE_SITE_CONFIG;
   let overlay: OverlayHandle | null = null;
+  /** Held only while an interstitial is up; see `holdMediaPaused`. */
+  let mediaHold: MediaHold | null = null;
   /** The gate id a completed pause was granted for. Reset the moment no gate applies. */
   let satisfiedGateId: GateId | null = null;
   let stopped = false;
@@ -254,6 +257,10 @@ export function initPlatformContentScript(
   function teardownOverlay(): void {
     overlay?.dispose();
     overlay = null;
+    // Release BEFORE the overlay is forgotten: a hold that outlives its interstitial would
+    // keep the page's media un-playable with nothing on screen to explain why.
+    mediaHold?.release();
+    mediaHold = null;
   }
 
   function refresh(): void {
@@ -284,7 +291,7 @@ export function initPlatformContentScript(
     if (overlay?.element.isConnected) return;
 
     teardownOverlay();
-    pauseMedia(doc);
+    mediaHold = holdMediaPaused(doc);
 
     const mode = gate.mode;
     const copy = options.gateCopy(gate.id);

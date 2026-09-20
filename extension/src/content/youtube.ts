@@ -33,6 +33,7 @@ import { channelKey, SETTLE_RECHECK_MS } from '../core/channelFreshness';
 import type { WatchGateVerdict } from '../core/channels';
 import { detectWatchChannel } from './channelDetection';
 import { applyAutoplayOff, applyHideToggles } from './unhook';
+import { holdMediaPaused, type MediaHold } from './overlay';
 import {
   HIDDEN_CLASS,
   NUDGE_OVERLAY_ID,
@@ -400,17 +401,6 @@ function overlayHost(doc: Document): Element {
   return elements[0] ?? doc.body;
 }
 
-/** Pause any playing media so the interstitial isn't just a lid over a running video. */
-function pauseMedia(doc: Document): void {
-  for (const video of Array.from(doc.querySelectorAll('video'))) {
-    try {
-      (video as HTMLVideoElement).pause();
-    } catch {
-      // jsdom and some embeds throw on pause(); the overlay still stands.
-    }
-  }
-}
-
 /**
  * Copy for the watch-page channel gate.
  *
@@ -502,6 +492,8 @@ export function initYoutubeContentScript(
   const view = doc.defaultView;
   let config: SiteConfig = IDLE_SITE_CONFIG;
   let overlay: OverlayHandle | null = null;
+  /** Held only while an interstitial is up; see `holdMediaPaused`. */
+  let mediaHold: MediaHold | null = null;
   /** Set once a pause is completed; cleared as soon as we leave the Shorts surface. */
   let gateSatisfied = false;
   /** The watch URL whose channel gate the user has already completed, if any. */
@@ -523,6 +515,10 @@ export function initYoutubeContentScript(
   function teardownOverlay(): void {
     overlay?.dispose();
     overlay = null;
+    // Release BEFORE the overlay is forgotten, or the page's media stays un-playable with
+    // nothing on screen to explain why.
+    mediaHold?.release();
+    mediaHold = null;
   }
 
   function refresh(): void {
@@ -580,7 +576,7 @@ export function initYoutubeContentScript(
     if (overlay?.element.isConnected) return;
 
     teardownOverlay();
-    pauseMedia(doc);
+    mediaHold = holdMediaPaused(doc);
 
     if (shortsGate !== null) {
       overlay = createGateOverlay(

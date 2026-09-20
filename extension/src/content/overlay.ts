@@ -215,13 +215,63 @@ export function createGateOverlay(
 
 /** Pause any playing media so the interstitial isn't just a lid over a running video. */
 export function pauseMedia(doc: Document): void {
-  for (const video of Array.from(doc.querySelectorAll('video'))) {
+  for (const media of Array.from(doc.querySelectorAll('video, audio'))) {
     try {
-      (video as HTMLVideoElement).pause();
+      (media as HTMLMediaElement).pause();
     } catch {
       // jsdom and some embeds throw on pause(); the overlay still stands.
     }
   }
+}
+
+/** A standing "nothing may play" hold, released when the overlay comes down. */
+export interface MediaHold {
+  /** Re-pause right now — for callers that already have a periodic pass. */
+  repause: () => void;
+  /** Stop holding. MUST be called on overlay teardown or media can never play again. */
+  release: () => void;
+}
+
+/**
+ * Keep media paused for as long as a gate overlay is up.
+ *
+ * A single `pause()` at mount time is not enough, and live QA caught exactly that (run 51,
+ * 2026-09-20): the Hard Block overlay was on screen while the video underneath paused at
+ * +2.0s and was playing again by +2.5s, unmuted, for the next twelve seconds. YouTube's own
+ * autoplay simply resumes the player after our one-shot pause, so the interstitial became a
+ * lid over a running video — the audio the user asked not to be pulled into kept playing.
+ * Intermittent (4 of 5 runs stayed paused), which is exactly why it needs a standing hold
+ * rather than a better-timed single pause.
+ *
+ * Listeners are CAPTURING and on the document: `play`/`playing` do not bubble, so a
+ * capturing document listener is the only way to hear them for a player that is replaced or
+ * re-created while the overlay is up — which YouTube does.
+ */
+export function holdMediaPaused(doc: Document): MediaHold {
+  const repause = (): void => pauseMedia(doc);
+
+  const onPlay = (event: Event): void => {
+    const target = event.target as Partial<HTMLMediaElement> | null;
+    if (target === null || typeof target.pause !== 'function') return;
+    try {
+      target.pause();
+    } catch {
+      // Same tolerance as pauseMedia: a player that refuses to pause must not throw into
+      // the gate that is holding the page.
+    }
+  };
+
+  doc.addEventListener('play', onPlay, true);
+  doc.addEventListener('playing', onPlay, true);
+  repause();
+
+  return {
+    repause,
+    release: () => {
+      doc.removeEventListener('play', onPlay, true);
+      doc.removeEventListener('playing', onPlay, true);
+    },
+  };
 }
 
 /**
