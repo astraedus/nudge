@@ -18,12 +18,18 @@ import {
   type ChannelProbe,
   type WatchGateVerdict,
 } from '../core/channels';
-import { channelFreshness, channelKey, SETTLE_COLOR_MS } from '../core/channelFreshness';
+import {
+  channelFreshness,
+  channelKey,
+  SETTLE_COLOR_MS,
+  type Freshness,
+} from '../core/channelFreshness';
 import type { SiteConfig } from '../core/protocol';
 import { DEFAULT_DELAY_SECONDS } from '../core/settingsSchema';
 import {
   detectCardChannel,
   detectWatchChannel,
+  type DetectedChannel,
   feedCards,
   inlineVideoId,
   videoIdFromUrl,
@@ -189,6 +195,62 @@ function warnIfDetectionDegraded(
   );
 }
 
+/** How a caller identifies which video the page is showing, for the settle window. */
+export interface WatchPageOptions {
+  url?: string;
+  previousKey?: string | null;
+  msSinceNav?: number;
+}
+
+/**
+ * The channel on this watch page, together with whether the settle window trusts it yet.
+ *
+ * ONE implementation for both consumers on purpose. The gate uses it to decide whether to
+ * show an interstitial; the channel observer uses it to decide whether the observation is
+ * safe to PERSIST. A second copy of "has this settled yet" is exactly how a stale id would
+ * end up merged into a stored entry — the same P0 the settle window exists to prevent,
+ * except written to storage instead of shown on screen for three seconds.
+ *
+ * `detected` is null when nothing identifiable was found, which is NOT the same as settling:
+ * a CONFIRMED miss is the documented unknown-channel case and the gate must still answer it.
+ */
+function detectWithFreshness(
+  doc: Document,
+  url: string,
+  options: WatchPageOptions,
+): { detected: DetectedChannel | null; freshness: Freshness } {
+  const detected = detectWatchChannel(doc, { url });
+  const freshness = channelFreshness({
+    videoId: videoIdFromUrl(url),
+    inlineVideoId: inlineVideoId(doc),
+    detectedKey: channelKey(detected),
+    previousKey: options.previousKey ?? null,
+    msSinceNav: options.msSinceNav ?? Number.POSITIVE_INFINITY,
+  });
+  return { detected, freshness };
+}
+
+/**
+ * The channel this watch page is CONFIRMED to be showing, for callers that want the channel
+ * itself rather than a verdict about it (see `content/channelObserver.ts`).
+ *
+ * Returns null on every page that is not a settled watch page, and while the channel lists
+ * are off: with no list there is nothing an observation could ever teach.
+ */
+export function confirmedWatchChannel(
+  doc: Document,
+  config: ChannelConfig,
+  options: WatchPageOptions = {},
+): DetectedChannel | null {
+  const channels = channelSettings(config);
+  if (!config.enabled || channels.channelMode === 'OFF') return null;
+  const url = options.url ?? doc.location?.href ?? '';
+  if (pageTypeFor(url) !== 'watch') return null;
+
+  const { detected, freshness } = detectWithFreshness(doc, url, options);
+  return freshness === 'CONFIRMED' ? detected : null;
+}
+
 /**
  * The gate verdict for the CURRENT watch page, or null when channel lists are off, this is
  * not a watch page, or the detection has not settled yet.
@@ -200,26 +262,18 @@ function warnIfDetectionDegraded(
 export function watchChannelVerdict(
   doc: Document,
   config: ChannelConfig,
-  options: { url?: string; previousKey?: string | null; msSinceNav?: number } = {},
+  options: WatchPageOptions = {},
 ): WatchGateVerdict | null {
   const channels = channelSettings(config);
   if (!config.enabled || channels.channelMode === 'OFF') return null;
   const url = options.url ?? doc.location?.href ?? '';
   if (pageTypeFor(url) !== 'watch') return null;
 
-  const detected = detectWatchChannel(doc, { url });
-
   // Hold fire while the byline may still describe the PREVIOUS video. Returning null means
   // "no interstitial yet", NOT "allowed" - the caller simply does not gate, which is the same
   // fail-open we already take for an unidentifiable channel, and it is what stops an allowed
   // channel being accused for several seconds after a navigation.
-  const freshness = channelFreshness({
-    videoId: videoIdFromUrl(url),
-    inlineVideoId: inlineVideoId(doc),
-    detectedKey: channelKey(detected),
-    previousKey: options.previousKey ?? null,
-    msSinceNav: options.msSinceNav ?? Number.POSITIVE_INFINITY,
-  });
+  const { detected, freshness } = detectWithFreshness(doc, url, options);
   if (freshness === 'SETTLING') return null;
 
   return decideWatchGate({
