@@ -4,6 +4,7 @@ import {
   applyRules,
   applyTempAllows,
   compileRules,
+  compiledRuleCount,
   redirectOpenTabs,
   youtubeWhitelistPaths,
   type UsageByKey,
@@ -377,6 +378,81 @@ describe('temporary grants', () => {
     );
     expect(resolve([...rules, ...session], 'https://www.youtube.com/')).toBe('allowed');
   });
+});
+
+describe('compiledRuleCount', () => {
+  /**
+   * The e2e harness waits on this number to know the worker's rule set has caught up with a
+   * settings write, and it cannot call `compileRules` itself (that builds redirect actions
+   * through `chrome.runtime.getURL`, absent in the Playwright process). So the two must not
+   * drift: a count that is too LOW makes the harness stop waiting early, which surfaces as
+   * a flaky race rather than an honest failure — the worst kind of test infrastructure bug.
+   *
+   * Driven over states that exercise all three rule kinds rather than one happy path,
+   * because the three are summed separately and only a mixed case catches a missed term.
+   */
+  const states: [string, ReturnType<typeof settings>, UsageByKey][] = [
+    ['nothing configured', settings({ rules: [] }), NO_USAGE],
+    [
+      'a plain Hard Block',
+      settings({ rules: [siteRule({ domain: 'example.com', mode: 'HARD_BLOCK' })] }),
+      NO_USAGE,
+    ],
+    [
+      'an Allow rule under budget',
+      settings({
+        rules: [siteRule({ domain: 'example.com', mode: 'ALLOW', dailyLimitMinutes: 30 })],
+      }),
+      NO_USAGE,
+    ],
+    [
+      'the same Allow rule over budget',
+      settings({
+        rules: [siteRule({ domain: 'example.com', mode: 'ALLOW', dailyLimitMinutes: 30 })],
+      }),
+      { 'example.com': 45 * 60_000 },
+    ],
+    [
+      'gates and a whitelist together',
+      settings({
+        rules: [
+          siteRule({
+            domain: 'youtube.com',
+            mode: 'HARD_BLOCK',
+            features: featuresWith('youtube', {
+              gates: { shorts: { mode: 'HARD_BLOCK' } },
+              youtube: {
+                channelMode: 'WHITELIST',
+                channels: [channel({ handle: 'veritasium' })],
+              },
+            }),
+          }),
+          siteRule({
+            domain: 'instagram.com',
+            mode: 'ALLOW',
+            features: featuresWith('instagram', { gates: { reels: { mode: 'DELAY' } } }),
+          }),
+        ],
+      }),
+      NO_USAGE,
+    ],
+    [
+      'Nudge switched off entirely',
+      settings({
+        globalEnabled: false,
+        rules: [siteRule({ domain: 'example.com', mode: 'HARD_BLOCK' })],
+      }),
+      NO_USAGE,
+    ],
+  ];
+
+  for (const [label, state, usage] of states) {
+    it(`matches what compileRules actually produces: ${label}`, () => {
+      expect(compiledRuleCount(state, usage, MIDDAY)).toBe(
+        compileRules(state, usage, MIDDAY).length,
+      );
+    });
+  }
 });
 
 describe('applyRules', () => {
