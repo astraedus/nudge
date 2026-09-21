@@ -414,11 +414,16 @@ class NudgeAccessibilityService : AccessibilityService() {
          * real `BuildConfig.APPLICATION_ID` and the real namespace.
          *
          * `BuildConfig` is generated INTO the namespace, so this is the namespace by construction
-         * and a rename moves it. (Release builds do not minify, so shipped class names match what
+         * and a rename moves it. Taken off the class NAME rather than `Class.getPackageName()`,
+         * which is API 31 and this app's minSdk is 26: an unguarded call there is a
+         * `NoSuchMethodError` on every Android 8-11 device, in the companion initialiser of the
+         * accessibility service, i.e. blocking would simply never start. `lintDebug` is the only
+         * check in this repo that can see that, and it did. (Release builds do not minify, so shipped class names match what
          * the tests see; if that ever changes, both sides of this comparison are obfuscated
          * together, because both come from real classes.)
          */
-        internal val OWN_CLASS_NAMESPACE: String = BuildConfig::class.java.packageName
+        internal val OWN_CLASS_NAMESPACE: String =
+            BuildConfig::class.java.name.substringBeforeLast('.')
 
         /**
          * Is this a window event for one of OUR OWN windows, i.e. should the awareness overlays be

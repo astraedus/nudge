@@ -444,7 +444,7 @@ object BlockLaunchGate {
      * `className.startsWith(applicationId)`, which is false for every event this app can emit, and
      * the branch it guarded was dead in production for months while its tests passed.
      *
-     * A literal rather than `BuildConfig::class.java.packageName` for the same reason
+     * A literal rather than a value read off `BuildConfig` for the same reason
      * [MAIN_APP_ACTIVITY_CLASS] is one — this object is pure Kotlin with no Android imports, which
      * is what makes the arrival model JVM-testable. Production never relies on the literal:
      * `NudgeAccessibilityService` derives the namespace from a real class at runtime and passes it

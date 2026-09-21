@@ -40,9 +40,9 @@ object NudgeIdentity {
      * The class namespace, i.e. the prefix `event.className` carries for our own windows.
      *
      * Derived from a real class in the root namespace rather than written out. `BuildConfig` is
-     * generated INTO `namespace`, so `BuildConfig::class.java.packageName` IS the namespace by
-     * construction — the same derivation production uses
+     * generated INTO `namespace`, so `BuildConfig::class.java.name.substringBeforeLast('.')` IS the namespace
+     * by construction — the same derivation production uses
      * (`NudgeAccessibilityService.OWN_CLASS_NAMESPACE`).
      */
-    val CLASS_NAMESPACE: String = BuildConfig::class.java.packageName
+    val CLASS_NAMESPACE: String = BuildConfig::class.java.name.substringBeforeLast('.')
 }
