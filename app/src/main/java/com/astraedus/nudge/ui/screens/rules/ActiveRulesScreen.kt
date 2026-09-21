@@ -1,10 +1,5 @@
 package com.astraedus.nudge.ui.screens.rules
 
-import android.content.Context
-import android.content.Intent
-import android.net.Uri
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -22,7 +17,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
@@ -34,10 +28,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -45,17 +37,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.core.content.FileProvider
 import androidx.core.graphics.drawable.toBitmap
+import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.astraedus.nudge.ui.backup.BackupDialogs
+import com.astraedus.nudge.ui.backup.BackupViewModel
+import com.astraedus.nudge.ui.backup.rememberBackupActions
 import com.astraedus.nudge.ui.components.StrictModeChallengeHost
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -66,7 +57,6 @@ fun ActiveRulesScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val challenge by viewModel.challenge.collectAsStateWithLifecycle()
-    val context = LocalContext.current
     var showMenu by remember { mutableStateOf(false) }
 
     StrictModeChallengeHost(
@@ -75,73 +65,11 @@ fun ActiveRulesScreen(
         onCancel = viewModel::cancelChallenge
     )
 
-    // File picker for import
-    val importLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument()
-    ) { uri: Uri? ->
-        // The read itself is handed to the ViewModel rather than done here: an export now carries
-        // the whole block history, so reading and parsing it is unbounded work that must not run
-        // on the UI thread inside a file-picker callback.
-        uri?.let { picked -> viewModel.previewImport { readJsonFromUri(context, picked) } }
-    }
-
-    // Handle export: write to cache dir (off the main thread -- the file can be megabytes of
-    // history) and share.
-    val exportJson = state.exportJson
-    LaunchedEffect(exportJson) {
-        if (exportJson != null) {
-            val uri = withContext(Dispatchers.IO) { writeExportFile(context, exportJson) }
-            shareExportUri(context, uri)
-            viewModel.clearExport()
-        }
-    }
-
-    // Import confirmation dialog
-    state.importPreview?.let { preview ->
-        AlertDialog(
-            onDismissRequest = { viewModel.cancelImport() },
-            title = { Text("Import Rules") },
-            text = { Text(buildImportPreviewMessage(preview)) },
-            confirmButton = {
-                TextButton(onClick = { viewModel.confirmImport() }) {
-                    Text("Import")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { viewModel.cancelImport() }) {
-                    Text("Cancel")
-                }
-            }
-        )
-    }
-
-    // Import result dialog
-    state.importOutcome?.let { outcome ->
-        AlertDialog(
-            onDismissRequest = { viewModel.clearImportOutcome() },
-            title = { Text("Import Complete") },
-            text = { Text(buildImportOutcomeMessage(outcome)) },
-            confirmButton = {
-                TextButton(onClick = { viewModel.clearImportOutcome() }) {
-                    Text("OK")
-                }
-            }
-        )
-    }
-
-    // Import error dialog
-    state.importError?.let { error ->
-        AlertDialog(
-            onDismissRequest = { viewModel.clearImportOutcome() },
-            title = { Text("Import Failed") },
-            text = { Text(error) },
-            confirmButton = {
-                TextButton(onClick = { viewModel.clearImportOutcome() }) {
-                    Text("OK")
-                }
-            }
-        )
-    }
+    // Backup and restore are shared with Settings, ViewModel and all -- see
+    // [com.astraedus.nudge.ui.backup.BackupViewModel].
+    val backupViewModel: BackupViewModel = hiltViewModel()
+    val backup = rememberBackupActions(backupViewModel)
+    BackupDialogs(backupViewModel)
 
     Scaffold(
         topBar = {
@@ -161,17 +89,24 @@ fun ActiveRulesScreen(
                         onDismissRequest = { showMenu = false }
                     ) {
                         DropdownMenuItem(
-                            text = { Text("Export Rules") },
+                            text = { Text("Save backup") },
                             onClick = {
                                 showMenu = false
-                                viewModel.exportRules()
+                                backup.saveBackup()
                             }
                         )
                         DropdownMenuItem(
-                            text = { Text("Import Rules") },
+                            text = { Text("Share backup") },
                             onClick = {
                                 showMenu = false
-                                importLauncher.launch(arrayOf("application/json", "*/*"))
+                                backup.shareBackup()
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Import backup") },
+                            onClick = {
+                                showMenu = false
+                                backup.importBackup()
                             }
                         )
                     }
@@ -283,31 +218,3 @@ private fun AppRuleCard(
     }
 }
 
-private fun readJsonFromUri(context: Context, uri: Uri): String? {
-    return try {
-        context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
-    } catch (e: Exception) {
-        null
-    }
-}
-
-private fun writeExportFile(context: Context, json: String): Uri {
-    val file = File(context.cacheDir, "nudge-rules-export.json")
-    file.writeText(json)
-
-    return FileProvider.getUriForFile(
-        context,
-        "${context.packageName}.fileprovider",
-        file
-    )
-}
-
-private fun shareExportUri(context: Context, uri: Uri) {
-    val shareIntent = Intent(Intent.ACTION_SEND).apply {
-        type = "application/json"
-        putExtra(Intent.EXTRA_STREAM, uri)
-        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-    }
-
-    context.startActivity(Intent.createChooser(shareIntent, "Export Rules"))
-}

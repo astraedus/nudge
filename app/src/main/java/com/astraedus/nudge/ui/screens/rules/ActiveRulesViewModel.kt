@@ -8,18 +8,12 @@ import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.data.repository.BlockRuleRepository
 import com.astraedus.nudge.data.repository.InstalledAppsRepository
 import com.astraedus.nudge.domain.lock.ChallengeState
-import com.astraedus.nudge.domain.usecase.ExportRulesUseCase
-import com.astraedus.nudge.domain.usecase.ImportOutcome
-import com.astraedus.nudge.domain.usecase.ImportPreview
-import com.astraedus.nudge.domain.usecase.ImportRulesUseCase
 import com.astraedus.nudge.ui.lock.StrictModeGate
 import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import androidx.compose.runtime.Immutable
 import javax.inject.Inject
 
@@ -36,19 +30,20 @@ data class ActiveRulesGroup(
 @Immutable
 data class ActiveRulesUiState(
     val groups: List<ActiveRulesGroup> = emptyList(),
-    val isLoading: Boolean = true,
-    val exportJson: String? = null,
-    val importPreview: ImportPreview? = null,
-    val importOutcome: ImportOutcome? = null,
-    val importError: String? = null
+    val isLoading: Boolean = true
 )
 
+/**
+ * The Active Rules list and its per-app on/off switch.
+ *
+ * Backup and restore used to live here too; they now live in
+ * [com.astraedus.nudge.ui.backup.BackupViewModel], because Settings offers them as well and the
+ * Strict Mode gate on an import must exist exactly once.
+ */
 @HiltViewModel
 class ActiveRulesViewModel @Inject constructor(
     private val blockRuleRepository: BlockRuleRepository,
     private val installedAppsRepository: InstalledAppsRepository,
-    private val exportRulesUseCase: ExportRulesUseCase,
-    private val importRulesUseCase: ImportRulesUseCase,
     nudgePreferences: NudgePreferences
 ) : ViewModel() {
 
@@ -120,86 +115,6 @@ class ActiveRulesViewModel @Inject constructor(
     /** Called when the user cancels the challenge dialog. */
     fun cancelChallenge() {
         strictModeGate.cancel()
-    }
-
-    // --- Export/Import ---
-
-    fun exportRules() {
-        viewModelScope.launch {
-            val json = exportRulesUseCase.invoke()
-            _uiState.value = _uiState.value.copy(exportJson = json)
-        }
-    }
-
-    fun clearExport() {
-        _uiState.value = _uiState.value.copy(exportJson = null)
-    }
-
-    /**
-     * Reads and previews an import file.
-     *
-     * [readJson] is a lambda rather than a String because the file is read on the IO dispatcher
-     * here: an export now carries the user's whole block history, so both the read and the parse
-     * are unbounded work that used to run on the UI thread from the file-picker callback.
-     */
-    fun previewImport(readJson: suspend () -> String?) {
-        viewModelScope.launch {
-            val json = withContext(Dispatchers.IO) { readJson() }
-            if (json == null) {
-                _uiState.value = _uiState.value.copy(
-                    importError = "Could not read that file.",
-                    importPreview = null
-                )
-                return@launch
-            }
-            val preview = importRulesUseCase.preview(json)
-            val error = preview.result.error
-            _uiState.value = if (error != null) {
-                _uiState.value.copy(importError = error, importPreview = null)
-            } else {
-                _uiState.value.copy(importPreview = preview, importError = null)
-            }
-        }
-    }
-
-    /**
-     * Writes the previewed import.
-     *
-     * A backup carries the user's app SETTINGS as well as their rules, so an import can WEAKEN
-     * protection — a hand-edited `"strictModeEnabled": false` would otherwise be a one-tap way out
-     * of the commitment lock. When it does, the whole import goes through the same
-     * [StrictModeGate] every other weakening action uses (see [toggleAppEnabled]).
-     *
-     * The WHOLE import is gated, not just the settings step: a half-applied restore (rules in,
-     * settings out) is a state the user's backup never described, and gating everything is the
-     * fail-closed reading. Rules-only and history-only files never weaken anything, so the common
-     * case is untouched, as is every file written before settings existed.
-     *
-     * The confirmation dialog is dismissed up front, so the challenge dialog does not stack on top
-     * of it; cancelling the challenge leaves the device exactly as it was.
-     */
-    fun confirmImport() {
-        val preview = _uiState.value.importPreview ?: return
-        _uiState.value = _uiState.value.copy(importPreview = null)
-        viewModelScope.launch {
-            val write: suspend () -> Unit = {
-                val outcome = importRulesUseCase.execute(preview.result)
-                _uiState.value = _uiState.value.copy(importOutcome = outcome)
-            }
-            if (importRulesUseCase.weakensProtection(preview.result)) {
-                strictModeGate.run(prompt = "Import settings that reduce protection", action = write)
-            } else {
-                write()
-            }
-        }
-    }
-
-    fun cancelImport() {
-        _uiState.value = _uiState.value.copy(importPreview = null, importError = null)
-    }
-
-    fun clearImportOutcome() {
-        _uiState.value = _uiState.value.copy(importOutcome = null, importError = null)
     }
 
     companion object {

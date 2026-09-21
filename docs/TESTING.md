@@ -1,5 +1,8 @@
 # Testing philosophy and coverage targets
 
+> **WHICH LAYER a test belongs at, and the rules a bug fix owes, live in `docs/testing-strategy.md`.**
+> This file is the philosophy and the per-layer limitations; that one is the routing table. Read both.
+
 The full version of the rule summarised in `CLAUDE.md`. **Read when deciding what a change owes in tests.**
 
 ## Testing Philosophy — Never Regress
