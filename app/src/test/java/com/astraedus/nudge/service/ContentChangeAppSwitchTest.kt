@@ -1,5 +1,6 @@
 package com.astraedus.nudge.service
 
+import com.astraedus.nudge.NudgeIdentity
 import com.astraedus.nudge.domain.events.A11yEventType
 import com.astraedus.nudge.domain.events.AccessibilityEventRecord
 import com.astraedus.nudge.domain.events.EventClassifier
@@ -31,7 +32,8 @@ import org.junit.Test
  */
 class ContentChangeAppSwitchTest {
 
-    private val own = "com.astraedus.nudge"
+    /** The REAL applicationId, never the namespace: see [NudgeIdentity]. */
+    private val own = NudgeIdentity.APPLICATION_ID
     private val keep = "com.google.android.keep"
     private val discord = "com.discord"
     private val futo = "org.futo.inputmethod.latin"
@@ -40,7 +42,8 @@ class ContentChangeAppSwitchTest {
         ownPackageName = own,
         systemPackages = NudgeAccessibilityService.SYSTEM_PACKAGES,
         imePackages = NudgeAccessibilityService.IME_PACKAGES,
-        frameworkPackage = NudgeAccessibilityService.FRAMEWORK_PACKAGE
+        frameworkPackage = NudgeAccessibilityService.FRAMEWORK_PACKAGE,
+        awarenessOverlayClassNames = AwarenessOverlayWindow.CLASS_NAMES
     )
 
     /** How many times the active window was read. The node read is the expensive part. */

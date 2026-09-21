@@ -1,5 +1,6 @@
 package com.astraedus.nudge.service
 
+import com.astraedus.nudge.NudgeIdentity
 import com.astraedus.nudge.domain.block.BlockLaunchGate
 import com.astraedus.nudge.domain.events.A11yEventType
 import com.astraedus.nudge.domain.events.AccessibilityEventRecord
@@ -23,7 +24,8 @@ class TransientWindowTest {
     private val futo = "org.futo.inputmethod.latin"
     private val gboard = "com.google.android.inputmethod.latin"
     private val instagram = "com.instagram.android"
-    private val ownPackage = "com.astraedus.nudge"
+    /** The REAL applicationId, never the namespace: see [NudgeIdentity]. */
+    private val ownPackage = NudgeIdentity.APPLICATION_ID
 
     /**
      * The real classifier, wired from the service's own package sets.
@@ -38,7 +40,8 @@ class TransientWindowTest {
         ownPackageName = ownPackage,
         systemPackages = NudgeAccessibilityService.SYSTEM_PACKAGES,
         imePackages = NudgeAccessibilityService.IME_PACKAGES,
-        frameworkPackage = NudgeAccessibilityService.FRAMEWORK_PACKAGE
+        frameworkPackage = NudgeAccessibilityService.FRAMEWORK_PACKAGE,
+        awarenessOverlayClassNames = AwarenessOverlayWindow.CLASS_NAMES
     )
 
     private fun signalFor(

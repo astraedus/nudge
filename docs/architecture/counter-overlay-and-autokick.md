@@ -23,6 +23,17 @@ Covers the floating interaction counter, the time-remaining overlay, both auto-k
 - **Auto-kick by time (v1.10.0)** — the second trigger, per-rule `autoKickAfterMinutes` (null = off). Kicks after N minutes of foreground time in one session. Independent of the interaction trigger — both can be set, whichever fires first kicks — and independent of the interaction counter, because its whole point is PASSIVE use (autoplaying video produces zero tap/scroll events). See "Time-based auto-kick architecture".
 - **Auto-kick cooldown** — configurable per-rule, stored as `autoKickCooldownSeconds` on BlockRule. After auto-kick, returning to the app forces a DELAY overlay for the remaining cooldown. Session counter preserved during cooldown. **v1.10.0**: the 0-300s slider became a free-form MINUTES input (0-1440), so issue #6's "30 minutes on, 15 minutes off" is expressible. See "Duration inputs".
 
+> **The overlays' windows are part of the event pipeline, not just pixels.** Both are
+> `TYPE_ACCESSIBILITY_OVERLAY` windows owned by Nudge, so adding one — or setting a
+> `TextView`'s text inside one — emits an accessibility event carrying our own package. Until
+> v1.17.3 that was read as "Nudge is in front", which moved the block gate's foreground to Nudge
+> and stopped a daily limit enforcing for as long as the user sat still
+> ([#41](https://github.com/astraedus/nudge/issues/41)). Every view in both overlays is therefore
+> an `AwarenessOverlayWindow` type, reporting one derived accessibility class name that
+> `EventClassifier` recognises. **Never construct a bare `TextView`/`LinearLayout` in these
+> managers** — `AwarenessOverlayContractTest` fails on it, and the reason is in
+> `docs/architecture/accessibility-event-pipeline.md`, "Our own windows are three different things".
+
 ## Counter overlay architecture
 
 - `InteractionTracker` (@Singleton): in-memory session/daily counts per package. No DB writes per interaction. Also tracks cooldown state per package after auto-kick.

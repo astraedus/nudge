@@ -3,6 +3,7 @@ package com.astraedus.nudge.domain.events
 import com.astraedus.nudge.domain.interaction.InteractionCounter
 import com.astraedus.nudge.domain.sitting.SittingEvent
 import com.astraedus.nudge.domain.sitting.SittingTracker
+import com.astraedus.nudge.service.AwarenessOverlayWindow
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -36,7 +37,8 @@ class A11yCaptureReplayTest {
             "com.android.permissioncontroller"
         ),
         imePackages = setOf("com.google.android.inputmethod.latin"),
-        frameworkPackage = "android"
+        frameworkPackage = "android",
+        awarenessOverlayClassNames = AwarenessOverlayWindow.CLASS_NAMES
     )
 
     private fun classify(record: AccessibilityEventRecord) = classifier.classify(

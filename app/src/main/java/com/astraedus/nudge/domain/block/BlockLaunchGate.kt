@@ -189,6 +189,7 @@ object BlockLaunchGate {
         is ForegroundSignal.Home -> signal.packageName
         is ForegroundSignal.OwnUi -> signal.packageName
 
+        is ForegroundSignal.AwarenessOverlay,
         is ForegroundSignal.SystemSurface,
         is ForegroundSignal.Transient,
         is ForegroundSignal.PipOnly,
@@ -281,6 +282,7 @@ object BlockLaunchGate {
             // walk-away path itself is Nudge UI on its way out, so this must NOT close the window,
             // or the overlay's own dying window event would close it before the transition starts.
             is ForegroundSignal.OwnUi,
+            is ForegroundSignal.AwarenessOverlay,
             is ForegroundSignal.SystemSurface,
             is ForegroundSignal.Transient,
             is ForegroundSignal.PipOnly,
@@ -424,6 +426,7 @@ object BlockLaunchGate {
                 if (signal.packageName == arrival.targetPackage) arrival else null
 
             is ForegroundSignal.OwnUi,
+            is ForegroundSignal.AwarenessOverlay,
             is ForegroundSignal.SystemSurface,
             is ForegroundSignal.Transient,
             is ForegroundSignal.PipOnly,
@@ -432,13 +435,46 @@ object BlockLaunchGate {
     }
 
     /**
+     * The Kotlin NAMESPACE every class this app ships lives in, which is NOT its applicationId.
+     *
+     * `namespace = "com.astraedus.nudge"`, `applicationId = "dev.astraedus.nudge"`
+     * (`app/build.gradle.kts`). Accessibility events carry the applicationId as the package and a
+     * class name from the namespace, so the two are never interchangeable — and treating them as
+     * interchangeable is [#33](https://github.com/astraedus/nudge/issues/33): the service asked
+     * `className.startsWith(applicationId)`, which is false for every event this app can emit, and
+     * the branch it guarded was dead in production for months while its tests passed.
+     *
+     * A literal rather than a value read off `BuildConfig` for the same reason
+     * [MAIN_APP_ACTIVITY_CLASS] is one — this object is pure Kotlin with no Android imports, which
+     * is what makes the arrival model JVM-testable. Production never relies on the literal:
+     * `NudgeAccessibilityService` derives the namespace from a real class at runtime and passes it
+     * in. `OwnClassNamespaceContractTest` pins the two against each other, and against
+     * `BuildConfig.APPLICATION_ID`, so a rename of either cannot silently disable a branch again.
+     */
+    const val OWN_CLASS_NAMESPACE = "com.astraedus.nudge"
+
+    /**
      * The one activity the user browses Nudge in (single-activity architecture).
      *
      * A literal rather than `MainActivity::class.java.name` because this object is pure Kotlin with
      * no Android imports, which is what makes the whole arrival model JVM-testable. Pinned against
      * the real class by `ArrivalAndStormGateTest`.
      */
-    const val MAIN_APP_ACTIVITY_CLASS = "com.astraedus.nudge.MainActivity"
+    const val MAIN_APP_ACTIVITY_CLASS = "$OWN_CLASS_NAMESPACE.MainActivity"
+
+    /**
+     * Is [className] a class THIS APP ships?
+     *
+     * The single source of truth for "is this class ours", shared with
+     * `NudgeAccessibilityService.shouldClearForOwnPackageEvent`, which is where issue #33 lived.
+     * One predicate, so the namespace-vs-applicationId distinction is made once instead of at every
+     * site that happens to need it.
+     *
+     * @param namespace the class namespace to test against. Production passes the value it derives
+     *   from a real class (never a literal); the default is here for the pure tests.
+     */
+    fun isOwnNudgeClass(className: String?, namespace: String = OWN_CLASS_NAMESPACE): Boolean =
+        className != null && (className == namespace || className.startsWith("$namespace."))
 
     /**
      * Is this Nudge's OWN MAIN app window, i.e. the user genuinely somewhere else?
@@ -452,10 +488,10 @@ object BlockLaunchGate {
      * activity may answer yes.
      *
      * Deliberately NOT `NudgeAccessibilityService.shouldClearForOwnPackageEvent`, which asks a
-     * different question and answers it with a prefix test this app's own naming defeats: the
-     * applicationId is `dev.astraedus.nudge` and the classes are `com.astraedus.nudge.*`, so that
-     * predicate is unreachable in production. Filed in `docs/BACKLOG.md` rather than repaired under
-     * a change about counting — it governs the awareness overlays, not the count.
+     * different question — "is this ANY window of ours", for hiding the awareness overlays — and
+     * now answers it through [isOwnNudgeClass], the shared predicate. That sibling was unreachable
+     * in production until issue #33 was fixed, because it tested the class name against the
+     * applicationId; see [OWN_CLASS_NAMESPACE].
      *
      * It lives in this pure object rather than beside its sibling in the service because naming an
      * Activity class inside a service file is what `MonitorServiceContractTest` exists to forbid.
@@ -542,6 +578,7 @@ object BlockLaunchGate {
                 if (signal.packageName == storm.targetPackage) storm else null
 
             is ForegroundSignal.OwnUi,
+            is ForegroundSignal.AwarenessOverlay,
             is ForegroundSignal.SystemSurface,
             is ForegroundSignal.Transient,
             is ForegroundSignal.PipOnly,

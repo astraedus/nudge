@@ -1,5 +1,6 @@
 package com.astraedus.nudge.domain.events
 
+import com.astraedus.nudge.service.AwarenessOverlayWindow
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -46,7 +47,8 @@ class EventClassifierTest {
         ownPackageName = ownPackage,
         systemPackages = systemPackages,
         imePackages = imePackages,
-        frameworkPackage = framework
+        frameworkPackage = framework,
+        awarenessOverlayClassNames = AwarenessOverlayWindow.CLASS_NAMES
     )
 
     private val instagram = "com.instagram.android"
@@ -67,8 +69,11 @@ class EventClassifierTest {
 
     private val launcherSet = setOf(launcher)
 
-    private fun event(pkg: String, type: A11yEventType = A11yEventType.WINDOW_STATE_CHANGED) =
-        AccessibilityEventRecord(type = type, packageName = pkg)
+    private fun event(
+        pkg: String,
+        type: A11yEventType = A11yEventType.WINDOW_STATE_CHANGED,
+        className: String? = null
+    ) = AccessibilityEventRecord(type = type, packageName = pkg, className = className)
 
     private fun classify(
         record: AccessibilityEventRecord,
@@ -87,6 +92,7 @@ class EventClassifierTest {
         is ForegroundSignal.Home -> "Home"
         is ForegroundSignal.SystemSurface -> "SystemSurface"
         is ForegroundSignal.OwnUi -> "OwnUi"
+        is ForegroundSignal.AwarenessOverlay -> "AwarenessOverlay"
         is ForegroundSignal.Transient -> "Transient"
         is ForegroundSignal.PipOnly -> "PipOnly"
         is ForegroundSignal.NotForeground -> "NotForeground"
@@ -101,12 +107,13 @@ class EventClassifierTest {
             classify(event(ownPackage)),
             classify(event(framework)),
             classify(event(youtube), pip = setOf(youtube)),
-            classify(event(instagram, A11yEventType.VIEW_SCROLLED))
+            classify(event(instagram, A11yEventType.VIEW_SCROLLED)),
+            classify(event(ownPackage, className = AwarenessOverlayWindow.CLASS_NAME))
         ).mapTo(mutableSetOf()) { nameOf(it) }
 
         assertEquals(
             setOf(
-                "AppWindow", "Home", "SystemSurface", "OwnUi",
+                "AppWindow", "Home", "SystemSurface", "OwnUi", "AwarenessOverlay",
                 "Transient", "PipOnly", "NotForeground"
             ),
             produced
@@ -138,6 +145,84 @@ class EventClassifierTest {
     @Test
     fun `our own package is OwnUi`() {
         assertEquals(ForegroundSignal.OwnUi(ownPackage), classify(event(ownPackage)))
+    }
+
+    /**
+     * Issue #41. An awareness overlay carries OUR package and means the opposite of `OwnUi` about
+     * where the user is: it is a view drawn OVER the app they never left, so it makes no claim
+     * about the foreground at all. Told apart POSITIVELY, by the class name the overlay's views
+     * report, because our package emits several window shapes and only this one is an overlay.
+     */
+    @Test
+    fun `our awareness overlay is AwarenessOverlay, not OwnUi`() {
+        assertEquals(
+            ForegroundSignal.AwarenessOverlay(ownPackage),
+            classify(event(ownPackage, className = AwarenessOverlayWindow.CLASS_NAME))
+        )
+    }
+
+    /**
+     * The counter overlay updates its text far more often than it appears, and a text change is a
+     * `WINDOW_CONTENT_CHANGED`. Those reach the classifier ahead of the window-change test, so if
+     * they were still `OwnUi` the foreground would move to Nudge on every single interaction and
+     * #41 would be half-fixed.
+     */
+    @Test
+    fun `an awareness overlay content change is AwarenessOverlay too`() {
+        assertEquals(
+            ForegroundSignal.AwarenessOverlay(ownPackage),
+            classify(
+                event(
+                    ownPackage,
+                    A11yEventType.WINDOW_CONTENT_CHANGED,
+                    className = AwarenessOverlayWindow.CLASS_NAME
+                )
+            )
+        )
+    }
+
+    /**
+     * Every OTHER window of ours stays `OwnUi`, which is what moves the foreground to Nudge. The
+     * framework class name in this list is the block overlay TASK's first window, timed on a Pixel
+     * 3 ~600ms ahead of the overlay itself — the exact window a negative "Nudge and not the
+     * overlay" test would misfile.
+     */
+    @Test
+    fun `every other window of ours is still OwnUi`() {
+        listOf(
+            null,
+            "android.widget.FrameLayout",
+            "com.astraedus.nudge.MainActivity",
+            "com.astraedus.nudge.ui.overlay.BlockOverlayActivity",
+            AwarenessOverlayWindow.CLASS_NAME + "Extra"
+        ).forEach { className ->
+            assertEquals(
+                "a Nudge window named $className is not an awareness overlay",
+                ForegroundSignal.OwnUi(ownPackage),
+                classify(event(ownPackage, className = className))
+            )
+        }
+    }
+
+    /** A PiP bubble outranks even our own package, and that ordering holds for the overlay too. */
+    @Test
+    fun `an awareness overlay class on a PiP-only package is still PipOnly`() {
+        assertEquals(
+            ForegroundSignal.PipOnly(ownPackage),
+            classify(
+                event(ownPackage, className = AwarenessOverlayWindow.CLASS_NAME),
+                pip = setOf(ownPackage)
+            )
+        )
+    }
+
+    /** Another app cannot claim our identity: the package is tested first. */
+    @Test
+    fun `another app reporting our overlay class name is still just an app`() {
+        assertEquals(
+            ForegroundSignal.AppWindow(instagram),
+            classify(event(instagram, className = AwarenessOverlayWindow.CLASS_NAME))
+        )
     }
 
     /** The `android` package hosts toasts, long-press menus and the paste toolbar — issue #5. */
