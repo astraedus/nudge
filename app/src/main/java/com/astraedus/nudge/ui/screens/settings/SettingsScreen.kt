@@ -31,6 +31,9 @@ import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Layers
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.QueryStats
+import androidx.compose.material.icons.outlined.Restore
+import androidx.compose.material.icons.outlined.Save
+import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material.icons.outlined.Timer
@@ -77,6 +80,9 @@ import com.astraedus.nudge.domain.lock.SettingsWeakening
 import com.astraedus.nudge.domain.lock.StrictModeChallenge
 import com.astraedus.nudge.service.AccessibilityConnectionSignal
 import com.astraedus.nudge.service.ProtectionStatus
+import com.astraedus.nudge.ui.backup.BackupDialogs
+import com.astraedus.nudge.ui.backup.BackupViewModel
+import com.astraedus.nudge.ui.backup.rememberBackupActions
 import com.astraedus.nudge.ui.components.AccessibilityDisclosureDialog
 import com.astraedus.nudge.ui.components.ChallengeDialog
 import com.astraedus.nudge.ui.hasGrayscalePermission
@@ -85,6 +91,7 @@ import com.astraedus.nudge.ui.widget.TodayWidgetReceiver
 import com.astraedus.nudge.ui.widget.TopBlockedWidgetReceiver
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
+import androidx.hilt.navigation.compose.hiltViewModel
 import kotlinx.coroutines.launch
 import com.astraedus.nudge.util.hasUsageAccess
 
@@ -93,7 +100,8 @@ import com.astraedus.nudge.util.hasUsageAccess
 fun SettingsScreen(
     onNavigateBack: () -> Unit,
     onNavigateToGrayscaleGuide: () -> Unit = {},
-    onNavigateToMessagesEditor: () -> Unit = {}
+    onNavigateToMessagesEditor: () -> Unit = {},
+    backupViewModel: BackupViewModel = hiltViewModel()
 ) {
     val context = LocalContext.current
     // See rememberPermissionStates: these three used to be `remember { mutableStateOf(x) }` —
@@ -123,6 +131,12 @@ fun SettingsScreen(
     // One pending slot serves them all: the freshly generated target, the dialog prompt, and the
     // action to run once the user types it. Null = no dialog up.
     var pendingUnlock by remember { mutableStateOf<PendingSettingsUnlock?>(null) }
+
+    // Backup and restore, the same ViewModel and the same dialogs the Active Rules menu uses.
+    // Settings is where people look for data portability -- it used to be findable only through
+    // that menu, behind a stat card on Home (docs/BACKLOG.md, v1.12.0 QA).
+    val backup = rememberBackupActions(backupViewModel)
+    BackupDialogs(backupViewModel)
 
     pendingUnlock?.let { pending ->
         ChallengeDialog(
@@ -442,6 +456,41 @@ fun SettingsScreen(
                 },
                 leadingContent = { Icon(Icons.Outlined.Edit, contentDescription = null) },
                 modifier = Modifier.clickable(onClick = onNavigateToMessagesEditor)
+            )
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+            Text(
+                "Backup",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                color = MaterialTheme.colorScheme.primary
+            )
+
+            ListItem(
+                headlineContent = { Text("Save backup") },
+                supportingContent = {
+                    Text("Write your rules, history and settings to a file on this device.")
+                },
+                leadingContent = { Icon(Icons.Outlined.Save, contentDescription = null) },
+                modifier = Modifier.clickable { backup.saveBackup() }
+            )
+
+            ListItem(
+                headlineContent = { Text("Share backup") },
+                supportingContent = { Text("Send the same file to another app or device.") },
+                leadingContent = { Icon(Icons.Outlined.Share, contentDescription = null) },
+                modifier = Modifier.clickable { backup.shareBackup() }
+            )
+
+            ListItem(
+                headlineContent = { Text("Import backup") },
+                supportingContent = {
+                    Text("Restore from a backup file. Rules you already have are left alone.")
+                },
+                leadingContent = { Icon(Icons.Outlined.Restore, contentDescription = null) },
+                modifier = Modifier.clickable { backup.importBackup() }
             )
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))

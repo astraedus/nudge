@@ -1,4 +1,4 @@
-package com.astraedus.nudge.ui.screens.rules
+package com.astraedus.nudge.ui.backup
 
 import com.astraedus.nudge.data.export.ExportedGroup
 import com.astraedus.nudge.data.export.ExportedHistoryEvent

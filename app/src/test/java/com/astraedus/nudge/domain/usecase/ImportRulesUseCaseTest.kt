@@ -573,6 +573,57 @@ class ImportRulesUseCaseTest {
         assertFalse(weakens(settingsJson(""""customDelayTitles": "Pause.", "customHardBlockMessages": """"")))
     }
 
+    // --- Rule on/off state (issue #43) ---
+
+    /**
+     * The round trip the issue is about: a user with a rule switched off backs up, wipes the
+     * phone, restores -- and the rule comes back switched off rather than absent, or (worse)
+     * silently switched on.
+     */
+    @Test
+    fun `a rule that was switched off comes back switched off`() = runTest {
+        val backup = RuleExporter().exportRules(
+            rules = listOf(
+                BlockRule(packageName = "com.on", mode = "HARD_BLOCK", enabled = true),
+                BlockRule(packageName = "com.off", mode = "DELAY", enabled = false)
+            ),
+            groups = emptyList(),
+            groupMembers = emptyMap()
+        )
+
+        val outcome = import(backup)
+
+        assertEquals(2, outcome.importedCount)
+        assertEquals(
+            mapOf("com.on" to true, "com.off" to false),
+            addedRules.associate { it.packageName to it.enabled }
+        )
+    }
+
+    /**
+     * Backward compatibility: a file written by a Nudge that exported only its enabled rules
+     * carries no `enabled` key at all, and every rule in it was an enabled one. Those rules must
+     * restore switched ON -- the format's silence means "on", and reading it as "off" would leave
+     * an old backup restoring a phone that blocks nothing.
+     */
+    @Test
+    fun `a rule from an older backup, with no on-off state in the file, restores switched on`() = runTest {
+        val outcome = import(
+            """
+            {
+                "version": 1,
+                "rules": [
+                    {"packageName": "com.app1", "mode": "HARD_BLOCK"},
+                    {"packageName": "com.app2", "mode": "DELAY", "delaySeconds": 15}
+                ]
+            }
+            """.trimIndent()
+        )
+
+        assertEquals(2, outcome.importedCount)
+        assertTrue("an old backup must not restore rules that block nothing", addedRules.all { it.enabled })
+    }
+
     private companion object {
         /** The app's own out-of-the-box settings, as `NudgePreferences` defaults them. */
         val DEVICE_DEFAULTS = ExportedSettings(
