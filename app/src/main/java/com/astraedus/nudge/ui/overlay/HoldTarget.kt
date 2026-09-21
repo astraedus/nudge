@@ -13,10 +13,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.TouchApp
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -48,19 +45,16 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 import com.astraedus.nudge.domain.hold.HoldProgress
+import kotlin.math.ceil
 
 /**
- * The press-and-hold that opens a blocked app once its timer has run out
- * ([issue #35](https://github.com/astraedus/nudge/issues/35)).
+ * The thing a [com.astraedus.nudge.domain.model.BlockMode.HOLD] block asks the user to do: keep a
+ * finger on this target for the rule's whole duration ([issue #35](https://github.com/astraedus/nudge/issues/35)).
  *
- * Before this existed, a delay reaching zero opened the app on its own — so the entire cost of
- * entering was *waiting*, and waiting is something a thumb can spend while the person is somewhere
- * else. The hold moves the last step back into the user's hands: it takes a few seconds of
- * continuous, deliberate contact, and **letting go is the cheap action**. Which is the direction
- * every affordance in this app should point.
- *
- * Rendered in place of the countdown ring, so the same circle the user has been watching drain now
- * fills under their thumb. One shape, two phases, nothing new to find on the screen.
+ * Deliberately the SAME shape and the same big number as the DELAY countdown next door, because it
+ * is the same promise with one difference: the clock only runs while you are touching it, and
+ * letting go puts it back to the start. Someone who has met a delay before knows what they are
+ * looking at without reading anything.
  *
  * ## What lives where
  *
@@ -75,24 +69,22 @@ import com.astraedus.nudge.domain.hold.HoldProgress
  * [detectTapGestures] never sees a finger and a user on TalkBack would be looking at a control they
  * physically cannot operate — locked out of their own phone by an accessibility feature. So the
  * control also publishes a semantic click action ([onClick]) that starts the SAME hold on the SAME
- * machine for the SAME duration; the friction is the delay, not the finger, and it is preserved
- * either way. Both paths converge on one [HoldProgress] and one [onUnlock].
+ * machine for the SAME duration; the friction is the wait, not the finger, and it is preserved
+ * either way. Both paths converge on one [HoldProgress] and one [onHoldComplete].
  *
- * @param holdDurationMs how long the hold must be sustained. Callers must only render this when
- *   [com.astraedus.nudge.domain.hold.HoldToUnlock.isEnabled] — "Off" means the timer completing
- *   opens the app directly and this control never appears.
- * @param onUnlock invoked exactly once, when the hold completes. This is the block overlay's
- *   existing completion callback, the one that grants passthrough: the hold gates that path, it does
- *   not add a second one.
+ * @param holdDurationMs how long the hold must be sustained without a break.
+ * @param onHoldComplete invoked exactly once, when the hold completes. This is the block overlay's
+ *   existing completion callback, the one that grants passthrough: the hold IS the block's timer, it
+ *   does not add a second way in.
  */
 @Composable
-fun HoldToUnlockControl(
+fun HoldTarget(
     holdDurationMs: Long,
-    onUnlock: () -> Unit,
+    onHoldComplete: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    // Keyed on the duration so a setting change (or, later, a per-rule override) cannot leave a
-    // machine measuring against the old length.
+    // Keyed on the duration so a rule edit (or, later, a per-rule override) cannot leave a machine
+    // measuring against the old length.
     val progress = remember(holdDurationMs) { HoldProgress(holdDurationMs) }
 
     // Whether a finger is down, and whether TalkBack asked for a hold. Either one holds.
@@ -108,18 +100,21 @@ fun HoldToUnlockControl(
     val lifecycleOwner = LocalLifecycleOwner.current
     // The effect below is keyed on `holding`, not on this lambda, so a recomposition that hands us a
     // fresh lambda instance must not leave the effect calling a stale one.
-    val currentOnUnlock by rememberUpdatedState(onUnlock)
+    val currentOnHoldComplete by rememberUpdatedState(onHoldComplete)
 
     LaunchedEffect(holding, holdDurationMs, lifecycleOwner) {
+        // A completed hold is done; re-entering would spin the frame loop below forever against a
+        // machine that can never advance again.
+        if (progress.isCompleted) return@LaunchedEffect
         if (!holding) {
             progress.release()
-            fraction = if (progress.isCompleted) 1f else 0f
+            fraction = 0f
             return@LaunchedEffect
         }
         try {
-            // RESUMED-gated for the same reason the countdown above it is (issue #8): an overlay
-            // that is not on screen must not be able to open an app. `press` restarts from the
-            // moment we come back, so wall-clock time spent away never counts toward entry.
+            // RESUMED-gated for the same reason the DELAY countdown is (issue #8): an overlay that
+            // is not on screen must not be able to open an app. `press` restarts from the moment we
+            // come back, so wall-clock time spent away never counts toward entry.
             lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
                 progress.press(System.currentTimeMillis())
                 while (true) {
@@ -130,7 +125,7 @@ fun HoldToUnlockControl(
                         // One tick at the moment it lands, so the user knows the hold is done
                         // without having to keep watching the ring.
                         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                        currentOnUnlock()
+                        currentOnHoldComplete()
                         break
                     }
                 }
@@ -149,7 +144,7 @@ fun HoldToUnlockControl(
     val drawnFraction by animateFloatAsState(
         targetValue = fraction,
         animationSpec = tween(
-            durationMillis = if (holding) 0 else 220,
+            durationMillis = if (holding) 0 else 320,
             easing = FastOutSlowInEasing
         ),
         label = "hold_fill"
@@ -174,8 +169,11 @@ fun HoldToUnlockControl(
         MaterialTheme.colorScheme.onSurfaceVariant
     }
 
-    val seconds = (holdDurationMs / 1000L).coerceAtLeast(1L)
-    val holdLabel = "Hold to open"
+    val totalSeconds = (holdDurationMs / 1000L).coerceAtLeast(1L)
+    // Seconds LEFT, rounded up, so the number only reaches zero when the hold is genuinely done and
+    // the last second is visible for its whole length — the same arithmetic the countdown shows.
+    val remainingSeconds =
+        ceil((holdDurationMs * (1f - drawnFraction)) / 1000f).toLong().coerceIn(0L, totalSeconds)
 
     Column(
         modifier = modifier,
@@ -187,13 +185,13 @@ fun HoldToUnlockControl(
             modifier = Modifier
                 .size(180.dp)
                 .scale(pressScale)
-                // Merged into one node so a screen reader announces one control, not a ring, an
-                // icon and a word.
+                // Merged into one node so a screen reader announces one control, not a ring, a
+                // number and a word.
                 .semantics(mergeDescendants = true) {
                     role = Role.Button
-                    contentDescription =
-                        "$holdLabel. Press and hold for $seconds seconds. Let go to stay out."
-                    onClick(label = "Open after $seconds seconds") {
+                    contentDescription = "Hold to open. Press and hold for $totalSeconds seconds. " +
+                        "Let go and it starts over."
+                    onClick(label = "Open after $totalSeconds seconds") {
                         accessibilityHold = true
                         true
                     }
@@ -227,15 +225,17 @@ fun HoldToUnlockControl(
             )
 
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Icon(
-                    imageVector = Icons.Outlined.TouchApp,
-                    contentDescription = null,
-                    modifier = Modifier.size(36.dp),
-                    tint = faceContentColor
-                )
-                Spacer(modifier = Modifier.height(6.dp))
                 Text(
-                    text = "HOLD",
+                    text = "$remainingSeconds",
+                    style = MaterialTheme.typography.displayLarge.copy(fontSize = 56.sp),
+                    // Always the face's own ON colour. The pressed state is already carried by the
+                    // face, the ring and the scale; tinting the number too would mean picking a
+                    // colour that has to stay legible on BOTH faces, and the obvious candidate
+                    // (primary on primaryContainer) is the one pairing M3 does not guarantee.
+                    color = faceContentColor
+                )
+                Text(
+                    text = if (holding) "KEEP HOLDING" else "HOLD",
                     style = MaterialTheme.typography.labelLarge.copy(
                         fontWeight = FontWeight.SemiBold,
                         letterSpacing = 2.sp
@@ -248,7 +248,7 @@ fun HoldToUnlockControl(
         Spacer(modifier = Modifier.height(16.dp))
 
         Text(
-            text = if (holding) "Keep holding…" else "Press and hold for $seconds seconds",
+            text = "Hold to open. Let go and it starts over.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center

@@ -170,6 +170,7 @@ class RuleEditorViewModel @Inject constructor(
                     val modeLabel = when (rule.mode) {
                         "HARD_BLOCK" -> "Hard Block"
                         "DELAY" -> "Delay ${rule.delaySeconds}s"
+                        "HOLD" -> "Hold ${rule.delaySeconds}s"
                         "BREATHING" -> "Breathing ${rule.delaySeconds}s"
                         else -> rule.mode
                     }

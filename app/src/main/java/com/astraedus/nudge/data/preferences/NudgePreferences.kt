@@ -10,7 +10,6 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.astraedus.nudge.data.export.ExportedSettings
-import com.astraedus.nudge.domain.hold.HoldToUnlock
 import com.astraedus.nudge.service.GlobalEnabledProvider
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
@@ -43,7 +42,6 @@ class NudgePreferences @Inject constructor(
         val PIP_ESCAPE_PROMPTED = stringPreferencesKey("pip_escape_prompted")
         val PROTECTION_DEGRADED = booleanPreferencesKey("protection_degraded")
         val PROTECTION_ALERT_SHOWN_AT = longPreferencesKey("protection_alert_shown_at")
-        val HOLD_TO_UNLOCK_SECONDS = intPreferencesKey("hold_to_unlock_seconds")
     }
 
     override val isGlobalEnabled: Flow<Boolean> = context.dataStore.data
@@ -169,22 +167,6 @@ class NudgePreferences @Inject constructor(
     }
 
     /**
-     * "Hold to unlock" ([HoldToUnlock]): how many seconds the user must press and hold once a
-     * block timer ends before the app opens. `0` means Off -- the timer completing opens the app
-     * directly, as it did before this setting existed. Defaults to
-     * [HoldToUnlock.DEFAULT_SECONDS], which is also what a fresh install and every user upgrading
-     * into this feature get.
-     */
-    val holdToUnlockSeconds: Flow<Int> = context.dataStore.data
-        .map { prefs -> prefs[Keys.HOLD_TO_UNLOCK_SECONDS] ?: HoldToUnlock.DEFAULT_SECONDS }
-
-    suspend fun setHoldToUnlockSeconds(seconds: Int) {
-        context.dataStore.edit { prefs ->
-            prefs[Keys.HOLD_TO_UNLOCK_SECONDS] = seconds
-        }
-    }
-
-    /**
      * Master toggle for the "2-minute daily pass" emergency escape hatch. Defaults to true (the
      * escape hatch is available out of the box); users can disable it entirely. Independent of Strict
      * Mode, which hides the pass button while it is on.
@@ -285,7 +267,7 @@ class NudgePreferences @Inject constructor(
      * Read through the public Flows above rather than off one raw `Preferences` snapshot, on
      * purpose: those Flows are where each setting's DEFAULT lives, and a second hand-written copy
      * of "`emergencyPassEnabled` defaults to true" here would eventually disagree with them —
-     * exporting a value the app never actually used. Ten cached reads on a user-initiated,
+     * exporting a value the app never actually used. Nine cached reads on a user-initiated,
      * already-off-main export is a trade worth making for that.
      */
     suspend fun exportableSettings(): ExportedSettings = ExportedSettings(
@@ -297,8 +279,7 @@ class NudgePreferences @Inject constructor(
         emergencyPassEnabled = emergencyPassEnabled.first(),
         customDelayTitles = customDelayTitles.first(),
         customDelaySubtitles = customDelaySubtitles.first(),
-        customHardBlockMessages = customHardBlockMessages.first(),
-        holdToUnlockSeconds = holdToUnlockSeconds.first()
+        customHardBlockMessages = customHardBlockMessages.first()
     )
 
     /**
@@ -329,7 +310,6 @@ class NudgePreferences @Inject constructor(
             settings.customDelayTitles?.let { prefs[Keys.CUSTOM_DELAY_TITLES] = it }
             settings.customDelaySubtitles?.let { prefs[Keys.CUSTOM_DELAY_SUBTITLES] = it }
             settings.customHardBlockMessages?.let { prefs[Keys.CUSTOM_HARD_BLOCK_MESSAGES] = it }
-            settings.holdToUnlockSeconds?.let { prefs[Keys.HOLD_TO_UNLOCK_SECONDS] = it }
         }
     }
 }

@@ -13,12 +13,12 @@ private const val EPS = 0.001f
 private const val HOLD_MS = 3_000L
 
 /**
- * Tests for [HoldToUnlock] (the duration resolver + bounds) and [HoldProgress] (the press/release/
- * completion state machine). [HoldProgress] is the load-bearing half: it is the ONLY thing standing
- * between a legitimate one-time hold and a bug that grants passthrough twice, or one that locks a
- * user out of an app they held their thumb on for the full duration.
+ * Tests for [HoldProgress], the press/release/completion state machine behind the press-and-hold.
+ *
+ * It is the ONLY thing standing between a legitimate one-time hold and a bug that grants passthrough
+ * twice, or one that locks a user out of an app they held their thumb on for the full duration.
  */
-class HoldToUnlockTest {
+class HoldProgressTest {
 
     // ── HoldProgress: fresh state ──
 
@@ -216,9 +216,8 @@ class HoldToUnlockTest {
     // ── HoldProgress: degenerate zero-length duration ──
 
     /**
-     * The UI never renders a zero-length hold ([HoldToUnlock.OFF_SECONDS] short-circuits before a
-     * [HoldProgress] is even created), but pinning the degenerate case stops it from silently
-     * starting to throw or infinite-loop if that assumption ever changes.
+     * The UI never renders a zero-length hold, but pinning the degenerate case stops it from
+     * silently starting to throw or infinite-loop if that assumption ever changes.
      */
     @Test
     fun `a zero-length machine completes on the first advance after a press`() {
@@ -232,67 +231,68 @@ class HoldToUnlockTest {
         assertFalse(progress.advance(nowMs = 0L)) // still fires only once
     }
 
-    // ── HoldToUnlock.resolveDurationMs ──
+    // ── The durations a HOLD RULE actually carries ──
 
+    /**
+     * A HOLD block spends the rule's own `delaySeconds` — the same number a DELAY rule spends — and
+     * the editor offers 5 / 15 / 30 / 60 plus a custom value up to 300. Every test above this one
+     * runs at 3s, which was the old global setting's default and is now a length no rule produces,
+     * so the arithmetic is pinned across the whole range the picker can actually write.
+     *
+     * One loop over the durations rather than a test each: a duration that behaved differently
+     * would be a hold that opened an app EARLY, and early is the direction that matters.
+     */
     @Test
-    fun `resolveDurationMs with no override uses the global seconds`() {
-        assertEquals(3_000L, HoldToUnlock.resolveDurationMs(ruleOverrideSeconds = null, globalSeconds = 3))
-        assertEquals(
-            0L,
-            HoldToUnlock.resolveDurationMs(ruleOverrideSeconds = null, globalSeconds = HoldToUnlock.OFF_SECONDS)
-        )
-    }
+    fun `at every duration the editor offers, the hold completes only at that duration`() {
+        val ruleDurationsSeconds = listOf(1, 5, 15, 30, 60, 300)
 
-    /** The per-app override hook the next issue #35 item fills in: when present, it wins outright. */
-    @Test
-    fun `a non-null rule override wins over the global setting`() {
-        assertEquals(5_000L, HoldToUnlock.resolveDurationMs(ruleOverrideSeconds = 5, globalSeconds = 2))
+        ruleDurationsSeconds.forEach { seconds ->
+            val durationMs = seconds * 1_000L
+            val progress = HoldProgress(durationMs)
+
+            progress.press(nowMs = 0L)
+
+            assertFalse(
+                "a ${seconds}s hold must not complete one millisecond early",
+                progress.advance(nowMs = durationMs - 1)
+            )
+            assertEquals(
+                "and must report just under full progress at that point",
+                1f,
+                progress.fraction(nowMs = durationMs - 1),
+                0.002f
+            )
+            assertTrue(
+                "a ${seconds}s hold completes at exactly ${seconds}s",
+                progress.advance(nowMs = durationMs)
+            )
+        }
     }
 
     /**
-     * Both arguments arrive from places a caller does not fully control — critically an IMPORTED
-     * BACKUP FILE, which can carry any integer a previous (or hand-edited) export wrote. Clamping
-     * here is what stops such a file from installing a hold nobody can physically complete.
+     * The rule this mode exists for, at the duration it will actually ship at.
+     *
+     * A 15-second hold released at 14.9s must cost the user all fifteen seconds again, not 100ms.
+     * If a release ever became a pause, HOLD would silently collapse into a DELAY that needs the
+     * screen touched now and then — which is WEAKER than the delay it replaced, because by then the
+     * user has learned to keep a thumb there.
      */
     @Test
-    fun `both arguments are clamped into OFF_SECONDS to MAX_SECONDS`() {
-        assertEquals(0L, HoldToUnlock.resolveDurationMs(ruleOverrideSeconds = null, globalSeconds = -5))
-        assertEquals(
-            HoldToUnlock.MAX_SECONDS * 1_000L,
-            HoldToUnlock.resolveDurationMs(ruleOverrideSeconds = null, globalSeconds = 9_999)
+    fun `letting go at the last moment of a 15 second hold costs the whole 15 seconds again`() {
+        val fifteenSeconds = 15_000L
+        val progress = HoldProgress(fifteenSeconds)
+
+        progress.press(nowMs = 0L)
+        assertFalse(progress.advance(nowMs = 14_900L))
+        progress.release()
+
+        assertEquals(0f, progress.fraction(nowMs = 14_900L), EPS)
+
+        progress.press(nowMs = 14_900L)
+        assertFalse(
+            "the abandoned 14.9s must not carry over",
+            progress.advance(nowMs = 14_900L + fifteenSeconds - 1)
         )
-        assertEquals(
-            HoldToUnlock.MAX_SECONDS * 1_000L,
-            HoldToUnlock.resolveDurationMs(ruleOverrideSeconds = 9_999, globalSeconds = 3)
-        )
-        assertEquals(0L, HoldToUnlock.resolveDurationMs(ruleOverrideSeconds = -5, globalSeconds = 3))
-    }
-
-    // ── HoldToUnlock.isEnabled ──
-
-    @Test
-    fun `isEnabled is false for zero and negative, true for any positive duration`() {
-        assertFalse(HoldToUnlock.isEnabled(durationMs = 0L))
-        assertFalse(HoldToUnlock.isEnabled(durationMs = -1L))
-        assertTrue(HoldToUnlock.isEnabled(durationMs = 1L))
-        assertTrue(HoldToUnlock.isEnabled(durationMs = HOLD_MS))
-    }
-
-    // ── HoldToUnlock.OPTION_SECONDS invariant ──
-
-    /**
-     * One invariant over the whole picker list rather than four separate assertions, so a future
-     * option (a 10s entry, say — this class's own KDoc names that example) cannot be added out of
-     * range or out of order without this test catching it.
-     */
-    @Test
-    fun `OPTION_SECONDS starts with Off, contains the default, and is strictly ascending within bounds`() {
-        val options = HoldToUnlock.OPTION_SECONDS
-
-        assertEquals(HoldToUnlock.OFF_SECONDS, options.first())
-        assertTrue(options.contains(HoldToUnlock.DEFAULT_SECONDS))
-        assertEquals(options.distinct(), options) // no duplicates
-        assertEquals(options.sorted(), options) // strictly ascending (distinct + sorted == as-is)
-        assertTrue(options.all { it in HoldToUnlock.OFF_SECONDS..HoldToUnlock.MAX_SECONDS })
+        assertTrue(progress.advance(nowMs = 14_900L + fifteenSeconds))
     }
 }

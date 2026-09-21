@@ -18,7 +18,7 @@ class BlockEngine @Inject constructor(
      *   list contains this feature will be considered. Whole-app rules are also considered unless
      *   [includeWholeAppRulesForFeature] is false.
      *
-     * Priority: HARD_BLOCK > time budget exceeded > DELAY > BREATHING > Allow
+     * Priority: HARD_BLOCK > time budget exceeded > DELAY > HOLD > BREATHING > Allow
      *
      * [BlockMode.NONE] deliberately matches none of the block branches below, so a rule carrying
      * it yields Allow. It still participates in the time-budget check, which keys off
@@ -102,41 +102,46 @@ class BlockEngine @Inject constructor(
             )
         }
 
-        // Check for DELAY rules
-        val delayRule = applicableRules.firstOrNull { it.mode == BlockMode.DELAY }
-        if (delayRule != null) {
-            logger.i(
-                "block package=$packageName reason=delay_rule " +
-                    "delaySeconds=${delayRule.delaySeconds} grayscale=$wantsGrayscale"
-            )
-            return BlockDecision.Block(
-                BlockMode.DELAY,
-                delayRule.delaySeconds,
-                wantsGrayscale,
-                ruleName = delayRule.ruleName,
-                dailyTimeRemainingMs = dailyTimeRemainingMs,
-                dailyLimitMinutes = minDailyLimit
-            )
-        }
-
-        // Check for BREATHING rules
-        val breathingRule = applicableRules.firstOrNull { it.mode == BlockMode.BREATHING }
-        if (breathingRule != null) {
-            logger.i(
-                "block package=$packageName reason=breathing_rule " +
-                    "delaySeconds=${breathingRule.delaySeconds} grayscale=$wantsGrayscale"
-            )
-            return BlockDecision.Block(
-                BlockMode.BREATHING,
-                breathingRule.delaySeconds,
-                wantsGrayscale,
-                ruleName = breathingRule.ruleName,
-                dailyTimeRemainingMs = dailyTimeRemainingMs,
-                dailyLimitMinutes = minDailyLimit
-            )
+        // The timed modes, strongest first. One ordered scan rather than a block per mode: these
+        // branches were three copies of the same eight lines, and BlockMode.HOLD arriving as a
+        // fourth copy is exactly how one of them ends up subtly different from its siblings.
+        TIMED_MODES_STRONGEST_FIRST.forEach { mode ->
+            val rule = applicableRules.firstOrNull { it.mode == mode }
+            if (rule != null) {
+                logger.i(
+                    "block package=$packageName reason=${mode.name.lowercase()}_rule " +
+                        "delaySeconds=${rule.delaySeconds} grayscale=$wantsGrayscale"
+                )
+                return BlockDecision.Block(
+                    mode,
+                    rule.delaySeconds,
+                    wantsGrayscale,
+                    ruleName = rule.ruleName,
+                    dailyTimeRemainingMs = dailyTimeRemainingMs,
+                    dailyLimitMinutes = minDailyLimit
+                )
+            }
         }
 
         logger.d("allow package=$packageName reason=no_matching_block_mode")
         return BlockDecision.Allow
+    }
+
+    private companion object {
+        /**
+         * The modes that gate an app behind a duration, in the order a tie is broken when several
+         * matching rules are active at once.
+         *
+         * [BlockMode.HOLD] sits beside [BlockMode.DELAY] because they are the same price in
+         * wall-clock time (see `RuleWeakening.modeStrength`, which ranks them equal); the order
+         * within the pair only decides which rule wins when a user has configured both for one app
+         * at the same moment, and DELAY first keeps that answer identical to what it was before
+         * HOLD existed.
+         *
+         * NOT `BlockMode.entries`: [BlockMode.NONE] gates nothing and [BlockMode.HARD_BLOCK] is
+         * decided above, ahead of the daily budget.
+         */
+        private val TIMED_MODES_STRONGEST_FIRST =
+            listOf(BlockMode.DELAY, BlockMode.HOLD, BlockMode.BREATHING)
     }
 }

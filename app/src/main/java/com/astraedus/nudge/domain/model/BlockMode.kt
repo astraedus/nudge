@@ -30,5 +30,33 @@ enum class BlockMode {
     NONE,
     HARD_BLOCK,
     DELAY,
-    BREATHING
+
+    /**
+     * Like [DELAY], except the clock only runs while a finger is on the screen.
+     *
+     * The user holds a target for the rule's `delaySeconds`; letting go puts the progress back to
+     * zero and the whole wait starts over. Requested on
+     * [issue #35](https://github.com/astraedus/nudge/issues/35): waiting is something a thumb can
+     * pay for while the person is somewhere else entirely, so the entire price of a DELAY can be
+     * spent without a decision ever being made. A hold is time the user has to keep CHOOSING, and
+     * letting go is the cheap action -- the direction every affordance in this app should point.
+     *
+     * It reuses `delaySeconds` rather than adding a column: the number means the same thing (how
+     * long before the app opens) and the editor offers the same picker, so a rule switched between
+     * DELAY and HOLD keeps its duration. That is also why [com.astraedus.nudge.domain.lock.RuleWeakening]
+     * ranks the two EQUAL: at one duration they cost the same wall-clock time, and a hold costs
+     * strictly more attention, so flipping between them is not a way around Strict Mode.
+     */
+    HOLD,
+    BREATHING;
+
+    /**
+     * Whether this mode spends the rule's `delaySeconds`, i.e. whether a duration picker is
+     * meaningful for a rule carrying it.
+     *
+     * Asked positively of the enum rather than as `mode == DELAY || mode == BREATHING` at each of
+     * the three call sites that used to spell it out: a mode added without being listed there would
+     * have silently shipped with an uneditable duration, stuck on whatever was last saved.
+     */
+    val usesDuration: Boolean get() = this == DELAY || this == HOLD || this == BREATHING
 }

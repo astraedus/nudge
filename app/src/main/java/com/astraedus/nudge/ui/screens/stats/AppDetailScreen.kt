@@ -226,6 +226,7 @@ private fun StatItem(label: String, value: String) {
 private fun formatBlockMode(mode: String): String = when (mode) {
     "HARD_BLOCK" -> "Hard Block"
     "DELAY" -> "Delay"
+    "HOLD" -> "Hold"
     "BREATHING" -> "Breathing"
     else -> mode.lowercase().replaceFirstChar { it.uppercase() }
 }

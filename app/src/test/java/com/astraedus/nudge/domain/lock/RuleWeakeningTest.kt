@@ -69,6 +69,88 @@ class RuleWeakeningTest {
         assertFalse(RuleWeakening.isWeakening(rule(mode = "BREATHING"), rule(mode = "DELAY")))
     }
 
+    // ── mode HOLD (ranks EQUAL to DELAY -- same wall-clock wait, so switching between the two
+    // at a fixed duration is not a way around Strict Mode; see RuleWeakening.modeStrength) ──
+
+    @Test
+    fun `mode DELAY to HOLD at the same delaySeconds is not weakening`() {
+        assertFalse(
+            RuleWeakening.isWeakening(
+                rule(mode = "DELAY", delaySeconds = 15),
+                rule(mode = "HOLD", delaySeconds = 15)
+            )
+        )
+    }
+
+    @Test
+    fun `mode HOLD to DELAY at the same delaySeconds is not weakening`() {
+        assertFalse(
+            RuleWeakening.isWeakening(
+                rule(mode = "HOLD", delaySeconds = 15),
+                rule(mode = "DELAY", delaySeconds = 15)
+            )
+        )
+    }
+
+    @Test
+    fun `mode HARD_BLOCK to HOLD is weakening`() {
+        assertTrue(RuleWeakening.isWeakening(rule(mode = "HARD_BLOCK"), rule(mode = "HOLD")))
+    }
+
+    @Test
+    fun `mode HOLD to HARD_BLOCK is not weakening`() {
+        assertFalse(RuleWeakening.isWeakening(rule(mode = "HOLD"), rule(mode = "HARD_BLOCK")))
+    }
+
+    @Test
+    fun `mode HOLD to BREATHING is weakening`() {
+        assertTrue(RuleWeakening.isWeakening(rule(mode = "HOLD"), rule(mode = "BREATHING")))
+    }
+
+    @Test
+    fun `mode BREATHING to HOLD is not weakening`() {
+        assertFalse(RuleWeakening.isWeakening(rule(mode = "BREATHING"), rule(mode = "HOLD")))
+    }
+
+    @Test
+    fun `mode HOLD to NONE is weakening`() {
+        assertTrue(RuleWeakening.isWeakening(rule(mode = "HOLD"), rule(mode = "NONE")))
+    }
+
+    @Test
+    fun `shortening delaySeconds on a HOLD rule is weakening`() {
+        assertTrue(
+            RuleWeakening.isWeakening(
+                rule(mode = "HOLD", delaySeconds = 30),
+                rule(mode = "HOLD", delaySeconds = 15)
+            )
+        )
+    }
+
+    @Test
+    fun `lengthening delaySeconds on a HOLD rule is not weakening`() {
+        assertFalse(
+            RuleWeakening.isWeakening(
+                rule(mode = "HOLD", delaySeconds = 15),
+                rule(mode = "HOLD", delaySeconds = 30)
+            )
+        )
+    }
+
+    @Test
+    fun `softening a HOLD website block mode to BREATHING is weakening`() {
+        val old = rule(mode = "NONE", webDomains = "instagram.com", webBlockMode = "HOLD")
+        val new = rule(mode = "NONE", webDomains = "instagram.com", webBlockMode = "BREATHING")
+        assertTrue(RuleWeakening.isWeakening(old, new))
+    }
+
+    @Test
+    fun `changing a HOLD website block mode to DELAY is not weakening`() {
+        val old = rule(mode = "NONE", webDomains = "instagram.com", webBlockMode = "HOLD")
+        val new = rule(mode = "NONE", webDomains = "instagram.com", webBlockMode = "DELAY")
+        assertFalse(RuleWeakening.isWeakening(old, new))
+    }
+
     // ── mode NONE (whole-app blocking switched off) ──
     // Turning off the "Block the whole app" switch writes NONE, which drops ALL gating of the app.
     // It is the largest weakening the config screen can produce and must never save unchallenged.

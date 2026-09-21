@@ -1,5 +1,6 @@
 package com.astraedus.nudge.data.export
 
+import com.astraedus.nudge.domain.model.BlockMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -204,9 +205,14 @@ class ImportValidationTest {
         assertEquals(0, result.groups.size)
     }
 
+    /**
+     * Derived from BlockMode.entries rather than hand-typed: a hand-typed list (this used to read
+     * `listOf("HARD_BLOCK", "DELAY", "BREATHING")`, silently missing NONE and then HOLD) stops
+     * covering the full enum the moment a mode is added, and never fails to alert you that it has.
+     */
     @Test
-    fun `all three block modes are accepted`() {
-        val modes = listOf("HARD_BLOCK", "DELAY", "BREATHING")
+    fun `every block mode is accepted`() {
+        val modes = BlockMode.entries.map { it.name }
         for (mode in modes) {
             val json = """
             {

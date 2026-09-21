@@ -2,6 +2,7 @@ package com.astraedus.nudge.ui.screens.stats
 
 import com.astraedus.nudge.data.db.entity.UsageEvent
 import com.astraedus.nudge.data.db.entity.isShownConfrontation
+import com.astraedus.nudge.domain.model.BlockMode
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -370,6 +371,7 @@ class InsightsCalculator @Inject constructor() {
     fun modeLabel(mode: String): String = when (mode) {
         "HARD_BLOCK" -> "Hard block"
         "DELAY" -> "Delay"
+        "HOLD" -> "Hold"
         "BREATHING" -> "Breathing"
         else -> "Other"
     }
@@ -434,7 +436,15 @@ class InsightsCalculator @Inject constructor() {
 
         private const val HOURS_PER_DAY = 24
         private const val DAYS_PER_WEEK = 7
-        private val KNOWN_MODES = setOf("HARD_BLOCK", "DELAY", "BREATHING")
+        /**
+         * The modes a `wasBlocked` row can carry, derived from [BlockMode] rather than hand-typed:
+         * a hardcoded list silently goes stale the moment a mode is added, and a mode missing from
+         * it is not a crash, it is every row of that mode quietly filed under "Other" on the
+         * interventions chart. [BlockMode.NONE] is excluded because it never produces a block, so
+         * it can never appear on a row here.
+         */
+        val KNOWN_MODES: Set<String> =
+            BlockMode.entries.filter { it != BlockMode.NONE }.mapTo(mutableSetOf()) { it.name }
         private val WEEKDAY_LABELS = listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
         private val WEEKDAY_FULL_LABELS = listOf(
             "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"

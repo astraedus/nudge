@@ -91,16 +91,32 @@ data class UnifiedAppConfigState(
     val blocksWholeApp: Boolean get() = defaultMode != BlockMode.NONE
 
     /**
-     * Whether the shared `delaySeconds` control is meaningful: some live block mode is DELAY or
-     * BREATHING. That is the app's own mode when the app is blocked, and otherwise the website
-     * mode — a web-only rule still needs its countdown length editable.
+     * The mode the shared `delaySeconds` control is currently editing the duration OF: the app's own
+     * mode when the app is blocked, and otherwise the website mode — a web-only rule still needs
+     * its countdown length editable.
+     */
+    private val durationMode: BlockMode
+        get() = if (blocksWholeApp) defaultMode else webBlockMode
+
+    /**
+     * Whether the shared `delaySeconds` control is meaningful, i.e. whether the live mode spends a
+     * duration at all. Asked of [BlockMode.usesDuration] rather than listed here, so a mode added to
+     * the picker cannot ship with an uneditable duration.
      */
     val showDelayDuration: Boolean
         get() = if (blocksWholeApp) {
-            defaultMode != BlockMode.HARD_BLOCK
+            durationMode.usesDuration
         } else {
-            webDomainEnabled && webBlockMode != BlockMode.HARD_BLOCK
+            webDomainEnabled && durationMode.usesDuration
         }
+
+    /**
+     * What to call that control. A HOLD rule's seconds are not a countdown the user watches, they
+     * are how long a thumb has to stay down, and "Delay Duration" over a hold picker reads as a
+     * second, separate wait.
+     */
+    val delayDurationLabel: String
+        get() = if (durationMode == BlockMode.HOLD) "Hold Duration" else "Delay Duration"
 
     companion object {
         val FEATURES_BY_PACKAGE: Map<String, List<FeatureInfo>> = mapOf(

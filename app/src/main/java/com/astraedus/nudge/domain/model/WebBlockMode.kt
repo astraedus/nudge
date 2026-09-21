@@ -38,6 +38,7 @@ object WebBlockMode {
         "NONE" -> BlockMode.NONE
         "HARD_BLOCK" -> BlockMode.HARD_BLOCK
         "DELAY" -> BlockMode.DELAY
+        "HOLD" -> BlockMode.HOLD
         "BREATHING" -> BlockMode.BREATHING
         else -> null
     }

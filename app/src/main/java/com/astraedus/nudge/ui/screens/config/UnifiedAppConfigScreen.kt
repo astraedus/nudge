@@ -53,6 +53,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.astraedus.nudge.domain.model.BlockMode
+import com.astraedus.nudge.ui.components.blockModeDescription
+import com.astraedus.nudge.ui.components.blockModeLabel
 import com.astraedus.nudge.domain.model.FeatureMode
 import com.astraedus.nudge.ui.components.CustomTimeDialog
 import com.astraedus.nudge.ui.components.MinutesField
@@ -462,9 +464,13 @@ fun UnifiedAppConfigScreen(
                                 shape = SegmentedButtonDefaults.itemShape(
                                     index = index,
                                     count = BLOCKING_MODES.size
-                                )
+                                ),
+                                // No check icon: with four modes in the row its 18dp + 8dp would
+                                // cost more than a quarter of the width left for "Hard Block", and
+                                // the selected segment is already unmistakable from its colour.
+                                icon = {}
                             ) {
-                                Text(blockModeLabel(mode))
+                                Text(blockModeLabel(mode), maxLines = 1)
                             }
                         }
                     }
@@ -484,7 +490,7 @@ fun UnifiedAppConfigScreen(
             if (state.showDelayDuration) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        "Delay Duration",
+                        state.delayDurationLabel,
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Medium
                     )
@@ -514,7 +520,7 @@ fun UnifiedAppConfigScreen(
 
                     if (showDelayDialog) {
                         CustomTimeDialog(
-                            title = "Custom Delay Duration",
+                            title = "Custom ${state.delayDurationLabel}",
                             unit = "seconds",
                             currentValue = state.defaultDelaySeconds,
                             min = 1,
@@ -915,12 +921,7 @@ private fun FeatureOverrideCard(
                         onClick = { onUpdate(override.copy(mode = mode)) },
                         label = {
                             Text(
-                                when (mode) {
-                                    FeatureMode.INHERIT -> "Inherit"
-                                    FeatureMode.BLOCK -> "Block"
-                                    FeatureMode.DELAY -> "Delay"
-                                    FeatureMode.BREATHING -> "Breathing"
-                                },
+                                featureModeLabel(mode),
                                 style = MaterialTheme.typography.bodySmall
                             )
                         }
@@ -928,8 +929,8 @@ private fun FeatureOverrideCard(
                 }
             }
 
-            // Expanded settings for DELAY and BREATHING
-            if (override.mode == FeatureMode.DELAY || override.mode == FeatureMode.BREATHING) {
+            // Expanded settings for every mode that spends a duration.
+            if (override.mode.usesDuration) {
                 // Delay duration chips
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     listOf(5, 15, 30, 60).forEach { s ->
@@ -1013,18 +1014,18 @@ private fun TimeSelector(
  * it would be an outright lie — a scheduled rule is additive, so a NONE scheduled rule adds
  * nothing rather than carving out an unblocked window during those hours.
  */
-private val BLOCKING_MODES = listOf(BlockMode.HARD_BLOCK, BlockMode.DELAY, BlockMode.BREATHING)
+private val BLOCKING_MODES =
+    listOf(BlockMode.HARD_BLOCK, BlockMode.DELAY, BlockMode.HOLD, BlockMode.BREATHING)
 
-private fun blockModeLabel(mode: BlockMode): String = when (mode) {
-    BlockMode.NONE -> "Off"
-    BlockMode.HARD_BLOCK -> "Hard Block"
-    BlockMode.DELAY -> "Delay"
-    BlockMode.BREATHING -> "Breathing"
-}
-
-private fun blockModeDescription(mode: BlockMode): String = when (mode) {
-    BlockMode.NONE -> "Not blocked."
-    BlockMode.HARD_BLOCK -> "Completely blocks the app. You can only go back to the home screen."
-    BlockMode.DELAY -> "Shows a countdown timer before letting you in."
-    BlockMode.BREATHING -> "Guides you through a breathing exercise before opening."
+/**
+ * The words on an in-app FEATURE override chip. Separate from [blockModeLabel] only because
+ * [FeatureMode] carries [FeatureMode.INHERIT], which is not a block mode at all; the rest read the
+ * same as the app-level picker on purpose.
+ */
+private fun featureModeLabel(mode: FeatureMode): String = when (mode) {
+    FeatureMode.INHERIT -> "Inherit"
+    FeatureMode.BLOCK -> "Block"
+    FeatureMode.DELAY -> "Delay"
+    FeatureMode.HOLD -> "Hold"
+    FeatureMode.BREATHING -> "Breathing"
 }
