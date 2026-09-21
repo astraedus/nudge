@@ -51,7 +51,7 @@ class ImportedSettingsWriteContractTest {
     }
 
     /**
-     * The nine settings a backup carries. Each must be written through a null-guard, so a file that
+     * The ten settings a backup carries. Each must be written through a null-guard, so a file that
      * does not carry it leaves this device's value alone.
      */
     @Test
@@ -65,7 +65,8 @@ class ImportedSettingsWriteContractTest {
             "emergencyPassEnabled" to "EMERGENCY_PASS_ENABLED",
             "customDelayTitles" to "CUSTOM_DELAY_TITLES",
             "customDelaySubtitles" to "CUSTOM_DELAY_SUBTITLES",
-            "customHardBlockMessages" to "CUSTOM_HARD_BLOCK_MESSAGES"
+            "customHardBlockMessages" to "CUSTOM_HARD_BLOCK_MESSAGES",
+            "holdToUnlockSeconds" to "HOLD_TO_UNLOCK_SECONDS"
         )
 
         carried.forEach { (field, key) ->
@@ -122,7 +123,8 @@ class ImportedSettingsWriteContractTest {
             "emergencyPassEnabled",
             "customDelayTitles",
             "customDelaySubtitles",
-            "customHardBlockMessages"
+            "customHardBlockMessages",
+            "holdToUnlockSeconds"
         ).forEach { field ->
             assertTrue("$field must be exported as well as importable", exportBody.contains("$field ="))
         }
