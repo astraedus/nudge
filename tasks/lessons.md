@@ -651,3 +651,71 @@ What generalises:
 - **A test whose numbers encode the bug must be re-stated, not deleted.** `HomeChartsBuilderTest` asserted
   `weekBlocked == 3` over a fixture containing one walk-away. It was green throughout, and it was the bug
   written down as a contract.
+
+## 1552 green tests aimed at the wrong layer: thirteen "coding mistakes" were testing-strategy failures (2026-09-21)
+
+The owner asked the right question after a run of shipped defects: *"a lot of these bugs, I swear, shouldn't
+our tests catch this? how are we actually testing this, are we doing tests wrong, are we missing something?"*
+The suite was evaluated against the last 18 defects. It is not theatre and it is not wrong. It is ~1550 tests
+aimed almost entirely at **one layer** — pure JVM logic — while the bug history sits in three places that
+layer cannot reach as written: lifecycle ordering, real-device event timing, and fixtures that agree with the
+code instead of with the device.
+
+The number that settles it: **75% of the test budget sits at the layer that would have caught 3 of 18**, while
+the layer that would have caught the most (**5** — replaying a recorded device event stream) holds **1.9%**.
+Writing more tests was never the fix. Every one of those 1552 could have been doubled and the same bugs ship.
+
+**The lesson is that "write a test for it" is an incomplete instruction.** The complete one is *"write a test
+at the layer this bug lives at"*, and the author is systematically the worst judge of that in the moment: #36
+shipped under 49 exhaustive, correct tests of the gates deciding whether to SHOW an overlay, because nobody
+asked which layer the COUNT question lived at. Exhaustive tests of the wrong question produce confidence, not
+safety. Hence the rule now in `docs/testing-strategy.md` and `CLAUDE.md`: **every bug-fix PR body names its
+layer (L1–L6) and puts the test there**, or says why that layer is not worth building for this bug.
+
+**Thirteen entries already in this file are this same failure wearing a coding-mistake costume** — "every test
+exercising the same trigger will miss a bug reached by a different one", "the gate that decides whether to
+SHOW is not the gate that decides whether to COUNT", "if you are writing a test to police a rule, the design
+is wrong", "a correction that lives on ONE screen is a bug on every other screen", and nine more. Each was
+filed as a bug lesson. Read together they are one lesson about aim, and that is only visible when you count
+them, which is the argument for doing this kind of evaluation periodically rather than trusting the running
+total of green tests.
+
+Three specifics that came out of it and are now doctrine:
+
+- **A fixture that hand-types an identity constant agrees with its author, not with the device.**
+  `PassthroughTest` supplies `ownPackageName = "com.astraedus.nudge"` to *both* sides of every comparison —
+  that is the `namespace`, while `applicationId` is `dev.astraedus.nudge`, so `isOwnAppWindowEvent` has been
+  dead in production for months under a green suite (#33). Same shape in `NudgeDatabaseMigrationTest`'s
+  hand-kept `currentVersion` and `SettingsExportTest`'s hand-typed list of block modes inside a test named
+  *"every real block mode is accepted"*. Derive from `BuildConfig`, the annotation, the enum.
+- **A capture is cheaper than a theory.** #28a shipped because the model ("a foreign package fired a window
+  event, so the user left") was false and no recorded stream existed to contradict it. Any accessibility
+  report now owes a committed capture with an oracle *before* the fix is designed.
+- **Do not buy a layer because a survey says it is standard.** Robolectric and an emulator suite are the
+  textbook answers and are both deliberately deferred, with the trigger that would reverse each written down.
+  The two practices funded instead — replay with a counterfactual, and fixture honesty — cover 8 of the 18
+  defects, need no new dependency, and make the tests already here honest.
+
+## A backup that FILTERS is data loss the file format cannot express (2026-09-21, issue #43)
+
+`ExportRulesUseCase` read `repository.getEnabledRules()`. Its own KDoc said "all enabled rules", so the
+filter read as intentional for a year, but the file format had carried an `enabled` flag per rule the whole
+time, and the importer had always restored it. The format was describing a state the exporter could never
+produce. A rule the user had switched off was simply absent from their backup, and a restore onto a wiped
+phone lost it with no error, no count, and nothing in the UI to notice.
+
+- **On a backup path, "which rows do we collect" is a correctness question, not a filter.** Every other
+  failure mode here is loud (per-entry skips are counted, a wrong-shaped envelope fails the import). A
+  narrowed *query* is the one data loss that reports success. When a use case says it exports a thing, check
+  which query feeds it, not just what it does with the rows.
+- **A field the format carries but the writer can never vary is the tell.** `enabled` was serialized,
+  parsed, defaulted (`optBoolean("enabled", true)`) and applied to the inserted `BlockRule`, four places
+  handling a value that was constant by construction. That asymmetry is visible from the data classes alone.
+- **The regression test asserts the COLLECTION, not the output.** `ExportRulesUseCaseTest` leaves
+  `getEnabledRules` deliberately UNSTUBBED on the mockk repository, so reaching for it again fails loudly
+  instead of quietly exporting less. Asserting "2 rules came out" would pass for a fixture where both happen
+  to be enabled.
+- **Backward compatibility rode on the default, not on a version bump.** A pre-#43 file names no `enabled`
+  key *and only ever contained enabled rules*, so the importer's `true` default is exactly right and must
+  stay; reading that silence as "off" would restore a phone that blocks nothing. Envelope stays version 1 in
+  both directions, for the same reason `history` and `settings` did.

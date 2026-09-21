@@ -1,4 +1,4 @@
-package com.astraedus.nudge.ui.screens.rules
+package com.astraedus.nudge.ui.backup
 
 import com.astraedus.nudge.domain.usecase.ImportOutcome
 import com.astraedus.nudge.domain.usecase.ImportPreview
@@ -15,7 +15,7 @@ import com.astraedus.nudge.domain.usecase.ImportPreview
 private const val MAX_LISTED_REASONS = 3
 
 /**
- * Body text of the "Import Rules" confirmation dialog, shown BEFORE anything is written.
+ * Body text of the "Import backup" confirmation dialog, shown BEFORE anything is written.
  *
  * A file with no history reads EXACTLY as it did before history existed -- a rules-only backup from
  * an older Nudge must not sprout a line about a feature it knows nothing about.
