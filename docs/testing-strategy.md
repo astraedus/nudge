@@ -197,7 +197,7 @@ Live offenders, all verifiable today:
 | `service/PassthroughTest.kt:211` | `const val OWN_PACKAGE = "com.astraedus.nudge"`, fed to **both** sides of every comparison | `namespace` is `com.astraedus.nudge`; `applicationId` is `dev.astraedus.nudge`. This is **#33**: `isOwnAppWindowEvent` can never be true in production, and has been dead for months |
 | `service/TransientWindowTest.kt:26`, `service/HomeScreenPassthroughTest.kt:29`, `service/ContentChangeAppSwitchTest.kt:34`, `data/repository/InstalledAppsRepositoryTest.kt:44` | the same wrong literal | six other files hand-typed the *correct* one, so this is drift, not convention. **No file in the suite imports `BuildConfig.APPLICATION_ID`** |
 | `data/db/NudgeDatabaseMigrationTest.kt:187` | `val currentVersion = 10` | already bit us once: the test sat at 6 while the DB was at 7 (`tasks/lessons.md`, 2026-05-20). Read it from the `@Database` annotation |
-| `data/export/SettingsExportTest.kt:387` | `listOf("NONE", "HARD_BLOCK", "DELAY", "BREATHING")` inside a test named *"every real block mode is accepted"* | it claims exhaustiveness over an enum it does not read. `BlockMode.entries.map { it.name }` makes the claim true, and a new mode then fails the test instead of silently escaping it |
+| `data/export/SettingsExportTest.kt:393` | `listOf("NONE", "HARD_BLOCK", "DELAY", "BREATHING")` inside a test named *"every real block mode is accepted"* | it claims exhaustiveness over an enum it does not read. `BlockMode.entries.map { it.name }` makes the claim true, and a new mode then fails the test instead of silently escaping it |
 | `domain/sitting/SittingTrackerTest.kt:19` | a 5-minute `returnWindowMs` where production wires `PASSTHROUGH_RETURN_WINDOW_MS = 2 minutes` | no test verifies that production wires the real constant |
 
 **The repo already solved this once and did not generalise it:** `BlockOverlayLaunchContractTest.kt:357`
@@ -227,7 +227,7 @@ order rather than to data; at L3 it costs one extra list of events.
 
 ### (e) Source-grep assertions: check an absence or a discovered count, never a presence
 
-This fell out of reading all 21 contract tests. The assertions that survive a faithful refactor check
+This fell out of reading all 21 source-grep contract tests present at `52f827e` (new ones have landed since; apply the rule to those too). The assertions that survive a faithful refactor check
 either an **absence of a whole defect class** (`assertFalse(source.contains("CoroutineScope("))`, no
 `mutableStateOf`, no `INTERVAL_DAILY`, no `onBackPressed` override) or a **count over a discovered
 set** (exactly one `wasBlocked = true` writer; this set of preferences equals that set). The ones
@@ -255,7 +255,7 @@ tests are bad", and it tells an author which kind to write. Apply it before addi
 
 ### Contract tests: migrate when next touched
 
-A first pass of the evaluation reported "13 of 21 pin a spelling". **That number was a sampling
+A first pass of the evaluation reported "13 of 21 pin a spelling" (the 21 present at `52f827e`). **That number was a sampling
 artifact and is wrong** — reading all 21 gives three buckets, and the correction is itself an
 instance of rule (b): a number that came from a sample rather than from the source. The mechanism
 (`contains("someCall(")`) is identical across the good and the bad ones; what differs is the property
