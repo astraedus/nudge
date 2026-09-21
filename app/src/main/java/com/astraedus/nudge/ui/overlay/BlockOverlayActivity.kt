@@ -12,7 +12,6 @@ import androidx.lifecycle.Lifecycle
 import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.domain.block.OverlayLifecycle
 import com.astraedus.nudge.domain.emergency.EmergencyPass
-import com.astraedus.nudge.domain.hold.HoldToUnlock
 import com.astraedus.nudge.domain.logging.NudgeLog
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.domain.usecase.RecordWalkAwayUseCase
@@ -251,15 +250,6 @@ class BlockOverlayActivity : ComponentActivity() {
         // the pass is governed by its own Settings toggle alone (v1.10.0); see
         // [resolveEmergencyPassState], which owns the whole decision.
         var passState = EmergencyPassUiState()
-        // How long the user must press and hold once this block's timer ends (issue #35). Read in
-        // the same blocking window as the message pools and for the same reason: the hold control
-        // replaces the countdown the instant it finishes, and a duration that arrived late would
-        // mean a hold whose length changed while the thumb was already on it.
-        //
-        // `null` is the per-rule override, which nothing writes yet. It is passed explicitly rather
-        // than left out so the shape of the question -- "what is the EFFECTIVE hold for THIS block"
-        // -- is already here for issue #35's item 2.
-        var holdToUnlockMs = 0L
         runBlocking {
             titlePool = NudgeMessages.resolvePool(
                 nudgePreferences.customDelayTitles.first(), NudgeMessages.delayTitles
@@ -276,11 +266,6 @@ class BlockOverlayActivity : ComponentActivity() {
                 passEnabled = nudgePreferences.emergencyPassEnabled.first(),
                 usage = EmergencyPass.parse(nudgePreferences.emergencyPassUsage.first()),
                 now = System.currentTimeMillis()
-            )
-
-            holdToUnlockMs = HoldToUnlock.resolveDurationMs(
-                ruleOverrideSeconds = null,
-                globalSeconds = nudgePreferences.holdToUnlockSeconds.first()
             )
         }
 
@@ -347,8 +332,7 @@ class BlockOverlayActivity : ComponentActivity() {
                             canUseEmergencyPass = passState.canUse,
                             emergencyLocked = passState.locked,
                             nextPassMs = passState.nextPassMs,
-                            onUseEmergencyPass = onUsePass,
-                            holdToUnlockMs = holdToUnlockMs
+                            onUseEmergencyPass = onUsePass
                         )
                     }
 
@@ -365,8 +349,7 @@ class BlockOverlayActivity : ComponentActivity() {
                             canUseEmergencyPass = passState.canUse,
                             emergencyLocked = passState.locked,
                             nextPassMs = passState.nextPassMs,
-                            onUseEmergencyPass = onUsePass,
-                            holdToUnlockMs = holdToUnlockMs
+                            onUseEmergencyPass = onUsePass
                         )
                     }
                 }

@@ -2,7 +2,6 @@ package com.astraedus.nudge.data.export
 
 import com.astraedus.nudge.data.db.entity.BlockRule
 import com.astraedus.nudge.data.db.entity.UsageEvent
-import com.astraedus.nudge.domain.hold.HoldToUnlock
 import com.astraedus.nudge.domain.lock.StrictModeChallenge
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -50,8 +49,7 @@ class SettingsExportTest {
         emergencyPassEnabled = false,
         customDelayTitles = "Pause.\nWait a moment.",
         customDelaySubtitles = "Is this what you wanted?",
-        customHardBlockMessages = "Not today.",
-        holdToUnlockSeconds = 5
+        customHardBlockMessages = "Not today."
     )
 
     private fun export(
@@ -87,9 +85,6 @@ class SettingsExportTest {
         assertEquals(1, result.version)
         assertEquals(settings(), result.settings)
         assertEquals(0, result.invalidSettingsCount)
-        // Explicit per-field check, not just the data-class equality above: this is the one that
-        // actually pins holdToUnlockSeconds round-tripping through export -> JSON -> parse.
-        assertEquals(5, result.settings?.holdToUnlockSeconds)
     }
 
     @Test
@@ -102,7 +97,6 @@ class SettingsExportTest {
         assertEquals("DELAY", settings.getString("contentFilterMode"))
         assertEquals(48, settings.getInt("strictModeChallengeLength"))
         assertEquals("Not today.", settings.getString("customHardBlockMessages"))
-        assertEquals(5, settings.getInt("holdToUnlockSeconds"))
         // The other payloads are untouched by its presence.
         assertEquals(1, json.getJSONArray("rules").length())
         assertNotNull(json.getJSONArray("groups"))
@@ -235,8 +229,8 @@ class SettingsExportTest {
     }
 
     /**
-     * Forward compatibility at the KEY level: a backup from a future Nudge that adds an eleventh
-     * setting must still restore the ten this build knows, without being penalised for the one it
+     * Forward compatibility at the KEY level: a backup from a future Nudge that adds a tenth
+     * setting must still restore the nine this build knows, without being penalised for the one it
      * does not.
      */
     @Test
@@ -442,47 +436,5 @@ class SettingsExportTest {
 
         assertEquals(0, result.invalidSettingsCount)
         assertEquals(StrictModeChallenge.MAX_LENGTH, result.settings?.strictModeChallengeLength)
-    }
-
-    /**
-     * A file must not be able to install a hold the user cannot physically complete.
-     *
-     * That is a permanent lockout rather than a deliberate pause, and it would break the same
-     * safety invariant the Strict Mode challenge length protects above -- on the one path where
-     * the value never passes through the app's own duration picker. An export file is plain,
-     * hand-editable JSON, so "nobody would type that" is not a defence.
-     */
-    @Test
-    fun `an out-of-range hold-to-unlock duration is refused, not clamped`() {
-        listOf("9999", "-5", (HoldToUnlock.MAX_SECONDS + 1).toString()).forEach { seconds ->
-            val result = exporter.importRules(
-                fileWithSettings(""""holdToUnlockSeconds": $seconds""")
-            )
-
-            assertEquals(seconds, 1, result.invalidSettingsCount)
-            assertNull(seconds, result.settings)
-        }
-    }
-
-    @Test
-    fun `every duration the app itself offers is accepted`() {
-        HoldToUnlock.OPTION_SECONDS.forEach { seconds ->
-            val result = exporter.importRules(
-                fileWithSettings(""""holdToUnlockSeconds": $seconds""")
-            )
-
-            assertEquals(seconds.toString(), 0, result.invalidSettingsCount)
-            assertEquals(seconds, result.settings?.holdToUnlockSeconds)
-        }
-    }
-
-    @Test
-    fun `the accepted hold-to-unlock duration runs right up to the documented maximum`() {
-        val result = exporter.importRules(
-            fileWithSettings(""""holdToUnlockSeconds": ${HoldToUnlock.MAX_SECONDS}""")
-        )
-
-        assertEquals(0, result.invalidSettingsCount)
-        assertEquals(HoldToUnlock.MAX_SECONDS, result.settings?.holdToUnlockSeconds)
     }
 }

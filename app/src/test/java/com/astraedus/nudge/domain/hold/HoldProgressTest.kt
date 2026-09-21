@@ -13,12 +13,12 @@ private const val EPS = 0.001f
 private const val HOLD_MS = 3_000L
 
 /**
- * Tests for [HoldToUnlock] (the duration resolver + bounds) and [HoldProgress] (the press/release/
- * completion state machine). [HoldProgress] is the load-bearing half: it is the ONLY thing standing
- * between a legitimate one-time hold and a bug that grants passthrough twice, or one that locks a
- * user out of an app they held their thumb on for the full duration.
+ * Tests for [HoldProgress], the press/release/completion state machine behind the press-and-hold.
+ *
+ * It is the ONLY thing standing between a legitimate one-time hold and a bug that grants passthrough
+ * twice, or one that locks a user out of an app they held their thumb on for the full duration.
  */
-class HoldToUnlockTest {
+class HoldProgressTest {
 
     // ── HoldProgress: fresh state ──
 
@@ -216,9 +216,8 @@ class HoldToUnlockTest {
     // ── HoldProgress: degenerate zero-length duration ──
 
     /**
-     * The UI never renders a zero-length hold ([HoldToUnlock.OFF_SECONDS] short-circuits before a
-     * [HoldProgress] is even created), but pinning the degenerate case stops it from silently
-     * starting to throw or infinite-loop if that assumption ever changes.
+     * The UI never renders a zero-length hold, but pinning the degenerate case stops it from
+     * silently starting to throw or infinite-loop if that assumption ever changes.
      */
     @Test
     fun `a zero-length machine completes on the first advance after a press`() {
@@ -230,69 +229,5 @@ class HoldToUnlockTest {
         assertTrue(progress.advance(nowMs = 0L))
         assertTrue(progress.isCompleted)
         assertFalse(progress.advance(nowMs = 0L)) // still fires only once
-    }
-
-    // ── HoldToUnlock.resolveDurationMs ──
-
-    @Test
-    fun `resolveDurationMs with no override uses the global seconds`() {
-        assertEquals(3_000L, HoldToUnlock.resolveDurationMs(ruleOverrideSeconds = null, globalSeconds = 3))
-        assertEquals(
-            0L,
-            HoldToUnlock.resolveDurationMs(ruleOverrideSeconds = null, globalSeconds = HoldToUnlock.OFF_SECONDS)
-        )
-    }
-
-    /** The per-app override hook the next issue #35 item fills in: when present, it wins outright. */
-    @Test
-    fun `a non-null rule override wins over the global setting`() {
-        assertEquals(5_000L, HoldToUnlock.resolveDurationMs(ruleOverrideSeconds = 5, globalSeconds = 2))
-    }
-
-    /**
-     * Both arguments arrive from places a caller does not fully control — critically an IMPORTED
-     * BACKUP FILE, which can carry any integer a previous (or hand-edited) export wrote. Clamping
-     * here is what stops such a file from installing a hold nobody can physically complete.
-     */
-    @Test
-    fun `both arguments are clamped into OFF_SECONDS to MAX_SECONDS`() {
-        assertEquals(0L, HoldToUnlock.resolveDurationMs(ruleOverrideSeconds = null, globalSeconds = -5))
-        assertEquals(
-            HoldToUnlock.MAX_SECONDS * 1_000L,
-            HoldToUnlock.resolveDurationMs(ruleOverrideSeconds = null, globalSeconds = 9_999)
-        )
-        assertEquals(
-            HoldToUnlock.MAX_SECONDS * 1_000L,
-            HoldToUnlock.resolveDurationMs(ruleOverrideSeconds = 9_999, globalSeconds = 3)
-        )
-        assertEquals(0L, HoldToUnlock.resolveDurationMs(ruleOverrideSeconds = -5, globalSeconds = 3))
-    }
-
-    // ── HoldToUnlock.isEnabled ──
-
-    @Test
-    fun `isEnabled is false for zero and negative, true for any positive duration`() {
-        assertFalse(HoldToUnlock.isEnabled(durationMs = 0L))
-        assertFalse(HoldToUnlock.isEnabled(durationMs = -1L))
-        assertTrue(HoldToUnlock.isEnabled(durationMs = 1L))
-        assertTrue(HoldToUnlock.isEnabled(durationMs = HOLD_MS))
-    }
-
-    // ── HoldToUnlock.OPTION_SECONDS invariant ──
-
-    /**
-     * One invariant over the whole picker list rather than four separate assertions, so a future
-     * option (a 10s entry, say — this class's own KDoc names that example) cannot be added out of
-     * range or out of order without this test catching it.
-     */
-    @Test
-    fun `OPTION_SECONDS starts with Off, contains the default, and is strictly ascending within bounds`() {
-        val options = HoldToUnlock.OPTION_SECONDS
-
-        assertEquals(HoldToUnlock.OFF_SECONDS, options.first())
-        assertTrue(options.contains(HoldToUnlock.DEFAULT_SECONDS))
-        assertEquals(options.distinct(), options) // no duplicates
-        assertEquals(options.sorted(), options) // strictly ascending (distinct + sorted == as-is)
-        assertTrue(options.all { it in HoldToUnlock.OFF_SECONDS..HoldToUnlock.MAX_SECONDS })
     }
 }

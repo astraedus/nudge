@@ -20,7 +20,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -31,7 +30,6 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
-import com.astraedus.nudge.domain.hold.HoldToUnlock
 import kotlinx.coroutines.delay
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -49,8 +47,7 @@ fun DelayContent(
     canUseEmergencyPass: Boolean = false,
     emergencyLocked: Boolean = false,
     nextPassMs: Long = 0L,
-    onUseEmergencyPass: () -> Unit = {},
-    holdToUnlockMs: Long = 0L
+    onUseEmergencyPass: () -> Unit = {}
 ) {
     val title = remember { titlePool.random() }
     val subtitle = remember { subtitlePool.random() }
@@ -76,12 +73,6 @@ fun DelayContent(
     // the loop and fire onComplete a second time. The guard makes completion exactly-once —
     // onComplete grants passthrough, and this path must never be able to grant it twice.
     val completed = remember { AtomicBoolean(false) }
-    // Issue #35: with a hold configured, the countdown reaching zero no longer OPENS the app, it
-    // hands the last step to the user. Remembered outside the lifecycle block for the same reason
-    // `remainingSeconds` is — a pause must not put the user back on a countdown they already sat
-    // through. When the hold is Off this stays false and nothing about the screen changes.
-    var timerFinished by remember { mutableStateOf(false) }
-    val holdEnabled = HoldToUnlock.isEnabled(holdToUnlockMs)
     val lifecycleOwner = LocalLifecycleOwner.current
     LaunchedEffect(lifecycleOwner) {
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
@@ -92,9 +83,7 @@ fun DelayContent(
                 // blocked app is paused, so UsageStatsManager accrues nothing against the budget.
                 // Draining the display would show the user spending time they are not spending.
             }
-            if (completed.compareAndSet(false, true)) {
-                if (holdEnabled) timerFinished = true else onComplete()
-            }
+            if (completed.compareAndSet(false, true)) onComplete()
         }
     }
 
@@ -130,43 +119,29 @@ fun DelayContent(
                 Spacer(modifier = Modifier.height(24.dp))
             }
 
-            // The countdown ring and the hold ring occupy the same place on purpose: the circle the
-            // user has been watching drain is the circle that fills under their thumb.
-            if (timerFinished) {
-                HoldToUnlockControl(
-                    holdDurationMs = holdToUnlockMs,
-                    // The SAME completion callback the countdown used to call on its own. The hold
-                    // gates the existing grant; it never becomes a second way in.
-                    onUnlock = onComplete
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier.size(180.dp)
+            ) {
+                CircularProgressIndicator(
+                    progress = { progress },
+                    modifier = Modifier.size(180.dp),
+                    strokeWidth = 8.dp,
+                    color = MaterialTheme.colorScheme.primary,
+                    trackColor = MaterialTheme.colorScheme.surfaceVariant
                 )
-            } else {
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier.size(180.dp)
-                ) {
-                    CircularProgressIndicator(
-                        progress = { progress },
-                        modifier = Modifier.size(180.dp),
-                        strokeWidth = 8.dp,
-                        color = MaterialTheme.colorScheme.primary,
-                        trackColor = MaterialTheme.colorScheme.surfaceVariant
-                    )
 
-                    Text(
-                        text = "$remainingSeconds",
-                        style = MaterialTheme.typography.displayLarge.copy(fontSize = 56.sp),
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
+                Text(
+                    text = "$remainingSeconds",
+                    style = MaterialTheme.typography.displayLarge.copy(fontSize = 56.sp),
+                    color = MaterialTheme.colorScheme.primary
+                )
             }
 
             Spacer(modifier = Modifier.height(32.dp))
 
-            // Once the wait is over the screen has one job left: say what the user must do now, and
-            // that stopping is still an option. A random motivational line would be answering a
-            // question nobody is asking any more.
             Text(
-                text = if (timerFinished) "The wait is over" else title,
+                text = title,
                 style = MaterialTheme.typography.titleLarge,
                 color = MaterialTheme.colorScheme.onBackground,
                 textAlign = TextAlign.Center
@@ -175,7 +150,7 @@ fun DelayContent(
             Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-                text = if (timerFinished) "Open it on purpose, or walk away." else subtitle,
+                text = subtitle,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
