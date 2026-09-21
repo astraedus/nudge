@@ -22,12 +22,19 @@ package com.astraedus.nudge.domain.events
  *  - [systemPackages] answers "should this be evaluated / should the awareness overlays hide" — and
  *    NOTHING else. It is no longer allowed anywhere near the question "did the user leave the app",
  *    which is what [com.astraedus.nudge.domain.sitting.SittingTracker] now owns.
+ *
+ * @param awarenessOverlayClassNames the accessibility class names Nudge's own awareness overlays
+ *   report (`AwarenessOverlayWindow.CLASS_NAMES`). Deliberately has NO default: every construction
+ *   site must decide, because a forgotten argument here would not fail — it would silently classify
+ *   the counter and the time-remaining pill as [ForegroundSignal.OwnUi] again and hand issue #41
+ *   straight back, with every test still green.
  */
 class EventClassifier(
     private val ownPackageName: String,
     private val systemPackages: Set<String>,
     private val imePackages: Set<String>,
-    private val frameworkPackage: String
+    private val frameworkPackage: String,
+    private val awarenessOverlayClassNames: Set<String>
 ) {
 
     /**
@@ -47,7 +54,7 @@ class EventClassifier(
     ): ForegroundSignal {
         val pkg = record.packageName
 
-        notOnScreen(pkg, currentImePackage, pipOnlyPackages)?.let { return it }
+        notOnScreen(pkg, record.className, currentImePackage, pipOnlyPackages)?.let { return it }
 
         // Only a window-bearing event makes any claim about what is in front. A content change, a
         // click or a scroll arrives from whatever is already there — treating one as a foreground
@@ -82,7 +89,7 @@ class EventClassifier(
         pipOnlyPackages: Set<String>
     ): ForegroundSignal {
         val pkg = record.packageName
-        notOnScreen(pkg, currentImePackage, pipOnlyPackages)?.let { return it }
+        notOnScreen(pkg, record.className, currentImePackage, pipOnlyPackages)?.let { return it }
         if (pkg in systemPackages) return ForegroundSignal.SystemSurface(pkg)
         return ForegroundSignal.AppWindow(pkg)
     }
@@ -99,16 +106,35 @@ class EventClassifier(
      */
     private fun notOnScreen(
         pkg: String,
+        className: String?,
         currentImePackage: String?,
         pipOnlyPackages: Set<String>
     ): ForegroundSignal? = when {
         // A PiP bubble fires events for an app the user is not looking at, so this outranks even
         // our own package.
         pkg in pipOnlyPackages -> ForegroundSignal.PipOnly(pkg)
-        pkg == ownPackageName -> ForegroundSignal.OwnUi(pkg)
+        pkg == ownPackageName -> ownUiSignal(pkg, className)
         isTransient(pkg, currentImePackage) -> ForegroundSignal.Transient(pkg)
         else -> null
     }
+
+    /**
+     * Which KIND of Nudge window this is: one the user is looking AT, or one we drew OVER the app
+     * they are still in (issue #41).
+     *
+     * The test is positive — this exact class is an awareness overlay — and never "Nudge and not the
+     * block overlay". Our own package emits four different window shapes and one of them is the
+     * block overlay TASK's first window, carrying the FRAMEWORK class `android.widget.FrameLayout`
+     * ~600ms before the overlay itself; a negative test files that under whichever branch it was
+     * not thinking about. `BlockLaunchGate.isOwnMainAppWindow` asks its neighbouring question the
+     * same way, for the same reason.
+     */
+    private fun ownUiSignal(pkg: String, className: String?): ForegroundSignal =
+        if (className != null && className in awarenessOverlayClassNames) {
+            ForegroundSignal.AwarenessOverlay(pkg)
+        } else {
+            ForegroundSignal.OwnUi(pkg)
+        }
 
     private fun isTransient(packageName: String, currentImePackage: String?): Boolean =
         packageName == frameworkPackage ||

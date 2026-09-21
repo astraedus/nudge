@@ -19,6 +19,7 @@ Five reports, five fixes, one shape:
 | [#7](https://github.com/astraedus/nudge/issues/7) | timer does not start on re-entry | a content-change-only re-entry returned before evaluation |
 | [#19](https://github.com/astraedus/nudge/issues/19) | 9 re-blocks in 5 minutes from a PiP bubble | the gate was attached to one branch instead of the pipeline |
 | [#28](https://github.com/astraedus/nudge/issues/28) | a picker re-blocks the app; the counter lies | any foreign package's event reached the passthrough clear |
+| [#41](https://github.com/astraedus/nudge/issues/41) | a daily limit stops blocking while our own counter is up | OUR OWN overlay's event was read as "Nudge is in front" |
 
 Every one of them was an **ordering** bug, not a logic bug, and every fix was a new hardcoded set or
 a new early return in a method that derived "what is on screen" independently in six places. That
@@ -38,7 +39,8 @@ AccessibilityEventRecord  (pure data, no android imports, serialisable)
   |
   |  EventClassifier.classify()                        <- ONE answer to "what is on screen?"
   v
-ForegroundSignal   AppWindow | Home | SystemSurface | OwnUi | Transient | PipOnly | NotForeground
+ForegroundSignal   AppWindow | Home | SystemSurface | OwnUi | AwarenessOverlay
+                   | Transient | PipOnly | NotForeground
   |
   |  PassthroughManager.onForegroundSignal()  ->  SittingTracker
   v
@@ -63,6 +65,85 @@ because neither is visible to a value-level test:
 Everything downstream reads the signal. Re-deriving `packageName in SYSTEM_PACKAGES` inside a branch
 is how the Pixel's `com.google.android.permissioncontroller` came to be classified two different
 ways in one file; the contract test now forbids it by name.
+
+## Our own windows are three different things ([#41](https://github.com/astraedus/nudge/issues/41), [#33](https://github.com/astraedus/nudge/issues/33))
+
+> Read this before touching anything that asks "is this Nudge?".
+
+Nudge emits four shapes of window event under one package name, and they do not mean the same thing:
+
+| What it is | Class name it carries | What it means about where the user is |
+|---|---|---|
+| The main app | `com.astraedus.nudge.MainActivity` | the user is **in Nudge**; they left whatever they were in |
+| The block overlay | `com.astraedus.nudge.ui.overlay.BlockOverlayActivity` | Nudge is **in front of** the user |
+| The overlay TASK's first window | `android.widget.FrameLayout` | nothing yet — it arrives ~600ms before the overlay itself |
+| An awareness overlay | `com.astraedus.nudge.service.AwarenessOverlayWindow` | Nudge drew **on top of** the app the user never left |
+
+For three releases all four were `ForegroundSignal.OwnUi`, and `BlockLaunchGate.foregroundAfter`
+moves the foreground to Nudge for `OwnUi`. For the first two that is deliberate and is half of
+issue #31's fix. For the last it is the bug.
+
+**#41, measured.** Bench Pixel 3, v1.17.1, scenario S3 of the #36 investigation: Hard Block plus a
+1-minute daily limit on Keep, the limit exceeded, Keep visibly in front. Every 30 seconds:
+
+```
+block overlay launch dropped target=com.google.android.keep attributed=com.google.android.keep
+  reason=DROP_FOREGROUND_MOVED foreground=dev.astraedus.nudge
+```
+
+The interaction counter and the time-remaining pill are `TYPE_ACCESSIBILITY_OVERLAY` windows we
+own, so adding one — or setting a `TextView`'s text inside one — emits an event carrying
+our package. The foreground moved to Nudge and **nothing moved it back**, because a user sitting
+still in an app fires no window event for the app they are already in. Every subsequent tick was
+refused. It self-corrected on the next real Keep window event, which on a phone left face-up is
+indefinitely, and in the meantime someone past their daily limit was not being blocked.
+
+**The fix is a separate signal, identified positively.** `ForegroundSignal.AwarenessOverlay`
+carries no foreground claim, ends no walk-away, no arrival and no storm, and moves no sitting: it
+sits with `SystemSurface` and `Transient` in every exhaustive `when`. It is recognised by the
+accessibility class name the overlay's views report — never as "Nudge and not the block
+overlay", because the framework class name on row three of that table is what a negative test
+misfiles, which is the same reason `BlockLaunchGate.isOwnMainAppWindow` is positive (see
+`block-overlay-lifecycle.md`, issue #36).
+
+Two details that are load-bearing rather than tidy:
+
+- **Every view in an awareness overlay wears the identity, not just the root.** A
+  `TYPE_WINDOW_CONTENT_CHANGED` is sourced from the view that changed, or from their common
+  ancestor once `ViewRootImpl` coalesces a burst. Our own package is classified *ahead of* the
+  window-change test, so content changes reach `foregroundAfter` too — identifying only the
+  root would leave the counter's own text updates claiming the foreground on every interaction it
+  counts.
+- **`EventClassifier`'s `awarenessOverlayClassNames` has no default.** A forgotten argument would
+  not fail; it would silently reclassify both overlays as `OwnUi` with the whole suite green.
+
+`AwarenessOverlayContractTest` DISCOVERS the rule rather than listing it: any framework widget
+constructed in either overlay manager fails it, including one nobody has added yet. Verified by
+reverting one view to a bare `TextView`.
+
+**#33, the same question asked one field over.** `NudgeAccessibilityService.shouldClearForOwnPackageEvent`
+tested `className.startsWith(ownPackageName)` where `ownPackageName` was the **applicationId**:
+
+| | value | appears as |
+|---|---|---|
+| `applicationId` | `dev.astraedus.nudge` | `event.packageName` |
+| `namespace` | `com.astraedus.nudge` | `event.className`, every class we ship |
+
+The prefix is therefore false for every event this app can emit, so `clearOverlays(packageName,
+"own_app_window")` was dead in production for months — the awareness overlays stopped hiding
+when the user opened Nudge. **Its three unit tests passed throughout**, because they built the
+predicate's constant out of the literal `"com.astraedus.nudge"` and fed it the same literal back.
+`tasks/lessons.md` (2026-09-14) records the general form: *a test that supplies its own value for a
+production constant cannot see that the production value breaks the predicate.*
+
+"Is this class ours" is now ONE predicate, `BlockLaunchGate.isOwnNudgeClass`, shared with
+`isOwnMainAppWindow`; the service derives the namespace from a real class
+(`BuildConfig::class.java.packageName`) rather than naming it; and `NudgeIdentity` gives the test
+tree one derived source for both identities, with `OwnClassNamespaceContractTest` asserting they
+are **different strings**. Four suites had been feeding the namespace in as the app's package;
+they now read the real values. The restored clear cannot double-fire on the overlays themselves:
+they classify as `AwarenessOverlay` and return above the `OwnUi` branch, so a pill can no longer
+order itself hidden.
 
 ## What a "sitting" is, and what it is not
 
@@ -251,7 +332,10 @@ fields, never from per-app knowledge**, so a stock `androidx` RecyclerView is th
 | Test | Pins |
 |---|---|
 | `SittingTrackerTest` | every branch of the model; one test per reported sub-flow; that no non-app signal can end a sitting |
-| `EventClassifierTest` | every `ForegroundSignal` is reachable; the PiP gate is ahead of everything; an empty launcher set classifies nothing as Home |
+| `EventClassifierTest` | every `ForegroundSignal` is reachable; the PiP gate is ahead of everything; an empty launcher set classifies nothing as Home; an awareness overlay is not `OwnUi` and every OTHER window of ours still is |
+| `AwarenessOverlayContractTest` | the overlays are built only from views that carry the identity, and the identity is derived from a real class |
+| `OwnClassNamespaceContractTest` | the applicationId and the namespace are different strings, production derives the namespace, and comparing a class name against the applicationId (issue #33) still cannot match |
+| `BlockLaunchGuardReplayTest` | issue #41 replayed through the real classifier and guard — the tick after an awareness overlay still LAUNCHes, with the counterfactual that the pre-fix classification DROPs it |
 | `InteractionCounterTest` | every counting branch, the primary-source election, the mode rules |
 | `A11yCaptureReplayTest` | the real device streams, each against its own oracle — plus counterfactuals showing the OLD rule really does fail each capture, so a passing fixture cannot be passing by luck |
 | `AccessibilityEventCodecTest` | encoder/decoder round trip, escaping, forward compatibility |

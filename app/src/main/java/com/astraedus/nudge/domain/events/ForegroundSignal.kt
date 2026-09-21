@@ -53,6 +53,30 @@ sealed interface ForegroundSignal {
     data class OwnUi(override val packageName: String) : ForegroundSignal
 
     /**
+     * One of Nudge's AWARENESS overlays — the interaction counter, the time-remaining pill — drawn
+     * over the app the user is still sitting in.
+     *
+     * Carries the same package as [OwnUi] and means the opposite thing about where the user is.
+     * [OwnUi] is Nudge *in front of* the user; this is Nudge *on top of* whatever they were already
+     * looking at, so it makes NO claim about the foreground at all and belongs with
+     * [SystemSurface]/[Transient] everywhere a claim is consumed.
+     *
+     * That distinction is [#41](https://github.com/astraedus/nudge/issues/41): a `TYPE_ACCESSIBILITY_OVERLAY`
+     * view owned by Nudge fires window and content events like any other window, `foregroundAfter`
+     * moved the foreground to Nudge for every one of them, and nothing moved it back while the user
+     * sat still in the blocked app — so every 30-second daily-limit tick was refused with
+     * `DROP_FOREGROUND_MOVED foreground=dev.astraedus.nudge` and a user past their limit went
+     * unblocked.
+     *
+     * It is identified POSITIVELY, by the accessibility class name the awareness overlay views
+     * report (`com.astraedus.nudge.service.AwarenessOverlayWindow`), never as "Nudge and not the
+     * block overlay". The same reason `BlockLaunchGate.isOwnMainAppWindow` is positive: the block
+     * overlay TASK's first window arrives ~600ms early carrying the framework class
+     * `android.widget.FrameLayout`, so any negative test misfiles it.
+     */
+    data class AwarenessOverlay(override val packageName: String) : ForegroundSignal
+
+    /**
      * A transient, non-application window: any soft keyboard (matched dynamically, so third-party
      * keyboards are covered — issue #5) or the `android` framework package that hosts toasts, the
      * paste toolbar and long-press popups. Ignored entirely; the app underneath has not changed.

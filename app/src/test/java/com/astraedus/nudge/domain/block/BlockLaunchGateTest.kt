@@ -288,6 +288,16 @@ class BlockLaunchGateTest {
      * picture-in-picture bubble happened to land inside the milliseconds a rule lookup takes, the
      * `SYSTEM_PACKAGES`-answers-two-questions trap, for the fourth time.
      */
+    /**
+     * ISSUE #41, at the one line it lives on. Our AWARENESS overlays carry our package like every
+     * other Nudge window, and mean the opposite thing: the counter and the time-remaining pill are
+     * drawn over an app the user never left. Reading one as "Nudge is in front" moved the
+     * foreground and nothing moved it back while the user sat still, so every 30-second
+     * daily-limit tick after it was refused with DROP_FOREGROUND_MOVED and someone past their
+     * limit stopped being blocked. The overlay is included in the list below for exactly that
+     * reason; the assertion that it is NOT `OwnUi` in the first place lives in
+     * `EventClassifierTest`.
+     */
     @Test
     fun `a system surface, a keyboard, a PiP bubble and a non-window event leave the foreground alone`() {
         val previous = blocked
@@ -295,7 +305,8 @@ class BlockLaunchGateTest {
             ForegroundSignal.SystemSurface("com.android.systemui"),
             ForegroundSignal.Transient("com.google.android.inputmethod.latin"),
             ForegroundSignal.PipOnly("com.google.android.youtube"),
-            ForegroundSignal.NotForeground(blocked)
+            ForegroundSignal.NotForeground(blocked),
+            ForegroundSignal.AwarenessOverlay(nudge)
         ).forEach { signal ->
             assertEquals(
                 "$signal must not move the foreground",
@@ -347,6 +358,7 @@ class BlockLaunchGateTest {
     fun `signals that claim nothing about the foreground leave the window alone`() {
         val pending = WalkAway(blocked, armedAtMs = 1_000)
         listOf(
+            ForegroundSignal.AwarenessOverlay(nudge),
             ForegroundSignal.SystemSurface("com.android.systemui"),
             ForegroundSignal.Transient("com.google.android.inputmethod.latin"),
             ForegroundSignal.PipOnly("com.google.android.youtube"),

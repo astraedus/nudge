@@ -120,7 +120,10 @@ class TimeRemainingOverlayManager @Inject constructor(
     private fun createOverlayView(ctx: Context): View {
         val d = ctx.resources.displayMetrics.density
 
-        val tv = TextView(ctx).apply {
+        // AwarenessOverlayWindow.Label, not a bare TextView: the accessibility class name it
+        // reports is how the classifier knows this window is drawn OVER the app the user is still
+        // in and carries no claim about what is in front (issue #41).
+        val tv = AwarenessOverlayWindow.Label(ctx).apply {
             text = ""
             setTextColor(Color.argb(240, 100, 220, 100))
             textSize = 15f

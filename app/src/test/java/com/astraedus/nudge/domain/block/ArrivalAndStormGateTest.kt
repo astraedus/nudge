@@ -302,6 +302,23 @@ class ArrivalAndStormGateTest {
         )
     }
 
+    /**
+     * ISSUE #41'S OTHER HALF. The counter and the time-remaining pill are drawn over the app the
+     * user is still in, so they are the LEAST plausible departure there is: if one ended the
+     * arrival, the very overlay that appears because the user is sitting in a blocked app would
+     * make the next block a fresh confrontation and start the count climbing again, which is
+     * issue #36's loop reached by a new road.
+     */
+    @Test
+    fun `an awareness overlay does not end the arrival`() {
+        val arrival = Arrival(insta, listOf(insta))
+        assertEquals(
+            "a counter drawn over the app the user never left cannot be them leaving it",
+            arrival,
+            BlockLaunchGate.arrivalAfterSignal(ForegroundSignal.AwarenessOverlay(nudge), arrival)
+        )
+    }
+
     @Test
     fun `a system surface does not end the arrival`() {
         val arrival = Arrival(insta, listOf(insta))
@@ -348,6 +365,7 @@ class ArrivalAndStormGateTest {
             ForegroundSignal.Home(launcher),
             ForegroundSignal.AppWindow(insta),
             ForegroundSignal.OwnUi(nudge),
+            ForegroundSignal.AwarenessOverlay(nudge),
             ForegroundSignal.SystemSurface("com.google.android.permissioncontroller"),
             ForegroundSignal.Transient("android"),
             ForegroundSignal.PipOnly(insta),
@@ -403,6 +421,16 @@ class ArrivalAndStormGateTest {
     }
 
     @Test
+    fun `an awareness overlay does not end the storm`() {
+        val storm = LaunchStorm(insta, windowStartedAtMs = 0, launches = 3, decisions = listOf("LAUNCH"), reported = false)
+        assertEquals(
+            "our own counter appearing over the storming app is not evidence it was left",
+            storm,
+            BlockLaunchGate.stormAfterSignal(ForegroundSignal.AwarenessOverlay(nudge), storm)
+        )
+    }
+
+    @Test
     fun `a system surface does not end the storm`() {
         val storm = LaunchStorm(insta, windowStartedAtMs = 0, launches = 3, decisions = listOf("LAUNCH"), reported = false)
         assertEquals(
@@ -435,6 +463,7 @@ class ArrivalAndStormGateTest {
             ForegroundSignal.Home(launcher),
             ForegroundSignal.AppWindow(insta),
             ForegroundSignal.OwnUi(nudge),
+            ForegroundSignal.AwarenessOverlay(nudge),
             ForegroundSignal.SystemSurface("com.google.android.permissioncontroller"),
             ForegroundSignal.Transient("android"),
             ForegroundSignal.PipOnly(insta),

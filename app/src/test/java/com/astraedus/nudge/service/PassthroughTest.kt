@@ -1,6 +1,7 @@
 package com.astraedus.nudge.service
 
 import android.view.accessibility.AccessibilityEvent
+import com.astraedus.nudge.NudgeIdentity
 import com.astraedus.nudge.domain.block.BlockLaunchGate
 import com.astraedus.nudge.domain.events.A11yEventType
 import com.astraedus.nudge.domain.events.AccessibilityEventRecord
@@ -30,7 +31,8 @@ class PassthroughTest {
         ownPackageName = OWN_PACKAGE,
         systemPackages = NudgeAccessibilityService.SYSTEM_PACKAGES,
         imePackages = NudgeAccessibilityService.IME_PACKAGES,
-        frameworkPackage = NudgeAccessibilityService.FRAMEWORK_PACKAGE
+        frameworkPackage = NudgeAccessibilityService.FRAMEWORK_PACKAGE,
+        awarenessOverlayClassNames = AwarenessOverlayWindow.CLASS_NAMES
     )
 
     private fun signalFor(
@@ -122,7 +124,7 @@ class PassthroughTest {
             NudgeAccessibilityService.shouldClearForOwnPackageEvent(
                 eventType = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
                 className = "android.widget.TextView",
-                ownPackageName = "com.astraedus.nudge"
+                ownClassNamespace = NudgeIdentity.CLASS_NAMESPACE
             )
         )
     }
@@ -133,7 +135,7 @@ class PassthroughTest {
             NudgeAccessibilityService.shouldClearForOwnPackageEvent(
                 eventType = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
                 className = "com.astraedus.nudge.MainActivity",
-                ownPackageName = "com.astraedus.nudge"
+                ownClassNamespace = NudgeIdentity.CLASS_NAMESPACE
             )
         )
     }
@@ -144,7 +146,7 @@ class PassthroughTest {
             NudgeAccessibilityService.shouldClearForOwnPackageEvent(
                 eventType = AccessibilityEvent.TYPE_VIEW_CLICKED,
                 className = "com.astraedus.nudge.MainActivity",
-                ownPackageName = "com.astraedus.nudge"
+                ownClassNamespace = NudgeIdentity.CLASS_NAMESPACE
             )
         )
     }
@@ -208,6 +210,11 @@ class PassthroughTest {
     }
 
     private companion object {
-        const val OWN_PACKAGE = "com.astraedus.nudge"
+        /**
+         * The REAL applicationId. It used to be the literal "com.astraedus.nudge", which is
+         * the NAMESPACE -- and that is precisely why the own-window tests below passed for
+         * months against a predicate that could never fire in production (issue #33).
+         */
+        val OWN_PACKAGE: String = NudgeIdentity.APPLICATION_ID
     }
 }

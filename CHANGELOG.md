@@ -2,7 +2,7 @@
 
 All notable changes to Nudge are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
-## [1.17.3] - unreleased
+## [1.17.3] - 2026-09-21
 
 ### Added
 - **Hold to unlock.** When a delay or breathing timer runs out, the app no longer just opens — you press and hold a circle for a few seconds, and it fills while you hold it. Let go early and it empties, and you stay out. Waiting is something a thumb can do while you are somewhere else; a hold is a few seconds you have to keep choosing, which is the whole point ([#35](https://github.com/astraedus/nudge/issues/35), asked for by a user who wrote in and left the same request as a review). It is on by default at three seconds, and there is a new **Block Screen** section in Settings to change it to two, five, or Off — Off is exactly the old behaviour. It works with TalkBack too: the same control can be activated by a screen reader and opens the app after the same delay. "I changed my mind" and the back gesture keep working the whole time, including mid-hold, and letting go is always free.
@@ -11,6 +11,9 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
 
 ### Fixed
 - **A backup now includes rules you have switched off** ([#43](https://github.com/astraedus/nudge/issues/43)). If you had turned a rule off — parked for later, or paused while you think about it — it was left out of the file entirely, so restoring onto a new or wiped phone came back without it and without any sign it had ever been there. Every rule is in the backup now, and comes back exactly as you left it: the ones you had on are on, the ones you had off are off. Backups written by older versions still restore the way they always did, with their rules switched on.
+- **A daily limit you have already passed keeps stopping you, even while Nudge's own counter is on screen.** If you were sitting in an app with the interaction counter or the time-left pill showing, Nudge could mistake its own little overlay for you having switched over to Nudge ([#41](https://github.com/astraedus/nudge/issues/41)). From then on, until you next opened another app, the block for that app was quietly skipped: you were past your limit, and nothing stopped you. Those overlays are drawn ON TOP of the app you are in, so they are no longer treated as you going anywhere.
+- **Opening Nudge itself clears the counter and the time-left pill again.** They were meant to disappear the moment you switched over to Nudge, and for several releases they did not, so one could linger over Nudge's own screens until something else moved ([#33](https://github.com/astraedus/nudge/issues/33)).
+- **A database or system error can no longer take blocking down with it.** Almost everything Nudge does in the background — working out whether to block, writing an entry to your history, reading a setting — ran somewhere that a single unexpected failure would end the whole app, and the blocking service with it, until Android restarted it. Failures there are now written to the log and shut in, and blocking carries on.
 
 ## [1.17.2] - 2026-09-20
 

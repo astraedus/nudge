@@ -5,6 +5,7 @@ import com.astraedus.nudge.domain.events.A11yCapture
 import com.astraedus.nudge.domain.events.A11yEventType
 import com.astraedus.nudge.domain.events.AccessibilityEventRecord
 import com.astraedus.nudge.domain.events.EventClassifier
+import com.astraedus.nudge.domain.events.ForegroundSignal
 import com.astraedus.nudge.domain.sitting.SittingEndCause
 import com.astraedus.nudge.domain.sitting.SittingEvent
 import com.astraedus.nudge.domain.sitting.SittingTracker
@@ -51,7 +52,8 @@ class BlockLaunchGuardReplayTest {
         ownPackageName = nudge,
         systemPackages = NudgeAccessibilityService.SYSTEM_PACKAGES,
         imePackages = NudgeAccessibilityService.IME_PACKAGES,
-        frameworkPackage = NudgeAccessibilityService.FRAMEWORK_PACKAGE
+        frameworkPackage = NudgeAccessibilityService.FRAMEWORK_PACKAGE,
+        awarenessOverlayClassNames = AwarenessOverlayWindow.CLASS_NAMES
     )
 
     private var clock = 10_000L
@@ -98,6 +100,23 @@ class BlockLaunchGuardReplayTest {
     private fun tick(ms: Long) {
         clock += ms
     }
+
+    /** One of Nudge's awareness overlays appearing over whatever the user is already in. */
+    private fun overlayWindow() =
+        window(nudge, AwarenessOverlayWindow.CLASS_NAME)
+
+    /**
+     * The classifier as it was before issue #41: it knows our package and not our overlay, so it
+     * cannot tell a pill drawn over Keep from Nudge coming to the front. Used only by the
+     * counterfactual below, which is what proves the fixture reproduces the defect.
+     */
+    private val preFixClassifier = EventClassifier(
+        ownPackageName = nudge,
+        systemPackages = NudgeAccessibilityService.SYSTEM_PACKAGES,
+        imePackages = NudgeAccessibilityService.IME_PACKAGES,
+        frameworkPackage = NudgeAccessibilityService.FRAMEWORK_PACKAGE,
+        awarenessOverlayClassNames = emptySet()
+    )
 
     /** What the pre-fix code did at a launch site: nothing. Kept honest by the tests below. */
     private fun preFixDecision() = BlockLaunchGate.Decision.LAUNCH
@@ -484,6 +503,144 @@ class BlockLaunchGuardReplayTest {
         )
         guard.onForegroundSignal(signal)
         assertEquals(true, guard.isGenuineBypass(A11yEventType.WINDOW_STATE_CHANGED, signal))
+    }
+
+    // --- issue #41: the daily-limit tick refused while our own counter is up --------------------
+
+    /**
+     * Bench Pixel 3, v1.17.1, scenario S3 of the #36 investigation: Hard Block plus a 1-minute
+     * daily limit on Keep, the limit already exceeded, Keep visibly in the foreground. Every 30
+     * seconds the clock tick tried to launch the daily-limit block and every one was refused:
+     *
+     * ```
+     * block overlay launch dropped target=com.google.android.keep reason=DROP_FOREGROUND_MOVED
+     *   foreground=dev.astraedus.nudge
+     * ```
+     *
+     * Nudge's awareness overlays are `TYPE_ACCESSIBILITY_OVERLAY` windows we own, so every time one
+     * is added the platform emits a window event carrying OUR package. That was classified `OwnUi`,
+     * `foregroundAfter` moves the foreground to Nudge for `OwnUi`, and nothing moved it back while
+     * the user sat still in Keep, because a user sitting still fires no window event for the app
+     * they are already in. The block did not merely stutter; it stayed off until the next real Keep
+     * window event, which on a phone left face-up is indefinitely.
+     *
+     * The counterfactual is on the same run: classified by a classifier that does not know the
+     * overlay's identity, exactly as production did, the second tick DROPS.
+     */
+    @Test
+    fun `our own counter appearing between two clock ticks does not stop the next block`() {
+        val keep = "com.google.android.keep"
+        window(keep)
+        assertEquals(
+            "the first tick blocks: Keep is in front and past its daily limit",
+            BlockLaunchGate.Decision.LAUNCH,
+            guard.decide(keep)
+        )
+
+        tick(30_000)
+        overlayWindow()
+
+        tick(30_000)
+        assertEquals(
+            "the counter is drawn OVER Keep; the user never left, so the next tick must still block",
+            BlockLaunchGate.Decision.LAUNCH,
+            guard.decide(keep)
+        )
+    }
+
+    /** The pre-fix rule, on the same event: proof this fixture really does reproduce the defect. */
+    @Test
+    fun `counterfactual - the pre-fix classification drops the next block`() {
+        val keep = "com.google.android.keep"
+        val preFix = BlockLaunchGuard().also { it.nowMs = { clock } }
+        preFix.onForegroundSignal(
+            preFixClassifier.classify(
+                AccessibilityEventRecord(A11yEventType.WINDOW_STATE_CHANGED, keep, eventTimeMs = clock),
+                ime,
+                setOf(launcher),
+                emptySet()
+            )
+        )
+        assertEquals(BlockLaunchGate.Decision.LAUNCH, preFix.decide(keep))
+
+        tick(30_000)
+        val overlaySignal = preFixClassifier.classify(
+            AccessibilityEventRecord(
+                A11yEventType.WINDOW_STATE_CHANGED,
+                nudge,
+                className = AwarenessOverlayWindow.CLASS_NAME,
+                eventTimeMs = clock
+            ),
+            ime,
+            setOf(launcher),
+            emptySet()
+        )
+        assertEquals(
+            "before the fix, our own pill was indistinguishable from Nudge coming to the front",
+            ForegroundSignal.OwnUi(nudge),
+            overlaySignal
+        )
+        preFix.onForegroundSignal(overlaySignal)
+
+        tick(30_000)
+        assertEquals(
+            "this is the reported bug: a user past their daily limit, sitting in the blocked app, " +
+                "with the block refused because our own counter claimed the foreground",
+            BlockLaunchGate.Decision.DROP_FOREGROUND_MOVED,
+            preFix.decide(keep)
+        )
+    }
+
+    /**
+     * The counter updates its text far more often than it appears, and a text change arrives as a
+     * `WINDOW_CONTENT_CHANGED`. Our own package is classified ahead of the window-change test, so
+     * these events reached `foregroundAfter` too: fixing only the window event would leave the
+     * defect firing on every interaction the counter counts.
+     */
+    @Test
+    fun `a counter text update does not claim the foreground either`() {
+        val keep = "com.google.android.keep"
+        window(keep)
+        event(A11yEventType.WINDOW_CONTENT_CHANGED, nudge, AwarenessOverlayWindow.CLASS_NAME)
+
+        assertEquals(keep, guard.foregroundPackage)
+        assertEquals(BlockLaunchGate.Decision.LAUNCH, guard.decide(keep))
+    }
+
+    /**
+     * The other direction, which must NOT change: Nudge's own app and its block overlay still move
+     * the foreground. That is issue #31's whole point, and a fix that made every Nudge window inert
+     * would hand #31 back while closing #41.
+     */
+    @Test
+    fun `Nudge's real windows still move the foreground`() {
+        val keep = "com.google.android.keep"
+        window(keep)
+        window(nudge, BlockLaunchGate.MAIN_APP_ACTIVITY_CLASS)
+        assertEquals(nudge, guard.foregroundPackage)
+        assertEquals(BlockLaunchGate.Decision.DROP_FOREGROUND_MOVED, guard.decide(keep))
+    }
+
+    /**
+     * An awareness overlay is not a departure either: it cannot end the arrival the #36 count hangs
+     * off, or the overlay that appears BECAUSE the user is in a blocked app would make the next
+     * block a fresh confrontation and start the count climbing again.
+     */
+    @Test
+    fun `an awareness overlay does not end the arrival, so the count stays honest`() {
+        val keep = "com.google.android.keep"
+        val key = BlockLaunchGate.confrontationKey(keep, null, null)
+        window(keep)
+        assertEquals("the first confrontation owes a row", true, guard.claimConfrontation(keep, key))
+
+        overlayWindow()
+        tick(30_000)
+        assertEquals(
+            "our own counter appearing is not the user leaving Keep, so this is the SAME " +
+                "confrontation and owes no second row",
+            false,
+            guard.claimConfrontation(keep, key)
+        )
     }
 
     // --- the guard's own lifecycle --------------------------------------------------------------

@@ -160,6 +160,7 @@ class SittingTracker(
         // silently inheriting "does nothing".
         is ForegroundSignal.SystemSurface,
         is ForegroundSignal.OwnUi,
+        is ForegroundSignal.AwarenessOverlay,
         is ForegroundSignal.Transient,
         is ForegroundSignal.PipOnly,
         is ForegroundSignal.NotForeground -> SittingEvent.Unchanged

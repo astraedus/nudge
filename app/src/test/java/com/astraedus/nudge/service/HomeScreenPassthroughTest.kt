@@ -1,6 +1,7 @@
 package com.astraedus.nudge.service
 
 import android.view.accessibility.AccessibilityEvent
+import com.astraedus.nudge.NudgeIdentity
 import com.astraedus.nudge.domain.sitting.SittingTracker
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -26,7 +27,8 @@ import org.junit.Test
  */
 class HomeScreenPassthroughTest {
 
-    private val ownPackage = "com.astraedus.nudge"
+    /** The REAL applicationId, never the namespace: see [NudgeIdentity]. */
+    private val ownPackage = NudgeIdentity.APPLICATION_ID
     private val pixelLauncher = "com.google.android.apps.nexuslauncher"
     private val launchers = setOf(pixelLauncher, "com.android.launcher3")
 
@@ -34,7 +36,8 @@ class HomeScreenPassthroughTest {
         ownPackageName = ownPackage,
         systemPackages = NudgeAccessibilityService.SYSTEM_PACKAGES,
         imePackages = NudgeAccessibilityService.IME_PACKAGES,
-        frameworkPackage = NudgeAccessibilityService.FRAMEWORK_PACKAGE
+        frameworkPackage = NudgeAccessibilityService.FRAMEWORK_PACKAGE,
+        awarenessOverlayClassNames = AwarenessOverlayWindow.CLASS_NAMES
     )
 
     /**
