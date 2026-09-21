@@ -174,6 +174,7 @@ one that matches what you are about to edit. Nothing here is optional reading if
 | `docs/architecture/stats-and-charts.md` | Dashboard tiles + mini charts, stats screen, day selection, the one screen-time source, insight pages, and the discoverability rules that keep a tappable tile legible | editing `ui/screens/stats/`, `ui/screens/home/`, `HomeChartsBuilder`, `InsightsCalculator`, `ScreenTimeProvider`, chart geometry, or any dashboard tile |
 | `docs/architecture/widgets.md` | Home-screen widgets (Jetpack Glance): the three widgets, the one-shot read model, update triggers off the accessibility hot path, deep links, and why the Protection widget can never weaken Strict Mode | editing `ui/widget/`, `MainActivity`'s deep-link handling, `NudgeNavGraph`'s signature, or the widget receivers in `AndroidManifest.xml` |
 | `docs/TESTING.md` | Testing philosophy, principles, coverage targets | deciding what a change owes in tests |
+| `docs/testing-strategy.md` | WHICH LAYER a test goes at: the six layers, the bug class each catches, the fixture-honesty and capture-first rules, what not to do, and why Robolectric/emulator are deferred | fixing ANY bug, or deciding where a new test belongs |
 | `docs/play-store.md` | Play a11y prominent-disclosure policy, store listing assets | touching onboarding, the Settings permission flow, or the listing |
 | `docs/BACKLOG.md` | Known issues, in-progress work, future ideas | picking up work, or after finding a new defect |
 | `tasks/lessons.md` | Mistakes already made in THIS repo | starting any non-trivial change |
@@ -188,6 +189,23 @@ The domain layer is pure Kotlin with no Android deps, so it is fast to JVM-test 
 - `app/src/androidTest/`, instrumented tests (Room migrations, accessibility service behavior)
 
 Full principles + coverage targets: `docs/TESTING.md`.
+
+### Which LAYER the test goes at — read `docs/testing-strategy.md` before fixing any bug
+
+Only 3 of the last 18 defects were reachable by a pure JVM unit test, and 75% of the suite is pure
+JVM unit tests: #36 shipped under 49 green tests aimed at the gate next door. The strategy doc has
+the six layers (L1 pure unit · L2 recorded-event replay · L3 pure lifecycle decision · L4 data/asset
+gates · L5 lint · L6 bench device), a symptom-to-layer routing table, and why Robolectric and an
+emulator suite are deliberately deferred. Four **musts** for any agent working here:
+
+- **(a) Name the layer** in every bug-fix PR body: *"Layer L1–L6: the test at that layer, or why that layer is not worth building for this bug."* Never answer an ordering bug with another source-grep contract test.
+- **(b) Fixture honesty:** never hand-type a value production reads from `BuildConfig`, the manifest, `build.gradle.kts`, a production `const` or an enum — derive it. (`applicationId` is `dev.astraedus.nudge`, `namespace` is `com.astraedus.nudge`; retyping the wrong one left #33 dead in production for months.)
+- **(c) Capture before theorising:** any accessibility-service issue gets a committed `scripts/a11y-capture.sh` capture with its `# EXPECTED (test oracle):` header **before** the fix is designed.
+- **(d) Reversed-order counterfactual:** a fix that closes a race by ordering asserts in the same PR that the reversed order still fails.
+
+Per layer: **`./gradlew test` runs L1–L4** — every layer we fund is JVM, no device and no emulator;
+`./gradlew lintDebug` is L5; L6 is `device-tester` on the bench Pixel. A sibling lane owns the pure
+lifecycle class (branch `test/overlay-lifecycle-pure`) — read it before adding lifecycle tests.
 
 ## Post-feature checklist
 
