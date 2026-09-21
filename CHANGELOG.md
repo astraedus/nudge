@@ -2,7 +2,7 @@
 
 All notable changes to Nudge are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
-## [1.17.3] - unreleased
+## [1.17.3] - 2026-09-21
 
 ### Added
 - **Hold to unlock.** When a delay or breathing timer runs out, the app no longer just opens — you press and hold a circle for a few seconds, and it fills while you hold it. Let go early and it empties, and you stay out. Waiting is something a thumb can do while you are somewhere else; a hold is a few seconds you have to keep choosing, which is the whole point ([#35](https://github.com/astraedus/nudge/issues/35), asked for by a user who wrote in and left the same request as a review). It is on by default at three seconds, and there is a new **Block Screen** section in Settings to change it to two, five, or Off — Off is exactly the old behaviour. It works with TalkBack too: the same control can be activated by a screen reader and opens the app after the same delay. "I changed my mind" and the back gesture keep working the whole time, including mid-hold, and letting go is always free.
