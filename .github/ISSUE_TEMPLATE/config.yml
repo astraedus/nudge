@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Feature idea or question
+    url: https://github.com/astraedus/nudge/issues/new
+    about: No template needed — open a blank issue and say what you'd like Nudge to do.
+  - name: Already-known issues and planned work
+    url: https://github.com/astraedus/nudge/blob/main/docs/BACKLOG.md
+    about: Worth a look before filing — it may already be on the list.
