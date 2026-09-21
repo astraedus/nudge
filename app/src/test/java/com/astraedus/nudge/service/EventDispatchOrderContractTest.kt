@@ -140,6 +140,7 @@ class EventDispatchOrderContractTest {
         listOf(
             "ForegroundSignal.PipOnly",
             "ForegroundSignal.OwnUi",
+            "ForegroundSignal.AwarenessOverlay",
             "ForegroundSignal.Transient",
             "ForegroundSignal.Home",
             "ForegroundSignal.SystemSurface"

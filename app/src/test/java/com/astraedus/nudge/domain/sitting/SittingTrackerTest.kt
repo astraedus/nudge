@@ -188,6 +188,7 @@ class SittingTrackerTest {
         val inert = listOf(
             ForegroundSignal.SystemSurface("com.android.systemui"),
             ForegroundSignal.OwnUi("dev.astraedus.nudge"),
+            ForegroundSignal.AwarenessOverlay("dev.astraedus.nudge"),
             ForegroundSignal.Transient("com.futo.inputmethod.latin"),
             ForegroundSignal.PipOnly("com.google.android.youtube"),
             ForegroundSignal.NotForeground("com.instagram.android")

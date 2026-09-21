@@ -10,6 +10,7 @@ import android.provider.Settings
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
+import com.astraedus.nudge.BuildConfig
 import com.astraedus.nudge.data.db.entity.UsageEvent
 import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.data.repository.BlockRuleRepository
@@ -33,16 +34,15 @@ import com.astraedus.nudge.domain.usecase.EvaluateBlockUseCase
 import com.astraedus.nudge.ui.lock.StrictModeGuardActivity
 import com.astraedus.nudge.ui.overlay.BlockOverlayActivity
 import com.astraedus.nudge.ui.overlay.PipEscapeActivity
+import com.astraedus.nudge.util.CrashSafeScope
 import com.astraedus.nudge.util.NudgeLogger
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
 import dagger.hilt.components.SingletonComponent
 import java.util.concurrent.ConcurrentHashMap
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
@@ -72,7 +72,21 @@ class NudgeAccessibilityService : AccessibilityService() {
         fun blockLaunchGuard(): BlockLaunchGuard
     }
 
-    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    /**
+     * The scope every block evaluation, `UsageEvent` write and DataStore collect in this service
+     * runs on.
+     *
+     * [CrashSafeScope] and not a bare `CoroutineScope(SupervisorJob() + Dispatchers.IO)`: the
+     * supervisor stops a failed child cancelling its siblings, and does nothing at all about the
+     * exception, which without a `CoroutineExceptionHandler` reaches the thread's default handler
+     * and kills the process — and with it the accessibility service, which is the only thing
+     * enforcing any block (backlog audit F7). Losing one database write must never stop blocking.
+     */
+    private val serviceScope = CrashSafeScope.create(
+        name = "nudge-accessibility-service",
+        dispatcher = Dispatchers.IO,
+        logger = { entryPoint.nudgeLogger() }
+    )
 
     private val entryPoint by lazy {
         EntryPointAccessors.fromApplication(
@@ -130,7 +144,8 @@ class NudgeAccessibilityService : AccessibilityService() {
             ownPackageName = applicationContext.packageName,
             systemPackages = SYSTEM_PACKAGES,
             imePackages = IME_PACKAGES,
-            frameworkPackage = FRAMEWORK_PACKAGE
+            frameworkPackage = FRAMEWORK_PACKAGE,
+            awarenessOverlayClassNames = AwarenessOverlayWindow.CLASS_NAMES
         )
     }
 
@@ -386,13 +401,39 @@ class NudgeAccessibilityService : AccessibilityService() {
             }
         }
 
+        /**
+         * The class NAMESPACE this app's own classes live in, read off a real class.
+         *
+         * Never a literal, and never `applicationContext.packageName`. That second mistake is
+         * [#33](https://github.com/astraedus/nudge/issues/33): the applicationId is
+         * `dev.astraedus.nudge` and every class name an accessibility event can carry starts with
+         * `com.astraedus.nudge`, so `className.startsWith(packageName)` was false for every event
+         * this app can emit and [shouldClearForOwnPackageEvent] was dead in production for months.
+         * Its unit tests passed throughout, because they supplied a matching value production never
+         * did — which is why `OwnClassNamespaceContractTest` now ties the test's constants to the
+         * real `BuildConfig.APPLICATION_ID` and the real namespace.
+         *
+         * `BuildConfig` is generated INTO the namespace, so this is the namespace by construction
+         * and a rename moves it. (Release builds do not minify, so shipped class names match what
+         * the tests see; if that ever changes, both sides of this comparison are obfuscated
+         * together, because both come from real classes.)
+         */
+        internal val OWN_CLASS_NAMESPACE: String = BuildConfig::class.java.packageName
+
+        /**
+         * Is this a window event for one of OUR OWN windows, i.e. should the awareness overlays be
+         * cleared because Nudge itself came forward?
+         *
+         * @param ownClassNamespace [OWN_CLASS_NAMESPACE] in production. A parameter so the test can
+         *   prove the predicate against the REAL value AND against the applicationId that broke it.
+         */
         internal fun shouldClearForOwnPackageEvent(
             eventType: Int,
             className: String?,
-            ownPackageName: String
+            ownClassNamespace: String
         ): Boolean {
             return eventType in WINDOW_CHANGE_EVENT_TYPES &&
-                className?.startsWith(ownPackageName) == true
+                BlockLaunchGate.isOwnNudgeClass(className, ownClassNamespace)
         }
 
         // "Is this Nudge's own MAIN app window?" (issue #36) is deliberately NOT here, next to its
@@ -955,6 +996,20 @@ class NudgeAccessibilityService : AccessibilityService() {
             return
         }
 
+        // One of OUR OWN awareness overlays (the interaction counter, the time-remaining pill)
+        // firing a window or content event. It is drawn OVER the app the user is still sitting in,
+        // so it says nothing about what is in front and must drive nothing at all — exactly like
+        // a keyboard or a toast, and unlike every other Nudge window.
+        //
+        // The foreground claim is where this bit (issue #41): `applyForegroundSignal` above has
+        // already run, and `BlockLaunchGate.foregroundAfter` leaves the foreground alone for this
+        // signal where it would have moved it to Nudge for `OwnUi`. Once it had moved, nothing
+        // moved it back while the user sat still in the blocked app, so every 30-second daily-limit
+        // tick was refused with DROP_FOREGROUND_MOVED and someone past their limit went unblocked.
+        if (signal is ForegroundSignal.AwarenessOverlay) {
+            return
+        }
+
         if (isOverlayActive) {
             // If a real app has come to the foreground, the overlay is no longer covering it — the
             // user tabbed out and back into the blocked app, orphaning the overlay in its own task.
@@ -980,6 +1035,12 @@ class NudgeAccessibilityService : AccessibilityService() {
         }
 
         if (signal is ForegroundSignal.OwnUi) {
+            // ANY window of ours coming forward hides the awareness overlays: the user is looking
+            // at Nudge, not at the app they were counting interactions in. Live again as of issue
+            // #33 — this predicate compared the class name against the applicationId, which is
+            // never its prefix, so for months this line ran and did nothing. The awareness
+            // overlays' OWN windows cannot reach it: they classify as `AwarenessOverlay` and
+            // returned above, so a pill can no longer order itself hidden.
             if (isOwnAppWindowEvent(event)) {
                 clearOverlays(packageName, "own_app_window")
             }
@@ -1139,7 +1200,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         return shouldClearForOwnPackageEvent(
             eventType = event.eventType,
             className = event.className?.toString(),
-            ownPackageName = applicationContext.packageName
+            ownClassNamespace = OWN_CLASS_NAMESPACE
         )
     }
 
