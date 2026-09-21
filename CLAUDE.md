@@ -118,7 +118,7 @@ AccessibilityService: TYPE_WINDOW_STATE_CHANGED
   (or a state-verified TYPE_WINDOW_CONTENT_CHANGED — see "Content-change app-switch fallback"
    in docs/architecture/foreground-detection.md)
   -> BlockEngine.evaluate(packageName, time, usage)
-  -> BlockDecision: ALLOW | HARD_BLOCK | DELAY | BREATHING
+  -> BlockDecision: ALLOW | HARD_BLOCK | DELAY | HOLD | BREATHING
   -> Launch BlockOverlayActivity if not ALLOW
 ```
 
@@ -143,6 +143,7 @@ AccessibilityService: TYPE_WINDOW_STATE_CHANGED
 
 - `HARD_BLOCK` — cannot open the app at all
 - `DELAY` — configurable countdown (5/15/30/60s) before app opens
+- `HOLD` — the same duration, but the clock only runs while a finger is held on the screen; letting go puts it back to zero ([#35](https://github.com/astraedus/nudge/issues/35))
 - `BREATHING` — guided breathing exercise before app opens (the signature feature)
 
 ## Database
@@ -165,7 +166,7 @@ one that matches what you are about to edit. Nothing here is optional reading if
 | `docs/architecture/counter-overlay-and-autokick.md` | Interaction counter, time-remaining overlay, both auto-kick triggers, cooldown, duration inputs | editing `service/` overlay code, `InteractionTracker`, `CounterCacheRefresher`, `AutoKick*`, `DurationInput` |
 | `docs/architecture/accessibility-event-pipeline.md` | The event pipeline end to end: the pure `AccessibilityEventRecord`, the one `EventClassifier`, the `SittingTracker` that owns "has the user left", the `InteractionCounter` that owns "what did they do", and the device-capture workflow that turns a bug report into a failing test | touching `onAccessibilityEvent`, `EventClassifier`, `SittingTracker`, `InteractionCounter`, `InteractionHandler`, `PassthroughManager`, or investigating ANY report about spurious re-blocks or a wrong counter |
 | `docs/architecture/foreground-detection.md` | What "the user is in app P" means: transient windows, the Home/launcher path, the content-change fallback, picture-in-picture, passthrough clearing. **The history and the reasons; the model itself now lives in `accessibility-event-pipeline.md`** | touching the event dispatch in `NudgeAccessibilityService`, `PassthroughManager`, or adding ANY early return to the hot path |
-| `docs/architecture/block-overlay-lifecycle.md` | Overlay lifecycle invariant (#8), the walk-away path, the daily 2-minute pass | editing `ui/overlay/`, `RecordWalkAwayUseCase`, `EmergencyPass*` |
+| `docs/architecture/block-overlay-lifecycle.md` | Overlay lifecycle invariant (#8), the walk-away path, the daily 2-minute pass, the HOLD mode (#35), and how a block mode is added without leaving a silent gap | editing `ui/overlay/`, `RecordWalkAwayUseCase`, `HoldProgress`/`HoldTarget`, `EmergencyPass*`, or adding a `BlockMode` |
 | `docs/architecture/service-lifecycle-and-watchdog.md` | What keeps enforcement alive and what notices when it dies: FGS start paths, the `MY_PACKAGE_REPLACED` receiver, the WorkManager watchdog + protection alert, live permission state | editing `NudgeMonitorService`, `BootReceiver`, `ProtectionWatchdogWorker`, `ProtectionStatus`, `NudgeApp`, `MainActivity`, or the Settings permission rows |
 | `docs/architecture/strict-mode.md` | Commitment lock, OS escape-route guard, global master toggle gating | editing `domain/lock/`, `ui/lock/`, or any gate in `onAccessibilityEvent` |
 | `docs/architecture/web-domain-blocking.md` | Per-rule website blocking, multi-browser URL-bar reads, independent `webBlockMode` (#21) | editing `WebDomainMatcher`, `WebDomainDetector`, `WebBlockMode`, or the browser paths |

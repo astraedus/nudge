@@ -3,6 +3,7 @@ package com.astraedus.nudge.data.export
 import com.astraedus.nudge.data.db.entity.BlockRule
 import com.astraedus.nudge.data.db.entity.UsageEvent
 import com.astraedus.nudge.domain.lock.StrictModeChallenge
+import com.astraedus.nudge.domain.model.BlockMode
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -384,7 +385,10 @@ class SettingsExportTest {
 
     @Test
     fun `every real block mode is accepted as a content filter mode`() {
-        listOf("NONE", "HARD_BLOCK", "DELAY", "BREATHING").forEach { mode ->
+        // Derived from BlockMode.entries rather than hand-typed: a hand-typed list silently stops
+        // covering the full enum the moment a new mode (e.g. HOLD) is added -- exactly the bug this
+        // was meant to guard against.
+        BlockMode.entries.map { it.name }.forEach { mode ->
             val result = exporter.importRules(fileWithSettings(""""contentFilterMode": "$mode""""))
 
             assertEquals(mode, 0, result.invalidSettingsCount)

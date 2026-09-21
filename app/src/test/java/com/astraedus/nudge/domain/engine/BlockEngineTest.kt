@@ -7,6 +7,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.util.Calendar
 
 class BlockEngineTest {
 
@@ -154,6 +155,131 @@ class BlockEngineTest {
         val block = decision as BlockDecision.Block
         assertEquals(BlockMode.DELAY, block.mode)
         assertEquals(15, block.delaySeconds)
+    }
+
+    // ── HOLD (mirrors DELAY: same BlockDecision.Block shape, same delaySeconds, different UI) ──
+
+    @Test
+    fun `HOLD rule returns Block HOLD with correct seconds`() {
+        val rules = listOf(
+            ActiveRule(mode = BlockMode.HOLD, delaySeconds = 20, dailyLimitMinutes = null, enabled = true)
+        )
+        val decision = engine.evaluate("com.example.app", rules, 0L)
+        assertTrue(decision is BlockDecision.Block)
+        val block = decision as BlockDecision.Block
+        assertEquals(BlockMode.HOLD, block.mode)
+        assertEquals(20, block.delaySeconds)
+    }
+
+    @Test
+    fun `disabled HOLD rule returns Allow`() {
+        val rules = listOf(
+            ActiveRule(mode = BlockMode.HOLD, delaySeconds = 20, dailyLimitMinutes = null, enabled = false)
+        )
+        val decision = engine.evaluate("com.example.app", rules, 0L)
+        assertTrue(decision is BlockDecision.Allow)
+    }
+
+    /**
+     * A HOLD rule outside its schedule must Allow, exactly as a DELAY rule does. Asserted for BOTH
+     * modes in one test so the claim is a comparison and not two separate hopes.
+     *
+     * The out-of-schedule window is every ISO day EXCEPT today, derived from the clock rather than
+     * hand-picked: a hardcoded day would pass six days a week and fail on the seventh, and an
+     * out-of-RANGE day (`8`) would be testing an unparseable schedule, which is a different thing
+     * from a schedule that simply is not on right now.
+     */
+    @Test
+    fun `an out-of-schedule HOLD rule Allows, exactly as an out-of-schedule DELAY rule does`() {
+        val todayIso = ScheduleEvaluator.calendarDayToIso(
+            Calendar.getInstance().get(Calendar.DAY_OF_WEEK)
+        )
+        val everyOtherDay = (1..7).filter { it != todayIso }
+
+        listOf(BlockMode.HOLD, BlockMode.DELAY).forEach { mode ->
+            val rules = listOf(
+                ActiveRule(
+                    mode = mode,
+                    delaySeconds = 20,
+                    dailyLimitMinutes = null,
+                    enabled = true,
+                    scheduleDays = everyOtherDay,
+                    scheduleStartMinute = 0,
+                    scheduleEndMinute = 1440
+                )
+            )
+            val decision = engine.evaluate("com.example.app", rules, 0L)
+            assertTrue("mode=$mode should Allow outside its schedule", decision is BlockDecision.Allow)
+        }
+    }
+
+    @Test
+    fun `HARD_BLOCK wins over HOLD when both present`() {
+        val rules = listOf(
+            ActiveRule(mode = BlockMode.HOLD, delaySeconds = 20, dailyLimitMinutes = null, enabled = true),
+            ActiveRule(mode = BlockMode.HARD_BLOCK, delaySeconds = 0, dailyLimitMinutes = null, enabled = true)
+        )
+        val decision = engine.evaluate("com.example.app", rules, 0L)
+        assertTrue(decision is BlockDecision.Block)
+        assertEquals(BlockMode.HARD_BLOCK, (decision as BlockDecision.Block).mode)
+    }
+
+    @Test
+    fun `daily limit exceeded beats HOLD and returns Block HARD_BLOCK`() {
+        val rules = listOf(
+            ActiveRule(mode = BlockMode.HOLD, delaySeconds = 20, dailyLimitMinutes = 30, enabled = true)
+        )
+        // 31 minutes used out of 30 minute limit
+        val usageMs = 31L * 60L * 1000L
+        val decision = engine.evaluate("com.example.app", rules, usageMs)
+        assertTrue(decision is BlockDecision.Block)
+        assertEquals(BlockMode.HARD_BLOCK, (decision as BlockDecision.Block).mode)
+    }
+
+    @Test
+    fun `HOLD decision carries grayscale ruleName dailyTimeRemainingMs and dailyLimitMinutes`() {
+        val rules = listOf(
+            ActiveRule(
+                mode = BlockMode.HOLD,
+                delaySeconds = 20,
+                dailyLimitMinutes = 60,
+                enabled = true,
+                grayscale = true,
+                ruleName = "Hold Rule"
+            )
+        )
+        // 10 minutes used out of 60 minute limit -- 50 minutes remaining
+        val usageMs = 10L * 60L * 1000L
+        val decision = engine.evaluate("com.example.app", rules, usageMs)
+        assertTrue(decision is BlockDecision.Block)
+        val block = decision as BlockDecision.Block
+        assertEquals(BlockMode.HOLD, block.mode)
+        assertTrue(block.grayscale)
+        assertEquals("Hold Rule", block.ruleName)
+        assertEquals(50L * 60L * 1000L, block.dailyTimeRemainingMs)
+        assertEquals(60, block.dailyLimitMinutes)
+    }
+
+    @Test
+    fun `every timed BlockMode produces a Block carrying its own mode and delaySeconds`() {
+        // Test the class, not the instance: derive the timed modes from the enum itself (minus
+        // NONE, which gates nothing, and HARD_BLOCK, which is decided ahead of the timed scan)
+        // so a future timed mode is covered automatically instead of needing a hand-typed list.
+        val timedModes = BlockMode.entries.filterNot {
+            it == BlockMode.NONE || it == BlockMode.HARD_BLOCK
+        }
+        assertTrue("expected at least one timed mode to exist", timedModes.isNotEmpty())
+
+        timedModes.forEach { mode ->
+            val rules = listOf(
+                ActiveRule(mode = mode, delaySeconds = 20, dailyLimitMinutes = null, enabled = true)
+            )
+            val decision = engine.evaluate("com.example.app", rules, 0L)
+            assertTrue("mode=$mode should Block", decision is BlockDecision.Block)
+            val block = decision as BlockDecision.Block
+            assertEquals("mode=$mode", mode, block.mode)
+            assertEquals("mode=$mode", 20, block.delaySeconds)
+        }
     }
 
     @Test

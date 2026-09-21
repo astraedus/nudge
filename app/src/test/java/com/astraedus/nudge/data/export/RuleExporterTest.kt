@@ -27,6 +27,11 @@ class RuleExporterTest {
      * went stale when NONE was added, and because one bad rule aborts the whole array, a single
      * NONE rule made an entire backup unrestorable. Iterating BlockMode here means the next mode
      * added fails this test instead of silently eating a user's rules.
+     *
+     * Also asserts `delaySeconds` comes back unchanged, not just the mode name: HOLD (and DELAY,
+     * BREATHING) carry their duration in that column, and a mode that imports but loses its
+     * duration is just as broken as one that fails to import at all -- see
+     * [BlockMode.usesDuration].
      */
     @Test
     fun `every block mode survives an export-import round trip`() {
@@ -45,9 +50,44 @@ class RuleExporterTest {
             val result = exporter.importRules(json)
 
             assertNull("mode ${mode.name} failed to import: ${result.error}", result.error)
+            assertEquals("mode ${mode.name} reported invalid rules", 0, result.invalidCount)
             assertEquals("mode ${mode.name} was dropped on import", 1, result.rules.size)
             assertEquals(mode.name, result.rules.first().mode)
+            assertEquals(
+                "mode ${mode.name} lost its delaySeconds on import",
+                15,
+                result.rules.first().delaySeconds
+            )
         }
+    }
+
+    /**
+     * A dedicated round trip for HOLD (issue #35), the mode that made [usesDuration] worth asking
+     * as a question rather than hand-checking `mode == DELAY || mode == BREATHING` at each call
+     * site. HOLD reuses `delaySeconds` exactly like DELAY -- this pins that a rule switched to HOLD
+     * keeps a distinctive duration through a full export/import cycle, on top of the enum-wide
+     * invariant above.
+     */
+    @Test
+    fun `HOLD rule round trip preserves mode and delaySeconds`() {
+        val rules = listOf(
+            BlockRule(
+                id = 1,
+                packageName = "com.instagram.android",
+                mode = BlockMode.HOLD.name,
+                delaySeconds = 20,
+                enabled = true
+            )
+        )
+
+        val json = exporter.exportRules(rules, emptyList(), emptyMap())
+        val result = exporter.importRules(json)
+
+        assertNull(result.error)
+        assertEquals(0, result.invalidCount)
+        assertEquals(1, result.rules.size)
+        assertEquals("HOLD", result.rules.first().mode)
+        assertEquals(20, result.rules.first().delaySeconds)
     }
 
     /**

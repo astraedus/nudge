@@ -1,9 +1,10 @@
-# Block overlay lifecycle, the walk-away path, and the daily pass
+# Block overlay lifecycle, the walk-away path, the daily pass, and the HOLD mode
 
 Covers `BlockOverlayActivity`'s lifecycle invariant (the delay only runs while you are looking at it),
-the "I changed my mind" walk-away write path that feeds every stat, and the daily 2-minute escape hatch
-rendered on all three overlays.
-**Read before touching `ui/overlay/`, `RecordWalkAwayUseCase`, or `EmergencyPass*`.**
+the "I changed my mind" walk-away write path that feeds every stat, the daily 2-minute escape hatch
+rendered on every overlay, and `BlockMode.HOLD`, the block whose timer only runs under a thumb.
+**Read before touching `ui/overlay/`, `RecordWalkAwayUseCase`, `HoldProgress`/`HoldTarget`,
+`EmergencyPass*`, or before adding a block mode.**
 
 ## Block overlay lifecycle — the delay only runs while you are looking at it (fixes #8)
 
@@ -21,7 +22,7 @@ Fix for [#8](https://github.com/astraedus/nudge/issues/8): the delay could be by
 
 ## The walk-away path — "I changed my mind" (2026-08-20)
 
-`navigateHome()` is the terminal path for the button on all three overlays and for the back button. It is the ONLY writer of `userChangedMind = true`, so it is the sole source of the home screen's "Walked Away" tile and of every number on the Willpower insight page. It had no owner and no voice; both defects were silent, which is why the report arrived as "it just doesn't count".
+`navigateHome()` is the terminal path for the button on every overlay and for the back button. It is the ONLY writer of `userChangedMind = true`, so it is the sole source of the home screen's "Walked Away" tile and of every number on the Willpower insight page. It had no owner and no voice; both defects were silent, which is why the report arrived as "it just doesn't count".
 
 - **The write is a `@Singleton` use case, not a coroutine the activity spawns.** `domain/usecase/RecordWalkAwayUseCase.kt`. The old code did `CoroutineScope(Dispatchers.IO).launch { … }` inline: created per tap, parented to nothing, referenced by nothing, on an activity that `finish()`es microseconds later — a promise nobody held. Worse, `launch` without a `CoroutineExceptionHandler` propagates to the thread's default handler, so a Room/SQLite failure here would have **killed the process** and with it the accessibility service; losing one stat row must never stop blocking. The singleton scope carries a `SupervisorJob` + a handler that logs, and it outlives the activity by construction.
 - **It logs, unconditionally, both ways** (`walk-away recorded package=… mode=…` / `walk-away NOT recorded: insert failed`). Without this, "the row never appeared" and "the row appeared and the tile did not move" are indistinguishable from a device — the same trap that cost a release cycle on the PiP work.
@@ -92,6 +93,106 @@ Opt-in escape hatch on the block overlays. **ONE 2-minute free window per rollin
 - **`service/EmergencyPassManager.kt`** (`@Singleton`) — modeled on `PassthroughManager`. In-memory `activeUntil: ConcurrentHashMap<pkg, Long>` — the active window stays **per-app** (pressing the pass on Instagram unblocks Instagram, not everything); only the lockout is global. Per-package `kickJobs` so a fresh grant replaces the prior timer. `isPassActive(pkg)` is the non-blocking hot-path check. `usePass(pkg)` opens the window, persists the global lockout (`prefs.recordEmergencyPassUsed(now)`), and schedules `delay(PASS_DURATION_MS) → remove → kickHome()` **only if `isGlobalEnabled`** (a scheduled kick must not fire while Nudge is globally disabled). `cancelAll()` cancels every window + pending kick (called on global-disable). `kickHome()` prefers `NudgeAccessibilityService.requestGoHome()` and falls back to a HOME intent. The active window is in-memory only — a restart ends the window (fail-safe toward re-blocking); only the lockout is persisted.
 - **Prefs** (`NudgePreferences`): `emergencyPassEnabled` (bool, default **true**) + `emergencyPassUsage` (serialized ledger string) + `recordEmergencyPassUsed(now)` (overwrites the ledger with the single global entry — the lockout is global, no per-app merge).
 - **Service integration** (`NudgeAccessibilityService`): `emergencyPassManager()` on the EntryPoint; in `evaluateForegroundPackage`, `if (isPassActive(pkg)) return` placed **before** the auto-kick-cooldown block so an active pass overrides cooldown too. When the window expires the scheduled kick sends the user home AND the next foreground event re-blocks normally (backstop).
-- **UI**: `ui/overlay/EmergencyPassAction.kt` — the pure resolver **plus** one shared composable rendered by all three overlays below the primary button: muted `TextButton` "Use for 2 minutes · once a day" when available; a **disabled/greyed** `TextButton` "Daily pass used · next in Xh" when spent (visible, not hidden); nothing otherwise. `internal fun resolveEmergencyPassState(packageName, passEnabled, usage, now, lockoutMs)` → `EmergencyPassUiState(canUse, locked, nextPassMs)` owns the **entire** decision (pseudo-package skip → toggle → `canUseGlobal`/`nextAvailableGlobalMs`); it is pure so it is JVM-tested (`EmergencyPassVisibilityTest`) instead of buried in the Activity. `BlockOverlayActivity` just calls it inside the existing `runBlocking` alongside the message pools (correct on first composition, no flash) and forwards the three fields. Rendered on ALL `BlockOverlayActivity` launch paths — rule blocks (`handleDecision`), auto-kick cooldown DELAY (`evaluateForegroundPackage`), and daily-limit HARD_BLOCK (`TimeRemainingHandler`) — since all set a real package and go through `render()`. Tap → `emergencyPassManager.usePass(pkg); finish()`. Settings master toggle under "Escape Hatch" (live under Strict Mode; enabling it is challenge-gated).
+- **UI**: `ui/overlay/EmergencyPassAction.kt` — the pure resolver **plus** one shared composable rendered by every overlay below the primary button: muted `TextButton` "Use for 2 minutes · once a day" when available; a **disabled/greyed** `TextButton` "Daily pass used · next in Xh" when spent (visible, not hidden); nothing otherwise. `internal fun resolveEmergencyPassState(packageName, passEnabled, usage, now, lockoutMs)` → `EmergencyPassUiState(canUse, locked, nextPassMs)` owns the **entire** decision (pseudo-package skip → toggle → `canUseGlobal`/`nextAvailableGlobalMs`); it is pure so it is JVM-tested (`EmergencyPassVisibilityTest`) instead of buried in the Activity. `BlockOverlayActivity` just calls it inside the existing `runBlocking` alongside the message pools (correct on first composition, no flash) and forwards the three fields. Rendered on ALL `BlockOverlayActivity` launch paths — rule blocks (`handleDecision`), auto-kick cooldown DELAY (`evaluateForegroundPackage`), and daily-limit HARD_BLOCK (`TimeRemainingHandler`) — since all set a real package and go through `render()`. Tap → `emergencyPassManager.usePass(pkg); finish()`. Settings master toggle under "Escape Hatch" (live under Strict Mode; enabling it is challenge-gated).
 - **Strict Mode vs. the escape hatch (v1.10.0)** — Strict Mode used to hide the pass on overlays and freeze/grey the Settings toggle. That silently revoked an escape hatch the user had deliberately opted into, so the lock now bites where protection is actually WEAKENED instead: **`resolveEmergencyPassState` takes no strict-mode flag at all** (a regression would have to add the parameter back), and turning the toggle OFF→ON while Strict Mode is on requires the typed unlock challenge. Turning it ON→OFF strengthens protection and is always free. Policy lives in `domain/lock/SettingsWeakening.requiresUnlock(toggle, enable, strictModeEnabled)` with `LockedToggle` = { STRICT_MODE, EMERGENCY_PASS } — the Settings-screen sibling of `RuleWeakening`.
 - **Device-verified**: v1.9.0 (per-app 1min); v1.9.2 (global 2min button text, cross-app greyed lockout). v1.10.0 semantics change is unit-tested; device QA pending.
+
+## HOLD, a block mode whose timer only runs under your thumb ([#35](https://github.com/astraedus/nudge/issues/35), v1.17.3)
+
+> Read this before changing anything about how a timed block COMPLETES, or before adding a block mode.
+
+A user wrote in on 2026-09-18 and left the same request as a Play review the same week: make the
+unlock a press-and-hold. They cite Wall Habit. The owner agreed to this item and explicitly deferred
+the other two on the issue (per-app hold durations, uninstall protection).
+
+The first attempt (PR #45) built it as a short hold appended AFTER a DELAY or BREATHING timer, plus
+a global "Hold to unlock" setting. That was the wrong shape, and the owner said so: *"it's meant to
+be another option to do INSTEAD of the delay or breathing timer -- like instead of waiting 15
+seconds, you have to be holding a button or pressing the screen for 15 or however many seconds
+before you can use the app."* All of the bolt-on was removed; what survived is `HoldProgress`.
+
+**So HOLD is a peer of HARD_BLOCK / DELAY / BREATHING, not a step attached to one.** The reason it
+is worth a mode is not the gesture, it is what the gesture changes about the cost of entering.
+A `DELAY`'s entire price is *waiting*, and waiting is something a thumb can pay while the person is
+somewhere else entirely. A hold is the same seconds spent *choosing*, and **letting go is the cheap
+action** — the direction every affordance in this app should point.
+
+### Shape
+
+- **`domain/hold/HoldProgress.kt`**, pure Kotlin, no Android, no Compose. `press` / `release` /
+  `fraction` / `advance` / `reset`. `advance` returns true **exactly once** per completed hold and
+  is the only thing between a sustained press and two passthrough grants. A release before
+  completion abandons the attempt; a second `press` while already pressed RESTARTS from that moment,
+  which is what makes time spent off-screen worthless (the same rule the countdown follows, issue
+  #8). Unit-tested end to end in `HoldProgressTest`, because every interesting rule here is a rule
+  about a gesture, and a gesture needs a finger and a stopwatch to observe on a device.
+- **`ui/overlay/HoldTarget.kt`**, rendering and input only. It drives one `HoldProgress` from a
+  `withFrameMillis` loop inside `repeatOnLifecycle(RESUMED)` and calls its callback when `advance`
+  says the hold landed. One haptic tick at completion.
+- **`ui/overlay/HoldContent.kt`**, the overlay body. Structurally `DelayContent` with the countdown
+  swapped for the target: same app label and "X left today" line, same headline pool (including the
+  user's own custom delay titles), same "I changed my mind", same daily pass, same rule footer.
+  There is no ticker in it at all — the only thing that moves this block's time forward is a finger.
+- **The duration is the rule's own `delaySeconds`.** Same column, same meaning, same picker, so a
+  rule flipped between DELAY and HOLD keeps its length and there is no migration to regret. The
+  editors relabel the control "Hold Duration" when the live mode is HOLD; the seconds are not a
+  countdown the user watches, and calling them a delay reads as a second, separate wait.
+
+### The invariants, and why each one is pinned
+
+- **The hold IS the block's timer; it is never a second way in.** `HoldContent` passes its own
+  `onComplete` straight through as the target's `onHoldComplete`, so completion lands in
+  `onTimerComplete()` — which is lifecycle-gated, because a countdown that reached zero off-screen
+  was the issue #8 bypass. `HoldModeContractTest` asserts `passthroughManager.grant` has exactly ONE
+  call site in the activity, that all three timed overlays complete into `onTimerComplete`, and that
+  neither hold file can reach `PassthroughManager` or `finish()` at all. This is the assertion the
+  whole test file exists for: a press-and-hold that opens apps is one careless edit away from being
+  an unguarded second door. **`OverlayLifecycle` is untouched by this feature** — deliberately, and
+  its unchanged tests are the evidence.
+- **The hold only progresses while the overlay is on screen.** RESUMED-gated loop, and `press`
+  restarts on re-entry rather than resuming, so wall-clock time away can never count toward opening
+  an app. Issue #8, one layer further in.
+- **A re-delivered block starts from zero.** Nothing new was built for this: the machine is
+  `remember`ed inside the per-delivery `key(blockToken)` subtree the activity already mints in
+  `render()` (issue #15), so a block arriving through `onNewIntent` discards it with everything
+  else. Hooking into the same token is the point — a second freshness mechanism is a second thing
+  to forget.
+- **Walking away still works, and still costs nothing.** "I changed my mind" and the back gesture
+  are untouched and live throughout the hold; the button sits below the target. On a HOLD the user's
+  thumb is already on the screen, so the one affordance that must never get harder to reach is the
+  one that lets them stop.
+- **TalkBack can operate it.** A press-and-hold is invisible to a screen reader — TalkBack consumes
+  touch exploration, so the gesture detector never sees a finger. On a DELAY such a user could still
+  just wait; on a HOLD there is nothing else to do, so without a second path a blind user would be
+  looking at the one control on screen that opens their app and be unable to use it: a block with no
+  way through. The target publishes a semantic click action that starts the SAME hold on the SAME
+  machine for the SAME duration. The friction is the wait, not the finger, so nothing is given away.
+- **HOLD and DELAY are EQUAL strength to `RuleWeakening`.** At one duration they cost the same
+  wall-clock wait, and the hold additionally costs attention for all of it, so neither is the softer
+  one and switching between them is not an edit Strict Mode should stand in the way of. Ranking HOLD
+  lower would have meant the stricter of the two needed a challenge to select.
+
+### Adding a block mode after this one
+
+Four lists used to have to be edited by hand for a new mode, and every one of them failed SILENTLY:
+no crash, no failing assertion, just a mode shown to the user by its raw enum name, or filed under
+"Other" with no bar on the interventions chart, or given a duration picker that never appears. They
+are now derived or shared:
+
+- `BlockEngine` scans one ordered `TIMED_MODES_STRONGEST_FIRST` instead of a branch per mode.
+- `blockModeLabel` / `blockModeDescription` live in `ui/components/BlockModeLabels.kt` and are
+  exhaustive `when`s, so a new mode does not COMPILE until it has a name and a sentence.
+- `BlockMode.usesDuration` / `FeatureMode.usesDuration` replace `== DELAY || == BREATHING`, and
+  `FeatureMode.toBlockMode` / `fromBlockMode` replace four hand-written mapping `when`s.
+- `InsightsCalculator.KNOWN_MODES` derives from `BlockMode.entries`, and `InterventionsScreen`'s
+  `MODE_ORDER` derives from that.
+
+What cannot be derived — the per-screen label `when (mode: String)` blocks, which have an `else` —
+is pinned by `HoldModeContractTest`'s two enum-driven tests: every `BlockMode` entry must have a
+branch on every screen that labels modes, and must render a real overlay body rather than falling
+through to `Unit` beside `NONE`.
+
+**Device QA pending.** The gesture's rules are unit-tested and its wiring is pinned at source level;
+what no JVM test can see is whether the target reads as something you press, whether fifteen seconds
+of holding feels like friction or like a bug, and whether TalkBack announces it usefully on a real
+phone.

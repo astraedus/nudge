@@ -230,4 +230,69 @@ class HoldProgressTest {
         assertTrue(progress.isCompleted)
         assertFalse(progress.advance(nowMs = 0L)) // still fires only once
     }
+
+    // ── The durations a HOLD RULE actually carries ──
+
+    /**
+     * A HOLD block spends the rule's own `delaySeconds` — the same number a DELAY rule spends — and
+     * the editor offers 5 / 15 / 30 / 60 plus a custom value up to 300. Every test above this one
+     * runs at 3s, which was the old global setting's default and is now a length no rule produces,
+     * so the arithmetic is pinned across the whole range the picker can actually write.
+     *
+     * One loop over the durations rather than a test each: a duration that behaved differently
+     * would be a hold that opened an app EARLY, and early is the direction that matters.
+     */
+    @Test
+    fun `at every duration the editor offers, the hold completes only at that duration`() {
+        val ruleDurationsSeconds = listOf(1, 5, 15, 30, 60, 300)
+
+        ruleDurationsSeconds.forEach { seconds ->
+            val durationMs = seconds * 1_000L
+            val progress = HoldProgress(durationMs)
+
+            progress.press(nowMs = 0L)
+
+            assertFalse(
+                "a ${seconds}s hold must not complete one millisecond early",
+                progress.advance(nowMs = durationMs - 1)
+            )
+            assertEquals(
+                "and must report just under full progress at that point",
+                1f,
+                progress.fraction(nowMs = durationMs - 1),
+                0.002f
+            )
+            assertTrue(
+                "a ${seconds}s hold completes at exactly ${seconds}s",
+                progress.advance(nowMs = durationMs)
+            )
+        }
+    }
+
+    /**
+     * The rule this mode exists for, at the duration it will actually ship at.
+     *
+     * A 15-second hold released at 14.9s must cost the user all fifteen seconds again, not 100ms.
+     * If a release ever became a pause, HOLD would silently collapse into a DELAY that needs the
+     * screen touched now and then — which is WEAKER than the delay it replaced, because by then the
+     * user has learned to keep a thumb there.
+     */
+    @Test
+    fun `letting go at the last moment of a 15 second hold costs the whole 15 seconds again`() {
+        val fifteenSeconds = 15_000L
+        val progress = HoldProgress(fifteenSeconds)
+
+        progress.press(nowMs = 0L)
+        assertFalse(progress.advance(nowMs = 14_900L))
+        progress.release()
+
+        assertEquals(0f, progress.fraction(nowMs = 14_900L), EPS)
+
+        progress.press(nowMs = 14_900L)
+        assertFalse(
+            "the abandoned 14.9s must not carry over",
+            progress.advance(nowMs = 14_900L + fifteenSeconds - 1)
+        )
+        assertTrue(progress.advance(nowMs = 14_900L + fifteenSeconds))
+    }
 }
