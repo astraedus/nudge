@@ -651,3 +651,47 @@ What generalises:
 - **A test whose numbers encode the bug must be re-stated, not deleted.** `HomeChartsBuilderTest` asserted
   `weekBlocked == 3` over a fixture containing one walk-away. It was green throughout, and it was the bug
   written down as a contract.
+
+## 1552 green tests aimed at the wrong layer: thirteen "coding mistakes" were testing-strategy failures (2026-09-21)
+
+The owner asked the right question after a run of shipped defects: *"a lot of these bugs, I swear, shouldn't
+our tests catch this? how are we actually testing this, are we doing tests wrong, are we missing something?"*
+The suite was evaluated against the last 18 defects. It is not theatre and it is not wrong. It is ~1550 tests
+aimed almost entirely at **one layer** — pure JVM logic — while the bug history sits in three places that
+layer cannot reach as written: lifecycle ordering, real-device event timing, and fixtures that agree with the
+code instead of with the device.
+
+The number that settles it: **75% of the test budget sits at the layer that would have caught 3 of 18**, while
+the layer that would have caught the most (**5** — replaying a recorded device event stream) holds **1.9%**.
+Writing more tests was never the fix. Every one of those 1552 could have been doubled and the same bugs ship.
+
+**The lesson is that "write a test for it" is an incomplete instruction.** The complete one is *"write a test
+at the layer this bug lives at"*, and the author is systematically the worst judge of that in the moment: #36
+shipped under 49 exhaustive, correct tests of the gates deciding whether to SHOW an overlay, because nobody
+asked which layer the COUNT question lived at. Exhaustive tests of the wrong question produce confidence, not
+safety. Hence the rule now in `docs/testing-strategy.md` and `CLAUDE.md`: **every bug-fix PR body names its
+layer (L1–L6) and puts the test there**, or says why that layer is not worth building for this bug.
+
+**Thirteen entries already in this file are this same failure wearing a coding-mistake costume** — "every test
+exercising the same trigger will miss a bug reached by a different one", "the gate that decides whether to
+SHOW is not the gate that decides whether to COUNT", "if you are writing a test to police a rule, the design
+is wrong", "a correction that lives on ONE screen is a bug on every other screen", and nine more. Each was
+filed as a bug lesson. Read together they are one lesson about aim, and that is only visible when you count
+them, which is the argument for doing this kind of evaluation periodically rather than trusting the running
+total of green tests.
+
+Three specifics that came out of it and are now doctrine:
+
+- **A fixture that hand-types an identity constant agrees with its author, not with the device.**
+  `PassthroughTest` supplies `ownPackageName = "com.astraedus.nudge"` to *both* sides of every comparison —
+  that is the `namespace`, while `applicationId` is `dev.astraedus.nudge`, so `isOwnAppWindowEvent` has been
+  dead in production for months under a green suite (#33). Same shape in `NudgeDatabaseMigrationTest`'s
+  hand-kept `currentVersion` and `SettingsExportTest`'s hand-typed list of block modes inside a test named
+  *"every real block mode is accepted"*. Derive from `BuildConfig`, the annotation, the enum.
+- **A capture is cheaper than a theory.** #28a shipped because the model ("a foreign package fired a window
+  event, so the user left") was false and no recorded stream existed to contradict it. Any accessibility
+  report now owes a committed capture with an oracle *before* the fix is designed.
+- **Do not buy a layer because a survey says it is standard.** Robolectric and an emulator suite are the
+  textbook answers and are both deliberately deferred, with the trigger that would reverse each written down.
+  The two practices funded instead — replay with a counterfactual, and fixture honesty — cover 8 of the 18
+  defects, need no new dependency, and make the tests already here honest.
