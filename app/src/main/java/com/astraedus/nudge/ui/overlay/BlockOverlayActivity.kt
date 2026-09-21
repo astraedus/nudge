@@ -10,7 +10,7 @@ import androidx.activity.compose.setContent
 import androidx.compose.runtime.key
 import androidx.lifecycle.Lifecycle
 import com.astraedus.nudge.data.preferences.NudgePreferences
-import com.astraedus.nudge.domain.block.BlockLaunchGate
+import com.astraedus.nudge.domain.block.OverlayLifecycle
 import com.astraedus.nudge.domain.emergency.EmergencyPass
 import com.astraedus.nudge.domain.hold.HoldToUnlock
 import com.astraedus.nudge.domain.logging.NudgeLog
@@ -24,7 +24,6 @@ import com.astraedus.nudge.ui.theme.NudgeTheme
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
-import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -41,45 +40,23 @@ class BlockOverlayActivity : ComponentActivity() {
     private val mainHandler = Handler(Looper.getMainLooper())
 
     /**
-     * Set when this DELIVERY terminates as a walk-away, so [navigateHome] logs exactly one event
-     * per attempt no matter how many times it is reached (button + back button, or a double tap).
+     * EVERY lifecycle decision this activity makes, and the only place any of them is made.
      *
-     * **Per delivery, and reset by [render], exactly like [renderToken].** It used to be set once
-     * for the life of the activity, on the reasoning that a re-delivered block always arrives on an
-     * activity that has not walked away yet, because [navigateHome] finished immediately. Deferring
-     * that finish (see [WALK_AWAY_FINISH_FAILSAFE_MS]) made that false: this activity now stays
-     * RESUMED for up to 1200ms after a walk-away, and a block for a DIFFERENT package delivered
-     * through [onNewIntent] inside that window would have rendered on top of a latched flag, leaving
-     * both "I changed my mind" and the back button dead. On a `HARD_BLOCK`, which has no completion
-     * path, that is not a missed stat, it is a user with no way out at all.
+     * This class is a thin ADAPTER over it: each lifecycle callback forwards the platform facts
+     * only the Activity can know (`isFinishing`, `isChangingConfigurations`, `isDestroyed`, whether
+     * the lifecycle is at least STARTED) and executes the ordered [OverlayLifecycle.Effect]s that
+     * come back, through [runEffects].
      *
-     * Resetting cannot let one attempt log two rows: the only delivery that could be the SAME
-     * attempt is one for the same package, and `BlockLaunchGate.WALK_AWAY_TRANSITION_MS` (1500ms)
-     * refuses those for longer than the 1200ms this activity can survive a walk-away. The two
-     * constants are load-bearing in that direction too.
+     * The split exists because an Activity is not JVM-constructible and the bugs this file has
+     * shipped (#8, #15, #26, and two of #36's four mechanisms) were all ORDERING bugs, invisible to
+     * every value-level test and reachable only by a source-level grep that pinned a spelling. As a
+     * pure state machine the same decisions are driven by `OverlayLifecycleTest` and, against the
+     * real `BlockLaunchGuard`, by `OverlayLifecycleGuardTest` — each with a counterfactual that runs
+     * the pre-fix rule over the same sequence and proves it still fails. What a JVM test still
+     * cannot see is whether THIS class calls it correctly; that half stays with the source-level
+     * contract tests.
      */
-    private val walkedAway = AtomicBoolean(false)
-
-    /**
-     * Incremented on every [render] so each delivered block composes under a fresh [key], discarding
-     * the previous block's remembered countdown state. A counter rather than the block's contents:
-     * two different apps can legitimately share a package-mode-delay triple, and re-delivering the
-     * *same* block is still a new attempt that must start from full.
-     */
-    private var renderToken = 0
-
-    /**
-     * Which pending overlay in [BlockLaunchGuard] this ACTIVITY INSTANCE is, read once per
-     * [render].
-     *
-     * [onDestroy] used to clear the guard's pending overlay unconditionally, which is wrong
-     * whenever this instance is not the one that is pending. An overlay that finishes itself from
-     * [onStop] while the service launches a replacement has its `onDestroy` run AFTER the new
-     * instance's `onResume` -- so the dying instance wiped the live one's state, and the newly
-     * blocked app's own start-up window events were read as the user getting past an overlay that
-     * had only just gone up. Part of issue #36.
-     */
-    private var overlayId: Long = BlockLaunchGate.NO_OVERLAY_ID
+    private val overlayLifecycle = OverlayLifecycle()
 
     companion object {
         const val EXTRA_BLOCK_MODE = "block_mode"
@@ -108,25 +85,57 @@ class BlockOverlayActivity : ComponentActivity() {
          * through.
          */
         const val EXTRA_WEB_DOMAIN = "web_domain"
+    }
 
-        /**
-         * How long the walk-away path waits for the dispatched "go home" to stop us, before
-         * finishing anyway.
-         *
-         * The normal path is not this timer: `GLOBAL_ACTION_HOME` brings the launcher forward, this
-         * activity is stopped, and [onStop] finishes it, from the BACKGROUND, where finishing pops
-         * nothing forward. That is the whole point of not calling `finish()` inline (see
-         * [navigateHome]). This exists only so that a `go home` the platform accepted and never
-         * honoured cannot strand the user on an overlay whose buttons are already spent.
-         *
-         * Deliberately SHORTER than [com.astraedus.nudge.domain.block.BlockLaunchGate
-         * .WALK_AWAY_TRANSITION_MS] (1500ms). The two numbers are one mechanism: if this fail-safe
-         * ever does fire, the finish pops back to the blocked app's task, exactly the resurfacing
-         * that issue #26 is about, and it must land while the service's walk-away window is still
-         * open to suppress the block it would otherwise re-arm. Raising this above that constant
-         * re-opens #26 for the failure case.
-         */
-        private const val WALK_AWAY_FINISH_FAILSAFE_MS = 1_200L
+    /**
+     * Perform what [OverlayLifecycle] decided, in the order it decided it.
+     *
+     * The ONE place a lifecycle decision turns into a side effect. Nothing here chooses anything:
+     * every `if` that used to live in a lifecycle callback is now a branch in the pure class, where
+     * a JVM test can reach it. `when` over a sealed interface, so adding an effect without handling
+     * it does not compile.
+     */
+    private fun runEffects(effects: List<OverlayLifecycle.Effect>) {
+        effects.forEach { effect ->
+            when (effect) {
+                OverlayLifecycle.Effect.MarkOverlayInactive ->
+                    NudgeAccessibilityService.markOverlayInactive()
+
+                OverlayLifecycle.Effect.Finish -> finish()
+
+                OverlayLifecycle.Effect.ReportOverlayShown -> blockLaunchGuard.onOverlayShown()
+
+                is OverlayLifecycle.Effect.ReportOverlayDismissed ->
+                    blockLaunchGuard.onOverlayDismissed(effect.overlayId)
+
+                is OverlayLifecycle.Effect.ArmWalkAwayWindow ->
+                    blockLaunchGuard.onWalkAwayStarted(effect.packageName)
+
+                is OverlayLifecycle.Effect.RecordWalkAway ->
+                    recordWalkAway.record(
+                        packageName = effect.packageName,
+                        blockMode = effect.blockMode
+                    )
+
+                OverlayLifecycle.Effect.GoHome -> goHome()
+
+                OverlayLifecycle.Effect.GrantPassthrough -> passthroughManager.grant(
+                    packageName = passthroughPackage(intent),
+                    featureKey = intent.getStringExtra(EXTRA_FEATURE_KEY),
+                    webDomain = intent.getStringExtra(EXTRA_WEB_DOMAIN)
+                )
+
+                is OverlayLifecycle.Effect.ScheduleFailSafeFinish ->
+                    scheduleWalkAwayFinish(effect.token, effect.delayMs)
+
+                OverlayLifecycle.Effect.CancelPendingFailSafe ->
+                    mainHandler.removeCallbacksAndMessages(null)
+
+                OverlayLifecycle.Effect.LogFailSafeFired -> nudgeLogger.w(
+                    "walk-away go-home did not land, finishing overlay on the fail-safe"
+                )
+            }
+        }
     }
 
     /**
@@ -154,7 +163,8 @@ class BlockOverlayActivity : ComponentActivity() {
      * the blocked app. The back gesture would have become a one-swipe bypass of every block.
      *
      * An always-enabled callback keeps the pre-36 semantics exactly: [navigateHome] records the
-     * walk-away (once, via [walkedAway]) and leaves for the launcher. Registered here in [onCreate]
+     * walk-away (once per delivery, see [OverlayLifecycle.onWalkAwayRequested]) and leaves for the
+     * launcher. Registered here in [onCreate]
      * rather than in [render] because this activity is singleInstance. [render] also runs from
      * [onNewIntent], which would stack a second callback on every re-delivered block.
      */
@@ -180,19 +190,16 @@ class BlockOverlayActivity : ComponentActivity() {
     }
 
     private fun render(intent: Intent) {
-        // A NEW delivery is a NEW attempt, and it gets its own walk-away budget and its own timers.
-        // Both of these matter only on the [onNewIntent] path, and only because [navigateHome] no
-        // longer finishes immediately: without them a block delivered during a walk-away's
-        // transition would render over a latched [walkedAway] with a dead button and a dead back
-        // gesture, and under a stale fail-safe belonging to the previous attempt. The fail-safe is
-        // already inert by its [renderToken] guard; cancelling it here means nobody has to know
-        // that to reason about this method.
-        walkedAway.set(false)
-        mainHandler.removeCallbacksAndMessages(null)
-        // Which pending overlay we are. Read here because render() runs synchronously from
-        // onCreate/onNewIntent, i.e. immediately after the service's startActivity, so the guard's
-        // current pending overlay IS this delivery's. See [overlayId].
-        overlayId = blockLaunchGuard.currentOverlayId()
+        // A NEW delivery is a NEW attempt: its own walk-away budget, its own timers, its own Compose
+        // key. All three of those resets live in OverlayLifecycle.onDelivered, which is where they
+        // can be tested; see its doc for why they only became load-bearing once the walk-away
+        // stopped finishing immediately.
+        //
+        // The guard's pending overlay is read HERE, and handed straight to the state machine as
+        // this delivery's identity: render() runs synchronously from onCreate/onNewIntent, i.e.
+        // immediately after the service's startActivity, so what is pending IS this delivery's.
+        // See [OverlayLifecycle.overlayId] and [OverlayLifecycle.onDelivered].
+        runEffects(overlayLifecycle.onDelivered(blockLaunchGuard.currentOverlayId()))
 
         val modeName = intent.getStringExtra(EXTRA_BLOCK_MODE) ?: BlockMode.HARD_BLOCK.name
         val mode = try {
@@ -205,8 +212,7 @@ class BlockOverlayActivity : ComponentActivity() {
         // there is no "no-op overlay", and showing any of the three below would gate an app the
         // user explicitly chose not to gate.
         if (mode == BlockMode.NONE) {
-            NudgeAccessibilityService.markOverlayInactive()
-            finish()
+            runEffects(overlayLifecycle.onUnrenderableBlock())
             return
         }
 
@@ -301,7 +307,7 @@ class BlockOverlayActivity : ComponentActivity() {
         // overlays at once, and a per-`remember` key would have to be derived from the block's
         // identity anyway — keying on delaySeconds alone is NOT enough, since two apps sharing the
         // default 15s delay would still hand each other stale state.
-        val blockToken = ++renderToken
+        val blockToken = overlayLifecycle.renderToken
 
         setContent {
             NudgeTheme {
@@ -393,32 +399,27 @@ class BlockOverlayActivity : ComponentActivity() {
      */
     override fun onResume() {
         super.onResume()
-        blockLaunchGuard.onOverlayShown()
+        runEffects(overlayLifecycle.onResumed())
     }
 
     override fun onStop() {
         super.onStop()
-        if (!isFinishing && !isChangingConfigurations) {
-            NudgeAccessibilityService.markOverlayInactive()
-            finish()
-        }
+        runEffects(
+            overlayLifecycle.onStopped(
+                isFinishing = isFinishing,
+                isChangingConfigurations = isChangingConfigurations
+            )
+        )
     }
 
     /** Timer finished -- user waited patiently, let them through to the blocked app. */
     private fun onTimerComplete() {
-        // Only grant passthrough if the overlay is genuinely on screen. A countdown that somehow
-        // reached zero while backgrounded must never open the app: that silent grant was the
-        // issue #8 bypass. Belt-and-braces behind the lifecycle-gated ticker and onStop above.
-        val pkg = passthroughPackage(intent)
-        if (pkg.isNotEmpty() && lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
-            passthroughManager.grant(
-                packageName = pkg,
-                featureKey = intent.getStringExtra(EXTRA_FEATURE_KEY),
-                webDomain = intent.getStringExtra(EXTRA_WEB_DOMAIN)
+        runEffects(
+            overlayLifecycle.onTimerCompleted(
+                hasPassthroughTarget = passthroughPackage(intent).isNotEmpty(),
+                atLeastStarted = lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
             )
-        }
-        NudgeAccessibilityService.markOverlayInactive()
-        finish()
+        )
     }
 
     /**
@@ -428,14 +429,15 @@ class BlockOverlayActivity : ComponentActivity() {
      * back button. Deliberately does NOT grant passthrough — turning around is not permission to
      * enter, so the next attempt gets a fresh, full block.
      *
-     * Three properties this path owes, each of which used to be missing:
+     * The decision, its once-only gate and the ORDER of everything below live in
+     * [OverlayLifecycle.onWalkAwayRequested]; this method only executes what comes back. Three
+     * properties this path owes, each of which used to be missing:
      *
-     *  - **Exactly one event per delivery.** [walkedAway] gates the whole body, so a double tap, or
-     *     a tap racing the back button, cannot log two walk-aways for one attempt. [render] resets
-     *     it, because a re-delivered block is a new attempt and must not inherit a spent flag; see
-     *     [walkedAway] for why that cannot double-count the same attempt. (The countdown cannot also
-     *     fire: [onTimerComplete] is the only other terminal path and it `finish()`es, while the
-     *     ticker is cancelled below RESUMED.)
+     *  - **Exactly one event per delivery.** A second call inside one delivery returns no effects,
+     *     so a double tap, or a tap racing the back button, cannot log two walk-aways for one
+     *     attempt — and a re-delivered block gets a fresh budget rather than inheriting a spent
+     *     flag. (The countdown cannot also fire: [onTimerComplete] is the only other terminal path
+     *     and it finishes, while the ticker is cancelled below RESUMED.)
      *  - **A write that survives us.** [RecordWalkAwayUseCase] is a process-lifetime singleton, so
      *     the insert is not tied to this activity, which is destroyed microseconds later.
      *  - **Actually landing on the launcher.** A bare `startActivity(HOME)` raced our own
@@ -460,64 +462,45 @@ class BlockOverlayActivity : ComponentActivity() {
      *
      *     So the walk-away no longer finishes itself. `GLOBAL_ACTION_HOME` stops us, [onStop]
      *     finishes us, and a finish from the background pops nothing forward, the departure is
-     *     ordered by the platform instead of raced against it. [WALK_AWAY_FINISH_FAILSAFE_MS] covers
-     *     a go-home that is accepted and never honoured, and the service-side
+     *     ordered by the platform instead of raced against it.
+     *     [OverlayLifecycle.WALK_AWAY_FINISH_FAILSAFE_MS] covers a go-home that is accepted and
+     *     never honoured, and the service-side
      *     [com.astraedus.nudge.domain.block.BlockLaunchGate] window covers what that fail-safe would
      *     then expose. Belt and braces, because the failure mode here is the user being shown the
      *     screen they just dismissed.
      */
     private fun navigateHome() {
-        if (!walkedAway.compareAndSet(false, true)) return
-
-        val pkg = intent.getStringExtra(EXTRA_PACKAGE_NAME) ?: ""
-        val mode = intent.getStringExtra(EXTRA_BLOCK_MODE) ?: ""
-        recordWalkAway.record(packageName = pkg, blockMode = mode)
-
-        // The block is over the moment the user turns around; leaving the flag set until onDestroy
-        // left a window in which the service still believed an overlay was up. onTimerComplete
-        // already clears it here rather than relying on onDestroy, and so should this path.
-        NudgeAccessibilityService.markOverlayInactive()
-
-        // Armed BEFORE the go-home is dispatched, never after: the whole point is to be in place
-        // when the blocked app's window resurfaces, and that can happen on the very next frame.
-        // Scoped to the package the user is sitting IN (the browser, for a web block), that is
-        // whose window is underneath us, and whose re-entry must not be read as a fresh arrival.
-        blockLaunchGuard.onWalkAwayStarted(passthroughPackage(intent))
-
-        goHome()
-        scheduleWalkAwayFinish()
+        runEffects(
+            overlayLifecycle.onWalkAwayRequested(
+                attributedPackage = intent.getStringExtra(EXTRA_PACKAGE_NAME) ?: "",
+                blockMode = intent.getStringExtra(EXTRA_BLOCK_MODE) ?: "",
+                // The package the user is sitting IN (the browser, for a web block): that is whose
+                // window is underneath us, and whose re-entry must not be read as a fresh arrival.
+                walkAwayPackage = passthroughPackage(intent)
+            )
+        )
     }
 
     /**
-     * Finish anyway if the dispatched go-home never stops us. See [WALK_AWAY_FINISH_FAILSAFE_MS].
+     * Post the fail-safe finish for [token], to fire in [delayMs].
      *
-     * Guarded on [renderToken] so a NEW block delivered through [onNewIntent] during the transition
-     * is not killed by the previous attempt's timer, that block belongs to a different app or a
-     * different rule and the user has not walked away from it.
+     * Whether it may still act when it fires is [OverlayLifecycle.onFailSafeFired]'s decision, not
+     * this method's: a NEW block delivered through [onNewIntent] during the transition must not be
+     * killed by the previous attempt's timer, and the re-arm that has to precede the finish is part
+     * of the same decision.
      */
-    private fun scheduleWalkAwayFinish() {
-        val tokenAtWalkAway = renderToken
+    private fun scheduleWalkAwayFinish(token: Int, delayMs: Long) {
         val walkAwayPackage = passthroughPackage(intent)
         mainHandler.postDelayed({
-            if (!isFinishing && !isDestroyed && renderToken == tokenAtWalkAway) {
-                nudgeLogger.w("walk-away go-home did not land, finishing overlay on the fail-safe")
-                // RE-ARM THE WINDOW AT THE MOMENT OF THE POP, not just at the moment of the tap.
-                //
-                // This finish is the old #26 bug reproduced deliberately: it pops the blocked app
-                // forward, that app fires a real window event, and the only thing that stops the
-                // service re-blocking an app the user just declined is the walk-away window. Armed
-                // once at the tap, the window had whatever was left of 1500ms minus the 1200ms
-                // spent waiting -- 300ms for the pop, the app's resume and its window event to all
-                // land, on precisely the slow devices that reported #26 in the first place. Past
-                // that, the block came back and (before issue #36's invariant) counted itself.
-                //
-                // Re-arming measures the window from the event it is actually about. The constants
-                // stay ordered as `BlockOverlayLaunchContractTest` pins them; this removes the need
-                // for the margin between them to also be big enough for a device nobody has.
-                blockLaunchGuard.onWalkAwayStarted(walkAwayPackage)
-                finish()
-            }
-        }, WALK_AWAY_FINISH_FAILSAFE_MS)
+            runEffects(
+                overlayLifecycle.onFailSafeFired(
+                    token = token,
+                    isFinishing = isFinishing,
+                    isDestroyed = isDestroyed,
+                    walkAwayPackage = walkAwayPackage
+                )
+            )
+        }, delayMs)
     }
 
     /**
@@ -541,12 +524,10 @@ class BlockOverlayActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        mainHandler.removeCallbacksAndMessages(null)
-        NudgeAccessibilityService.markOverlayInactive()
         // Nothing is pending once we are gone. Leaving a stale pending overlay behind would let it
         // suppress a genuine bypass for the rest of its settle window -- but only OUR pending
         // overlay is ours to clear: a replacement instance is already on screen by the time a
-        // finished one is destroyed. See [overlayId].
-        blockLaunchGuard.onOverlayDismissed(overlayId)
+        // finished one is destroyed. See [OverlayLifecycle.overlayId].
+        runEffects(overlayLifecycle.onDestroyed())
     }
 }
