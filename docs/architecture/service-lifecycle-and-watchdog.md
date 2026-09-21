@@ -332,3 +332,20 @@ Each is a separate lane, and each has a real cost that has not been paid yet:
 - The passthrough that survives screen-off, the background-activity-launch overlay fallback, the
   untested `isOverlayActive`/content-change seam, and the local diagnostics log. All are in
   `docs/BACKLOG.md` and in the resilience audit's fix order.
+
+## The service's coroutine scope cannot take the process down (audit F7, v1.17.3)
+
+Every block evaluation, every `UsageEvent` write and every DataStore collect in this app runs on
+`NudgeAccessibilityService.serviceScope`. It was a bare `CoroutineScope(SupervisorJob() +
+Dispatchers.IO)`, which is the half of the answer everyone remembers: the supervisor stops one
+failed child cancelling its siblings and does NOTHING about the exception itself. With no
+`CoroutineExceptionHandler` in the context, an unhandled throwable in a root coroutine reaches the
+thread's default uncaught-exception handler — and that kills the process, taking the
+accessibility service with it, which means blocking stops entirely until the system rebinds. One
+Room constraint violation is enough. Losing a stat row must never stop enforcement.
+
+The scope is now a `util/CrashSafeScope`, which is the pattern `RecordWalkAwayUseCase` already
+carried, extracted so it can be tested rather than eyeballed: the failure is logged at e-level with
+the coroutine's name and swallowed. `CrashSafeScopeTest` asserts the outcomes and carries the
+counterfactual that makes them mean something — the same throwing coroutine on a bare
+`SupervisorJob` scope DOES reach the default uncaught handler, and on this one never does.
