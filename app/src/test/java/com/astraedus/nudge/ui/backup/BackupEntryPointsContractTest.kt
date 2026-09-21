@@ -78,7 +78,7 @@ class BackupEntryPointsContractTest {
     fun `only the backup ViewModel touches the export and import use cases`() {
         val owners = mainSources.walkTopDown()
             .filter { it.isFile && it.extension == "kt" }
-            .filterNot { it.parentFile.name == "usecase" } // the use cases themselves
+            .filterNot { it.parentFile?.name == "usecase" } // the use cases themselves
             .filter {
                 val text = it.readText()
                 text.contains("ExportRulesUseCase") || text.contains("ImportRulesUseCase")
