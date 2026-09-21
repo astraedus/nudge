@@ -56,6 +56,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.astraedus.nudge.domain.model.BlockMode
+import com.astraedus.nudge.ui.components.blockModeDescription
+import com.astraedus.nudge.ui.components.blockModeLabel
 import com.astraedus.nudge.ui.components.CustomTimeDialog
 import com.astraedus.nudge.ui.components.MinutesField
 import com.astraedus.nudge.ui.components.formatMinutesDisplay
@@ -191,8 +193,9 @@ fun RuleEditorScreen(
                         "Choose what this rule does when it matches.\n\n" +
                         "Hard Block -- Completely prevents opening the app. You can only go back to the home screen.\n\n" +
                         "Delay -- Shows a countdown timer (5-60 seconds) before letting you in. Gives your brain time to reconsider.\n\n" +
+                        "Hold -- Same wait, but the clock only runs while your finger is on the screen. Let go and it starts over.\n\n" +
                         "Breathing -- Guides you through a calming breathing exercise before the app opens.\n\n" +
-                        "If multiple matching rules are active, the strongest action wins: Hard Block > Delay > Breathing."
+                        "If multiple matching rules are active, the strongest action wins: Hard Block > Delay > Hold > Breathing."
                     )
                 }
 
@@ -206,36 +209,33 @@ fun RuleEditorScreen(
                             shape = SegmentedButtonDefaults.itemShape(
                                 index = index,
                                 count = EDITOR_BLOCKING_MODES.size
-                            )
+                            ),
+                            // No check icon. With four modes in the row its 18dp + 8dp would cost
+                            // more than a quarter of the width left for "Hard Block", and the
+                            // selected segment is already unmistakable from its container colour.
+                            icon = {}
                         ) {
                             Text(
-                                when (mode) {
-                                    BlockMode.NONE -> "Off"
-                                    BlockMode.HARD_BLOCK -> "Hard Block"
-                                    BlockMode.DELAY -> "Delay"
-                                    BlockMode.BREATHING -> "Breathing"
-                                }
+                                blockModeLabel(mode),
+                                maxLines = 1
                             )
                         }
                     }
                 }
 
                 Text(
-                    when (state.blockMode) {
-                        BlockMode.NONE -> "Not blocked."
-                        BlockMode.HARD_BLOCK -> "Completely blocks the app. You can only go back to the home screen."
-                        BlockMode.DELAY -> "Shows a countdown timer before letting you in. Gives you time to reconsider."
-                        BlockMode.BREATHING -> "Guides you through a breathing exercise before opening. Calms the impulse."
-                    },
+                    blockModeDescription(state.blockMode),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
 
-            if (state.blockMode == BlockMode.DELAY || state.blockMode == BlockMode.BREATHING) {
+            if (state.blockMode.usesDuration) {
+                val durationLabel =
+                    if (state.blockMode == BlockMode.HOLD) "Hold Duration" else "Delay Duration"
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        "Delay Duration",
+                        durationLabel,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Medium
                     )
@@ -266,7 +266,7 @@ fun RuleEditorScreen(
 
                     if (showDelayDialog) {
                         CustomTimeDialog(
-                            title = "Custom Delay Duration",
+                            title = "Custom $durationLabel",
                             unit = "seconds",
                             currentValue = state.delaySeconds,
                             min = 1,
@@ -879,4 +879,4 @@ private fun TimeSelector(
  * "Block the whole app" switch in `UnifiedAppConfigScreen`.
  */
 private val EDITOR_BLOCKING_MODES =
-    listOf(BlockMode.HARD_BLOCK, BlockMode.DELAY, BlockMode.BREATHING)
+    listOf(BlockMode.HARD_BLOCK, BlockMode.DELAY, BlockMode.HOLD, BlockMode.BREATHING)

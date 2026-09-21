@@ -66,6 +66,7 @@ class RuleEvaluator @Inject constructor() {
             BlockMode.NONE -> if (rule.dailyLimitMinutes != null) "Daily limit" else "No block"
             BlockMode.HARD_BLOCK -> "Hard Block"
             BlockMode.DELAY -> "Delay"
+            BlockMode.HOLD -> "Hold"
             BlockMode.BREATHING -> "Breathing"
         }
         parts += modeName

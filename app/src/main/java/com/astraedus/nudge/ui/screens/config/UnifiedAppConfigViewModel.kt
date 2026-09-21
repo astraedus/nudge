@@ -180,22 +180,18 @@ class UnifiedAppConfigViewModel @Inject constructor(
         }
     }
 
-    private fun parseBlockMode(mode: String?): BlockMode = when (mode) {
-        "NONE" -> BlockMode.NONE
-        "HARD_BLOCK" -> BlockMode.HARD_BLOCK
-        "DELAY" -> BlockMode.DELAY
-        "BREATHING" -> BlockMode.BREATHING
-        // Includes null (no existing rule): a brand-new rule defaults to DELAY, not NONE, so
-        // opening the editor for an unconfigured app still proposes actual protection.
-        else -> BlockMode.DELAY
-    }
+    /**
+     * The stored `mode` column as a [BlockMode]. Matched against the enum rather than hand-listed,
+     * so a mode added to [BlockMode] is readable back off a saved rule without a second edit here.
+     *
+     * Anything unrecognised, INCLUDING null (no existing rule), falls to DELAY rather than NONE, so
+     * opening the editor for an unconfigured app still proposes actual protection.
+     */
+    private fun parseBlockMode(mode: String?): BlockMode =
+        BlockMode.entries.firstOrNull { it.name == mode } ?: BlockMode.DELAY
 
-    private fun mapBlockModeToFeatureMode(mode: String): FeatureMode = when (mode) {
-        "HARD_BLOCK" -> FeatureMode.BLOCK
-        "DELAY" -> FeatureMode.DELAY
-        "BREATHING" -> FeatureMode.BREATHING
-        else -> FeatureMode.INHERIT
-    }
+    private fun mapBlockModeToFeatureMode(mode: String): FeatureMode =
+        FeatureMode.fromBlockMode(mode)
 
     // ═══ Save logic ═══
 
@@ -265,12 +261,7 @@ class UnifiedAppConfigViewModel @Inject constructor(
         // 3. Create feature override rules (non-INHERIT only)
         for ((featureKey, override) in state.featureOverrides) {
             if (override.mode == FeatureMode.INHERIT) continue
-            val ruleMode = when (override.mode) {
-                FeatureMode.BLOCK -> "HARD_BLOCK"
-                FeatureMode.DELAY -> "DELAY"
-                FeatureMode.BREATHING -> "BREATHING"
-                else -> continue
-            }
+            val ruleMode = override.mode.toBlockMode()?.name ?: continue
             blockRuleRepository.addRule(
                 BlockRule(
                     packageName = packageName,
@@ -310,12 +301,7 @@ class UnifiedAppConfigViewModel @Inject constructor(
             // Scheduled feature override rules
             for ((featureKey, override) in state.scheduledFeatureOverrides) {
                 if (override.mode == FeatureMode.INHERIT) continue
-                val ruleMode = when (override.mode) {
-                    FeatureMode.BLOCK -> "HARD_BLOCK"
-                    FeatureMode.DELAY -> "DELAY"
-                    FeatureMode.BREATHING -> "BREATHING"
-                    else -> continue
-                }
+                val ruleMode = override.mode.toBlockMode()?.name ?: continue
                 blockRuleRepository.addRule(
                     BlockRule(
                         packageName = packageName,

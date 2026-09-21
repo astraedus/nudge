@@ -336,6 +336,23 @@ class BlockOverlayActivity : ComponentActivity() {
                         )
                     }
 
+                    BlockMode.HOLD -> {
+                        HoldContent(
+                            holdSeconds = delaySeconds,
+                            appLabel = appLabel,
+                            dailyTimeRemainingMs = dailyTimeRemainingMs,
+                            dailyLimitMinutes = dailyLimitMinutes,
+                            onComplete = { onTimerComplete() },
+                            onCancel = { navigateHome() },
+                            ruleName = ruleName,
+                            titlePool = titlePool,
+                            canUseEmergencyPass = passState.canUse,
+                            emergencyLocked = passState.locked,
+                            nextPassMs = passState.nextPassMs,
+                            onUseEmergencyPass = onUsePass
+                        )
+                    }
+
                     BlockMode.BREATHING -> {
                         BreathingContent(
                             delaySeconds = delaySeconds,

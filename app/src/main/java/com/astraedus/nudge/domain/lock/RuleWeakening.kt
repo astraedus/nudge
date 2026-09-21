@@ -26,7 +26,12 @@ object RuleWeakening {
      */
     internal fun modeStrength(mode: String?): Int = when (mode) {
         "HARD_BLOCK" -> 3
-        "DELAY" -> 2
+        // DELAY and HOLD rank EQUAL on purpose. At the same duration they cost the same wall-clock
+        // wait before the app opens, and the hold additionally costs a thumb on the screen for all
+        // of it -- so neither is a softer version of the other, and switching between them at one
+        // duration is not an edit Strict Mode should stand in the way of. Ranking HOLD lower would
+        // make the stricter of the two the one that needs a challenge to select.
+        "DELAY", "HOLD" -> 2
         "BREATHING" -> 1
         "NONE" -> 0
         else -> 0
@@ -39,7 +44,7 @@ object RuleWeakening {
      *
      * Weakening dimensions:
      *  - enabled true -> false (the rule stops applying)
-     *  - mode softened (HARD_BLOCK > DELAY > BREATHING)
+     *  - mode softened (HARD_BLOCK > DELAY = HOLD > BREATHING)
      *  - delaySeconds shortened (less time to reconsider)
      *  - dailyLimitMinutes lowered, or removed when one existed (more allowance)
      *  - autoKickAfter raised, or removed when one existed (more interactions before the kick)

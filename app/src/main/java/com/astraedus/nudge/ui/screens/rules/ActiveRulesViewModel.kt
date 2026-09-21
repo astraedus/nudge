@@ -171,6 +171,7 @@ class ActiveRulesViewModel @Inject constructor(
                 "NONE" -> "Not blocked"
                 "HARD_BLOCK" -> "Hard Block"
                 "DELAY" -> "Delay ${delaySeconds}s"
+                "HOLD" -> "Hold ${delaySeconds}s"
                 "BREATHING" -> "Breathing ${delaySeconds}s"
                 else -> mode
             }

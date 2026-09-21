@@ -222,6 +222,7 @@ class EvaluateBlockUseCase @Inject constructor(
         val modeName = when (mode) {
             BlockMode.HARD_BLOCK -> "Hard Block"
             BlockMode.DELAY -> "Delay"
+            BlockMode.HOLD -> "Hold"
             BlockMode.BREATHING -> "Breathing"
             BlockMode.NONE -> "Off" // unreachable: NONE rules are filtered out before this point
         }

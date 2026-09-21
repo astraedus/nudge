@@ -319,6 +319,9 @@ private fun InterventionAppRowItem(
 private fun modeColor(mode: String): Color = when (mode) {
     "HARD_BLOCK" -> MaterialTheme.colorScheme.error
     "DELAY" -> MaterialTheme.colorScheme.primary
+    // HOLD is DELAY's sibling, so it takes the primary family rather than a fifth hue: the two
+    // cost the same wait, and the chart reads as three kinds of block plus "other", not four.
+    "HOLD" -> MaterialTheme.colorScheme.secondary
     "BREATHING" -> MaterialTheme.colorScheme.tertiary
     else -> MaterialTheme.colorScheme.surfaceVariant
 }
@@ -347,5 +350,10 @@ private fun buildWeekdayBars(weekday: List<Int>, calculator: InsightsCalculator)
     }
 }
 
+/**
+ * Legend and stacking order. Derived from [InsightsCalculator.KNOWN_MODES] rather than re-listed,
+ * so a block mode cannot be counted by the calculator and then be invisible on the chart drawn from
+ * it: a mode missing from this list has no bar, no legend row and no chip, with nothing failing.
+ */
 private val MODE_ORDER =
-    listOf("HARD_BLOCK", "DELAY", "BREATHING", InsightsCalculator.OTHER_MODE)
+    InsightsCalculator.KNOWN_MODES.toList() + InsightsCalculator.OTHER_MODE
