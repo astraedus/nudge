@@ -695,3 +695,27 @@ Three specifics that came out of it and are now doctrine:
   textbook answers and are both deliberately deferred, with the trigger that would reverse each written down.
   The two practices funded instead — replay with a counterfactual, and fixture honesty — cover 8 of the 18
   defects, need no new dependency, and make the tests already here honest.
+
+## A backup that FILTERS is data loss the file format cannot express (2026-09-21, issue #43)
+
+`ExportRulesUseCase` read `repository.getEnabledRules()`. Its own KDoc said "all enabled rules", so the
+filter read as intentional for a year, but the file format had carried an `enabled` flag per rule the whole
+time, and the importer had always restored it. The format was describing a state the exporter could never
+produce. A rule the user had switched off was simply absent from their backup, and a restore onto a wiped
+phone lost it with no error, no count, and nothing in the UI to notice.
+
+- **On a backup path, "which rows do we collect" is a correctness question, not a filter.** Every other
+  failure mode here is loud (per-entry skips are counted, a wrong-shaped envelope fails the import). A
+  narrowed *query* is the one data loss that reports success. When a use case says it exports a thing, check
+  which query feeds it, not just what it does with the rows.
+- **A field the format carries but the writer can never vary is the tell.** `enabled` was serialized,
+  parsed, defaulted (`optBoolean("enabled", true)`) and applied to the inserted `BlockRule`, four places
+  handling a value that was constant by construction. That asymmetry is visible from the data classes alone.
+- **The regression test asserts the COLLECTION, not the output.** `ExportRulesUseCaseTest` leaves
+  `getEnabledRules` deliberately UNSTUBBED on the mockk repository, so reaching for it again fails loudly
+  instead of quietly exporting less. Asserting "2 rules came out" would pass for a fixture where both happen
+  to be enabled.
+- **Backward compatibility rode on the default, not on a version bump.** A pre-#43 file names no `enabled`
+  key *and only ever contained enabled rules*, so the importer's `true` default is exactly right and must
+  stay; reading that silence as "off" would restore a phone that blocks nothing. Envelope stays version 1 in
+  both directions, for the same reason `history` and `settings` did.
