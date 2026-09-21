@@ -2,6 +2,15 @@
 
 All notable changes to Nudge are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.17.3] - unreleased
+
+### Added
+- **You can save a backup to your own phone now, not just send it somewhere.** Nudge only ever offered to *share* a backup, and "save to this device" is not something Android's share sheet can do — on a real phone the whole list was Drive, Gmail, Telegram and the like, every one of them sending your file off to a cloud or another device. For an app with no internet permission at all, that was a strange place to end up. "Save backup" now opens your phone's own file picker, you choose a folder, and the file lands there — named for the day you took it, so a folder of them reads in order. Sharing is still there, right underneath it, for when sending it somewhere is what you actually want. If the file cannot be written for any reason, Nudge says so rather than leaving you thinking you have a backup you do not.
+- **Backup and restore are in Settings.** They used to live only in the menu on the Active Rules screen, which you can only get to by tapping a card on the dashboard — findable if you already knew, invisible if you did not. There is now a Backup section in Settings with all three: save, share and restore. Same backup, same restore, two places to find them.
+
+### Fixed
+- **A backup now includes rules you have switched off** ([#43](https://github.com/astraedus/nudge/issues/43)). If you had turned a rule off — parked for later, or paused while you think about it — it was left out of the file entirely, so restoring onto a new or wiped phone came back without it and without any sign it had ever been there. Every rule is in the backup now, and comes back exactly as you left it: the ones you had on are on, the ones you had off are off. Backups written by older versions still restore the way they always did, with their rules switched on.
+
 ## [1.17.2] - 2026-09-20
 
 ### Fixed

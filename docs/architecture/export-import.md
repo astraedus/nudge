@@ -9,10 +9,34 @@ that is not an `ALTER TABLE`, because it rewrites the same `usage_events` rows a
 
 - `data/export/RuleExportData.kt` — data classes: `NudgeExport`, `ExportedRule`, `ExportedGroup`, `ExportedHistoryEvent`, `ExportedSettings`
 - `data/export/RuleExporter.kt` — serialization/deserialization via `org.json` (no extra dependency). Handles null fields, version validation, block mode validation. `@Singleton` with `@Inject`.
-- `domain/usecase/ExportRulesUseCase.kt` — collects enabled rules + groups + members + the full usage history + the app's settings, delegates to RuleExporter (off the main thread)
+- `domain/usecase/ExportRulesUseCase.kt` — collects EVERY rule with its `enabled` flag (see below) + groups + members + the full usage history + the app's settings, delegates to RuleExporter (off the main thread)
 - `domain/usecase/ImportRulesUseCase.kt` — `preview()` (suspend) returns an `ImportPreview`, `execute()` inserts with duplicate detection (packageName + mode + schedule match). Creates groups by name if missing. Applies the file's settings, if it carries any, then merges history last.
-- UI: three-dot overflow menu in `ActiveRulesScreen` with "Export Rules" (share intent via FileProvider) and "Import Rules" (ACTION_OPEN_DOCUMENT file picker). Confirmation dialog before importing.
+- UI: `ui/backup/` owns every entry point — `BackupViewModel` (the only holder of the two use cases), `rememberBackupActions` (the two document pickers) and `BackupDialogs` (preview / result / error / save-result / Strict Mode challenge), plus `ImportMessages.kt`'s pure text builders. Two screens host that pair: the three-dot overflow menu in `ActiveRulesScreen` and the "Backup" section in `SettingsScreen`. Both offer **Save backup** (`ACTION_CREATE_DOCUMENT`), **Share backup** (`ACTION_SEND` via FileProvider) and **Import backup** (`ACTION_OPEN_DOCUMENT`), with a confirmation dialog before importing.
 - Export format: pretty-printed JSON, version 1, human-readable. Groups referenced by name (not ID). Usage history and app settings both ride in the same file — see below.
+
+### Every rule, including the ones switched off (issue #43)
+
+The export collected `getEnabledRules()`, so a rule the user had switched off — how people park a rule they mean to come back to — was absent from their backup and lost on a restore to a wiped phone. It now collects `getAllRules()`.
+
+- **Nothing about the FORMAT changed.** `enabled` has always been written for every exported rule and `parseRule` has always read it, defaulting to `true`. That default is the backward-compatibility mechanism and must stay: a pre-#43 file names no flag *and only ever contained enabled rules*, so reading its silence as "off" would restore a phone that blocks nothing. Still envelope version 1 in both directions, for the same reason `history` and `settings` are.
+- **Duplicate detection does not consider `enabled`** (target + mode + schedule), so re-importing a backup onto a device that already has the rule does not flip its switch — a duplicate is a rule you already have, not an instruction about its state.
+- Pinned by `ExportRulesUseCaseTest` (the collection: `getEnabledRules` is deliberately left unstubbed, so reaching for it fails loudly) and two `ImportRulesUseCaseTest` cases (the off-backup-restore round trip through the real exporter, and an old file with no `enabled` key restoring switched ON).
+
+### Saving a backup to the device (`ACTION_CREATE_DOCUMENT`)
+
+Export used to fire `ACTION_SEND` only, and **"save to device" is not an `ACTION_SEND` target on Android**: enumerated on the Pixel 3, the entire share sheet was Drive, Gmail, KDE Connect, Telegram, Bitwarden and Discord — every one of them sending the file to a cloud or another device. A zero-internet-permission privacy app could not put a backup in its own user's Downloads folder, and the file the share path writes lives in `cacheDir`, where the system may evict it.
+
+- **Save** uses the `CreateDocument("application/json")` contract, mirroring the `OpenDocument` import, and writes through the returned `Uri` in mode **`"wt"`**. `"w"` does not truncate on every provider: overwriting a larger previous backup would leave its tail behind and produce a file that is no longer valid JSON — a corrupt backup that looks saved.
+- **A refused write is reported as a failure**, not as nothing. A backup the user believes they have is worse than one they know they do not.
+- **The export runs only once a destination exists.** Serializing an unbounded history is real work, so backing out of the picker costs nothing.
+- Files are offered as `nudge-backup-<ISO date>.json` (`ui/backup/BackupFileName.kt`, pure and unit-tested) so a folder of backups sorts and identifies itself.
+- **Share stays**, as the second option: sending the file straight to another device or a password manager is legitimate, it just cannot be the only destination.
+
+### Why backup has its own ViewModel
+
+Backup lived in `ActiveRulesViewModel`, reachable only from that screen's overflow menu — and Active Rules is itself reachable only by tapping a dashboard stat card. A QA agent searching exhaustively concluded the feature did not exist (`docs/BACKLOG.md`, v1.12.0 QA). Adding the Settings entry point by copying the flow would have meant a second, independent idea of what a weakening import owes Strict Mode, so the flow moved into `ui/backup/BackupViewModel` instead and both screens host the same instance-per-screen of it. Settings also gets backup without dragging in the installed-app scan and rules flow `ActiveRulesViewModel` exists for.
+
+`BackupEntryPointsContractTest` pins the shape rather than the list: both screens still offer all three actions, **every** screen that wires `rememberBackupActions` also renders `BackupDialogs` (a picker with no dialogs shows the user nothing after an import, including no challenge), and only `BackupViewModel` touches the export/import use cases.
 
 ### Usage HISTORY rides in the same file (optional `history` key, still version 1)
 
