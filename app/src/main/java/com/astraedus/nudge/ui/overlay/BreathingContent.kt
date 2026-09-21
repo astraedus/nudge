@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
+import com.astraedus.nudge.domain.hold.HoldToUnlock
 import java.util.concurrent.atomic.AtomicBoolean
 
 @Composable
@@ -51,7 +52,8 @@ fun BreathingContent(
     canUseEmergencyPass: Boolean = false,
     emergencyLocked: Boolean = false,
     nextPassMs: Long = 0L,
-    onUseEmergencyPass: () -> Unit = {}
+    onUseEmergencyPass: () -> Unit = {},
+    holdToUnlockMs: Long = 0L
 ) {
     // Unkeyed by design: BlockOverlayActivity composes this subtree under a per-delivery key, so a
     // re-delivered block already gets fresh state (issue #15).
@@ -75,6 +77,13 @@ fun BreathingContent(
     // this path must never be able to grant it twice.
     val completed = remember { AtomicBoolean(false) }
 
+    // Issue #35: with a hold configured, finishing the exercise no longer OPENS the app, it hands
+    // the last step to the user. Remembered outside the lifecycle block for the same reason
+    // `elapsedMs` is, a pause must not put the user back on an exercise they already completed.
+    // When the hold is Off this stays false and nothing about the screen changes.
+    var timerFinished by remember { mutableStateOf(false) }
+    val holdEnabled = HoldToUnlock.isEnabled(holdToUnlockMs)
+
     // Breathing cycle animation — runs ONLY while the overlay is on screen (issue #8).
     val lifecycleOwner = LocalLifecycleOwner.current
     LaunchedEffect(lifecycleOwner, totalMs) {
@@ -95,7 +104,9 @@ fun BreathingContent(
             }
 
             fun completeOnce() {
-                if (completed.compareAndSet(false, true)) onComplete()
+                if (completed.compareAndSet(false, true)) {
+                    if (holdEnabled) timerFinished = true else onComplete()
+                }
             }
 
             while (true) {
@@ -157,8 +168,15 @@ fun BreathingContent(
                 Spacer(modifier = Modifier.height(16.dp))
             }
 
+            // Once the exercise is over the screen has one job left: say what the user must do now,
+            // and that stopping is still an option. "Breathe in" is an instruction for an exercise
+            // that has already finished.
             Text(
-                text = if (isInhaling) "Breathe in..." else "Breathe out...",
+                text = when {
+                    timerFinished -> "The exercise is done"
+                    isInhaling -> "Breathe in..."
+                    else -> "Breathe out..."
+                },
                 style = MaterialTheme.typography.titleLarge,
                 color = MaterialTheme.colorScheme.onBackground,
                 textAlign = TextAlign.Center
@@ -167,7 +185,7 @@ fun BreathingContent(
             Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-                text = subtitle,
+                text = if (timerFinished) "Open it on purpose, or walk away." else subtitle,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
@@ -175,29 +193,40 @@ fun BreathingContent(
 
             Spacer(modifier = Modifier.height(32.dp))
 
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier.size(200.dp)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(160.dp)
-                        .scale(circleScale.value)
-                        .clip(CircleShape)
-                        .background(
-                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
-                        )
+            // The breathing circle and the hold ring occupy the same place on purpose: the circle
+            // the user has been breathing with is the circle that fills under their thumb.
+            if (timerFinished) {
+                HoldToUnlockControl(
+                    holdDurationMs = holdToUnlockMs,
+                    // The SAME completion callback the exercise used to call on its own. The hold
+                    // gates the existing grant; it never becomes a second way in.
+                    onUnlock = onComplete
                 )
+            } else {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier.size(200.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(160.dp)
+                            .scale(circleScale.value)
+                            .clip(CircleShape)
+                            .background(
+                                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
+                            )
+                    )
 
-                Box(
-                    modifier = Modifier
-                        .size(100.dp)
-                        .scale(circleScale.value)
-                        .clip(CircleShape)
-                        .background(
-                            MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)
-                        )
-                )
+                    Box(
+                        modifier = Modifier
+                            .size(100.dp)
+                            .scale(circleScale.value)
+                            .clip(CircleShape)
+                            .background(
+                                MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)
+                            )
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(40.dp))
