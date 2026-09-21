@@ -34,6 +34,7 @@ import androidx.compose.material.icons.outlined.QueryStats
 import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material.icons.outlined.Timer
+import androidx.compose.material.icons.outlined.TouchApp
 import androidx.compose.material.icons.outlined.Widgets
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -70,6 +71,7 @@ import androidx.compose.ui.res.stringResource
 import com.astraedus.nudge.BuildConfig
 import com.astraedus.nudge.R
 import com.astraedus.nudge.data.preferences.NudgePreferences
+import com.astraedus.nudge.domain.hold.HoldToUnlock
 import com.astraedus.nudge.domain.lock.LockedToggle
 import com.astraedus.nudge.domain.lock.SettingsWeakening
 import com.astraedus.nudge.domain.lock.StrictModeChallenge
@@ -110,6 +112,9 @@ fun SettingsScreen(
         initialValue = StrictModeChallenge.DEFAULT_LENGTH
     )
     val emergencyPassEnabled by preferences.emergencyPassEnabled.collectAsStateWithLifecycle(initialValue = true)
+    val holdToUnlockSeconds by preferences.holdToUnlockSeconds.collectAsStateWithLifecycle(
+        initialValue = HoldToUnlock.DEFAULT_SECONDS
+    )
     val coroutineScope = rememberCoroutineScope()
     var versionTapCount by rememberSaveable { mutableIntStateOf(0) }
     var developerOptionsVisible by rememberSaveable { mutableStateOf(false) }
@@ -383,6 +388,46 @@ fun SettingsScreen(
             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
             Text(
+                "Block Screen",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                color = MaterialTheme.colorScheme.primary
+            )
+
+            ListItem(
+                headlineContent = { Text("Hold to unlock") },
+                supportingContent = {
+                    Text(
+                        "When a delay or breathing timer finishes, press and hold to open the app —" +
+                            " letting go early keeps you out. \"Off\" opens the app as soon as the " +
+                            "timer ends, the way it always has."
+                    )
+                },
+                leadingContent = { Icon(Icons.Outlined.TouchApp, contentDescription = null) }
+            )
+
+            // Not gated by applyLockedToggle / Strict Mode's unlock challenge, on the same reasoning
+            // as the Strict Mode difficulty chips above: changing the hold length doesn't undo a
+            // block — the delay or breathing exercise still runs in full either way, and the app is
+            // still confronted before it opens. That's what Strict Mode exists to protect, and this
+            // picker doesn't touch it, so it stays freely editable.
+            Row(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                HoldToUnlock.OPTION_SECONDS.forEach { seconds ->
+                    HoldDurationChip(
+                        seconds = seconds,
+                        selected = holdToUnlockSeconds == seconds,
+                        onSelect = { coroutineScope.launch { preferences.setHoldToUnlockSeconds(it) } }
+                    )
+                }
+            }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+            Text(
                 "Personalize",
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.Medium,
@@ -579,6 +624,21 @@ private fun StrictModeDifficultyChip(
         selected = selected,
         onClick = { onSelect(length) },
         label = { Text("$label ($length)") }
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun HoldDurationChip(
+    seconds: Int,
+    selected: Boolean,
+    onSelect: (Int) -> Unit
+) {
+    val label = if (seconds == HoldToUnlock.OFF_SECONDS) "Off" else "${seconds}s"
+    FilterChip(
+        selected = selected,
+        onClick = { onSelect(seconds) },
+        label = { Text(label) }
     )
 }
 
