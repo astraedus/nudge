@@ -1,10 +1,8 @@
-package com.astraedus.nudge.ui.screens.rules
+package com.astraedus.nudge.ui.backup
 
 import com.astraedus.nudge.data.export.ExportedSettings
 import com.astraedus.nudge.data.export.ImportResult
 import com.astraedus.nudge.data.preferences.NudgePreferences
-import com.astraedus.nudge.data.repository.BlockRuleRepository
-import com.astraedus.nudge.data.repository.InstalledAppsRepository
 import com.astraedus.nudge.domain.lock.StrictModeChallenge
 import com.astraedus.nudge.domain.usecase.ExportRulesUseCase
 import com.astraedus.nudge.domain.usecase.ImportOutcome
@@ -38,15 +36,13 @@ import java.io.File
  * and importing the file would release the commitment lock in one tap, on the one write path that
  * does not go through the Settings screen.
  *
- * These drive the real [ActiveRulesViewModel] rather than re-stating its logic, because the thing
- * being pinned is the ORDER of its decisions (ask whether the payload weakens, gate, only then
- * write), and a re-statement would happily keep passing after the ViewModel stopped doing it.
+ * These drive the real [BackupViewModel] rather than re-stating its logic, because the thing being
+ * pinned is the ORDER of its decisions (ask whether the payload weakens, gate, only then write),
+ * and a re-statement would happily keep passing after the ViewModel stopped doing it.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
-class ActiveRulesImportGateTest {
+class BackupImportGateTest {
 
-    private lateinit var blockRuleRepository: BlockRuleRepository
-    private lateinit var installedAppsRepository: InstalledAppsRepository
     private lateinit var exportRulesUseCase: ExportRulesUseCase
     private lateinit var importRulesUseCase: ImportRulesUseCase
     private lateinit var preferences: NudgePreferences
@@ -64,15 +60,11 @@ class ActiveRulesImportGateTest {
     @Before
     fun setUp() {
         Dispatchers.setMain(UnconfinedTestDispatcher())
-        blockRuleRepository = mockk()
-        installedAppsRepository = mockk()
         exportRulesUseCase = mockk()
         importRulesUseCase = mockk()
         preferences = mockk()
         writes = mutableListOf()
 
-        every { blockRuleRepository.getAllRules() } returns flowOf(emptyList())
-        coEvery { installedAppsRepository.getInstalledApps() } returns emptyList()
         coEvery { importRulesUseCase.preview(any()) } returns ImportPreview(parsed, 0)
         coEvery { importRulesUseCase.execute(any()) } answers {
             writes.add(firstArg())
@@ -91,16 +83,10 @@ class ActiveRulesImportGateTest {
         Dispatchers.resetMain()
     }
 
-    private fun viewModel(strictOn: Boolean, weakens: Boolean): ActiveRulesViewModel {
+    private fun viewModel(strictOn: Boolean, weakens: Boolean): BackupViewModel {
         every { preferences.isStrictModeEnabled } returns flowOf(strictOn)
         coEvery { importRulesUseCase.weakensProtection(any()) } returns weakens
-        return ActiveRulesViewModel(
-            blockRuleRepository,
-            installedAppsRepository,
-            exportRulesUseCase,
-            importRulesUseCase,
-            preferences
-        )
+        return BackupViewModel(exportRulesUseCase, importRulesUseCase, preferences)
     }
 
     /**
@@ -111,7 +97,7 @@ class ActiveRulesImportGateTest {
      * UI thread), which is a real thread pool the test scheduler does not control. Waiting on the
      * state the dialog is driven from is the same thing the user does.
      */
-    private suspend fun ActiveRulesViewModel.previewThenConfirm() {
+    private suspend fun BackupViewModel.previewThenConfirm() {
         previewImport { "{}" }
         uiState.first { it.importPreview != null }
         confirmImport()
@@ -215,13 +201,13 @@ class ActiveRulesImportGateTest {
             .toList()
 
         assertEquals(
-            "every import write must go through the Strict Mode gate in ActiveRulesViewModel",
-            listOf("ActiveRulesViewModel.kt"),
+            "every import write must go through the Strict Mode gate in BackupViewModel",
+            listOf("BackupViewModel.kt"),
             writers
         )
         assertTrue(
             "the writer must ask whether the payload weakens protection",
-            File(mainSources, "com/astraedus/nudge/ui/screens/rules/ActiveRulesViewModel.kt")
+            File(mainSources, "com/astraedus/nudge/ui/backup/BackupViewModel.kt")
                 .readText()
                 .contains("importRulesUseCase.weakensProtection(")
         )
