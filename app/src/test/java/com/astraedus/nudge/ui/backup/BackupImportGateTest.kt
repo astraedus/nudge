@@ -33,8 +33,8 @@ import java.io.File
  *
  * A backup file carries the user's app SETTINGS as well as their rules, and it is plain,
  * hand-editable JSON — so without this gate, typing `"strictModeEnabled": false` into a text editor
- * and importing the file would release the commitment lock in one tap, on the one write path that
- * does not go through the Settings screen.
+ * and importing the file would release the commitment lock in one tap, on the one write path whose
+ * values never pass through the Settings screen's own toggles.
  *
  * These drive the real [BackupViewModel] rather than re-stating its logic, because the thing being
  * pinned is the ORDER of its decisions (ask whether the payload weakens, gate, only then write),
