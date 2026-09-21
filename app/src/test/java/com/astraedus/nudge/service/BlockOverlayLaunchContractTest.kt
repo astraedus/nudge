@@ -184,20 +184,33 @@ class BlockOverlayLaunchContractTest {
             "the launch must record that an overlay is on its way but not yet visible",
             launchHelper.contains("guard.onOverlayLaunched(targetPackage)")
         )
+        // The DECISIONS moved into the pure `OverlayLifecycle`, where they are driven against the
+        // real guard by `OverlayLifecycleGuardTest`. What no value test can see is whether this
+        // activity still forwards the two callbacks at all — a lifecycle callback that quietly
+        // stops calling the state machine is a silent no-op, so the forwarding is what is pinned
+        // here.
         val onResume = stripComments(
             overlay.substringAfter("override fun onResume()").substringBefore("\n    }")
         )
         assertTrue(
             "only the activity can say when it is on screen; the accessibility stream cannot, " +
                 "because the overlay task's first window arrives ahead of the overlay itself",
-            onResume.contains("blockLaunchGuard.onOverlayShown()")
+            onResume.contains("overlayLifecycle.onResumed()")
+        )
+        val onDestroy = stripComments(
+            overlay.substringAfter("override fun onDestroy()").substringBefore("\n    }")
         )
         assertTrue(
-            "and a destroyed overlay must stop suppressing bypasses, but only for the overlay " +
-                "instance it actually owns: a stale pending overlay cleared unconditionally would " +
-                "let a REPLACEMENT instance's bypass suppression be wiped out by the finish of the " +
-                "one it replaced, which is already on screen by the time the old one is destroyed",
-            stripComments(overlay).contains("blockLaunchGuard.onOverlayDismissed(overlayId)")
+            "and a destroyed overlay must stop suppressing bypasses",
+            onDestroy.contains("overlayLifecycle.onDestroyed()")
+        )
+        assertTrue(
+            "...but only for the overlay instance it actually owns: a stale pending overlay " +
+                "cleared unconditionally would let a REPLACEMENT instance's bypass suppression be " +
+                "wiped out by the finish of the one it replaced, which is already on screen by the " +
+                "time the old one is destroyed. So the dismissal is reported BY ID, never bare",
+            stripComments(overlay)
+                .contains("blockLaunchGuard.onOverlayDismissed(effect.overlayId)")
         )
     }
 
@@ -374,16 +387,27 @@ class BlockOverlayLaunchContractTest {
      */
     @Test
     fun `the walk-away fail-safe re-arms the window at the moment of the pop`() {
+        // The ORDER (re-arm, then finish) is now a value assertion against the real guard, in
+        // `OverlayLifecycleGuardTest.the walk-away fail-safe re-arms the window at the pop it
+        // causes` — it runs the whole sequence on a real clock and proves, with a counterfactual,
+        // that a window armed only at the tap has expired by the time the pop it caused lands.
+        //
+        // What remains source-level is the thing a value test cannot reach: that the posted
+        // callback DELEGATES rather than deciding for itself. A fail-safe that re-derived "may I
+        // still act" here would be a second copy of a rule whose whole history is copies drifting.
         val body = stripComments(
-            overlay.substringAfter("private fun scheduleWalkAwayFinish() {").substringBefore("\n    }")
+            overlay
+                .substringAfter("private fun scheduleWalkAwayFinish(token: Int, delayMs: Long) {")
+                .substringBefore("\n    }")
         )
-        val arm = index(body, "blockLaunchGuard.onWalkAwayStarted(")
-        val finishCall = index(body, "finish()")
         assertTrue(
-            "the fail-safe must re-arm the window immediately before its own finish(), that finish " +
-                "deliberately reproduces issue #26's pop, so the window must be measured from the " +
-                "pop and not from a tap 1200ms earlier",
-            arm < finishCall
+            "the posted fail-safe must ask the state machine whether it may still act",
+            body.contains("overlayLifecycle.onFailSafeFired(")
+        )
+        assertFalse(
+            "and must not decide anything itself: no inline finish, no inline re-arm",
+            Regex("""(^|\W)finish\(\)""").containsMatchIn(body) ||
+                body.contains("blockLaunchGuard.")
         )
     }
 
@@ -437,20 +461,32 @@ class BlockOverlayLaunchContractTest {
      */
     @Test
     fun `the walk-away arms the launch window before going home, and does not finish itself`() {
+        // Both halves are now value assertions in `OverlayLifecycleTest` and
+        // `OverlayLifecycleGuardTest`: the effect list returned for a walk-away is exactly
+        // RecordWalkAway, MarkOverlayInactive, ArmWalkAwayWindow, GoHome, ScheduleFailSafeFinish —
+        // so "armed before the go-home" and "never finishes inline" are read off the list rather
+        // than off the spelling of a method body, and the guard test proves what each one buys.
+        //
+        // The residue is the forwarding, and it is worth pinning: a `navigateHome` that grew a
+        // second decision of its own would put the once-only gate and the arming order back in two
+        // places, which is how #26 arrived in the first place.
         val body = stripComments(
             overlay.substringAfter("private fun navigateHome()").substringBefore("\n    }")
         )
-        val arm = index(body, "blockLaunchGuard.onWalkAwayStarted(")
-        val goHome = index(body, "goHome()")
-        assertTrue("the window must be armed before the go-home is dispatched", arm < goHome)
+        assertTrue(
+            "the walk-away must be one delegation to the state machine",
+            body.contains("overlayLifecycle.onWalkAwayRequested(")
+        )
         assertFalse(
             "finishing inline is the pop that reveals the blocked app, issue #26. onStop finishes " +
                 "us once the launcher lands, and the fail-safe covers a go-home that never does",
             Regex("""(^|\W)finish\(\)""").containsMatchIn(body)
         )
-        assertTrue(
-            "a walk-away must still always terminate the overlay",
-            body.contains("scheduleWalkAwayFinish()")
+        assertFalse(
+            "nor may it arm, record or go home on its own account: the order of those is the fix",
+            body.contains("blockLaunchGuard.") ||
+                body.contains("recordWalkAway.") ||
+                body.contains("goHome()")
         )
     }
 
@@ -462,9 +498,12 @@ class BlockOverlayLaunchContractTest {
      */
     @Test
     fun `the overlay's fail-safe finish lands inside the service's walk-away window`() {
-        val failSafe = Regex("""WALK_AWAY_FINISH_FAILSAFE_MS\s*=\s*([\d_]+)""")
-            .find(overlay)?.groupValues?.get(1)?.replace("_", "")?.toLong()
-            ?: error("WALK_AWAY_FINISH_FAILSAFE_MS not found in BlockOverlayActivity")
+        // Both numbers are plain constants now that the overlay's lifecycle decisions live in
+        // `OverlayLifecycle`, so this compares the VALUES instead of regexing one of them out of a
+        // source file — a regex that would have gone on passing by finding nothing if the constant
+        // were ever renamed.
+        val failSafe =
+            com.astraedus.nudge.domain.block.OverlayLifecycle.WALK_AWAY_FINISH_FAILSAFE_MS
         assertTrue(
             "the overlay must give up before the service stops covering for it " +
                 "(fail-safe ${failSafe}ms vs window " +

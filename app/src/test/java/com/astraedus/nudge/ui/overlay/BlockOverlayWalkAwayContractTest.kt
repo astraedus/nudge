@@ -1,5 +1,6 @@
 package com.astraedus.nudge.ui.overlay
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -83,9 +84,23 @@ class BlockOverlayWalkAwayContractTest {
      */
     @Test
     fun `the walk-away path is gated so one attempt cannot log two events`() {
+        // The gate itself is a value assertion now (`OverlayLifecycleTest`: a second walk-away
+        // inside one delivery returns an EMPTY effect list, and a new delivery restores the
+        // budget). What a value test cannot see is whether BOTH entry points still land on the one
+        // gated path: the overlay button and the back gesture each call `navigateHome`, and either
+        // of them growing its own body would be a second walk-away writer.
+        val backHandler = stripComments(
+            source.substringAfter("private fun registerBackHandler()").substringBefore("\n    }")
+        )
         assertTrue(
-            "navigateHome must claim a once-only flag before recording",
-            source.contains("walkedAway.compareAndSet(false, true)")
+            "the back gesture must walk away through the one gated path",
+            backHandler.contains("navigateHome()")
+        )
+        assertEquals(
+            "the walk-away is claimed in exactly one place",
+            1,
+            Regex("""overlayLifecycle\.onWalkAwayRequested\(""")
+                .findAll(stripComments(source)).count()
         )
     }
 
@@ -111,15 +126,20 @@ class BlockOverlayWalkAwayContractTest {
         assertTrue("render must exist", render >= 0)
         assertTrue("navigateHome must follow render", navigateHome > render)
 
+        // WHAT a delivery resets (the once-only walk-away flag, the stale fail-safe, the Compose
+        // key) is asserted as values in `OverlayLifecycleTest`. What is asserted here is that a
+        // delivery is REPORTED at all — an `onNewIntent` that rendered without telling the state
+        // machine would render a new block over a spent flag with a dead button and a dead back
+        // gesture, which on a HARD_BLOCK leaves the user no way off the screen.
         val body = stripComments(source.substring(render, navigateHome))
         assertTrue(
-            "render must reset the once-only walk-away flag, or a block delivered during a " +
-                "walk-away transition renders with a dead button and a dead back gesture",
-            body.contains("walkedAway.set(false)")
+            "every delivery must be reported to the state machine that owns the per-delivery reset",
+            body.contains("overlayLifecycle.onDelivered(")
         )
         assertTrue(
-            "and must drop the previous attempt's pending fail-safe finish",
-            body.contains("mainHandler.removeCallbacksAndMessages(null)")
+            "and it must adopt the guard's CURRENT pending overlay as this delivery's identity, " +
+                "read at render time because render runs synchronously from the service's launch",
+            body.contains("blockLaunchGuard.currentOverlayId()")
         )
         assertTrue(
             "render is reached from onNewIntent, which is what makes the reset reach a re-delivery",
