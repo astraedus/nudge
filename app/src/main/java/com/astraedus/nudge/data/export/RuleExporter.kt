@@ -4,6 +4,7 @@ import com.astraedus.nudge.data.db.entity.AppGroup
 import com.astraedus.nudge.data.db.entity.AppGroupMember
 import com.astraedus.nudge.data.db.entity.BlockRule
 import com.astraedus.nudge.data.db.entity.UsageEvent
+import com.astraedus.nudge.domain.hold.HoldToUnlock
 import com.astraedus.nudge.domain.lock.StrictModeChallenge
 import com.astraedus.nudge.domain.model.BlockMode
 import org.json.JSONArray
@@ -323,6 +324,7 @@ class RuleExporter @Inject constructor() {
         settings.customDelayTitles?.let { put("customDelayTitles", it) }
         settings.customDelaySubtitles?.let { put("customDelaySubtitles", it) }
         settings.customHardBlockMessages?.let { put("customHardBlockMessages", it) }
+        settings.holdToUnlockSeconds?.let { put("holdToUnlockSeconds", it) }
     }
 
     /**
@@ -439,7 +441,7 @@ class RuleExporter @Inject constructor() {
      * A key that is ABSENT stays null, which the importer reads as "this file does not carry that
      * setting" and leaves the device's own value alone. A key that is PRESENT but unreadable (wrong
      * type, unknown block mode, an out-of-range challenge length) is skipped with a reason and the
-     * other eight still apply -- one bad toggle must not cost the user their custom block messages,
+     * other nine still apply -- one bad toggle must not cost the user their custom block messages,
      * let alone the rules in the same file (issue #20's failure shape, one level down).
      *
      * Returns null when the file carried no settings object at all, or when it carried one that
@@ -472,7 +474,20 @@ class RuleExporter @Inject constructor() {
             customDelayTitles = obj.setting("customDelayTitles", onSkip) { stringValue(it) },
             customDelaySubtitles = obj.setting("customDelaySubtitles", onSkip) { stringValue(it) },
             customHardBlockMessages =
-                obj.setting("customHardBlockMessages", onSkip) { stringValue(it) }
+                obj.setting("customHardBlockMessages", onSkip) { stringValue(it) },
+            holdToUnlockSeconds = obj.setting("holdToUnlockSeconds", onSkip) { key ->
+                intValue(key).also { seconds ->
+                    // A file must not be able to install a hold the user cannot physically
+                    // complete. That is a permanent lockout, not a deliberate pause, and it would
+                    // break the same safety invariant the Strict Mode challenge length protects
+                    // above -- on a path where the value never passed through the app's own
+                    // duration picker.
+                    require(seconds in HoldToUnlock.OFF_SECONDS..HoldToUnlock.MAX_SECONDS) {
+                        "hold-to-unlock $seconds is outside " +
+                            "${HoldToUnlock.OFF_SECONDS}..${HoldToUnlock.MAX_SECONDS}"
+                    }
+                }
+            }
         )
         return settings.takeIf { !it.isEmpty }
     }

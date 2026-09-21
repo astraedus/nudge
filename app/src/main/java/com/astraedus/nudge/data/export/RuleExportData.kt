@@ -34,7 +34,7 @@ data class NudgeExport(
  * EVERY field is nullable and every field is optional in the JSON, and that is the whole
  * forward/backward-compatibility mechanism at this level: a key that is absent means "this file
  * does not carry that setting", and the importing device simply keeps its own value. So a backup
- * written by a future Nudge that adds a tenth setting still restores its other nine here, and a
+ * written by a future Nudge that adds an eleventh setting still restores its other ten here, and a
  * backup written by this build still restores on that future one.
  *
  * ## What is deliberately NOT here
@@ -75,7 +75,9 @@ data class ExportedSettings(
      */
     val customDelayTitles: String? = null,
     val customDelaySubtitles: String? = null,
-    val customHardBlockMessages: String? = null
+    val customHardBlockMessages: String? = null,
+    /** Press-and-hold duration, in seconds, required to open an app once its timer ends; 0 = off. */
+    val holdToUnlockSeconds: Int? = null
 ) {
     /** True when this carries no setting at all, so there is nothing to write to the file. */
     val isEmpty: Boolean
@@ -87,7 +89,8 @@ data class ExportedSettings(
             emergencyPassEnabled == null &&
             customDelayTitles == null &&
             customDelaySubtitles == null &&
-            customHardBlockMessages == null
+            customHardBlockMessages == null &&
+            holdToUnlockSeconds == null
 }
 
 data class ExportedRule(
