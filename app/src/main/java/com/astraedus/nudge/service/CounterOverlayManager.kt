@@ -100,7 +100,7 @@ class CounterOverlayManager @Inject constructor(
         }
         counterText?.setTextColor(counterColor)
 
-        val container = overlayView as? LinearLayout
+        val container = overlayView as? AwarenessOverlayWindow.Container
         val shouldAlert = sessionCount >= 30
         if (shouldAlert != currentBgIsAlert) {
             container?.background = if (shouldAlert) bgAlert else bgNormal
@@ -143,7 +143,11 @@ class CounterOverlayManager @Inject constructor(
     private fun createOverlayView(ctx: Context, label: String): View {
         val d = ctx.resources.displayMetrics.density
 
-        val container = LinearLayout(ctx).apply {
+        // AwarenessOverlayWindow.Container, not a bare LinearLayout: these views' accessibility
+        // class name is how the event classifier tells "Nudge drew over the app you are in" from
+        // "Nudge is in front of you" (issue #41). Every view here wears it, because a content
+        // change is sourced from the view that changed, not from the root.
+        val container = AwarenessOverlayWindow.Container(ctx).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
             setPadding((32 * d).toInt(), (20 * d).toInt(), (32 * d).toInt(), (20 * d).toInt())
@@ -155,7 +159,7 @@ class CounterOverlayManager @Inject constructor(
             alpha = 0.85f
         }
 
-        counterText = TextView(ctx).apply {
+        counterText = AwarenessOverlayWindow.Label(ctx).apply {
             text = "0"
             setTextColor(Color.WHITE)
             textSize = 40f
@@ -164,7 +168,7 @@ class CounterOverlayManager @Inject constructor(
         }
         container.addView(counterText)
 
-        labelText = TextView(ctx).apply {
+        labelText = AwarenessOverlayWindow.Label(ctx).apply {
             text = label
             setTextColor(Color.argb(200, 255, 255, 255))
             textSize = 16f
@@ -172,7 +176,7 @@ class CounterOverlayManager @Inject constructor(
         }
         container.addView(labelText)
 
-        dailyText = TextView(ctx).apply {
+        dailyText = AwarenessOverlayWindow.Label(ctx).apply {
             text = "today: 0"
             setTextColor(Color.argb(150, 255, 255, 255))
             textSize = 13f
