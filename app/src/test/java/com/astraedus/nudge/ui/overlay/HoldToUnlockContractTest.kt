@@ -74,12 +74,19 @@ class HoldToUnlockContractTest {
             1,
             Regex("""passthroughManager\.grant""").findAll(activity).count()
         )
+        assertTrue(
+            "the one grant must be reachable only as the GrantPassthrough effect, which " +
+                "OverlayLifecycle emits only when the overlay is at least STARTED (issue #8): a " +
+                "countdown that reached zero while backgrounded must never open the app",
+            activity.contains("OverlayLifecycle.Effect.GrantPassthrough -> passthroughManager.grant")
+        )
         val onTimerComplete = activity
             .substringAfter("private fun onTimerComplete()")
             .substringBefore("\n    }")
         assertTrue(
-            "the one grant must live in onTimerComplete, which is lifecycle-gated (issue #8)",
-            onTimerComplete.contains("passthroughManager.grant(")
+            "and the activity must hand the state machine the lifecycle fact it cannot read " +
+                "itself, or that gate silently becomes unconditional",
+            onTimerComplete.contains("lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)")
         )
         assertFalse(
             "the hold control must not be able to grant passthrough itself",
@@ -222,9 +229,13 @@ class HoldToUnlockContractTest {
      */
     @Test
     fun `a re-delivered block starts its hold from zero`() {
+        // The token itself is minted by `OverlayLifecycle.onDelivered`, and that it STRICTLY
+        // INCREASES on every delivery — including a re-delivery of an identical block — is a value
+        // test in `OverlayLifecycleTest`. What can only be checked here is that render actually
+        // composes under the token that machine hands out, rather than a second one of its own.
         assertTrue(
-            "render must mint a fresh delivery token",
-            activity.contains("val blockToken = ++renderToken")
+            "render must key the subtree on the state machine's per-delivery token",
+            activity.contains("val blockToken = overlayLifecycle.renderToken")
         )
         val content = activity.substringAfter("setContent {").substringBefore("\n    }")
         assertTrue(

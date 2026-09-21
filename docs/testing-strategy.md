@@ -92,19 +92,24 @@ between two blocked apps showed the new app's name over the old frozen ring); **
 finish/`GLOBAL_ACTION_HOME` race). All three are decisions about a *sequence of lifecycle events*,
 and a sequence of lifecycle events is data.
 
-**How to add one — this is the shape, and it is not Robolectric.** The activity is reduced to a thin
-adapter that forwards its callbacks; a pure decision class owns what each ordering *means*
-(started, stopped, tick, new intent for package P, walk-away elapsed), returns a decision, and is
-tested against the **real** `BlockLaunchGuard` rather than a mock of it. An ordering test is then an
-ordinary JVM list of events, and the reversed-order counterfactual of rule (d) costs one more list.
-**A sibling lane owns this extraction on branch `test/overlay-lifecycle-pure`** — read that class
-before adding the second test, and put new lifecycle assertions there instead of inventing a
-parallel model.
+**How to add one — this is the shape, and it is not Robolectric.** `domain/block/OverlayLifecycle` is
+the pure decision class. Each Activity lifecycle callback hands it the platform facts only an Activity
+can know (`isFinishing`, `isChangingConfigurations`, `isDestroyed`, whether the lifecycle is at least
+STARTED) and gets back an ORDERED list of `Effect`s — `MarkOverlayInactive`, `Finish`,
+`ArmWalkAwayWindow`, `GoHome`, and the rest of the sealed `Effect` interface — which
+`BlockOverlayActivity` runs through one `when` over that sealed interface. Two test files drive it:
+`OverlayLifecycleTest` exercises the state machine in isolation, and `OverlayLifecycleGuardTest` drives
+the same class against the **real** `BlockLaunchGuard`, with counterfactuals that run the pre-fix rule
+over the same sequence. An ordering test is an ordinary JVM list of events, and the reversed-order
+counterfactual of rule (d) costs one more list. **This class is now the model** — read it before adding
+the next lifecycle assertion, and put new ones there instead of inventing a parallel model.
 
-**What this honestly does not catch:** that the adapter actually *calls* the decision class on every
-callback. That residue is the whole argument for the deferred layers below. Mitigate it by keeping
-the adapter small enough to read in one screen, and by pinning the forwarding with an
-absence/count-style assertion per rule (e).
+**What this honestly does not catch:** that `BlockOverlayActivity` actually *calls* `OverlayLifecycle`
+on every callback and runs every `Effect` it returns. That residue is the whole argument for the
+deferred layers below. Mitigate it by keeping the adapter small enough to read in one screen, and by
+pinning the forwarding with an absence/count-style assertion per rule (e) —
+`BlockOverlayLaunchContractTest` and `BlockOverlayWalkAwayContractTest` are that source-level
+contract today.
 
 **Cost:** one extraction, then minutes per test inside `./gradlew test`. No new dependency, no
 runtime download, no slowdown of the existing suite.

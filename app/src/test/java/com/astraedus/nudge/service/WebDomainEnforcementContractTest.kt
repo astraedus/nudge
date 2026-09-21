@@ -86,16 +86,19 @@ class WebDomainEnforcementContractTest {
 
     @Test
     fun `the completed block is what grants the domain`() {
-        val onTimerComplete = overlay.substringAfter("private fun onTimerComplete()")
-            .substringBefore("private fun navigateHome()")
+        // The grant is now the GrantPassthrough effect, emitted by OverlayLifecycle only for a
+        // COMPLETED timer and only while the overlay is at least STARTED. What the grant is scoped
+        // TO is still the activity's, because only it holds the intent.
+        val grant = overlay.substringAfter("OverlayLifecycle.Effect.GrantPassthrough ->")
+            .substringBefore("\n\n")
 
         assertTrue(
             "the grant must carry the web domain so it is scoped to the site",
-            onTimerComplete.contains("webDomain = intent.getStringExtra(EXTRA_WEB_DOMAIN)")
+            grant.contains("webDomain = intent.getStringExtra(EXTRA_WEB_DOMAIN)")
         )
         assertTrue(
             "the grant must apply to the app the user is IN (the browser for a web block)",
-            onTimerComplete.contains("passthroughPackage(intent)")
+            grant.contains("passthroughPackage(intent)")
         )
     }
 

@@ -719,3 +719,30 @@ phone lost it with no error, no count, and nothing in the UI to notice.
   key *and only ever contained enabled rules*, so the importer's `true` default is exactly right and must
   stay; reading that silence as "off" would restore a phone that blocks nothing. Envelope stays version 1 in
   both directions, for the same reason `history` and `settings` did.
+
+## Robolectric was tried, and the price was not the one on the tin (2026-09-21)
+
+The lifecycle-ordering layer (#8, #15, #26, two of #36's four mechanisms) was first built with
+Robolectric, because that is the textbook answer and the research said so. It was reverted, and the
+reasons are worth keeping so nobody pays the same hour twice:
+
+- **It did not run.** Robolectric 4.17 (the current stable, SDK 37) fails on this machine's JDK 21 with
+  `RuntimeException at AndroidInterceptors.java:88 -> IllegalAccessException at Reflection.java:394`,
+  *with* the documented `--add-opens` set already applied. That is a boot-time failure, before a single
+  assertion runs. Anyone reviving this owes a JDK-version answer first, and CI's JDK is not this one.
+- **The sticker price was the wrong number to look at.** The dependency line is two entries; the real
+  cost is a per-SDK `android-all` runtime download and a permanent tax on every `./gradlew test` run,
+  paid by ~1550 tests that do not need it, to reach decisions that turned out to need no dependency at
+  all.
+- **What reached the same bugs instead**: the decisions were extracted out of `BlockOverlayActivity`
+  into the pure `domain/block/OverlayLifecycle` — lifecycle callbacks in, an ordered list of
+  `Effect`s out — and driven against the REAL `BlockLaunchGuard` in `OverlayLifecycleGuardTest`, in the orderings
+  the platform actually produces. 36 JVM tests, no new dependency, no measurable change to the suite's
+  wall time.
+- **Extracting the decisions costs the spelling-pinning contract tests, and that is an upgrade, not
+  damage.** Six assertions across four `*ContractTest` files were greps for `walkedAway.compareAndSet`,
+  `++renderToken`, a `finish()` inside `navigateHome`, and a regex that read
+  `WALK_AWAY_FINISH_FAILSAFE_MS` out of a source file. Each was re-homed: the ORDER of the walk-away's
+  effects and the fail-safe's re-arm-before-finish are now VALUE assertions, the two timing constants
+  are compared as numbers, and what stays source-level is only what a value test cannot reach — that
+  the adapter still forwards each callback. Re-home them; do not delete them to go green.

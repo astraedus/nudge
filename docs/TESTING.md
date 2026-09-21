@@ -29,11 +29,21 @@ Test locations:
   otherwise a capture that quietly stops reproducing leaves a green test asserting nothing.
 - `app/src/androidTest/` — instrumented tests (Room migrations, accessibility service behavior)
 
-Two things this module cannot JVM-test, so nobody re-discovers them:
-- **There is no Robolectric here.** A JVM test cannot construct an `AccessibilityEvent` or an
-  `AccessibilityNodeInfo` (MockK can stub the latter). This is why the event pipeline converts to a
-  pure `AccessibilityEventRecord` at the service boundary — everything downstream is then testable,
-  and the untestable part is one field-copying function.
+One tool this module deliberately does not use, and two things it cannot JVM-test, so nobody
+re-discovers any of them:
+- **There is no Robolectric here — evaluated for exactly this bug class, and declined.** It is the
+  textbook answer to lifecycle-ordering bugs, and it was priced against them: a per-SDK `android-all`
+  runtime download, and a permanent cost on every `./gradlew test` run, to reach decisions that can be
+  reached with no dependency at all. What replaces it: the lifecycle DECISIONS are extracted into the
+  pure `domain/block/OverlayLifecycle` and driven as ordinary JVM tests against the real
+  `BlockLaunchGuard` (`OverlayLifecycleTest`, `OverlayLifecycleGuardTest`); the accessibility-event
+  side is already pure (`AccessibilityEventRecord` at the service boundary) and replayed from recorded
+  `.jsonl` captures. What is still genuinely untestable is a narrow residue: a JVM test cannot
+  construct an `AccessibilityEvent` or an `AccessibilityNodeInfo` (MockK can stub the latter), which is
+  exactly why the event pipeline converts to a pure record at the boundary and the untestable part is
+  one field-copying function. The honest residue of the new arrangement is that nothing at this layer
+  can prove the Activity ADAPTER actually calls the decision class on every callback — that half stays
+  a source-level contract test, and it is the standing argument for an emulator layer later.
 - Consequently the node-tree label path (`InteractionHandler.resolveLabelIfUnknown` ->
   `InAppDetector.detectFeature`) has no JVM coverage. It affects the counter's LABEL only, never its
   number, which is the reason that split is drawn where it is.
