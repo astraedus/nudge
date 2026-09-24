@@ -101,7 +101,11 @@ one debug log line per attempt and outcome.
 ## Out of scope
 YouTube Shorts tab vanish + Subscriptions steer (roadmap line only). TikTok. The web extension.
 
-## Open item carried from the spike
-`BlockOverlayActivity` flashed for ~1 s on Instagram launch and self-dismissed with no tap, on the
-QA device's leftover rules. Device QA must capture logcat; fix here only if it is the tab-selection
-heuristic this PR touches, otherwise file it with the capture.
+## Open item carried from the spike — RESOLVED
+
+`BlockOverlayActivity` flashed for ~1 s on Instagram launch during the 2026-09-22 spike. **Not
+reproducible** on the 1.18.0 QA build: two cold starts with debug logging on, no flash. The spike ran
+against leftover rules from the #35 QA session, so the most likely reading is that it was a real block
+firing on those rules rather than anything this feature introduced. Closed rather than carried — if it
+returns, the capture to take is a logcat around the launch with debug logging enabled, because the
+`i`-level "handling block" and "block overlay launch dropped" lines name both the rule and the reason.
