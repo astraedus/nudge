@@ -10,7 +10,12 @@ enum class SittingEndCause {
     /** The user pressed Home. The one unambiguous "I am leaving" gesture the platform gives us. */
     WENT_HOME,
 
-    /** The screen went off. A sitting cannot span a locked phone (backlog F5). */
+    /**
+     * The screen was off for longer than the return window. A sitting cannot span a locked phone
+     * (backlog F5) — but it MUST span a display timeout, which is a different thing wearing the same
+     * broadcast ([#54](https://github.com/astraedus/nudge/issues/54)). See
+     * [SittingTracker.onScreenOff].
+     */
     SCREEN_OFF,
 
     /**
@@ -63,11 +68,11 @@ sealed interface SittingEvent {
  *
  * A sitting ends for exactly three reasons, none of which is "an unknown package appeared":
  *
- * | Cause | Passthrough grant | Interaction count / time baseline |
- * |---|---|---|
- * | [SittingEndCause.WENT_HOME] | revoked | **untouched** — a trip home must not refill a time budget |
- * | [SittingEndCause.SCREEN_OFF] | revoked | **untouched**, same reason |
- * | [SittingEndCause.ANOTHER_APP_HELD_FOREGROUND] | revoked | reset — this is the same ≥[returnWindowMs] "away long enough" rule [com.astraedus.nudge.service.InteractionTracker] already uses, so the two can no longer disagree about whether this is still the same sitting |
+ * | Cause | Ends on | Passthrough grant | Interaction count / time baseline |
+ * |---|---|---|---|
+ * | [SittingEndCause.WENT_HOME] | the gesture itself, at once | revoked | **untouched** — a trip home must not refill a time budget |
+ * | [SittingEndCause.SCREEN_OFF] | the screen having been off for ≥[returnWindowMs] when the user comes back | revoked | reset on return |
+ * | [SittingEndCause.ANOTHER_APP_HELD_FOREGROUND] | that app holding the foreground for ≥[returnWindowMs] | revoked | reset — this is the same ≥[returnWindowMs] "away long enough" rule [com.astraedus.nudge.service.InteractionTracker] already uses, so the two can no longer disagree about whether this is still the same sitting |
  *
  * A picker, share sheet, permission dialog, custom tab, notification hop or volume panel is
  * therefore a **sub-flow of the sitting by construction**: it is another app in front for a few
@@ -79,6 +84,36 @@ sealed interface SittingEvent {
  * phone — the real bypass, backlog F5, *"complete Instagram's delay → lock the phone → unlock hours
  * later straight back into Instagram → no delay"* — now costs a fresh delay where it used to cost
  * nothing.
+ *
+ * ## A screen-off is an ABSENCE, not a departure ([#54](https://github.com/astraedus/nudge/issues/54))
+ *
+ * [SittingEndCause.SCREEN_OFF] used to end the sitting the instant the broadcast arrived, with no
+ * return window at all. The premise, written into the receiver that raises it, was that *"a
+ * screen-off is not a timer — it is an observation that the user stopped using the phone"*.
+ *
+ * The user who asked for HOLD mode ([#35](https://github.com/astraedus/nudge/issues/35)) falsified
+ * that premise by email on 2026-09-24: *"I hold 60 second to unlock and then after 3-5 minute of use
+ * it again Askin for hold and also even after just 1 minute ahead asking for hold to unlock ... I
+ * have some client info on it and chat with them"*. Android's display timeout is driven by touch
+ * INPUT, not by attention, and the Pixel default is **30 seconds** — so reading a chat inside the
+ * blocked app blanks the screen, and unlocking straight back into the same app read as a brand-new
+ * arrival worth a full 60-second hold.
+ *
+ * That was the one end cause with no grace, and it was the *inconsistent* one: this model already
+ * rules that another app holding the foreground for 110 seconds is NOT a departure (the whole of
+ * #28), and a screen that blanked for 40 seconds and came back to the SAME app is strictly less of a
+ * departure than that. So a screen-off now starts the away clock exactly as a foreign app window
+ * does, and the SAME [returnWindowMs] decides. F5 is untouched, because "unlock hours later" is far
+ * past the window; what changes is only the case where nobody went anywhere.
+ *
+ * It is a clock start rather than an end for a second reason: there is no `ACTION_SCREEN_ON`
+ * equivalent in this model and there does not need to be. [awaySinceMs] is read on the next app
+ * window, and its clock (`SystemClock.elapsedRealtime()`) counts while the device sleeps, so the
+ * absence measures itself.
+ *
+ * The bug predates HOLD by every release the sitting model has shipped; a DELAY has always had it.
+ * Nobody reported it because paying a 15-second countdown again reads as annoying, while paying 60
+ * seconds of sustained attention again reads as broken.
  *
  * ## What this does NOT do
  *
@@ -144,6 +179,17 @@ class SittingTracker(
         private set
 
     /**
+     * What started the away clock, so the [SittingEvent.Ended] it eventually produces names the real
+     * evidence rather than the shape of the branch that noticed.
+     *
+     * Only read while [awaySinceMs] is non-null. It is set by whichever of the two absences started
+     * the clock and NOT overwritten by the other: if the user switched to another app and the screen
+     * then timed out, the departure began when they left the app, and that is both the timestamp and
+     * the cause.
+     */
+    private var awayCause: SittingEndCause = SittingEndCause.ANOTHER_APP_HELD_FOREGROUND
+
+    /**
      * @param nowMs a MONOTONIC clock reading (the service passes `SystemClock.elapsedRealtime()`),
      *   never epoch time. The return window decides whether a grant survives, so a wall clock that
      *   jumped -- an NTP correction, or a user changing the time in Settings -- would revoke a pass
@@ -166,8 +212,30 @@ class SittingTracker(
         is ForegroundSignal.NotForeground -> SittingEvent.Unchanged
     }
 
-    /** The screen went off: no sitting can survive it (backlog F5). */
-    fun onScreenOff(): SittingEvent = end(SittingEndCause.SCREEN_OFF)
+    /**
+     * The screen went off. Starts the away clock; it does NOT end the sitting on its own.
+     *
+     * A display timeout and a deliberate lock arrive as the same broadcast, and only the LENGTH of
+     * the absence tells them apart ([#54](https://github.com/astraedus/nudge/issues/54)). So this
+     * makes the same claim a foreign app window makes — "the user is not looking at their app right
+     * now" — and lets [returnWindowMs] decide, on their return, whether that was a departure. A
+     * phone locked for hours (backlog F5) is far past the window and still costs a fresh block; a
+     * screen that blanked for forty seconds while they read does not.
+     *
+     * Deliberately takes no position on WHERE the user comes back to. If it is the same app,
+     * [onAppWindow] closes the clock or ends the sitting on its length. If it is the launcher,
+     * [SittingEndCause.WENT_HOME] ends it outright, as it always did. If it is another app, that
+     * app's own away clock is already running from the moment the screen went dark, which is when
+     * the user genuinely stopped looking.
+     *
+     * @param nowMs the same MONOTONIC clock [onSignal] is given. It must count while the device
+     *   sleeps, or every absence would measure as zero — which is the whole mechanism here.
+     */
+    fun onScreenOff(nowMs: Long): SittingEvent {
+        if (currentApp == null) return SittingEvent.Unchanged
+        startAwayClock(nowMs, SittingEndCause.SCREEN_OFF)
+        return SittingEvent.Unchanged
+    }
 
     /**
      * The user completed a block for [packageName], so they are unambiguously sitting with it now.
@@ -226,13 +294,13 @@ class SittingTracker(
         if (packageName == current) {
             // The user came back. Whether that ends the sitting depends only on how long they were
             // gone — the SAME question InteractionTracker asks, so the two answers cannot diverge.
+            // How they were away (another app in front, or the screen dark) changes only what the
+            // end event is CALLED; the threshold is one threshold, which is issue #54's fix.
             val awaySince = awaySinceMs
+            val cause = awayCause
             awaySinceMs = null
             if (awaySince != null && nowMs - awaySince >= returnWindowMs) {
-                return SittingEvent.Started(
-                    packageName,
-                    SittingEvent.Ended(current, SittingEndCause.ANOTHER_APP_HELD_FOREGROUND)
-                )
+                return SittingEvent.Started(packageName, SittingEvent.Ended(current, cause))
             }
             return SittingEvent.Unchanged
         }
@@ -240,15 +308,28 @@ class SittingTracker(
         // A different app is in front. Start (or keep) the away clock; the sitting survives until
         // that clock passes the return window. THIS is the line that fixes #28: a picker, a share
         // sheet or a permission dialog is just an app that will not be in front for five minutes.
-        val awaySince = awaySinceMs ?: nowMs.also { awaySinceMs = it }
+        val awaySince = awaySinceMs
+            ?: nowMs.also { startAwayClock(it, SittingEndCause.ANOTHER_APP_HELD_FOREGROUND) }
+        val cause = awayCause
         if (nowMs - awaySince < returnWindowMs) return SittingEvent.Unchanged
 
         currentApp = packageName
         awaySinceMs = null
-        return SittingEvent.Started(
-            packageName,
-            SittingEvent.Ended(current, SittingEndCause.ANOTHER_APP_HELD_FOREGROUND)
-        )
+        return SittingEvent.Started(packageName, SittingEvent.Ended(current, cause))
+    }
+
+    /**
+     * Begin measuring an absence, unless one is already being measured.
+     *
+     * The FIRST evidence wins, both the timestamp and the cause. The user who switches to another
+     * app and then lets the screen time out left their app when they switched, not when the display
+     * blanked; restarting the clock there would hand them a free window they did not earn, and every
+     * further absence inside one departure would extend it again.
+     */
+    private fun startAwayClock(nowMs: Long, cause: SittingEndCause) {
+        if (awaySinceMs != null) return
+        awaySinceMs = nowMs
+        awayCause = cause
     }
 
     private fun end(cause: SittingEndCause): SittingEvent {

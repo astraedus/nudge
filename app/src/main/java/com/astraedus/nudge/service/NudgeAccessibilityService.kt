@@ -569,13 +569,21 @@ class NudgeAccessibilityService : AccessibilityService() {
     @Volatile private var pipOnlyPackagesCached: Set<String> = emptySet()
 
     /**
-     * Ends the user's sitting when the screen goes off (backlog F5).
+     * Starts the away clock on the user's sitting when the screen goes off (backlog F5, issue
+     * [#54](https://github.com/astraedus/nudge/issues/54)).
      *
      * The repro this closes: *complete Instagram's delay, lock the phone, unlock hours later
      * straight back into Instagram, no delay.* `PassthroughManager` has no time expiry by design
      * (issue #5: a timer would re-block a user mid-use), and the keyguard is a system surface, so
-     * nothing ever ended that sitting. A screen-off is not a timer — it is an observation that the
-     * user stopped using the phone, which is exactly the evidence the grant's lifetime needs.
+     * nothing ever ended that sitting.
+     *
+     * It used to end the sitting outright, on the reasoning that *a screen-off is not a timer, it is
+     * an observation that the user stopped using the phone*. That reasoning has one hole and #54 is
+     * it: Android blanks the display on lack of INPUT, not lack of attention, and the Pixel default
+     * is 30 seconds — so reading inside a blocked app times the screen out, and unlocking straight
+     * back into it cost a full fresh block. A lock and a timeout are the same broadcast and only
+     * their LENGTH tells them apart, so the length is now what decides
+     * ([SittingTracker.onScreenOff]); hours still costs a fresh block, forty seconds does not.
      *
      * `ACTION_SCREEN_OFF` cannot be declared in a manifest (it is a protected, registered-only
      * broadcast), which is why it lives here and not in `BootReceiver`.
@@ -584,13 +592,21 @@ class NudgeAccessibilityService : AccessibilityService() {
         object : android.content.BroadcastReceiver() {
             override fun onReceive(context: android.content.Context?, intent: Intent?) {
                 if (intent?.action != Intent.ACTION_SCREEN_OFF) return
-                entryPoint.passthroughManager().onScreenOff()
-                // The same evidence that ends the sitting ends the ARRIVAL (issue #36): coming back
-                // to a blocked app after the phone has been off is a fresh confrontation and owes
-                // its own row. It arrives here rather than through the signal pipeline because a
-                // screen-off is a broadcast and not an accessibility event at all -- and because
-                // the overlay's own `onStop`/`finish()` on screen-off is one half of the loop that
-                // produced 2500 interventions in a day.
+                // [sittingClock], never wall time: the whole point of this call is to measure an
+                // interval in which the device is allowed to sleep, and `elapsedRealtime` is the
+                // only clock that both counts through sleep and cannot be jumped from Settings.
+                // Pinned by `EventDispatchOrderContractTest`.
+                entryPoint.passthroughManager().onScreenOff(sittingClock())
+                // The ARRIVAL (issue #36) still ends here, immediately, and deliberately does NOT
+                // wait for the window above. The two answer different questions: the sitting
+                // governs whether the user is BLOCKED again, where a false revoke interrupts
+                // someone mid-use, and the arrival governs only whether a block that happens
+                // anyway is WORTH A ROW, where the safe direction is to count. A short screen-off
+                // now writes no row regardless, because there is no second block to count. It
+                // arrives here rather than through the signal pipeline because a screen-off is a
+                // broadcast and not an accessibility event at all -- and because the overlay's own
+                // `onStop`/`finish()` on screen-off is one half of the loop that produced 2500
+                // interventions in a day.
                 entryPoint.blockLaunchGuard().onDeparture("screen_off")
                 // The awareness overlays and the clocks belong to a screen nobody is looking at.
                 hideAllOverlays()
