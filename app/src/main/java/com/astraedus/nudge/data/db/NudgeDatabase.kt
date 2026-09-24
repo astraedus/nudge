@@ -19,7 +19,7 @@ import com.astraedus.nudge.data.db.entity.UsageEvent
         AppGroupMember::class,
         UsageEvent::class
     ],
-    version = 10,
+    version = 11,
     exportSchema = false
 )
 abstract class NudgeDatabase : RoomDatabase() {
@@ -133,6 +133,25 @@ abstract class NudgeDatabase : RoomDatabase() {
                     "UPDATE block_rules SET webBlockMode = 'DELAY' " +
                         "WHERE mode = 'NONE' AND webDomains IS NOT NULL AND webDomains != ''"
                 )
+            }
+        }
+
+        /**
+         * Adds Tab Vanish and the experimental Following steer (v1.18.0), per-rule columns backing
+         * [com.astraedus.nudge.data.db.entity.BlockRule.tabVanish] and
+         * [com.astraedus.nudge.data.db.entity.BlockRule.followingSteer].
+         *
+         * Both default to what a pre-migration rule already meant, not to the code-level default:
+         * `tabVanish = 1` because every rule that existed before this feature had no cover at all,
+         * and restoring one to the entity's new default (on) is the correct reading of "this rule
+         * hard-blocks Instagram REELS" now that the app can express a cover; `followingSteer = 0`
+         * because the steer is a brand-new, opt-in, experimental capability no existing rule ever
+         * asked for.
+         */
+        val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE block_rules ADD COLUMN tabVanish INTEGER NOT NULL DEFAULT 1")
+                db.execSQL("ALTER TABLE block_rules ADD COLUMN followingSteer INTEGER NOT NULL DEFAULT 0")
             }
         }
     }

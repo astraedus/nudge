@@ -2,6 +2,16 @@
 
 All notable changes to Nudge are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.18.0] - 2026-09-22
+
+### Added
+- **The Reels tab disappears while Reels is blocked.** Blocking Reels used to mean meeting a block screen after you tapped the tab — the tab was still sitting there in Instagram's bottom bar, still inviting the tap, and you still had to decide again every time you looked at it. Now, while your rule is hard-blocking Reels, Nudge covers that tab over: the icon is not there, and tapping where it used to be does nothing at all. The rest of Instagram is untouched, and everything else Nudge already did still happens — a reel opened from Explore, from a message or from someone's profile still meets the block screen, because the tab was never the only way in. It is on by default for Instagram rules, and there is a switch to turn it off in the rule editor.
+- **And it goes away by itself when your daily timer runs out.** If you have given Instagram a daily limit rather than blocking it outright, the tab is there while you still have time, and the moment your time is spent it is gone — the same rule, the same moment, one more thing that stops asking you.
+- **Open Instagram to Following instead of Home (experimental, off by default).** Instagram's home feed is mostly posts it chose for you. Switch this on for an Instagram rule and Nudge does the two taps for you when you open the app: you land on Following, which is only people you actually follow, in the order they posted. You can go back to the normal feed whenever you want, and Nudge will not drag you out of it again until your next visit. It is marked experimental on purpose — it works by finding Instagram's own menu, so if Instagram rearranges things it quietly stops working rather than doing anything strange.
+
+### Changed
+- Backups now carry both of the above, so restoring onto a new phone brings your Reels-tab setting and your Following preference with it. Backups written by older versions restore exactly as they always did.
+
 ## [1.17.3] - 2026-09-21
 
 ### Added

@@ -60,7 +60,9 @@ class EvaluateBlockUseCase @Inject constructor(
                 scheduleEndMinute = rule.scheduleEndMinute,
                 inAppFeatures = rule.inAppFeatures?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() },
                 grayscale = rule.grayscale,
-                webDomains = rule.webDomains
+                webDomains = rule.webDomains,
+                tabVanish = rule.tabVanish,
+                followingSteer = rule.followingSteer
             )
         }
 

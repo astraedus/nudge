@@ -171,6 +171,21 @@ class NudgeDatabaseMigrationTest {
     }
 
     @Test
+    fun `MIGRATION_10_11 adds tabVanish and followingSteer columns`() {
+        val db = RecordingDatabase()
+
+        NudgeDatabase.MIGRATION_10_11.migrate(db.proxy)
+
+        assertEquals(
+            listOf(
+                "ALTER TABLE block_rules ADD COLUMN tabVanish INTEGER NOT NULL DEFAULT 1",
+                "ALTER TABLE block_rules ADD COLUMN followingSteer INTEGER NOT NULL DEFAULT 0"
+            ),
+            db.sql
+        )
+    }
+
+    @Test
     fun `all migrations registered from version 1 to current`() {
         val allMigrations = listOf(
             NudgeDatabase.MIGRATION_1_2,
@@ -181,10 +196,16 @@ class NudgeDatabaseMigrationTest {
             NudgeDatabase.MIGRATION_6_7,
             NudgeDatabase.MIGRATION_7_8,
             NudgeDatabase.MIGRATION_8_9,
-            NudgeDatabase.MIGRATION_9_10
+            NudgeDatabase.MIGRATION_9_10,
+            NudgeDatabase.MIGRATION_10_11
         )
 
-        val currentVersion = 10
+        // Derived, not hand-typed: a hand-kept constant here is exactly the fixture-honesty
+        // failure LESSONS 2026-09-21 describes for `PassthroughTest`'s `ownPackageName` -- it
+        // agrees with whoever last edited it, not with the production annotation, and would keep
+        // passing forever after a version bump nobody remembered to update in two places.
+        val currentVersion = NudgeDatabase::class.java
+            .getAnnotation(androidx.room.Database::class.java)!!.version
 
         // Every version gap from 1 to current must have a migration
         for (v in 1 until currentVersion) {

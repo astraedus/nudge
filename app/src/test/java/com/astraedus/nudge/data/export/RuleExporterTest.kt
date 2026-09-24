@@ -6,6 +6,7 @@ import com.astraedus.nudge.data.db.entity.BlockRule
 import com.astraedus.nudge.domain.model.BlockMode
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -351,6 +352,64 @@ class RuleExporterTest {
         assertNull(result.error)
         assertEquals(1, result.rules.size)
         assertNull(result.rules[0].webBlockMode)
+    }
+
+    /**
+     * v1.18.0's Tab Vanish / Following steer round trip. `tabVanish=false` on this rule means the
+     * user deliberately turned OFF the default-on cover — losing that on a restore would silently
+     * turn it back on, the same class of regression `webBlockMode`'s round trip above guards.
+     */
+    @Test
+    fun `roundtrip preserves tabVanish=false and followingSteer=true`() {
+        val rules = listOf(
+            BlockRule(
+                id = 1,
+                packageName = "com.instagram.android",
+                mode = "HARD_BLOCK",
+                enabled = true,
+                tabVanish = false,
+                followingSteer = true
+            )
+        )
+
+        val json = exporter.exportRules(rules, emptyList(), emptyMap())
+        val result = exporter.importRules(json)
+
+        assertNull(result.error)
+        assertEquals(1, result.rules.size)
+        assertFalse(result.rules[0].tabVanish)
+        assertTrue(result.rules[0].followingSteer)
+    }
+
+    /**
+     * A file with neither key — every backup written before v1.18.0 — must restore as
+     * `tabVanish=true` (matching the entity's new default: those rules had no cover of their own,
+     * and "on" is the correct reading of them now) and `followingSteer=false` (a brand-new,
+     * opt-in, experimental capability no old export could have carried).
+     */
+    @Test
+    fun `import of a pre-v1_18_0 export without tabVanish or followingSteer keys defaults them on and off`() {
+        val json = """
+        {
+          "version": 1,
+          "exportedAt": 1700000000000,
+          "rules": [{
+            "packageName": "com.instagram.android",
+            "groupName": null,
+            "mode": "HARD_BLOCK",
+            "delaySeconds": 15,
+            "enabled": true
+          }],
+          "groups": []
+        }
+        """.trimIndent()
+
+        val result = exporter.importRules(json)
+
+        assertNull(result.error)
+        assertEquals(1, result.rules.size)
+        assertTrue(result.rules[0].tabVanish)
+        assertFalse(result.rules[0].followingSteer)
     }
 
     @Test

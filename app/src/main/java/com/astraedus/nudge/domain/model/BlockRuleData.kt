@@ -13,5 +13,9 @@ data class BlockRuleData(
     val scheduleEndMinute: Int? = null,
     val inAppFeatures: List<String>? = null,
     val grayscale: Boolean = false,
-    val webDomains: String? = null              // comma-separated: "instagram.com,www.instagram.com"
+    val webDomains: String? = null,             // comma-separated: "instagram.com,www.instagram.com"
+    /** See [com.astraedus.nudge.data.db.entity.BlockRule.tabVanish]. */
+    val tabVanish: Boolean = true,
+    /** See [com.astraedus.nudge.data.db.entity.BlockRule.followingSteer]. */
+    val followingSteer: Boolean = false
 )

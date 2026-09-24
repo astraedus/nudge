@@ -4,6 +4,7 @@ import com.astraedus.nudge.domain.model.ActiveRule
 import com.astraedus.nudge.domain.model.BlockDecision
 import com.astraedus.nudge.domain.model.BlockMode
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -310,5 +311,130 @@ class BlockEngineTest {
 
         assertTrue(decision is BlockDecision.Block)
         assertEquals(BlockMode.HARD_BLOCK, (decision as BlockDecision.Block).mode)
+    }
+
+    // ── tabVanish: read off the DECIDING rule, never `any {}` (see BlockEngine's
+    // unconditionalHardBlockRule / timeBudgetRule / timed-mode branches) ──
+
+    @Test
+    fun `unconditional HARD_BLOCK decision carries that rule's tabVanish`() {
+        val rules = listOf(
+            ActiveRule(
+                mode = BlockMode.HARD_BLOCK,
+                delaySeconds = 0,
+                dailyLimitMinutes = null,
+                enabled = true,
+                tabVanish = false
+            )
+        )
+        val decision = engine.evaluate("com.instagram.android", rules, 0L)
+        assertTrue(decision is BlockDecision.Block)
+        assertFalse((decision as BlockDecision.Block).tabVanish)
+    }
+
+    @Test
+    fun `unconditional HARD_BLOCK decision reads the DECIDING rule's tabVanish, not any{} across applicable rules`() {
+        // Two applicable, unconditional HARD_BLOCK rules. The FIRST one in the list is the one
+        // BlockEngine's `firstOrNull` picks to decide -- it carries tabVanish=false. If the engine
+        // wrongly used `any { it.tabVanish }` (grayscale's semantics), the second rule's `true`
+        // would win and this would read true instead.
+        val decidingRule = ActiveRule(
+            mode = BlockMode.HARD_BLOCK,
+            delaySeconds = 0,
+            dailyLimitMinutes = null,
+            enabled = true,
+            tabVanish = false,
+            ruleName = "Deciding rule"
+        )
+        val otherRule = ActiveRule(
+            mode = BlockMode.HARD_BLOCK,
+            delaySeconds = 0,
+            dailyLimitMinutes = null,
+            enabled = true,
+            tabVanish = true,
+            ruleName = "Other rule"
+        )
+        val decision = engine.evaluate("com.instagram.android", listOf(decidingRule, otherRule), 0L)
+        assertTrue(decision is BlockDecision.Block)
+        val block = decision as BlockDecision.Block
+        assertEquals("Deciding rule", block.ruleName)
+        assertFalse(
+            "tabVanish must come from the deciding rule (false), not any{} across applicable rules (which would read true)",
+            block.tabVanish
+        )
+    }
+
+    @Test
+    fun `time budget exceeded decision carries the exceeding rule's tabVanish`() {
+        val rules = listOf(
+            ActiveRule(
+                mode = BlockMode.DELAY,
+                delaySeconds = 15,
+                dailyLimitMinutes = 30,
+                enabled = true,
+                tabVanish = false
+            )
+        )
+        val usageMs = 31L * 60L * 1000L
+        val decision = engine.evaluate("com.instagram.android", rules, usageMs)
+        assertTrue(decision is BlockDecision.Block)
+        assertEquals(BlockMode.HARD_BLOCK, (decision as BlockDecision.Block).mode)
+        assertFalse(decision.tabVanish)
+    }
+
+    @Test
+    fun `a NONE rule whose daily budget is spent produces Block HARD_BLOCK carrying that rule's tabVanish`() {
+        // Anti's headline behaviour: "once you've done your daily timer it'll just disappear".
+        // A NONE-mode rule never itself HARD_BLOCKs -- it only gates via dailyLimitMinutes -- so
+        // this pins that the time-budget branch (not the unconditional one) is what supplies
+        // tabVanish once the day's minutes run out.
+        val rules = listOf(
+            ActiveRule(
+                mode = BlockMode.NONE,
+                delaySeconds = 0,
+                dailyLimitMinutes = 30,
+                enabled = true,
+                tabVanish = true
+            )
+        )
+        val usageMs = 31L * 60L * 1000L
+        val decision = engine.evaluate("com.instagram.android", rules, usageMs)
+        assertTrue(decision is BlockDecision.Block)
+        val block = decision as BlockDecision.Block
+        assertEquals(BlockMode.HARD_BLOCK, block.mode)
+        assertTrue(block.tabVanish)
+    }
+
+    @Test
+    fun `a NONE rule with tabVanish off and daily budget spent carries tabVanish false`() {
+        val rules = listOf(
+            ActiveRule(
+                mode = BlockMode.NONE,
+                delaySeconds = 0,
+                dailyLimitMinutes = 30,
+                enabled = true,
+                tabVanish = false
+            )
+        )
+        val usageMs = 31L * 60L * 1000L
+        val decision = engine.evaluate("com.instagram.android", rules, usageMs)
+        assertTrue(decision is BlockDecision.Block)
+        assertFalse((decision as BlockDecision.Block).tabVanish)
+    }
+
+    @Test
+    fun `timed-mode decision carries that rule's tabVanish`() {
+        val rules = listOf(
+            ActiveRule(
+                mode = BlockMode.DELAY,
+                delaySeconds = 15,
+                dailyLimitMinutes = null,
+                enabled = true,
+                tabVanish = false
+            )
+        )
+        val decision = engine.evaluate("com.instagram.android", rules, 0L)
+        assertTrue(decision is BlockDecision.Block)
+        assertFalse((decision as BlockDecision.Block).tabVanish)
     }
 }

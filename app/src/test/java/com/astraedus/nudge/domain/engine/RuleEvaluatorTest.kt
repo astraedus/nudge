@@ -4,6 +4,7 @@ import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.domain.model.BlockRuleData
 import com.astraedus.nudge.domain.model.GroupMembership
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -97,5 +98,35 @@ class RuleEvaluatorTest {
         )
         val result = evaluator.resolveRulesForPackage("com.example.app", rules, memberships)
         assertTrue(result.isEmpty())
+    }
+
+    @Test
+    fun `tabVanish and followingSteer survive the entity-to-ActiveRule mapping`() {
+        val rules = listOf(
+            BlockRuleData(
+                id = 1, packageName = "com.instagram.android", groupId = null,
+                mode = BlockMode.HARD_BLOCK, delaySeconds = 0,
+                dailyLimitMinutes = null, enabled = true,
+                tabVanish = false, followingSteer = true
+            )
+        )
+        val result = evaluator.resolveRulesForPackage("com.instagram.android", rules, emptyList())
+        assertEquals(1, result.size)
+        assertFalse(result[0].tabVanish)
+        assertTrue(result[0].followingSteer)
+    }
+
+    @Test
+    fun `tabVanish and followingSteer default to on and off respectively`() {
+        val rules = listOf(
+            BlockRuleData(
+                id = 1, packageName = "com.instagram.android", groupId = null,
+                mode = BlockMode.HARD_BLOCK, delaySeconds = 0,
+                dailyLimitMinutes = null, enabled = true
+            )
+        )
+        val result = evaluator.resolveRulesForPackage("com.instagram.android", rules, emptyList())
+        assertTrue(result[0].tabVanish)
+        assertFalse(result[0].followingSteer)
     }
 }

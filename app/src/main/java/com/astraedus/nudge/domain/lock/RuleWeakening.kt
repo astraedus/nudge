@@ -52,6 +52,11 @@ object RuleWeakening {
      *  - autoKickCooldownSeconds lowered (less time locked out after a kick)
      *  - web enforcement softened: the mode a rule's websites block with (webBlockMode, falling
      *    back to mode) lowered, or the domains removed entirely, when web blocking was configured
+     *  - tabVanish true -> false: it removes the Reels-tab cover, i.e. it removes enforcement, so
+     *    turning it off is weakening exactly like softening the mode is. `followingSteer` is
+     *    deliberately NOT a dimension here -- it is a steer, not a block, so flipping it either way
+     *    never changes how much protection a rule enforces (do not add it later "by symmetry" with
+     *    tabVanish; it belongs to a different axis entirely).
      *
      * Strengthening or unchanged on all dimensions -> false.
      */
@@ -84,6 +89,11 @@ object RuleWeakening {
         // their own weakening axis: without this, Strict Mode could be sidestepped by softening
         // (or deleting) website blocking while leaving the app-level rule untouched.
         if (isWebEnforcementWeakened(old, new)) return true
+
+        // Tab Vanish: turning it off removes the Reels-tab cover, i.e. removes enforcement that
+        // was there before. Turning it ON is never weakening (it only adds a cover), so this is a
+        // one-directional check like `enabled` above, not a strength comparison.
+        if (old.tabVanish && !new.tabVanish) return true
 
         return false
     }
