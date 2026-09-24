@@ -109,7 +109,20 @@ data class ExportedRule(
     val webDomains: String? = null,
     val autoKickAfterMinutes: Int? = null,
     /** Independent block mode for [webDomains]; null = inherit [mode]. See `BlockRule.webBlockMode`. */
-    val webBlockMode: String? = null
+    val webBlockMode: String? = null,
+    /**
+     * See `BlockRule.tabVanish`. Defaults **true**, matching the entity default, and that default
+     * is also the correct restore reading for a backup written before this feature existed: such a
+     * file carries no `tabVanish` key at all, and every rule it describes had no tab cover of its
+     * own on the device that wrote it -- restoring it under this build's new default (on) is what
+     * "this rule hard-blocks Instagram REELS" means now that a cover exists, not a downgrade.
+     */
+    val tabVanish: Boolean = true,
+    /**
+     * See `BlockRule.followingSteer`. Defaults **false**: an experimental, opt-in capability that
+     * a pre-feature backup could never have carried, so its absence must restore as off.
+     */
+    val followingSteer: Boolean = false
 )
 
 data class ExportedGroup(

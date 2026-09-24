@@ -22,12 +22,22 @@ import com.astraedus.nudge.domain.events.A11yEventType
 import com.astraedus.nudge.domain.events.AccessibilityEventRecord
 import com.astraedus.nudge.domain.events.EventClassifier
 import com.astraedus.nudge.domain.events.ForegroundSignal
+import com.astraedus.nudge.domain.interaction.SyntheticClickWindow
 import com.astraedus.nudge.domain.lock.StrictModeEscapeGuard
 import com.astraedus.nudge.domain.sitting.SittingEvent
 import com.astraedus.nudge.domain.model.BlockDecision
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.domain.model.WebBlockMode
 import com.astraedus.nudge.domain.pip.PipEscapeLedger
+import com.astraedus.nudge.domain.surfaces.FollowingSteer
+import com.astraedus.nudge.domain.surfaces.HostSurface
+import com.astraedus.nudge.domain.surfaces.PlatformSurfaces
+import com.astraedus.nudge.domain.surfaces.PlatformSurfacesRegistry
+import com.astraedus.nudge.domain.surfaces.SteerAction
+import com.astraedus.nudge.domain.surfaces.SteerRecipe
+import com.astraedus.nudge.domain.surfaces.TabCoverDecider
+import com.astraedus.nudge.domain.surfaces.TabCoverEffect
+import com.astraedus.nudge.domain.surfaces.TabCoverPlacement
 import com.astraedus.nudge.domain.web.WebDomainGate
 import com.astraedus.nudge.domain.web.WebSessionKey
 import com.astraedus.nudge.domain.usecase.EvaluateBlockUseCase
@@ -63,6 +73,8 @@ class NudgeAccessibilityService : AccessibilityService() {
         fun interactionTracker(): InteractionTracker
         fun counterOverlayManager(): CounterOverlayManager
         fun timeRemainingOverlayManager(): TimeRemainingOverlayManager
+        fun tabCoverOverlayManager(): TabCoverOverlayManager
+        fun followingSteerExecutor(): FollowingSteerExecutor
         fun blockRuleRepository(): BlockRuleRepository
         fun nudgeLogger(): NudgeLogger
         fun passthroughManager(): PassthroughManager
@@ -182,6 +194,31 @@ class NudgeAccessibilityService : AccessibilityService() {
     private var grayscaleActiveForPackage: String? = null
 
     private val counterCache = CounterCacheRefresher()
+
+    /**
+     * Show / move / hide / leave-alone for the Reels tab cover. Pure; holds no state of its own
+     * beyond what it is handed, so the "is a cover up, and where" question has exactly one owner
+     * ([TabCoverOverlayManager]).
+     */
+    private val tabCoverDecider = TabCoverDecider()
+
+    /**
+     * "Have we already steered this arrival at the home feed, and is a menu tap outstanding."
+     *
+     * Lives on the service rather than in the manager because it is a fact about the USER'S VISIT,
+     * not about a window: it has to survive the dropdown opening (which makes the tree stop looking
+     * like the home feed) and it has to be forgotten when they leave the app.
+     */
+    private val followingSteer = FollowingSteer()
+
+    /**
+     * Remembers that the click the platform is about to report was OURS.
+     *
+     * The steer's `ACTION_CLICK` is reported exactly like a finger, so without this the blocker's
+     * own taps land in the user's "taps today" -- measured on device as `reason=click session=14`
+     * straight after a steer. A counter that includes the blocker's own actions is measuring itself.
+     */
+    private val syntheticClicks = SyntheticClickWindow()
 
     private lateinit var interactionHandler: InteractionHandler
     private lateinit var timeRemainingHandler: TimeRemainingHandler
@@ -767,6 +804,7 @@ class NudgeAccessibilityService : AccessibilityService() {
 
         entryPoint.counterOverlayManager().setServiceContext(this)
         entryPoint.timeRemainingOverlayManager().setServiceContext(this)
+        entryPoint.tabCoverOverlayManager().setServiceContext(this)
 
         val passthrough = entryPoint.passthroughManager()
         passthroughManagerInstance = passthrough
@@ -1131,8 +1169,20 @@ class NudgeAccessibilityService : AccessibilityService() {
             A11yEventType.WINDOW_CONTENT_CHANGED -> handleWindowContentChanged(record)
 
             A11yEventType.VIEW_CLICKED,
-            A11yEventType.VIEW_SCROLLED -> interactionHandler.handleInteraction(record) {
-                eventRecordFactory.readSourceViewId(event)
+            A11yEventType.VIEW_SCROLLED -> {
+                // A click we performed ourselves (the Following steer) is reported by the platform
+                // exactly like a finger. Counting it would inflate the number this overlay exists to
+                // make honest -- issue #28's mistake from the other direction, with the blocker as
+                // the phantom user. Scrolls are never ours, so only clicks consult the window.
+                val ours = record.type == A11yEventType.VIEW_CLICKED &&
+                    syntheticClicks.shouldSuppress(android.os.SystemClock.elapsedRealtime())
+                if (ours) {
+                    entryPoint.nudgeLogger().d("interaction ignored reason=our_own_click")
+                } else {
+                    interactionHandler.handleInteraction(record) {
+                        eventRecordFactory.readSourceViewId(event)
+                    }
+                }
             }
 
             A11yEventType.OTHER -> Unit
@@ -1143,7 +1193,7 @@ class NudgeAccessibilityService : AccessibilityService() {
      * Feed the ONE classification to everything that consumes it, once per event, above every early
      * return.
      *
-     * There are exactly two consumers and they must never disagree:
+     * There are exactly three consumers and they must never disagree:
      *
      *  - [PassthroughManager] owns *is the user still in a sitting with app X* (issue #28).
      *    Everything it does is inside that class deliberately: the grant and the sitting that owns
@@ -1153,14 +1203,21 @@ class NudgeAccessibilityService : AccessibilityService() {
      *    (issues #31 and #26). It is fed here, from the same signal, rather than at the branches
      *    that happen to care: a branch-local update is precisely the shape that produced #5, #7,
      *    #19 and #28, each of which was a path that returned before something that had to happen.
+     *  - [TabCoverOverlayManager] owns *is the cover over the Reels tab still over the app it was
+     *    drawn for*. It is here for the same reason and not in the six branches that each mean "the
+     *    user is somewhere else": a cover left behind is a black rectangle floating over the
+     *    launcher, and there is no branch you can add one hide to that covers all of them. It
+     *    delegates the whole decision to `TabCoverPresence`, which is exhaustive over
+     *    [ForegroundSignal] with no `else`, so a signal added later cannot be forgotten here.
      *
      * This method used to be called `applySitting`, which was accurate when the sitting was the only
      * consumer. A name that describes one of two consumers is how the next person adds the third
-     * one somewhere else.
+     * one somewhere else -- and the third one did arrive, right here.
      */
     private fun applyForegroundSignal(signal: ForegroundSignal) {
         entryPoint.blockLaunchGuard().onForegroundSignal(signal)
         entryPoint.passthroughManager().onForegroundSignal(signal, sittingClock())
+        entryPoint.tabCoverOverlayManager().onForegroundSignal(signal)
     }
 
     /**
@@ -1658,6 +1715,12 @@ class NudgeAccessibilityService : AccessibilityService() {
         try {
             if (::interactionHandler.isInitialized) interactionHandler.hideCounter()
             if (::timeRemainingHandler.isInitialized) timeRemainingHandler.hide()
+            // The cover is enforcement, so it goes with the rest of it: a globally-disabled Nudge
+            // must behave as if uninstalled, and a screen nobody is looking at owes no cover either.
+            entryPoint.tabCoverOverlayManager().hide()
+            // The steer's "already done this arrival" is about a visit that has now ended.
+            followingSteer.reset()
+            syntheticClicks.reset()
         } catch (e: Exception) {
             entryPoint.nudgeLogger().w("overlay hide-all failed", e)
         }
@@ -1713,6 +1776,21 @@ class NudgeAccessibilityService : AccessibilityService() {
             return
         }
 
+        // THE STEER'S FAST PATH, and it sits ABOVE the debounce deliberately.
+        //
+        // `detectAndEvaluateFeature` is debounced to `contentChangedDebounceMs` (2s) because a tree
+        // read is expensive and these events arrive in bursts. That debounce made
+        // `SteerAction.ClickFollowing` UNREACHABLE on a real device: we click the dropdown, the menu
+        // opens ~250ms later and fires a burst of content changes, and every one of them is swallowed
+        // until 2s have passed -- by which time the attempt had already aged out. Nudge opened
+        // Instagram's dropdown and then never clicked anything, leaving it hanging open over the feed
+        // until the user pressed back. The state machine was correct in isolation and every unit test
+        // passed, because the tests drive `onObservation` directly and the CADENCE is what was wrong.
+        //
+        // Cost is bounded to the ~250ms between our click and the menu appearing, once per home-feed
+        // arrival, and only while an attempt is actually in flight.
+        if (followingSteer.isMenuPending) completePendingSteer(packageName)
+
         if (packageName !in InAppDetector.SUPPORTED_PACKAGES) {
             // Issue #7: a re-entry the OS delivers WITHOUT a TYPE_WINDOW_STATE_CHANGED (recents
             // overview, notification tap) would otherwise never be evaluated for this package —
@@ -1755,6 +1833,13 @@ class NudgeAccessibilityService : AccessibilityService() {
         lastContentChangedTime[packageName] = now
 
         val rootNode = try { rootInActiveWindow } catch (_: Exception) { null } ?: return
+
+        // Tab Vanish and the Following steer ride THIS tree read rather than adding one. Both are
+        // node-tree questions about the same instant, the read is the expensive part on this path
+        // (a device capture measured ~26k content-change events in a few minutes of Instagram use),
+        // and asking them here means they inherit the same debounce the detector already pays for.
+        maintainHostSurfaces(packageName, rootNode)
+
         val feature = entryPoint.inAppDetector().detectFeature(packageName, rootNode)
 
         // TOLD FIRST, AND TOLD EVEN WHEN THE ANSWER IS NULL. This used to be
@@ -1787,6 +1872,262 @@ class NudgeAccessibilityService : AccessibilityService() {
             )
             handleDecision(decision, packageName, feature.key)
         }
+    }
+
+    /**
+     * Maintain the two IN-HOST-APP surfaces for [packageName]: the Reels tab cover (Tab Vanish) and
+     * the Following steer. Called from [detectAndEvaluateFeature] with the tree read it already did.
+     *
+     * ## Everything the node tree is asked is asked HERE, synchronously, before anything suspends
+     *
+     * Both features need a database read (the block decision, the per-rule steer toggle) and an
+     * [AccessibilityNodeInfo] is only valid while its window is. So this function converts the tree
+     * into PURE VALUES on the event thread -- a classified [HostSurface], a boolean, a
+     * [TabCoverPlacement] -- and everything past the `launch` reasons about those values. It is the
+     * same boundary `AccessibilityEventRecord` draws for the event pipeline, and for the same
+     * reason: what crosses a suspend point has to be data, not a handle.
+     *
+     * The one exception is the steer's tap, which needs a live node and therefore re-reads the tree
+     * on the main thread -- but only on the rare tick where a tap is actually due (once per arrival),
+     * never in the steady state.
+     */
+    private fun maintainHostSurfaces(packageName: String, rootNode: AccessibilityNodeInfo) {
+        val surfaces = PlatformSurfacesRegistry.forPackage(packageName) ?: return
+
+        val executor = entryPoint.followingSteerExecutor()
+        val surface = surfaces.classify(executor.observe(rootNode, surfaces))
+        val menuVisible = surfaces.followingSteer?.let { executor.isMenuVisible(rootNode, it) } ?: false
+
+        // The tab we would cover, if any is on screen at all. Absent inside the reel player, a
+        // story, a DM thread and the Following screen -- all of which drop the nav bar entirely.
+        val vanishable = surfaces.vanishableTabs.entries.firstNotNullOfOrNull { (feature, locator) ->
+            HostNodeFinder.findPlacement(rootNode, locator)?.let { feature to it }
+        }
+
+        serviceScope.launch {
+            if (!entryPoint.nudgePreferences().isGlobalEnabled.first()) return@launch
+            maintainTabCover(packageName, surfaces, vanishable)
+            maintainFollowingSteer(packageName, surfaces, surface, menuVisible)
+        }
+    }
+
+    /**
+     * Draw, move or drop the cover over [packageName]'s vanishable tab.
+     *
+     * The cover is wanted only where the decision for that FEATURE is a hard block and the deciding
+     * rule opted in -- which is what makes Anti's headline behaviour fall out of the existing rule
+     * model rather than needing a mechanism of its own: a `NONE` + daily-limit rule evaluates to
+     * `HARD_BLOCK` the moment the budget is spent, so the tab goes on its own, on the same tick the
+     * limit is crossed, with nothing here that knows what a daily limit is.
+     *
+     * DELAY / HOLD / BREATHING deliberately do not qualify. Those modes are friction with a choice
+     * at the end of it, and the tab has to stay tappable to reach the interstitial -- covering it
+     * would remove the choice the mode exists to offer.
+     */
+    private suspend fun maintainTabCover(
+        packageName: String,
+        surfaces: PlatformSurfaces,
+        vanishable: Pair<String, TabCoverPlacement>?
+    ) {
+        val cover = entryPoint.tabCoverOverlayManager()
+
+        val requested = vanishable != null && run {
+            val decision = entryPoint.evaluateBlockUseCase().invoke(
+                packageName = packageName,
+                detectedFeature = vanishable.first
+            )
+            decision is BlockDecision.Block &&
+                decision.mode == BlockMode.HARD_BLOCK &&
+                decision.tabVanish
+        }
+
+        val effect = tabCoverDecider.decide(
+            vanishRequested = requested,
+            bounds = vanishable?.second,
+            shown = cover.shownPlacement()
+        )
+        if (effect is TabCoverEffect.None) return
+
+        cover.apply(
+            packageName = packageName,
+            effect = effect,
+            color = surfaces.navBarColor(isNightMode()),
+            label = coverLabel(vanishable?.first)
+        )
+    }
+
+    /**
+     * Steer [packageName]'s home feed to its Following feed, at most once per arrival.
+     *
+     * The decision is [FollowingSteer]'s; this function only supplies the observation and performs
+     * whatever it asks for. When the per-rule toggle is off the state machine is RESET rather than
+     * simply skipped, so switching the toggle on mid-session starts from a clean arrival instead of
+     * inheriting an "already steered" that was recorded while the feature was inert.
+     */
+    private suspend fun maintainFollowingSteer(
+        packageName: String,
+        surfaces: PlatformSurfaces,
+        surface: HostSurface,
+        menuVisible: Boolean
+    ) {
+        val recipe = surfaces.followingSteer ?: return
+
+        if (!entryPoint.evaluateBlockUseCase().isFollowingSteerEnabled(packageName)) {
+            followingSteer.reset()
+            return
+        }
+
+        val action = followingSteer.onObservation(
+            surface = surface,
+            inHostApp = true,
+            menuVisible = menuVisible,
+            // Monotonic, for the reason `sittingClock` is: this measures "how long have we been
+            // waiting for the menu", and an epoch clock can jump backwards mid-wait.
+            nowMs = android.os.SystemClock.elapsedRealtime()
+        )
+        if (action is SteerAction.None) return
+
+        withContext(Dispatchers.Main) { performSteerAction(action, recipe, packageName) }
+    }
+
+    /**
+     * Resolve a steer attempt that is ALREADY in flight, off the debounced feature path.
+     *
+     * Asks only "is the menu up", which is the one thing a caller here can actually vouch for, and
+     * lets [FollowingSteer.resolvePending] decide. Main thread, no suspend, no database read: the
+     * toggle was already checked when the attempt was started, and re-reading it here would put a
+     * Room query on the burst of content changes the opening menu produces.
+     */
+    private fun completePendingSteer(packageName: String) {
+        val surfaces = PlatformSurfacesRegistry.forPackage(packageName) ?: return
+        val recipe = surfaces.followingSteer ?: return
+
+        val menuRoot = findMenuRoot(recipe)
+        val action = followingSteer.resolvePending(
+            menuVisible = menuRoot != null,
+            nowMs = android.os.SystemClock.elapsedRealtime()
+        )
+        if (action is SteerAction.None) return
+        performSteerAction(action, recipe, packageName, menuRoot)
+    }
+
+    /**
+     * The root of whichever window currently holds the dropdown, or null when it is not up.
+     *
+     * Checks the active window first and then every other window, because a dropdown is a POPUP and
+     * we cannot assume which window `rootInActiveWindow` will hand back while one is open -- the
+     * recorded device dump of that moment contains the popup alone, with none of the activity's own
+     * chrome. Searching one window would make this feature depend on an ordering nobody controls.
+     * `flagRetrieveInteractiveWindows` is already set in the service config, so the list is available.
+     *
+     * Only ever called while an attempt is pending, so the per-window `root` binder reads are paid
+     * for a few hundred milliseconds once per home-feed arrival, not on the hot path.
+     */
+    private fun findMenuRoot(recipe: SteerRecipe): AccessibilityNodeInfo? {
+        val executor = entryPoint.followingSteerExecutor()
+        try {
+            rootInActiveWindow?.let { if (executor.isMenuVisible(it, recipe)) return it }
+        } catch (_: Exception) {
+            // fall through to the full window sweep
+        }
+        return try {
+            windows.orEmpty().firstNotNullOfOrNull { window ->
+                val root = try { window.root } catch (_: Exception) { null }
+                root?.takeIf { executor.isMenuVisible(it, recipe) }
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Perform one steer action on the main thread, and mark it as OURS so the interaction counter
+     * does not attribute our click to the user.
+     */
+    private fun performSteerAction(
+        action: SteerAction,
+        recipe: SteerRecipe,
+        packageName: String,
+        knownMenuRoot: AccessibilityNodeInfo? = null
+    ) {
+        if (action is SteerAction.CloseMenu) {
+            // We opened this dropdown and could not finish; leaving it hanging over the user's feed
+            // is a half-performed interaction in someone else's app, which is worse than not acting.
+            //
+            // BUT THE BACK PRESS IS GUARDED, and this is the important half. `CloseMenu` is emitted
+            // on TIMEOUT, i.e. precisely when we could NOT see the menu -- which covers two very
+            // different situations: the menu is open and we failed to find it, or the user already
+            // dismissed it themselves. Pressing back blindly is only correct in the first. In the
+            // second it is a back navigation the user did not ask for, inside their app, possibly
+            // out of the feed or out of Instagram entirely. So we look ONE more time, across every
+            // window, and press back only with the menu actually in front of us. No evidence, no
+            // action: the same fail-toward-doing-nothing this whole feature is built on.
+            val stillOpen = findMenuRoot(recipe) != null
+            if (!stillOpen) {
+                entryPoint.nudgeLogger().i(
+                    "following steer gave up, menu already gone package=$packageName"
+                )
+                return
+            }
+            val dismissed = try {
+                performGlobalAction(GLOBAL_ACTION_BACK)
+            } catch (e: Exception) {
+                entryPoint.nudgeLogger().w("following steer menu dismiss failed", e)
+                false
+            }
+            entryPoint.nudgeLogger().i(
+                "following steer gave up and closed the menu dismissed=$dismissed package=$packageName"
+            )
+            return
+        }
+
+        val root = knownMenuRoot
+            ?: try { rootInActiveWindow } catch (_: Exception) { null }
+        if (root == null) {
+            entryPoint.nudgeLogger().d("following steer skipped action=$action reason=no_root")
+            return
+        }
+
+        // BEFORE the click, not after: the accessibility event our own click produces can be
+        // delivered before `execute` returns.
+        syntheticClicks.onDispatch(android.os.SystemClock.elapsedRealtime())
+        val performed = entryPoint.followingSteerExecutor().execute(root, recipe, action)
+
+        // `i`, not `d`, and this is the one line in the feature that earns it: this is Nudge
+        // performing a CLICK inside somebody else's app. Debug logging is off by default, so a
+        // `d` here would make the only action this app takes in another app invisible in every
+        // field report -- the failure this repo has paid for twice ("a surface you cannot
+        // observe cannot be debugged"). At most two lines per home-feed arrival, so it cannot
+        // flood. `performed=false` is the interesting half: the node was absent and the steer
+        // silently did nothing, which is the designed failure and otherwise looks identical to
+        // never having run.
+        entryPoint.nudgeLogger().i(
+            "following steer action=$action performed=$performed package=$packageName"
+        )
+    }
+
+    /**
+     * Whether the device is in dark mode, which is what the host app's nav-bar colour follows.
+     *
+     * Read per call rather than cached: the user can flip the system theme (or cross a scheduled
+     * light/dark boundary) while sitting in the app, and a cached white rectangle on a black nav bar
+     * is the single most visible way this feature can look broken.
+     */
+    private fun isNightMode(): Boolean =
+        (resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
+            android.content.res.Configuration.UI_MODE_NIGHT_YES
+
+    /**
+     * What TalkBack says about the covered tab.
+     *
+     * DERIVED from the feature enum rather than written out: this app's own accessibility service
+     * is what puts a blank region over somebody's navigation bar, so leaving it unlabelled would be
+     * the wrong end of that -- and a hand-typed "Reels" here would be a second name for a thing that
+     * already has one (`docs/TESTING.md`, fixture honesty).
+     */
+    private fun coverLabel(featureKey: String?): String {
+        val feature = InAppDetector.Feature.entries.firstOrNull { it.key == featureKey }
+        return "${feature?.displayName ?: "This tab"} blocked by $ownAppLabel"
     }
 
     /**
@@ -2152,6 +2493,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         entryPoint.passthroughManager().setSittingReaction(null)
         entryPoint.counterOverlayManager().clearServiceContext()
         entryPoint.timeRemainingOverlayManager().clearServiceContext()
+        entryPoint.tabCoverOverlayManager().clearServiceContext()
         passthroughManagerInstance = null
         if (grayscaleActiveForPackage != null) {
             entryPoint.grayscaleManager().disableGrayscale()

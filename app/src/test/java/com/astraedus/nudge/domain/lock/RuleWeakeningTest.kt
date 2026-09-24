@@ -21,7 +21,9 @@ class RuleWeakeningTest {
         autoKickAfterMinutes: Int? = null,
         autoKickCooldownSeconds: Int = 60,
         webDomains: String? = null,
-        webBlockMode: String? = null
+        webBlockMode: String? = null,
+        tabVanish: Boolean = true,
+        followingSteer: Boolean = false
     ) = BlockRule(
         packageName = "com.example",
         mode = mode,
@@ -32,7 +34,9 @@ class RuleWeakeningTest {
         autoKickAfterMinutes = autoKickAfterMinutes,
         autoKickCooldownSeconds = autoKickCooldownSeconds,
         webDomains = webDomains,
-        webBlockMode = webBlockMode
+        webBlockMode = webBlockMode,
+        tabVanish = tabVanish,
+        followingSteer = followingSteer
     )
 
     // ── delay ──
@@ -460,5 +464,43 @@ class RuleWeakeningTest {
         // …and with the app-level mode held constant, the same web pinning is a no-op.
         val oldNone = rule(mode = "NONE", webDomains = "instagram.com", webBlockMode = "HARD_BLOCK")
         assertFalse(RuleWeakening.isWeakening(oldNone, new))
+    }
+
+    // ── tabVanish (Tab Vanish, v1.18.0) — turning it off removes the Reels-tab cover, so it is a
+    // one-directional weakening axis exactly like `enabled`. followingSteer is NOT an axis: it is
+    // a steer, not a block, so flipping it either way must never register as weakening. ──
+
+    @Test
+    fun `turning tabVanish off is weakening`() {
+        assertTrue(
+            RuleWeakening.isWeakening(rule(tabVanish = true), rule(tabVanish = false))
+        )
+    }
+
+    @Test
+    fun `turning tabVanish on is not weakening`() {
+        assertFalse(
+            RuleWeakening.isWeakening(rule(tabVanish = false), rule(tabVanish = true))
+        )
+    }
+
+    @Test
+    fun `leaving tabVanish unchanged is not weakening`() {
+        assertFalse(RuleWeakening.isWeakening(rule(tabVanish = true), rule(tabVanish = true)))
+        assertFalse(RuleWeakening.isWeakening(rule(tabVanish = false), rule(tabVanish = false)))
+    }
+
+    @Test
+    fun `turning followingSteer on is not weakening`() {
+        assertFalse(
+            RuleWeakening.isWeakening(rule(followingSteer = false), rule(followingSteer = true))
+        )
+    }
+
+    @Test
+    fun `turning followingSteer off is not weakening`() {
+        assertFalse(
+            RuleWeakening.isWeakening(rule(followingSteer = true), rule(followingSteer = false))
+        )
     }
 }

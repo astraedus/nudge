@@ -659,6 +659,63 @@ fun UnifiedAppConfigScreen(
                         onUpdate = { viewModel.setFeatureOverride(feature.key, it) }
                     )
                 }
+
+                // Tab Vanish -- covers the in-app tab (e.g. Instagram's Reels tab) while a rule
+                // covering that feature resolves to a hard block, so the icon disappears rather
+                // than merely refusing to open. Visibility asks the registry (supportsTabVanish),
+                // never a hardcoded package check.
+                if (state.supportsTabVanish) {
+                    val vanishLabel = state.vanishableFeatureLabel ?: "Reels"
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Hide the $vanishLabel tab", style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                "While $vanishLabel is blocked, Nudge covers the $vanishLabel tab in " +
+                                    "Instagram's bottom bar, so the icon is not there and tapping it does " +
+                                    "nothing. The rest of Instagram works as normal.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = state.tabVanish,
+                            onCheckedChange = viewModel::setTabVanish
+                        )
+                    }
+                }
+
+                // Following steer -- experimental, default off. Opens Instagram's Following feed
+                // instead of Home. Visibility asks the registry (supportsFollowingSteer).
+                if (state.supportsFollowingSteer) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "Open to Following instead of Home",
+                                style = MaterialTheme.typography.bodyLarge
+                            )
+                            Text(
+                                "Experimental. When you open Instagram's home feed, Nudge switches it to " +
+                                    "Following, so you see posts from people you follow rather than " +
+                                    "suggested ones. You can switch back at any time. If Instagram changes " +
+                                    "its layout this quietly stops working.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = state.followingSteer,
+                            onCheckedChange = viewModel::setFollowingSteer
+                        )
+                    }
+                }
             }
 
             HorizontalDivider()

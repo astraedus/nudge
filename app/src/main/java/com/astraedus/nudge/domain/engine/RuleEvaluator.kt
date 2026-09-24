@@ -39,7 +39,9 @@ class RuleEvaluator @Inject constructor() {
                 scheduleEndMinute = rule.scheduleEndMinute,
                 inAppFeatures = rule.inAppFeatures,
                 grayscale = rule.grayscale,
-                ruleName = buildRuleName(rule)
+                ruleName = buildRuleName(rule),
+                tabVanish = rule.tabVanish,
+                followingSteer = rule.followingSteer
             )
         }
     }

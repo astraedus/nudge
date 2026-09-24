@@ -30,7 +30,12 @@ class AwarenessOverlayContractTest {
 
     private val managerFiles = listOf(
         "main/java/com/astraedus/nudge/service/CounterOverlayManager.kt",
-        "main/java/com/astraedus/nudge/service/TimeRemainingOverlayManager.kt"
+        "main/java/com/astraedus/nudge/service/TimeRemainingOverlayManager.kt",
+        // The tab-vanish cover. Same rule, sharper consequence: this window is drawn OVER the app it
+        // is enforcing against, so a bare widget here would move the foreground to Nudge and drop
+        // every subsequent block for that exact app — the cover would silently disable blocking for
+        // the app it covers.
+        "main/java/com/astraedus/nudge/service/TabCoverOverlayManager.kt"
     )
 
     private fun read(relative: String): String {

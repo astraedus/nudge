@@ -3,6 +3,7 @@ package com.astraedus.nudge.ui.screens.config
 import androidx.compose.runtime.Immutable
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.domain.model.FeatureMode
+import com.astraedus.nudge.domain.surfaces.PlatformSurfacesRegistry
 
 @Immutable
 data class FeatureOverride(
@@ -76,6 +77,21 @@ data class UnifiedAppConfigState(
     val scheduledDelaySeconds: Int = 15,
     val scheduledFeatureOverrides: Map<String, FeatureOverride> = emptyMap(),
 
+    // Platform surface capabilities (Tab Vanish / Following steer)
+    /**
+     * Cover the in-app tab (e.g. Instagram's Reels tab) while a rule covering that feature
+     * resolves to a HARD_BLOCK, so the icon disappears instead of merely refusing to open.
+     * Default true: it only ever activates behind a decision that is already the strongest
+     * block mode, so it adds enforcement only where the user already asked for it.
+     */
+    val tabVanish: Boolean = true,
+    /**
+     * Experimental, per-rule opt-in: on arrival at the app's home feed, steer it to the
+     * Following/subscriptions feed. Default false, unlike every other capability flag here --
+     * this is the first thing Nudge does *inside* another app rather than around it.
+     */
+    val followingSteer: Boolean = false,
+
     // UI state
     val isLoading: Boolean = true,
     val isSaved: Boolean = false,
@@ -117,6 +133,36 @@ data class UnifiedAppConfigState(
      */
     val delayDurationLabel: String
         get() = if (durationMode == BlockMode.HOLD) "Hold Duration" else "Delay Duration"
+
+    /**
+     * Whether this package exposes a vanishable in-app tab to cover (e.g. Instagram's Reels
+     * tab). Asked of [PlatformSurfacesRegistry] rather than a hardcoded package list -- that is
+     * what makes a new platform a registry entry rather than a UI edit.
+     */
+    val supportsTabVanish: Boolean
+        get() = PlatformSurfacesRegistry.forPackage(packageName)?.vanishableTabs?.isNotEmpty() == true
+
+    /**
+     * Whether this package exposes a Following-feed steer target (e.g. Instagram's Home ->
+     * Following). Asked of [PlatformSurfacesRegistry] for the same reason as [supportsTabVanish].
+     */
+    val supportsFollowingSteer: Boolean
+        get() = PlatformSurfacesRegistry.forPackage(packageName)?.followingSteer != null
+
+    /**
+     * Display name of the feature Tab Vanish would cover (e.g. "Reels"), resolved through the
+     * existing [FEATURES_BY_PACKAGE] map rather than hardcoded, so the Tab Vanish copy doesn't
+     * bake in one platform's feature name. Null when nothing is vanishable for this package.
+     */
+    val vanishableFeatureLabel: String?
+        get() {
+            val featureKey = PlatformSurfacesRegistry.forPackage(packageName)
+                ?.vanishableTabs
+                ?.keys
+                ?.firstOrNull()
+                ?: return null
+            return FEATURES_BY_PACKAGE[packageName]?.firstOrNull { it.key == featureKey }?.displayName
+        }
 
     companion object {
         val FEATURES_BY_PACKAGE: Map<String, List<FeatureInfo>> = mapOf(

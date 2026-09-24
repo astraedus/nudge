@@ -81,7 +81,8 @@ class BlockEngine @Inject constructor(
                 grayscale = wantsGrayscale,
                 ruleName = unconditionalHardBlockRule.ruleName,
                 dailyTimeRemainingMs = dailyTimeRemainingMs,
-                dailyLimitMinutes = minDailyLimit
+                dailyLimitMinutes = minDailyLimit,
+                tabVanish = unconditionalHardBlockRule.tabVanish
             )
         }
 
@@ -98,7 +99,8 @@ class BlockEngine @Inject constructor(
                 grayscale = wantsGrayscale,
                 ruleName = budgetRuleName,
                 dailyTimeRemainingMs = dailyTimeRemainingMs,
-                dailyLimitMinutes = minDailyLimit
+                dailyLimitMinutes = minDailyLimit,
+                tabVanish = timeBudgetRule.tabVanish
             )
         }
 
@@ -118,7 +120,8 @@ class BlockEngine @Inject constructor(
                     wantsGrayscale,
                     ruleName = rule.ruleName,
                     dailyTimeRemainingMs = dailyTimeRemainingMs,
-                    dailyLimitMinutes = minDailyLimit
+                    dailyLimitMinutes = minDailyLimit,
+                    tabVanish = rule.tabVanish
                 )
             }
         }

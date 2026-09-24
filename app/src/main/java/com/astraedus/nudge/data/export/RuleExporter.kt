@@ -121,7 +121,9 @@ class RuleExporter @Inject constructor() {
                 autoKickCooldownSeconds = rule.autoKickCooldownSeconds,
                 webDomains = rule.webDomains,
                 autoKickAfterMinutes = rule.autoKickAfterMinutes,
-                webBlockMode = rule.webBlockMode
+                webBlockMode = rule.webBlockMode,
+                tabVanish = rule.tabVanish,
+                followingSteer = rule.followingSteer
             )
         }
 
@@ -288,6 +290,8 @@ class RuleExporter @Inject constructor() {
             obj.put("webDomains", rule.webDomains ?: JSONObject.NULL)
             obj.put("autoKickAfterMinutes", rule.autoKickAfterMinutes ?: JSONObject.NULL)
             obj.put("webBlockMode", rule.webBlockMode ?: JSONObject.NULL)
+            obj.put("tabVanish", rule.tabVanish)
+            obj.put("followingSteer", rule.followingSteer)
             rulesArray.put(obj)
         }
         root.put("rules", rulesArray)
@@ -526,7 +530,12 @@ class RuleExporter @Inject constructor() {
             // Null (absent, or written by an older Nudge) = inherit the app-level mode, which is
             // exactly what those exports meant. An unrecognized value is tolerated rather than
             // failing the import: WebBlockMode falls back to the app-level mode for it.
-            webBlockMode = obj.optStringOrNull("webBlockMode")
+            webBlockMode = obj.optStringOrNull("webBlockMode"),
+            // Absent (pre-v1.18.0 file) reads as tabVanish=true / followingSteer=false -- see the
+            // KDoc on ExportedRule for why those are the correct restore values, not just the
+            // entity's code-level defaults reused for convenience.
+            tabVanish = obj.optBoolean("tabVanish", true),
+            followingSteer = obj.optBoolean("followingSteer", false)
         )
     }
 

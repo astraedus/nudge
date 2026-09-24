@@ -55,6 +55,7 @@ class EvaluateBlockAfterRestartTest {
             usageRepository = usageRepository,
             blockEngine = BlockEngine(ScheduleEvaluator()),
             ruleEvaluator = RuleEvaluator(),
+            scheduleEvaluator = ScheduleEvaluator(),
             preferences = preferences,
             contentFilter = contentFilter
         )

@@ -171,6 +171,10 @@ class UnifiedAppConfigViewModel @Inject constructor(
                 scheduledMode = parseBlockMode(scheduledAppRule?.mode),
                 scheduledDelaySeconds = scheduledAppRule?.delaySeconds ?: 15,
                 scheduledFeatureOverrides = scheduledFeatureOverridesMap,
+                // Platform surface capabilities -- read off the default app rule; falling back
+                // to the same defaults as a fresh BlockRule when there is no existing rule.
+                tabVanish = defaultAppRule?.tabVanish ?: true,
+                followingSteer = defaultAppRule?.followingSteer ?: false,
                 // UI state
                 isLoading = false,
                 isSaved = false,
@@ -226,7 +230,14 @@ class UnifiedAppConfigViewModel @Inject constructor(
                 state.originalAutoKickCooldownSeconds
             ),
             webDomains = webDomains,
-            webBlockMode = webBlockMode
+            webBlockMode = webBlockMode,
+            // followingSteer is only ever meaningful on the app-level default rule: the steer is
+            // consulted while the app is ALLOWED, not as part of a block decision, and the
+            // app-level rule is the one that always exists. tabVanish is also set here, but
+            // performSave additionally copies it onto every other rule this view model
+            // persists -- see the comment there.
+            tabVanish = state.tabVanish,
+            followingSteer = state.followingSteer
         )
     }
 
@@ -274,7 +285,13 @@ class UnifiedAppConfigViewModel @Inject constructor(
                         override.autoKickCooldownMinutesText,
                         override.originalAutoKickCooldownSeconds
                     ),
-                    showCounter = state.showCounter
+                    showCounter = state.showCounter,
+                    // The engine reads tabVanish off the rule that DECIDED the block. A feature
+                    // override rule for a vanishable feature can be the deciding rule, so it must
+                    // carry the same tabVanish value as every other rule for this package -- else
+                    // whether the cover shows would depend on which rule happened to win, a coin
+                    // flip from the user's point of view.
+                    tabVanish = state.tabVanish
                 )
             )
         }
@@ -285,7 +302,11 @@ class UnifiedAppConfigViewModel @Inject constructor(
             val startMin = state.scheduleStartHour * 60 + state.scheduleStartMinute
             val endMin = state.scheduleEndHour * 60 + state.scheduleEndMinute
 
-            // Scheduled app-level rule
+            // Scheduled app-level rule. tabVanish carries here too -- same reasoning as the
+            // feature override rules above: this rule can be the one that decides a HARD_BLOCK
+            // during the scheduled window, so it needs the same flag as every other rule for
+            // this package. followingSteer does NOT go here: it belongs on the app-level
+            // DEFAULT rule only (see buildDefaultRule), never on a scheduled rule.
             blockRuleRepository.addRule(
                 BlockRule(
                     packageName = packageName,
@@ -294,7 +315,8 @@ class UnifiedAppConfigViewModel @Inject constructor(
                     enabled = state.enabled,
                     scheduleDays = scheduleDaysStr,
                     scheduleStartMinute = startMin,
-                    scheduleEndMinute = endMin
+                    scheduleEndMinute = endMin,
+                    tabVanish = state.tabVanish
                 )
             )
 
@@ -317,7 +339,11 @@ class UnifiedAppConfigViewModel @Inject constructor(
                         showCounter = state.showCounter,
                         scheduleDays = scheduleDaysStr,
                         scheduleStartMinute = startMin,
-                        scheduleEndMinute = endMin
+                        scheduleEndMinute = endMin,
+                        // Same reasoning as every other rule persisted here: tabVanish must be
+                        // uniform across all of this package's rules, since the engine reads it
+                        // off whichever rule decides the block.
+                        tabVanish = state.tabVanish
                     )
                 )
             }
@@ -524,5 +550,15 @@ class UnifiedAppConfigViewModel @Inject constructor(
         val current = _uiState.value.scheduledFeatureOverrides.toMutableMap()
         current[featureKey] = override
         _uiState.value = _uiState.value.copy(scheduledFeatureOverrides = current)
+    }
+
+    // ═══ Platform surface capabilities ═══
+
+    fun setTabVanish(enabled: Boolean) {
+        _uiState.value = _uiState.value.copy(tabVanish = enabled)
+    }
+
+    fun setFollowingSteer(enabled: Boolean) {
+        _uiState.value = _uiState.value.copy(followingSteer = enabled)
     }
 }

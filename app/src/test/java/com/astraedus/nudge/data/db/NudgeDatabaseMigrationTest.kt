@@ -171,6 +171,21 @@ class NudgeDatabaseMigrationTest {
     }
 
     @Test
+    fun `MIGRATION_10_11 adds tabVanish and followingSteer columns`() {
+        val db = RecordingDatabase()
+
+        NudgeDatabase.MIGRATION_10_11.migrate(db.proxy)
+
+        assertEquals(
+            listOf(
+                "ALTER TABLE block_rules ADD COLUMN tabVanish INTEGER NOT NULL DEFAULT 1",
+                "ALTER TABLE block_rules ADD COLUMN followingSteer INTEGER NOT NULL DEFAULT 0"
+            ),
+            db.sql
+        )
+    }
+
+    @Test
     fun `all migrations registered from version 1 to current`() {
         val allMigrations = listOf(
             NudgeDatabase.MIGRATION_1_2,
@@ -181,10 +196,20 @@ class NudgeDatabaseMigrationTest {
             NudgeDatabase.MIGRATION_6_7,
             NudgeDatabase.MIGRATION_7_8,
             NudgeDatabase.MIGRATION_8_9,
-            NudgeDatabase.MIGRATION_9_10
+            NudgeDatabase.MIGRATION_9_10,
+            NudgeDatabase.MIGRATION_10_11
         )
 
-        val currentVersion = 10
+        // Read from production, not hand-typed: a hand-kept constant here is exactly the
+        // fixture-honesty failure LESSONS 2026-09-21 describes for `PassthroughTest`'s
+        // `ownPackageName` -- it agrees with whoever last edited it, not with production, and would
+        // keep passing forever after a version bump nobody remembered to make in two places.
+        //
+        // It is the `NUDGE_DB_VERSION` constant rather than the `@Database` annotation because the
+        // annotation is genuinely invisible here: Room declares it with BINARY retention, so
+        // `getAnnotation(Database::class.java)` returns null on the JVM and reflecting on it throws.
+        // The constant is what the annotation itself is built from, so the two cannot diverge.
+        val currentVersion = NUDGE_DB_VERSION
 
         // Every version gap from 1 to current must have a migration
         for (v in 1 until currentVersion) {

@@ -2,7 +2,9 @@ package com.astraedus.nudge.ui.screens.rules
 
 import com.astraedus.nudge.ui.components.DurationInput
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -24,7 +26,9 @@ class RuleEditorRuleBuilderTest {
         originalAutoKickAfterMinutes: Int? = null,
         showCounter: Boolean = true,
         webDomains: String? = null,
-        webBlockMode: String? = null
+        webBlockMode: String? = null,
+        tabVanish: Boolean = true,
+        followingSteer: Boolean = false
     ) = RuleEditorUiState(
         packageName = "com.example.app",
         existingRuleId = 7L,
@@ -37,8 +41,39 @@ class RuleEditorRuleBuilderTest {
         originalAutoKickCooldownSeconds = originalAutoKickCooldownSeconds,
         originalAutoKickAfterMinutes = originalAutoKickAfterMinutes,
         webDomains = webDomains,
-        webBlockMode = webBlockMode
+        webBlockMode = webBlockMode,
+        tabVanish = tabVanish,
+        followingSteer = followingSteer
     )
+
+    // ── tab vanish / following steer (regression) ──
+
+    /**
+     * Same regression as `webDomains` below, one feature later. This editor has no UI for either
+     * flag and rebuilds the whole rule, so before they were threaded through, opening an Instagram
+     * rule here and saving ANY unrelated change silently turned a switched-off tab cover back ON.
+     */
+    @Test
+    fun `saving preserves a tab cover the user switched off`() {
+        assertFalse(RuleEditorViewModel.buildRule(state(tabVanish = false)).tabVanish)
+    }
+
+    /**
+     * The other direction, and the one that loses a feature the user deliberately enabled: the
+     * Following steer defaults to OFF, so dropping it here would switch it off on every save.
+     */
+    @Test
+    fun `saving preserves a following steer the user switched on`() {
+        assertTrue(RuleEditorViewModel.buildRule(state(followingSteer = true)).followingSteer)
+    }
+
+    @Test
+    fun `the defaults round-trip unchanged`() {
+        val rule = RuleEditorViewModel.buildRule(state())
+
+        assertTrue("tab vanish defaults on", rule.tabVanish)
+        assertFalse("the steer defaults off", rule.followingSteer)
+    }
 
     // ── web domains (regression) ──
 
