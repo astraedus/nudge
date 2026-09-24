@@ -165,20 +165,157 @@ class SittingTrackerTest {
         assertNull(t.currentApp)
     }
 
-    /** Backlog F5: a sitting cannot span a locked phone. */
-    @Test
-    fun `screen off ends the sitting immediately`() {
-        val t = tracker()
-        t.app(keep, 0)
-        assertEquals(SittingEvent.Ended(keep, SittingEndCause.SCREEN_OFF), t.onScreenOff())
-        assertNull(t.currentApp)
-    }
-
     @Test
     fun `ending a sitting that does not exist is a no-op`() {
         val t = tracker()
-        assertEquals(SittingEvent.Unchanged, t.onScreenOff())
+        assertEquals(SittingEvent.Unchanged, t.onScreenOff(0))
         assertEquals(SittingEvent.Unchanged, t.onSignal(ForegroundSignal.Home(launcher), 0))
+    }
+
+    // --- the screen going off (#54, backlog F5) -------------------------------------------------
+
+    /**
+     * ISSUE [#54](https://github.com/astraedus/nudge/issues/54), the reported case, in the smallest
+     * form it exists in.
+     *
+     * The user who asked for HOLD mode, by email 2026-09-24: *"I hold 60 second to unlock and then
+     * after 3-5 minute of use it again Askin for hold and also even after just 1 minute ahead asking
+     * for hold to unlock ... I have some client info on it and chat with them"*. Reading a chat
+     * inside the blocked app produces no touches, the display times out (Pixel default: 30 seconds),
+     * and the pre-fix rule ended the sitting on the broadcast alone — so unlocking straight back
+     * into the same app was a brand-new arrival and cost the full hold again.
+     */
+    @Test
+    fun `a display timeout the user returns from does not end the sitting`() {
+        val t = tracker()
+        t.app(keep, 0)
+
+        assertEquals(SittingEvent.Unchanged, t.onScreenOff(30_000))
+        assertEquals(keep, t.currentApp)
+
+        // The keyguard, then straight back into the app they never left.
+        t.onSignal(ForegroundSignal.SystemSurface("com.android.systemui"), 75_000)
+        assertEquals(SittingEvent.Unchanged, t.app(keep, 76_000))
+        assertEquals(keep, t.currentApp)
+        assertNull("the return closes the away clock", t.awaySinceMs)
+    }
+
+    /**
+     * Backlog F5, unchanged: *complete Instagram's delay, lock the phone, unlock hours later
+     * straight back into Instagram, no delay.* Hours is far past the return window, so the sitting
+     * is over and the next entry is a fresh block — and it says SCREEN_OFF, not the away clock's
+     * default cause.
+     */
+    @Test
+    fun `a phone locked past the return window ends the sitting, and says why`() {
+        val t = tracker()
+        t.app(keep, 0)
+        t.onScreenOff(1_000)
+
+        assertEquals(
+            SittingEvent.Started(keep, SittingEvent.Ended(keep, SittingEndCause.SCREEN_OFF)),
+            t.app(keep, 1_000 + window)
+        )
+        assertEquals(keep, t.currentApp)
+    }
+
+    /**
+     * **The counterfactual, on one stream.** The pre-fix rule was `end(SCREEN_OFF)` with no clock
+     * read at all, so BOTH rows below ended the sitting and the two cases were indistinguishable.
+     * Running the identical sequence at the two durations either side of the threshold, and getting
+     * two different answers, is what proves the LENGTH of the absence is now what decides. Anything
+     * that reverts to answering on the broadcast alone fails the first row.
+     */
+    @Test
+    fun `a screen-off is decided by its length, not by the broadcast`() {
+        listOf(
+            Triple("a display timeout", window - 1, false),
+            Triple("a locked phone", window, true)
+        ).forEach { (label, awayMs, endsIt) ->
+            val t = tracker()
+            t.app(keep, 0)
+            t.onScreenOff(0)
+            val event = t.app(keep, awayMs)
+            if (endsIt) {
+                assertEquals(
+                    label,
+                    SittingEvent.Started(keep, SittingEvent.Ended(keep, SittingEndCause.SCREEN_OFF)),
+                    event
+                )
+            } else {
+                assertEquals(label, SittingEvent.Unchanged, event)
+            }
+        }
+    }
+
+    /**
+     * A screen-off with a sitting already away must not restart the clock. The user left when they
+     * switched apps, not when the display blanked; measuring from the later moment would hand out a
+     * free window nobody earned, and a phone that blanks every thirty seconds would extend it
+     * forever.
+     */
+    @Test
+    fun `a screen-off does not restart an away clock another app already started`() {
+        val t = tracker()
+        t.app(keep, 0)
+        t.app(picker, 1_000)
+        t.onScreenOff(60_000)
+
+        assertEquals(1_000L, t.awaySinceMs)
+        assertEquals(
+            SittingEvent.Started(keep, SittingEvent.Ended(keep, SittingEndCause.ANOTHER_APP_HELD_FOREGROUND)),
+            t.app(keep, 1_000 + window)
+        )
+    }
+
+    /** ...and the reverse: an app coming forward during a screen-off keeps the screen-off's clock. */
+    @Test
+    fun `unlocking into a different app measures from when the screen went dark`() {
+        val t = tracker()
+        t.app(keep, 0)
+        t.onScreenOff(1_000)
+
+        // They unlock into another app well inside the window: keep's sitting is still theirs.
+        assertEquals(SittingEvent.Unchanged, t.app(picker, 2_000))
+        assertEquals(1_000L, t.awaySinceMs)
+        assertEquals(keep, t.currentApp)
+
+        // Past it, keep's sitting ends and the cause is still the evidence that started the clock.
+        assertEquals(
+            SittingEvent.Started(picker, SittingEvent.Ended(keep, SittingEndCause.SCREEN_OFF)),
+            t.app(picker, 1_000 + window)
+        )
+    }
+
+    /**
+     * Going home is still instant, screen off or not. Home is the one gesture that unambiguously
+     * means "I am leaving this app", and the whole point of #54's fix is that a screen-off is NOT
+     * that gesture — so the two must not start behaving alike in either direction.
+     */
+    @Test
+    fun `unlocking to the launcher still ends the sitting at once`() {
+        val t = tracker()
+        t.app(keep, 0)
+        t.onScreenOff(1_000)
+
+        assertEquals(
+            SittingEvent.Ended(keep, SittingEndCause.WENT_HOME),
+            t.onSignal(ForegroundSignal.Home(launcher), 2_000)
+        )
+        assertNull(t.currentApp)
+        assertNull(t.awaySinceMs)
+    }
+
+    /** A grant earned after the screen came back on closes the clock, like any other return. */
+    @Test
+    fun `a grant closes an away clock a screen-off started`() {
+        val t = tracker()
+        t.app(keep, 0)
+        t.onScreenOff(1_000)
+
+        assertEquals(SittingEvent.Unchanged, t.onGrantEarned(keep))
+        assertNull(t.awaySinceMs)
+        assertEquals(SittingEvent.Unchanged, t.app(keep, 1_000 + window))
     }
 
     // --- signals that must be structurally incapable of ending a sitting ---------------------

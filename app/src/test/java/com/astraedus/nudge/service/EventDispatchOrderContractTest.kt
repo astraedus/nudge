@@ -365,4 +365,58 @@ class EventDispatchOrderContractTest {
             stripComments(handler).contains("isDebugEnabled")
         )
     }
+
+    // --- the sitting model's clock (#54) ---------------------------------------------------------
+
+    /**
+     * EVERY call into the sitting model from this service must pass [sittingClock], never wall time.
+     *
+     * Discovered from `PassthroughManager`'s own signatures rather than from a hand-written list of
+     * call sites, because a hand-written list pins yesterday's bug: the clock-taking methods were
+     * one for a year and became two when [#54](https://github.com/astraedus/nudge/issues/54) gave
+     * the screen-off a return window, and a third would inherit nothing.
+     *
+     * Both failure directions are silent and both are user-visible. `System.currentTimeMillis()`
+     * does not advance while the device is asleep on every device, and it can be jumped from
+     * Settings — so a wall clock would measure a two-hour lock as an instant (handing back the
+     * bypass backlog F5 closed) or a thirty-second one as a week (handing back #54, the report this
+     * whole window exists for). `SystemClock.elapsedRealtime()` is neither jumpable nor pausable,
+     * which is the only reason the window means anything.
+     */
+    @Test
+    fun `every sitting-model call from the service uses the monotonic clock`() {
+        val manager = listOf(
+            java.io.File("src/main/java/com/astraedus/nudge/service/PassthroughManager.kt"),
+            java.io.File("app/src/main/java/com/astraedus/nudge/service/PassthroughManager.kt")
+        ).first { it.exists() }.readText()
+
+        val clockTakingMethods = Regex("""fun (\w+)\([^)]*\bnowMs: Long""")
+            .findAll(stripComments(manager))
+            .map { it.groupValues[1] }
+            .toSet()
+        assertTrue(
+            "expected PassthroughManager to expose clock-taking methods; did one get renamed?",
+            clockTakingMethods.size >= 2
+        )
+
+        // Each call site is read as the whole LINE it starts on. Balancing `sittingClock()`'s own
+        // parentheses with a regex is how the first version of this test passed a truncated
+        // argument list to `contains` and failed on correct code; a line is unambiguous, and a call
+        // spread over several lines failing loudly here is the right outcome anyway.
+        val code = stripComments(source)
+        clockTakingMethods.forEach { method ->
+            val callSites = code.lines().filter { it.contains("passthroughManager().$method(") }
+            assertTrue(
+                "PassthroughManager.$method takes a clock but the service never calls it — " +
+                    "either it is dead or the call moved somewhere this test cannot see it",
+                callSites.isNotEmpty()
+            )
+            callSites.forEach { line ->
+                assertTrue(
+                    "`${line.trim()}` must pass sittingClock(), not wall time",
+                    line.contains("sittingClock()")
+                )
+            }
+        }
+    }
 }
