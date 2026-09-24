@@ -32,7 +32,19 @@ data class NodeLocator(
     /** Exact `text` values. Localized and copy-fragile — fallback only. */
     val texts: List<String> = emptyList(),
     /** Exact `contentDescription` values. Localized and copy-fragile — fallback only. */
-    val contentDescriptions: List<String> = emptyList()
+    val contentDescriptions: List<String> = emptyList(),
+    /**
+     * Opt in to AND semantics: the id SCOPES and the label SELECTS, and a node must satisfy both.
+     * See [isScopedLabel] for when that is the only correct rule.
+     *
+     * DECLARED, never inferred. It would be tempting to derive this from "has ids AND has labels",
+     * and that is wrong: the Reels tab locator carries `clips_tab` AND the description "Reels"
+     * precisely so that EITHER can find it when a host-app build exposes only one of them, so
+     * inferring intent from which lists are populated would silently convert that fallback into a
+     * requirement — and the cover would stop appearing in any locale whose description is not the
+     * English string. Two locators, two rules, stated rather than guessed.
+     */
+    val scopedLabel: Boolean = false
 ) {
     /** True when this locator names no way at all to find a node, and so can never match. */
     val isEmpty: Boolean
@@ -49,4 +61,47 @@ data class NodeLocator(
         (viewId != null && viewId in viewIds) ||
             (text != null && text in texts) ||
             (contentDescription != null && contentDescription in contentDescriptions)
+
+    /**
+     * True when this locator both SCOPES by view id and SELECTS by label, so a node must satisfy
+     * BOTH to match ([matchesScoped]) rather than either ([matches]).
+     *
+     * ## Why one locator needs AND when the rest want OR
+     *
+     * The tab locator legitimately wants OR: `clips_tab` OR the content-description "Reels",
+     * whichever this Instagram build happens to expose. The dropdown's menu row cannot work that
+     * way, and it fails in both directions:
+     *
+     * - **Id alone is ambiguous.** Every row in the menu carries `context_menu_item_label`, so an
+     *   id-first lookup returns whichever row is first in the tree. `logo-menu.xml` holds both
+     *   "Following" and "Favorites", so that coin decides which one Nudge taps.
+     * - **Text alone is dangerous.** `findAccessibilityNodeInfosByText` is a case-insensitive
+     *   SUBSTRING search over the whole tree, so a feed caption containing the word "following"
+     *   matches, and the clickable ancestor of a caption is the post.
+     *
+     * One is a coin flip and the other taps a stranger's post. Both are decided by requiring the id
+     * and the label to agree, which is the only thing that actually identifies the row.
+     *
+     * True only when [scopedLabel] was declared AND there is actually an id and a label to combine —
+     * a locator that asks for AND but supplies only one side would otherwise match nothing at all,
+     * silently, which is the hardest kind of selector bug to see.
+     */
+    val isScopedLabel: Boolean
+        get() = scopedLabel && viewIds.isNotEmpty() &&
+            (texts.isNotEmpty() || contentDescriptions.isNotEmpty())
+
+    /**
+     * Whether one node satisfies this locator under AND semantics: its id must be one of [viewIds]
+     * AND its [text] or [contentDescription] must be one of the labels.
+     *
+     * Only meaningful when [isScopedLabel]; for any other locator it is equivalent to requiring the
+     * id, which is why callers branch on [isScopedLabel] rather than calling this unconditionally.
+     */
+    fun matchesScoped(viewId: String?, text: String?, contentDescription: String?): Boolean {
+        val idMatches = viewId != null && viewId in viewIds
+        if (!idMatches) return false
+        val labelMatches = (text != null && text in texts) ||
+            (contentDescription != null && contentDescription in contentDescriptions)
+        return labelMatches
+    }
 }

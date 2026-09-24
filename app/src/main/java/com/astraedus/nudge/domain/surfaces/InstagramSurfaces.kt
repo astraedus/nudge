@@ -145,7 +145,13 @@ object InstagramSurfaces : PlatformSurfaces {
         menuItemLabel = NodeLocator(
             viewIds = listOf(ID_CONTEXT_MENU_ITEM_LABEL),
             texts = listOf(LABEL_FOLLOWING),
-            contentDescriptions = listOf(LABEL_FOLLOWING)
+            contentDescriptions = listOf(LABEL_FOLLOWING),
+            // AND, not OR, and this is the one locator in the app that needs it. Every row in the
+            // dropdown carries `context_menu_item_label` -- "Favorites" as much as "Following" -- so
+            // the id alone picks whichever is first in the tree, and the label alone runs a substring
+            // search that a feed caption containing "following" satisfies. Only both together name
+            // the row. See NodeLocator.isScopedLabel.
+            scopedLabel = true
         )
     )
 

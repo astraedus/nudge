@@ -29,15 +29,30 @@ sealed interface SteerAction {
  * ## The policy, verbatim
  *
  * - `!inHostApp` (the user left the app) -> reset `attempted=false`, clear any pending menu, `None`
+ * - **a pending menu attempt is resolved BEFORE the surface is even looked at** (see below):
+ *   `menuVisible` -> clear pending, `ClickFollowing`; else if `nowMs - pendingSince > menuTimeoutMs`
+ *   -> clear pending, `None` (gave up silently, `attempted` STAYS true); else `None`
  * - `OTHER_TAB` -> reset `attempted=false`, clear pending, `None`
  * - `FOLLOWING_FEED` -> `attempted = true`, clear pending, `None`
  * - `UNKNOWN` -> `None`, change nothing (reel player / story / DM thread tells us nothing)
- * - `HOME_FEED`:
- *     - if a menu attempt is pending: `menuVisible` -> clear pending, `ClickFollowing`; else if
- *       `nowMs - pendingSince > menuTimeoutMs` -> clear pending, `None` (gave up silently,
- *       `attempted` STAYS true); else `None`
- *     - else if `attempted` -> `None`
- *     - else -> `attempted = true`, pending = `nowMs`, `OpenMenu`
+ * - `HOME_FEED` -> if `attempted` then `None`, else `attempted = true`, pending = `nowMs`, `OpenMenu`
+ *
+ * ## Why the pending attempt is resolved above the surface switch
+ *
+ * Because we do not know, and cannot know from here, which window the service will be holding while
+ * the dropdown is open. `logo-menu.xml` — the real dump taken with the menu up — contains no
+ * `title_logo`, no `tab_bar` and no `action_bar_title`, i.e. uiautomator captured the popup window
+ * alone. If the accessibility service sees the same thing, [PlatformSurfaces.classify] returns
+ * [HostSurface.UNKNOWN] for exactly the moment we are waiting for. Resolving the pending attempt
+ * inside the `HOME_FEED` branch would then make [SteerAction.ClickFollowing] unreachable, and Nudge
+ * would open Instagram's dropdown and leave it hanging open over the user's feed — worse than not
+ * steering at all. If instead the service sees the activity's root, the menu classifies as
+ * `HOME_FEED` and both structures work.
+ *
+ * A pending attempt is a fact about what WE just did, not about what screen is showing, so it does
+ * not belong under a branch keyed on the screen. The cost of resolving it above the switch is that
+ * an unrelated screen can age out a pending attempt; that is bounded by [menuTimeoutMs] and costs at
+ * most one abandoned attempt on this arrival.
  *
  * ## Why `attempted` survives `FOLLOWING_FEED`
  *
@@ -89,6 +104,23 @@ class FollowingSteer(private val menuTimeoutMs: Long = 1_500L) {
             reset()
             return SteerAction.None
         }
+
+        // A PENDING ATTEMPT IS RESOLVED FIRST, whatever the surface classifies as. The open dropdown
+        // may well be the only window we can see, in which case this moment classifies as UNKNOWN —
+        // see the class KDoc for why doing this inside the HOME_FEED branch leaves the menu hanging
+        // open on the user's screen.
+        pendingSince?.let { since ->
+            if (menuVisible) {
+                pendingSince = null
+                return SteerAction.ClickFollowing
+            }
+            if (nowMs - since > menuTimeoutMs) {
+                // Gave up. `attempted` stays true on purpose: one attempt per arrival, never a retry.
+                pendingSince = null
+            }
+            return SteerAction.None
+        }
+
         return when (surface) {
             // Another tab: a real navigation away from the feed. This arrival is over, so the next
             // return to Home is a fresh one and may steer again.
@@ -103,28 +135,21 @@ class FollowingSteer(private val menuTimeoutMs: Long = 1_500L) {
                 pendingSince = null
                 SteerAction.None
             }
-            // The reel player, a story, a DM thread. These tell us nothing about the arrival, so
-            // they must not clear `attempted` (that would re-steer on every return from a reel) and
-            // must not age out a pending menu against a screen the menu was never on.
+            // The reel player, a story, a DM thread — and possibly the open dropdown itself, which
+            // is why any pending attempt was already resolved above this switch. These tell us
+            // nothing about the arrival, so they must not clear `attempted`: doing so would re-steer
+            // the user every time they came back from a reel.
             HostSurface.UNKNOWN -> SteerAction.None
 
-            HostSurface.HOME_FEED -> onHomeFeed(menuVisible, nowMs)
+            HostSurface.HOME_FEED -> onHomeFeed(nowMs)
         }
     }
 
-    private fun onHomeFeed(menuVisible: Boolean, nowMs: Long): SteerAction {
-        val pending = pendingSince
-        if (pending != null) {
-            if (menuVisible) {
-                pendingSince = null
-                return SteerAction.ClickFollowing
-            }
-            if (nowMs - pending > menuTimeoutMs) {
-                // Gave up. `attempted` stays true on purpose: one attempt per arrival, never a retry.
-                pendingSince = null
-            }
-            return SteerAction.None
-        }
+    /**
+     * The first-attempt decision for this arrival. Reached only with no attempt outstanding — the
+     * pending case is resolved by [onObservation] above the surface switch.
+     */
+    private fun onHomeFeed(nowMs: Long): SteerAction {
         if (attempted) return SteerAction.None
         attempted = true
         pendingSince = nowMs

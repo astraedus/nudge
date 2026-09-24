@@ -237,6 +237,34 @@ object HostNodeFinder {
     ): List<AccessibilityNodeInfo> {
         if (locator.isEmpty) return emptyList()
 
+        // SCOPED LABEL: the id SCOPES and the label SELECTS, and both must agree. This is not a
+        // stricter version of the fallback chain below, it is a different rule, and it exists because
+        // neither half can identify Instagram's dropdown row alone: every row carries
+        // `context_menu_item_label`, so an id-only match returns whichever is first in the tree and a
+        // coin decides whether Nudge taps "Following" or "Favorites"; while a text-only match runs
+        // the framework's case-insensitive SUBSTRING search over the whole tree, where a feed caption
+        // containing the word "following" matches and its clickable ancestor is somebody's post.
+        //
+        // Deliberately NO fallback to a bare text search when the id is present but no label matches.
+        // That would reintroduce the caption case at exactly the moment we are most likely to be on
+        // the feed. Nothing found means nothing found, and the steer's silent-failure path runs.
+        if (locator.isScopedLabel) {
+            for (id in locator.viewIds) {
+                val nodes = root.findAccessibilityNodeInfosByViewId(id) ?: continue
+                if (nodes.isEmpty()) continue
+                val exact = nodes.firstOrNull {
+                    locator.matchesScoped(
+                        id,
+                        it.text?.toString(),
+                        it.contentDescription?.toString()
+                    )
+                }
+                if (exact != null) return listOf(exact) + nodes.filter { it !== exact }
+                recycleNodes(nodes)
+            }
+            return emptyList()
+        }
+
         for (id in locator.viewIds) {
             val nodes = root.findAccessibilityNodeInfosByViewId(id) ?: continue
             if (nodes.isNotEmpty()) return nodes
