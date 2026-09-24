@@ -123,6 +123,17 @@ object InstagramSurfaces : PlatformSurfaces {
         )
     )
 
+    /**
+     * The Following activity's header. Its TEXT is the first rung of [classify], and the only positive
+     * identification of that screen — `tab_bar` and `clips_tab` are simply absent there, and absence
+     * cannot tell the Following feed from a reel player.
+     *
+     * Matched by id only, deliberately. Matching on the text "Following" as well would make the
+     * locator find the dropdown ROW of the same name on the Home feed, and the classifier would then
+     * read an open menu as the destination screen.
+     */
+    override val titleLocator: NodeLocator = NodeLocator(viewIds = listOf(ID_ACTION_BAR_TITLE))
+
     override val followingSteer: SteerRecipe = SteerRecipe(
         // The ViewAnimator, NOT title_logo: the logo reports clickable=false, so a tap dispatched
         // at it does nothing at all.

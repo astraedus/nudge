@@ -32,6 +32,21 @@ interface PlatformSurfaces {
     val followingSteer: SteerRecipe?
 
     /**
+     * Where this app keeps the screen title that [classify] reads, or null when it has none.
+     *
+     * Needed because [classify] consumes [SurfaceObservation.actionBarTitle] and something has to tell
+     * the service layer which node that string comes from. Without it the title is always null, and
+     * for Instagram that is not a cosmetic loss: the title is the ONLY positive identification of the
+     * Following feed, so the steer's once-per-arrival memory would never be marked from the
+     * destination screen and a user who backed out of Following to Home could be steered again.
+     *
+     * Defaults to null so an adapter with no title screen declares nothing. A null title always
+     * classifies as [HostSurface.UNKNOWN], which means change nothing — the correct failure.
+     */
+    val titleLocator: NodeLocator?
+        get() = null
+
+    /**
      * The ARGB colour the tab cover is painted with, so the vanished tab reads as empty nav bar
      * rather than as a black rectangle.
      *
