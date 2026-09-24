@@ -253,3 +253,29 @@ also the reasoning for what would have to be true to pick one up.
 
 ## Noted 2026-08-31 (v1.15.1 QA): stay-awake devices legitimately show near-24h days
 Device QA of the screentime fix on the Pixel 3 (which has "stay awake while charging" on and lives on AC) showed ~17h "today" and several ~24h historical days. This is CORRECT: dumpsys usagestats confirmed the app genuinely was foreground with the screen on the whole time (no screen-off events ever fire on that device). Digital Wellbeing counts the same way. Do NOT "fix" this by distrusting long inherited sessions, that would under-count real long sessions (overnight video, navigation, charging docks). If it ever bothers users, the only defensible improvement is annotating, not clamping.
+
+## Tab Vanish / Following steer — known gaps at v1.18.0
+
+- [ ] **`HostSurface.OTHER_TAB` is fixture-unverified.** The spike captured Home, Home-scrolled, the open
+  dropdown, the Following screen, a warm relaunch, a cold start and both deep-link attempts — but not the
+  Search, Messages or Profile tabs. `InstagramSurfaces.classify` distinguishes Home from another tab by
+  `sticky_header_list` being present alongside `tab_bar`, which is load-bearing because Instagram hides
+  `title_logo` once the feed is scrolled (`home-scrolled.xml` proves it). If that id also appears on those
+  tabs we classify HOME_FEED, attempt a steer, find no entry point and no-op silently — ordered to fail in
+  that direction on purpose. Closing it is one capture per tab plus three assertions; do it the next time
+  the bench device has Instagram open.
+- [ ] **The cover is only as exact as one node's bounds.** `clips_tab` reported [216,1896][432,2028] on a
+  1080x2160 Pixel 3, and the cover is drawn straight from `getBoundsInScreen`. Nothing verifies the
+  rectangle does not overlap the neighbouring tabs on a device with a different density, a larger system
+  font, or a three-button nav bar. `TabCoverPlacement.of` rejects only degenerate and negative rectangles,
+  not implausible ones. If a report ever says "the Home tab stopped working", this is the first thing to
+  measure.
+- [ ] **Instagram is testing moving Reels to the second nav slot** (press, Sept 2026). Bounds-driven
+  placement follows that automatically; an id RENAME would not, and the failure would be silent — the cover
+  simply never appears. There is no signal we can watch for it from inside the app, so it will arrive as a
+  user report. Keep `InstagramSurfaces` as the one file to edit when it does.
+- [ ] **YouTube: Shorts tab vanish + Subscriptions steer.** The same adapter, no new mechanism — what is
+  missing is a bench capture of the Shorts tab's bounds and the Subscriptions nav item, plus a product call
+  on the Shorts shelf INSIDE Subscriptions, which scrolls and so cannot be covered the same way. Also worth
+  surfacing as a tip rather than code: turning off YouTube watch history blanks the Home feed entirely
+  (Google-documented), which is a stronger intervention than any steer we can perform.
