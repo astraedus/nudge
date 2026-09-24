@@ -22,6 +22,7 @@ import com.astraedus.nudge.domain.events.A11yEventType
 import com.astraedus.nudge.domain.events.AccessibilityEventRecord
 import com.astraedus.nudge.domain.events.EventClassifier
 import com.astraedus.nudge.domain.events.ForegroundSignal
+import com.astraedus.nudge.domain.interaction.SyntheticClickWindow
 import com.astraedus.nudge.domain.lock.StrictModeEscapeGuard
 import com.astraedus.nudge.domain.sitting.SittingEvent
 import com.astraedus.nudge.domain.model.BlockDecision
@@ -33,6 +34,7 @@ import com.astraedus.nudge.domain.surfaces.HostSurface
 import com.astraedus.nudge.domain.surfaces.PlatformSurfaces
 import com.astraedus.nudge.domain.surfaces.PlatformSurfacesRegistry
 import com.astraedus.nudge.domain.surfaces.SteerAction
+import com.astraedus.nudge.domain.surfaces.SteerRecipe
 import com.astraedus.nudge.domain.surfaces.TabCoverDecider
 import com.astraedus.nudge.domain.surfaces.TabCoverEffect
 import com.astraedus.nudge.domain.surfaces.TabCoverPlacement
@@ -208,6 +210,15 @@ class NudgeAccessibilityService : AccessibilityService() {
      * like the home feed) and it has to be forgotten when they leave the app.
      */
     private val followingSteer = FollowingSteer()
+
+    /**
+     * Remembers that the click the platform is about to report was OURS.
+     *
+     * The steer's `ACTION_CLICK` is reported exactly like a finger, so without this the blocker's
+     * own taps land in the user's "taps today" -- measured on device as `reason=click session=14`
+     * straight after a steer. A counter that includes the blocker's own actions is measuring itself.
+     */
+    private val syntheticClicks = SyntheticClickWindow()
 
     private lateinit var interactionHandler: InteractionHandler
     private lateinit var timeRemainingHandler: TimeRemainingHandler
@@ -1158,8 +1169,20 @@ class NudgeAccessibilityService : AccessibilityService() {
             A11yEventType.WINDOW_CONTENT_CHANGED -> handleWindowContentChanged(record)
 
             A11yEventType.VIEW_CLICKED,
-            A11yEventType.VIEW_SCROLLED -> interactionHandler.handleInteraction(record) {
-                eventRecordFactory.readSourceViewId(event)
+            A11yEventType.VIEW_SCROLLED -> {
+                // A click we performed ourselves (the Following steer) is reported by the platform
+                // exactly like a finger. Counting it would inflate the number this overlay exists to
+                // make honest -- issue #28's mistake from the other direction, with the blocker as
+                // the phantom user. Scrolls are never ours, so only clicks consult the window.
+                val ours = record.type == A11yEventType.VIEW_CLICKED &&
+                    syntheticClicks.shouldSuppress(android.os.SystemClock.elapsedRealtime())
+                if (ours) {
+                    entryPoint.nudgeLogger().d("interaction ignored reason=our_own_click")
+                } else {
+                    interactionHandler.handleInteraction(record) {
+                        eventRecordFactory.readSourceViewId(event)
+                    }
+                }
             }
 
             A11yEventType.OTHER -> Unit
@@ -1697,6 +1720,7 @@ class NudgeAccessibilityService : AccessibilityService() {
             entryPoint.tabCoverOverlayManager().hide()
             // The steer's "already done this arrival" is about a visit that has now ended.
             followingSteer.reset()
+            syntheticClicks.reset()
         } catch (e: Exception) {
             entryPoint.nudgeLogger().w("overlay hide-all failed", e)
         }
@@ -1751,6 +1775,21 @@ class NudgeAccessibilityService : AccessibilityService() {
             }
             return
         }
+
+        // THE STEER'S FAST PATH, and it sits ABOVE the debounce deliberately.
+        //
+        // `detectAndEvaluateFeature` is debounced to `contentChangedDebounceMs` (2s) because a tree
+        // read is expensive and these events arrive in bursts. That debounce made
+        // `SteerAction.ClickFollowing` UNREACHABLE on a real device: we click the dropdown, the menu
+        // opens ~250ms later and fires a burst of content changes, and every one of them is swallowed
+        // until 2s have passed -- by which time the attempt had already aged out. Nudge opened
+        // Instagram's dropdown and then never clicked anything, leaving it hanging open over the feed
+        // until the user pressed back. The state machine was correct in isolation and every unit test
+        // passed, because the tests drive `onObservation` directly and the CADENCE is what was wrong.
+        //
+        // Cost is bounded to the ~250ms between our click and the menu appearing, once per home-feed
+        // arrival, and only while an attempt is actually in flight.
+        if (followingSteer.isMenuPending) completePendingSteer(packageName)
 
         if (packageName !in InAppDetector.SUPPORTED_PACKAGES) {
             // Issue #7: a re-entry the OS delivers WITHOUT a TYPE_WINDOW_STATE_CHANGED (recents
@@ -1948,27 +1987,107 @@ class NudgeAccessibilityService : AccessibilityService() {
         )
         if (action is SteerAction.None) return
 
-        withContext(Dispatchers.Main) {
-            // Re-read rather than holding the caller's node across the suspend above. Only reached
-            // when a tap is actually due, so the steady state pays nothing for it.
-            val root = try { rootInActiveWindow } catch (_: Exception) { null }
-            if (root == null) {
-                entryPoint.nudgeLogger().d("following steer skipped action=$action reason=no_root")
-                return@withContext
-            }
-            val performed = entryPoint.followingSteerExecutor().execute(root, recipe, action)
-            // `i`, not `d`, and this is the one line in the feature that earns it: this is Nudge
-            // performing a CLICK inside somebody else's app. Debug logging is off by default, so a
-            // `d` here would make the only action this app takes in another app invisible in every
-            // field report -- the failure this repo has paid for twice ("a surface you cannot
-            // observe cannot be debugged"). At most one line per home-feed arrival, so it cannot
-            // flood. `performed=false` is the interesting half: the node was absent and the steer
-            // silently did nothing, which is the designed failure and otherwise looks identical to
-            // never having run.
-            entryPoint.nudgeLogger().i(
-                "following steer action=$action performed=$performed package=$packageName"
-            )
+        withContext(Dispatchers.Main) { performSteerAction(action, recipe, packageName) }
+    }
+
+    /**
+     * Resolve a steer attempt that is ALREADY in flight, off the debounced feature path.
+     *
+     * Asks only "is the menu up", which is the one thing a caller here can actually vouch for, and
+     * lets [FollowingSteer.resolvePending] decide. Main thread, no suspend, no database read: the
+     * toggle was already checked when the attempt was started, and re-reading it here would put a
+     * Room query on the burst of content changes the opening menu produces.
+     */
+    private fun completePendingSteer(packageName: String) {
+        val surfaces = PlatformSurfacesRegistry.forPackage(packageName) ?: return
+        val recipe = surfaces.followingSteer ?: return
+
+        val menuRoot = findMenuRoot(recipe)
+        val action = followingSteer.resolvePending(
+            menuVisible = menuRoot != null,
+            nowMs = android.os.SystemClock.elapsedRealtime()
+        )
+        if (action is SteerAction.None) return
+        performSteerAction(action, recipe, packageName, menuRoot)
+    }
+
+    /**
+     * The root of whichever window currently holds the dropdown, or null when it is not up.
+     *
+     * Checks the active window first and then every other window, because a dropdown is a POPUP and
+     * we cannot assume which window `rootInActiveWindow` will hand back while one is open -- the
+     * recorded device dump of that moment contains the popup alone, with none of the activity's own
+     * chrome. Searching one window would make this feature depend on an ordering nobody controls.
+     * `flagRetrieveInteractiveWindows` is already set in the service config, so the list is available.
+     *
+     * Only ever called while an attempt is pending, so the per-window `root` binder reads are paid
+     * for a few hundred milliseconds once per home-feed arrival, not on the hot path.
+     */
+    private fun findMenuRoot(recipe: SteerRecipe): AccessibilityNodeInfo? {
+        val executor = entryPoint.followingSteerExecutor()
+        try {
+            rootInActiveWindow?.let { if (executor.isMenuVisible(it, recipe)) return it }
+        } catch (_: Exception) {
+            // fall through to the full window sweep
         }
+        return try {
+            windows.orEmpty().firstNotNullOfOrNull { window ->
+                val root = try { window.root } catch (_: Exception) { null }
+                root?.takeIf { executor.isMenuVisible(it, recipe) }
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Perform one steer action on the main thread, and mark it as OURS so the interaction counter
+     * does not attribute our click to the user.
+     */
+    private fun performSteerAction(
+        action: SteerAction,
+        recipe: SteerRecipe,
+        packageName: String,
+        knownMenuRoot: AccessibilityNodeInfo? = null
+    ) {
+        if (action is SteerAction.CloseMenu) {
+            // We opened this dropdown and could not finish; leaving it hanging over the user's feed
+            // is a half-performed interaction in someone else's app, which is worse than not acting.
+            val dismissed = try {
+                performGlobalAction(GLOBAL_ACTION_BACK)
+            } catch (e: Exception) {
+                entryPoint.nudgeLogger().w("following steer menu dismiss failed", e)
+                false
+            }
+            entryPoint.nudgeLogger().i(
+                "following steer gave up and closed the menu dismissed=$dismissed package=$packageName"
+            )
+            return
+        }
+
+        val root = knownMenuRoot
+            ?: try { rootInActiveWindow } catch (_: Exception) { null }
+        if (root == null) {
+            entryPoint.nudgeLogger().d("following steer skipped action=$action reason=no_root")
+            return
+        }
+
+        // BEFORE the click, not after: the accessibility event our own click produces can be
+        // delivered before `execute` returns.
+        syntheticClicks.onDispatch(android.os.SystemClock.elapsedRealtime())
+        val performed = entryPoint.followingSteerExecutor().execute(root, recipe, action)
+
+        // `i`, not `d`, and this is the one line in the feature that earns it: this is Nudge
+        // performing a CLICK inside somebody else's app. Debug logging is off by default, so a
+        // `d` here would make the only action this app takes in another app invisible in every
+        // field report -- the failure this repo has paid for twice ("a surface you cannot
+        // observe cannot be debugged"). At most two lines per home-feed arrival, so it cannot
+        // flood. `performed=false` is the interesting half: the node was absent and the steer
+        // silently did nothing, which is the designed failure and otherwise looks identical to
+        // never having run.
+        entryPoint.nudgeLogger().i(
+            "following steer action=$action performed=$performed package=$packageName"
+        )
     }
 
     /**

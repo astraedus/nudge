@@ -132,6 +132,13 @@ class FollowingSteerExecutor @Inject constructor(
             is SteerAction.None -> return false
             is SteerAction.OpenMenu -> recipe.entryPoint
             is SteerAction.ClickFollowing -> recipe.menuItemLabel
+            // Dismissing the dropdown is a GLOBAL action (back), not a click on a node, so it
+            // belongs to the service and not to a class whose whole job is "find a node and click
+            // it". Returning false here rather than silently doing nothing would be a lie to the
+            // caller; the service never routes CloseMenu through this method, and this branch exists
+            // because the `when` is exhaustive on purpose -- adding an action forces a decision here
+            // instead of letting a new one fall into an `else` and quietly do nothing.
+            is SteerAction.CloseMenu -> return false
         }
 
         val name = action::class.simpleName

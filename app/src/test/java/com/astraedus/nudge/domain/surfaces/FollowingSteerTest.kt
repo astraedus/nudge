@@ -159,7 +159,9 @@ class FollowingSteerTest {
     fun `an unknown surface can age out a pending attempt and does not retry`() {
         val s = steer()
         assertEquals(SteerAction.OpenMenu, s.at(HostSurface.HOME_FEED, 0))
-        assertEquals(SteerAction.None, s.at(HostSurface.UNKNOWN, timeout + 1))
+        // CloseMenu, not None: ageing out means we opened a dropdown we are never going to use, and
+        // leaving it on screen is what stranded Instagram's menu on the bench device.
+        assertEquals(SteerAction.CloseMenu, s.at(HostSurface.UNKNOWN, timeout + 1))
         assertFalse("the attempt aged out", s.isMenuPending)
         assertTrue("giving up must not clear `attempted`", s.hasAttempted)
         assertEquals(SteerAction.None, s.at(HostSurface.HOME_FEED, timeout + 100))
@@ -302,7 +304,10 @@ class FollowingSteerTest {
     fun `the menu timeout gives up and does not retry`() {
         val s = steer()
         assertEquals(SteerAction.OpenMenu, s.at(HostSurface.HOME_FEED, 0))
-        assertEquals(SteerAction.None, s.at(HostSurface.HOME_FEED, timeout + 1))
+        // The give-up is silent as far as the STEER goes, but it is not silent as far as the MENU
+        // goes: we opened it, so we close it. Re-stated from `None` when the device showed a failed
+        // attempt leaving the dropdown hanging open over the feed.
+        assertEquals(SteerAction.CloseMenu, s.at(HostSurface.HOME_FEED, timeout + 1))
         assertFalse("the attempt is no longer pending", s.isMenuPending)
         assertTrue("giving up must not clear `attempted` — that would be a retry", s.hasAttempted)
         assertEquals(SteerAction.None, s.at(HostSurface.HOME_FEED, timeout + 100))
@@ -338,15 +343,23 @@ class FollowingSteerTest {
         assertEquals(SteerAction.OpenMenu, s.at(HostSurface.HOME_FEED, timeout + 200))
     }
 
-    /** The default timeout is the agreed 1.5s bounded wait. */
+    /**
+     * The default bounded wait, read from production rather than restated.
+     *
+     * It was 1.5s and is now [FollowingSteer.DEFAULT_MENU_TIMEOUT_MS], because 1.5s was SHORTER than
+     * the 2s content-change debounce that gated observations, so a pending attempt could age out
+     * before anything was allowed to look at the menu. `FollowingSteerCadenceContractTest` pins that
+     * relationship against the service's own constant; this pins the boundary behaviour.
+     */
     @Test
-    fun `the default menu timeout is one and a half seconds`() {
+    fun `the default menu timeout is a bounded wait with a strict boundary`() {
+        val default = FollowingSteer.DEFAULT_MENU_TIMEOUT_MS
         val s = FollowingSteer()
         s.at(HostSurface.HOME_FEED, 0)
-        assertEquals(SteerAction.None, s.at(HostSurface.HOME_FEED, 1_500))
-        assertTrue("1500ms must still be inside the window", s.isMenuPending)
-        s.at(HostSurface.HOME_FEED, 1_501)
-        assertFalse("1501ms must be outside it", s.isMenuPending)
+        assertEquals(SteerAction.None, s.at(HostSurface.HOME_FEED, default))
+        assertTrue("${default}ms must still be inside the window", s.isMenuPending)
+        s.at(HostSurface.HOME_FEED, default + 1)
+        assertFalse("${default + 1}ms must be outside it", s.isMenuPending)
     }
 
     // -----------------------------------------------------------------------------------------

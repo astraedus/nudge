@@ -16,6 +16,16 @@ sealed interface SteerAction {
 
     /** The menu is up; click its "Following" row. */
     data object ClickFollowing : SteerAction
+
+    /**
+     * We opened the dropdown and never found the row. Dismiss it.
+     *
+     * Emitted exactly once, when a pending attempt ages out. Giving up silently is right for the
+     * STEER, but not for the MENU: on the bench device a failed attempt left Instagram's dropdown
+     * hanging open over the feed indefinitely, needing a manual back press. Nudge opened it, so
+     * Nudge closes it -- a half-performed interaction in someone else's app is worse than none.
+     */
+    data object CloseMenu : SteerAction
 }
 
 /**
@@ -31,7 +41,7 @@ sealed interface SteerAction {
  * - `!inHostApp` (the user left the app) -> reset `attempted=false`, clear any pending menu, `None`
  * - **a pending menu attempt is resolved BEFORE the surface is even looked at** (see below):
  *   `menuVisible` -> clear pending, `ClickFollowing`; else if `nowMs - pendingSince > menuTimeoutMs`
- *   -> clear pending, `None` (gave up silently, `attempted` STAYS true); else `None`
+ *   -> clear pending, `CloseMenu` (gave up, `attempted` STAYS true); else `None`
  * - `OTHER_TAB` -> reset `attempted=false`, clear pending, `None`
  * - `FOLLOWING_FEED` -> `attempted = true`, clear pending, `None`
  * - `UNKNOWN` -> `None`, change nothing (reel player / story / DM thread tells us nothing)
@@ -70,7 +80,7 @@ sealed interface SteerAction {
  *
  * @param menuTimeoutMs how long to wait for the dropdown after clicking the entry point.
  */
-class FollowingSteer(private val menuTimeoutMs: Long = 1_500L) {
+class FollowingSteer(private val menuTimeoutMs: Long = DEFAULT_MENU_TIMEOUT_MS) {
 
     /** Has this arrival already been steered (or already had its one attempt)? */
     private var attempted = false
@@ -109,17 +119,7 @@ class FollowingSteer(private val menuTimeoutMs: Long = 1_500L) {
         // may well be the only window we can see, in which case this moment classifies as UNKNOWN —
         // see the class KDoc for why doing this inside the HOME_FEED branch leaves the menu hanging
         // open on the user's screen.
-        pendingSince?.let { since ->
-            if (menuVisible) {
-                pendingSince = null
-                return SteerAction.ClickFollowing
-            }
-            if (nowMs - since > menuTimeoutMs) {
-                // Gave up. `attempted` stays true on purpose: one attempt per arrival, never a retry.
-                pendingSince = null
-            }
-            return SteerAction.None
-        }
+        if (isMenuPending) return resolvePending(menuVisible, nowMs)
 
         return when (surface) {
             // Another tab: a real navigation away from the feed. This arrival is over, so the next
@@ -146,6 +146,33 @@ class FollowingSteer(private val menuTimeoutMs: Long = 1_500L) {
     }
 
     /**
+     * Resolve an attempt that is already in flight, WITHOUT claiming to know what screen is showing.
+     *
+     * Split out so the service can drive it from its fast path: the observation that sees the open
+     * dropdown must not wait on the 2s content-change debounce that gates feature detection, or the
+     * attempt ages out before [SteerAction.ClickFollowing] can ever be returned (it did, on device).
+     * A caller there knows only "is the menu up", not which surface it is over, and fabricating a
+     * [HostSurface] to satisfy [onObservation] would be feeding a state machine a premise the caller
+     * cannot actually vouch for.
+     *
+     * [SteerAction.None] when nothing is pending, so it is always safe to ask.
+     */
+    fun resolvePending(menuVisible: Boolean, nowMs: Long): SteerAction {
+        val since = pendingSince ?: return SteerAction.None
+        if (menuVisible) {
+            pendingSince = null
+            return SteerAction.ClickFollowing
+        }
+        if (nowMs - since > menuTimeoutMs) {
+            // Gave up. `attempted` stays true on purpose: one attempt per arrival, never a retry.
+            // But the dropdown we opened is still on screen, so close it on the way out.
+            pendingSince = null
+            return SteerAction.CloseMenu
+        }
+        return SteerAction.None
+    }
+
+    /**
      * The first-attempt decision for this arrival. Reached only with no attempt outstanding — the
      * pending case is resolved by [onObservation] above the surface switch.
      */
@@ -168,5 +195,24 @@ class FollowingSteer(private val menuTimeoutMs: Long = 1_500L) {
     fun reset() {
         attempted = false
         pendingSince = null
+    }
+
+    companion object {
+        /**
+         * How long to wait for the dropdown after clicking the entry point.
+         *
+         * Deliberately several times the ~250 ms the menu actually takes to appear, and deliberately
+         * LONGER than `NudgeAccessibilityService.contentChangedDebounceMs` (2 s). The first shipped
+         * value was 1.5 s, i.e. SHORTER than that debounce, which made [SteerAction.ClickFollowing]
+         * unreachable on a real device: the observation that would have seen the open menu could not
+         * arrive until the debounce elapsed, by which point the attempt had already aged out. Nudge
+         * opened Instagram's dropdown and never clicked anything.
+         *
+         * The service no longer relies on that debounced path for a pending attempt (it observes on
+         * a fast path while one is in flight), so this margin is belt-and-braces rather than the
+         * mechanism -- but `FollowingSteerTimeoutContractTest` pins the relationship anyway, because
+         * the failure it prevents is silent and device-only.
+         */
+        const val DEFAULT_MENU_TIMEOUT_MS = 4_000L
     }
 }
