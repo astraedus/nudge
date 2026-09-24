@@ -1957,7 +1957,15 @@ class NudgeAccessibilityService : AccessibilityService() {
                 return@withContext
             }
             val performed = entryPoint.followingSteerExecutor().execute(root, recipe, action)
-            entryPoint.nudgeLogger().d(
+            // `i`, not `d`, and this is the one line in the feature that earns it: this is Nudge
+            // performing a CLICK inside somebody else's app. Debug logging is off by default, so a
+            // `d` here would make the only action this app takes in another app invisible in every
+            // field report -- the failure this repo has paid for twice ("a surface you cannot
+            // observe cannot be debugged"). At most one line per home-feed arrival, so it cannot
+            // flood. `performed=false` is the interesting half: the node was absent and the steer
+            // silently did nothing, which is the designed failure and otherwise looks identical to
+            // never having run.
+            entryPoint.nudgeLogger().i(
                 "following steer action=$action performed=$performed package=$packageName"
             )
         }
