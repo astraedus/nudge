@@ -2053,6 +2053,22 @@ class NudgeAccessibilityService : AccessibilityService() {
         if (action is SteerAction.CloseMenu) {
             // We opened this dropdown and could not finish; leaving it hanging over the user's feed
             // is a half-performed interaction in someone else's app, which is worse than not acting.
+            //
+            // BUT THE BACK PRESS IS GUARDED, and this is the important half. `CloseMenu` is emitted
+            // on TIMEOUT, i.e. precisely when we could NOT see the menu -- which covers two very
+            // different situations: the menu is open and we failed to find it, or the user already
+            // dismissed it themselves. Pressing back blindly is only correct in the first. In the
+            // second it is a back navigation the user did not ask for, inside their app, possibly
+            // out of the feed or out of Instagram entirely. So we look ONE more time, across every
+            // window, and press back only with the menu actually in front of us. No evidence, no
+            // action: the same fail-toward-doing-nothing this whole feature is built on.
+            val stillOpen = findMenuRoot(recipe) != null
+            if (!stillOpen) {
+                entryPoint.nudgeLogger().i(
+                    "following steer gave up, menu already gone package=$packageName"
+                )
+                return
+            }
             val dismissed = try {
                 performGlobalAction(GLOBAL_ACTION_BACK)
             } catch (e: Exception) {

@@ -123,6 +123,33 @@ class FollowingSteerCadenceContractTest {
     }
 
     /**
+     * The back press on give-up must be EVIDENCE-GATED.
+     *
+     * `CloseMenu` is emitted on timeout, i.e. exactly when we could not see the menu, which covers
+     * both "it is open and we failed to find it" and "the user already dismissed it". Pressing back
+     * is only correct in the first; in the second it is an unrequested back navigation inside the
+     * user's app, potentially out of the feed or out of Instagram. So the service must look again
+     * before acting, and do nothing when the menu is gone.
+     */
+    @Test
+    fun `the give-up back press only fires with the menu actually in front of us`() {
+        val handler = code.substring(code.indexOf("SteerAction.CloseMenu"))
+            .substringBefore("performSteerAction(")
+            .take(2_000)
+
+        val guard = handler.indexOf("findMenuRoot(recipe) != null")
+        val backPress = handler.indexOf("GLOBAL_ACTION_BACK")
+
+        assertTrue("the CloseMenu branch must re-check for the menu before pressing back", guard >= 0)
+        assertTrue("the CloseMenu branch must press back", backPress >= 0)
+        assertTrue(
+            "the menu re-check must come BEFORE the back press, or Nudge sends a back navigation " +
+                "into the user's app on the strength of no evidence at all",
+            guard < backPress
+        )
+    }
+
+    /**
      * Driving the real state machine at the BROKEN cadence, to prove the old arithmetic really did
      * make the click unreachable rather than merely unlikely. This is the counterfactual
      * `docs/testing-strategy.md` rule (d) asks for.
