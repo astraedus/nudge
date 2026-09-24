@@ -253,7 +253,7 @@ object HostNodeFinder {
                 val nodes = root.findAccessibilityNodeInfosByViewId(id) ?: continue
                 if (nodes.isEmpty()) continue
                 val exact = nodes.firstOrNull {
-                    locator.matchesScoped(
+                    locator.matchesNode(
                         id,
                         it.text?.toString(),
                         it.contentDescription?.toString()

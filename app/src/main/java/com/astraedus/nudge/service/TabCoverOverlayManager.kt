@@ -70,6 +70,9 @@ class TabCoverOverlayManager @Inject constructor(
 
     private var overlayView: AwarenessOverlayWindow.Container? = null
     private var windowManager: WindowManager? = null
+    // Volatile because shownPlacement() is read from whatever thread asks, while the writes happen
+    // on the main thread inside the window work.
+    @Volatile
     private var currentPlacement: TabCoverPlacement? = null
 
     @Volatile
@@ -140,7 +143,9 @@ class TabCoverOverlayManager @Inject constructor(
 
     override fun coveredPackage(): String? = coveredPackage
 
-    override fun shownPlacement(): TabCoverPlacement? = currentPlacement
+    // Read straight off the window state rather than cached anywhere else, so "where is the cover"
+    // has exactly one answer and the decider cannot be told one thing while the window does another.
+    override fun shownPlacement(): TabCoverPlacement? = if (isShowing) currentPlacement else null
 
     override fun apply(packageName: String, effect: TabCoverEffect, color: Int, label: String) {
         when (effect) {
@@ -237,11 +242,23 @@ class TabCoverOverlayManager @Inject constructor(
         isShowing = false
     }
 
+    /**
+     * The window's whole contract, in one place.
+     *
+     * **Every value is assigned as a FIELD, deliberately, rather than through the five-argument
+     * `LayoutParams(w, h, type, flags, format)` constructor.** That constructor is the only thing
+     * those five assignments would go through, and in this module's JVM test target an android
+     * constructor body is a no-op stub — so built that way, `width`, `height`, `type`, `flags` and
+     * `format` all read back as 0 and the flag set that IS this feature cannot be asserted at all
+     * (it wasn't: two tests failed on exactly that). Field writes need no android implementation, so
+     * production behaviour is identical and the contract becomes testable. Do not "tidy" this back
+     * into the constructor; that silently un-tests the flags.
+     */
     private fun layoutParamsFor(placement: TabCoverPlacement): WindowManager.LayoutParams =
-        WindowManager.LayoutParams(
-            placement.width,
-            placement.height,
-            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+        WindowManager.LayoutParams().apply {
+            width = placement.width
+            height = placement.height
+            type = WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
             // NOT_FOCUSABLE: the cover must never take input focus from the host app or dismiss its
             //   keyboard.
             // LAYOUT_IN_SCREEN + LAYOUT_NO_LIMITS: the placement comes from getBoundsInScreen, so
@@ -249,12 +266,11 @@ class TabCoverOverlayManager @Inject constructor(
             //   the system-window inset region that NO_LIMITS is what allows us to reach.
             // FLAG_NOT_TOUCHABLE is deliberately ABSENT -- see the class KDoc. Eating the tap is the
             //   feature; CounterOverlayManager sets that flag for the opposite reason.
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+            flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
             // A solid fill, not a translucent pill: OPAQUE lets the compositor skip blending it.
-            PixelFormat.OPAQUE
-        ).apply {
+            format = PixelFormat.OPAQUE
             gravity = Gravity.TOP or Gravity.START
             x = placement.x
             y = placement.y

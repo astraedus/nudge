@@ -200,12 +200,16 @@ class NudgeDatabaseMigrationTest {
             NudgeDatabase.MIGRATION_10_11
         )
 
-        // Derived, not hand-typed: a hand-kept constant here is exactly the fixture-honesty
-        // failure LESSONS 2026-09-21 describes for `PassthroughTest`'s `ownPackageName` -- it
-        // agrees with whoever last edited it, not with the production annotation, and would keep
-        // passing forever after a version bump nobody remembered to update in two places.
-        val currentVersion = NudgeDatabase::class.java
-            .getAnnotation(androidx.room.Database::class.java)!!.version
+        // Read from production, not hand-typed: a hand-kept constant here is exactly the
+        // fixture-honesty failure LESSONS 2026-09-21 describes for `PassthroughTest`'s
+        // `ownPackageName` -- it agrees with whoever last edited it, not with production, and would
+        // keep passing forever after a version bump nobody remembered to make in two places.
+        //
+        // It is the `NUDGE_DB_VERSION` constant rather than the `@Database` annotation because the
+        // annotation is genuinely invisible here: Room declares it with BINARY retention, so
+        // `getAnnotation(Database::class.java)` returns null on the JVM and reflecting on it throws.
+        // The constant is what the annotation itself is built from, so the two cannot diverge.
+        val currentVersion = NUDGE_DB_VERSION
 
         // Every version gap from 1 to current must have a migration
         for (v in 1 until currentVersion) {

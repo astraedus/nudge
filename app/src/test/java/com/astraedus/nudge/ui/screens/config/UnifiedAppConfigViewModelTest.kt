@@ -71,12 +71,16 @@ class UnifiedAppConfigViewModelTest {
     private fun defaultRule(
         mode: String,
         webDomains: String? = null,
-        webBlockMode: String? = null
+        webBlockMode: String? = null,
+        tabVanish: Boolean = true,
+        followingSteer: Boolean = false
     ) = BlockRule(
         packageName = packageName,
         mode = mode,
         webDomains = webDomains,
-        webBlockMode = webBlockMode
+        webBlockMode = webBlockMode,
+        tabVanish = tabVanish,
+        followingSteer = followingSteer
     )
 
     // ── setBlocksWholeApp / lastBlockingMode restore ──────────────────────
@@ -217,5 +221,120 @@ class UnifiedAppConfigViewModelTest {
         vm.setWebBlockMode(BlockMode.NONE)
 
         assertEquals(before, vm.uiState.value.webBlockMode)
+    }
+
+    // ── Tab Vanish / Following steer: load-side defaults ───────────────────
+
+    @Test
+    fun `loading a rule with tabVanish false loads state tabVanish false`() = runTest {
+        val vm = viewModel(listOf(defaultRule(mode = "HARD_BLOCK", tabVanish = false)))
+
+        assertFalse(vm.uiState.value.tabVanish)
+    }
+
+    @Test
+    fun `no existing rule loads state tabVanish true`() = runTest {
+        val vm = viewModel()
+
+        assertTrue(vm.uiState.value.tabVanish)
+    }
+
+    @Test
+    fun `loading a rule with followingSteer true loads state followingSteer true`() = runTest {
+        val vm = viewModel(listOf(defaultRule(mode = "HARD_BLOCK", followingSteer = true)))
+
+        assertTrue(vm.uiState.value.followingSteer)
+    }
+
+    @Test
+    fun `no existing rule loads state followingSteer false`() = runTest {
+        val vm = viewModel()
+
+        assertFalse(vm.uiState.value.followingSteer)
+    }
+
+    // ── Tab Vanish / Following steer: save-side propagation ────────────────
+
+    @Test
+    fun `save with tabVanish false and a Reels feature override writes tabVanish false on every persisted rule`() = runTest {
+        val capturedRules = mutableListOf<BlockRule>()
+        coEvery { blockRuleRepository.deleteDirectRulesForPackage(any()) } just Runs
+        coEvery { blockRuleRepository.addRule(capture(capturedRules)) } returns 1L
+
+        val vm = viewModel()
+        vm.setTabVanish(false)
+        vm.setFeatureOverride("REELS", FeatureOverride(mode = FeatureMode.BLOCK))
+
+        vm.save()
+
+        // At least the app-level default rule AND the Reels feature-override rule must have been
+        // persisted -- this is the case a test that only checks the default rule would miss.
+        assertTrue("expected 2+ persisted rules, got ${capturedRules.size}", capturedRules.size >= 2)
+        assertTrue(
+            "expected a feature-override rule for REELS",
+            capturedRules.any { it.inAppFeatures == "REELS" }
+        )
+        capturedRules.forEach { rule ->
+            assertFalse("rule ${rule.inAppFeatures ?: "<default>"} carried tabVanish=true", rule.tabVanish)
+        }
+    }
+
+    @Test
+    fun `followingSteer lands on the app-level rule and not on a feature-override rule`() = runTest {
+        val capturedRules = mutableListOf<BlockRule>()
+        coEvery { blockRuleRepository.deleteDirectRulesForPackage(any()) } just Runs
+        coEvery { blockRuleRepository.addRule(capture(capturedRules)) } returns 1L
+
+        val vm = viewModel()
+        vm.setFollowingSteer(true)
+        vm.setFeatureOverride("REELS", FeatureOverride(mode = FeatureMode.BLOCK))
+
+        vm.save()
+
+        val defaultRuleCaptured = capturedRules.first { it.inAppFeatures == null }
+        val featureRuleCaptured = capturedRules.first { it.inAppFeatures == "REELS" }
+        assertTrue(defaultRuleCaptured.followingSteer)
+        assertFalse(featureRuleCaptured.followingSteer)
+    }
+
+    @Test
+    fun `save with a scheduled override also writes tabVanish false on the scheduled rules`() = runTest {
+        val capturedRules = mutableListOf<BlockRule>()
+        coEvery { blockRuleRepository.deleteDirectRulesForPackage(any()) } just Runs
+        coEvery { blockRuleRepository.addRule(capture(capturedRules)) } returns 1L
+
+        val vm = viewModel()
+        vm.setTabVanish(false)
+        vm.setScheduledOverrideEnabled(true)
+        vm.setScheduledFeatureOverride("REELS", FeatureOverride(mode = FeatureMode.BLOCK))
+
+        vm.save()
+
+        // App-level default + scheduled app-level + scheduled feature override = 3 rules.
+        assertTrue("expected 3+ persisted rules, got ${capturedRules.size}", capturedRules.size >= 3)
+        capturedRules.forEach { rule ->
+            assertFalse(
+                "rule (schedule=${rule.scheduleDays}, feature=${rule.inAppFeatures}) carried tabVanish=true",
+                rule.tabVanish
+            )
+        }
+    }
+
+    // ── Tab Vanish / Following steer: registry-driven visibility ───────────
+
+    @Test
+    fun `supportsTabVanish and supportsFollowingSteer are true for Instagram`() {
+        val state = UnifiedAppConfigState(packageName = "com.instagram.android")
+
+        assertTrue(state.supportsTabVanish)
+        assertTrue(state.supportsFollowingSteer)
+    }
+
+    @Test
+    fun `supportsTabVanish and supportsFollowingSteer are false for a package with no adapter`() {
+        val state = UnifiedAppConfigState(packageName = "com.google.android.keep")
+
+        assertFalse(state.supportsTabVanish)
+        assertFalse(state.supportsFollowingSteer)
     }
 }

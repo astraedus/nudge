@@ -200,6 +200,66 @@ class InstagramSurfacesFixtureTest {
     }
 
     /**
+     * **The menu-row locator selects "Following" and NOT "Favorites".**
+     *
+     * The rows all carry the same `context_menu_item_label` id, so under OR semantics this locator
+     * matches every row and the finder taps whichever came first in the tree — which for this fixture
+     * could be Favorites. `menuItemLabel` therefore declares `scopedLabel = true`, and the fixture
+     * reader branches on `isScopedLabel` exactly as `HostNodeFinder` does.
+     *
+     * The test asserts the Favorites row IS present in the same dump first. Without that, the whole
+     * thing would pass on a one-row fixture while proving nothing at all.
+     */
+    @Test
+    fun `the menu label locator selects the following row and never favorites`() {
+        val labelLocator = InstagramSurfaces.followingSteer!!.menuItemLabel
+        assertTrue("this locator must use id-AND-label semantics", labelLocator.isScopedLabel)
+
+        // The premise: both rows exist in this dump, so choosing between them is a real choice.
+        val allLabels = SurfaceFixture.load("logo-menu")
+            .filter { it.viewId == InstagramSurfaces.ID_CONTEXT_MENU_ITEM_LABEL }
+            .mapNotNull { it.text ?: it.contentDescription }
+        assertEquals(
+            "the fixture must contain BOTH rows, or this test proves nothing",
+            listOf("Favorites", "Following"),
+            allLabels.sorted()
+        )
+
+        // The assertion: exactly one node is selected, and it is the Following row.
+        val selected = SurfaceFixture.findAll("logo-menu", labelLocator)
+        assertEquals("exactly one row may be selected", 1, selected.size)
+        assertEquals(
+            InstagramSurfaces.LABEL_FOLLOWING,
+            selected.single().text ?: selected.single().contentDescription
+        )
+        assertEquals(InstagramSurfaces.ID_CONTEXT_MENU_ITEM_LABEL, selected.single().viewId)
+    }
+
+    /**
+     * The counterfactual for the rule above: under OR semantics the SAME locator over the SAME dump
+     * matches more than one node, so the finder's choice would be arbitrary.
+     *
+     * This is what makes the scoped flag provably load-bearing rather than decorative — delete
+     * `scopedLabel = true` and the test above starts depending on tree order.
+     */
+    @Test
+    fun `under OR semantics the same locator would match more than one row`() {
+        val labelLocator = InstagramSurfaces.followingSteer!!.menuItemLabel
+        val orMatches = SurfaceFixture.load("logo-menu").filter {
+            labelLocator.matches(it.viewId, it.text, it.contentDescription)
+        }
+        assertTrue(
+            "if OR matched only one node the scoped flag would be pointless; it matches " +
+                "${orMatches.size}, which is why AND is required",
+            orMatches.size > 1
+        )
+        assertTrue(
+            "and one of those OR matches is the Favorites row — the row we must never tap",
+            orMatches.any { (it.text ?: it.contentDescription) == "Favorites" }
+        )
+    }
+
+    /**
      * The entry point is the clickable ancestor, not the logo.
      *
      * `title_logo` reports `clickable=false` in the dump, so a tap dispatched at it does nothing at

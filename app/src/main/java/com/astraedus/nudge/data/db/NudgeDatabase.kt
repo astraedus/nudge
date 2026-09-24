@@ -12,6 +12,24 @@ import com.astraedus.nudge.data.db.entity.AppGroupMember
 import com.astraedus.nudge.data.db.entity.BlockRule
 import com.astraedus.nudge.data.db.entity.UsageEvent
 
+/**
+ * The schema version, as ONE declaration that both the `@Database` annotation and the migration test
+ * read.
+ *
+ * It is a top-level `const` rather than a literal inside the annotation because a JVM test cannot see
+ * the annotation at all: Room declares `@Database` with BINARY retention, so
+ * `NudgeDatabase::class.java.getAnnotation(Database::class.java)` returns null at runtime and any test
+ * "deriving" the version that way gets a `NullPointerException` (it did — this constant is what
+ * replaced that).
+ *
+ * The alternative was a hand-kept `currentVersion` in the test, which is precisely the fixture-honesty
+ * failure `tasks/lessons.md` records for `PassthroughTest`'s `ownPackageName` (2026-09-21): a second
+ * copy of a production value agrees with whoever last edited it rather than with production, and it
+ * keeps passing forever after a bump nobody remembered to make twice. One constant, two readers, and
+ * the compiler holds them together.
+ */
+internal const val NUDGE_DB_VERSION = 11
+
 @Database(
     entities = [
         BlockRule::class,
@@ -19,7 +37,7 @@ import com.astraedus.nudge.data.db.entity.UsageEvent
         AppGroupMember::class,
         UsageEvent::class
     ],
-    version = 11,
+    version = NUDGE_DB_VERSION,
     exportSchema = false
 )
 abstract class NudgeDatabase : RoomDatabase() {

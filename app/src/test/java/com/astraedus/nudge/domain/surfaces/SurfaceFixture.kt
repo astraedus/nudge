@@ -99,18 +99,15 @@ object SurfaceFixture {
     /**
      * Every node in [name] matching [locator].
      *
-     * Branches on [NodeLocator.isScopedLabel] exactly as `HostNodeFinder.matchesFor` does, so a
-     * fixture test asks the same question the accessibility service asks. Without this branch the
-     * dropdown's rows would be matched under OR and the test would "find" the Following row while
-     * production found whichever row came first — the fixture agreeing with the test instead of with
-     * the device, which is the failure mode rule (b) is about.
+     * Asks [NodeLocator.matchesNode] — the SAME function `HostNodeFinder` asks of a real node — so a
+     * fixture test cannot answer a different question than the accessibility service does. This used
+     * to spell the scoped/unscoped branch out here, mirroring the one in `HostNodeFinder`; two copies
+     * of a matching rule is how a fixture ends up agreeing with its author instead of with the device
+     * (`docs/testing-strategy.md` rule (b)) — the dump reader would have selected "Following" under OR
+     * while production selected whichever row came first, green about the wrong thing.
      */
     fun findAll(name: String, locator: NodeLocator): List<FixtureNode> = load(name).filter { node ->
-        if (locator.isScopedLabel) {
-            locator.matchesScoped(node.viewId, node.text, node.contentDescription)
-        } else {
-            locator.matches(node.viewId, node.text, node.contentDescription)
-        }
+        locator.matchesNode(node.viewId, node.text, node.contentDescription)
     }
 
     private fun attribute(tag: String, name: String): String? =

@@ -104,4 +104,25 @@ data class NodeLocator(
             (contentDescription != null && contentDescription in contentDescriptions)
         return labelMatches
     }
+
+    /**
+     * THE match question: does this node satisfy this locator, under whichever rule the locator
+     * declares? [matchesScoped] when [isScopedLabel], else [matches].
+     *
+     * This exists so the branch lives in ONE place. It was briefly written out twice — once in
+     * `HostNodeFinder` for the real node tree and once in the fixture reader for recorded dumps — and
+     * two copies of a matching rule is how a fixture ends up agreeing with the test author instead of
+     * with the device (`docs/testing-strategy.md` rule (b)): the dump reader would select "Following"
+     * under OR while production selected whichever row came first, and the test would be green about
+     * the wrong thing. One function, both callers, nothing to keep in step.
+     *
+     * [matches] and [matchesScoped] stay public and stay unaware of the flag, because the tests that
+     * prove the two rules DIFFER have to be able to ask each one directly.
+     */
+    fun matchesNode(viewId: String?, text: String?, contentDescription: String?): Boolean =
+        if (isScopedLabel) {
+            matchesScoped(viewId, text, contentDescription)
+        } else {
+            matches(viewId, text, contentDescription)
+        }
 }
