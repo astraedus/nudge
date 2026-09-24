@@ -746,3 +746,73 @@ reasons are worth keeping so nobody pays the same hour twice:
   effects and the fail-safe's re-arm-before-finish are now VALUE assertions, the two timing constants
   are compared as numbers, and what stays source-level is only what a value test cannot reach — that
   the adapter still forwards each callback. Re-home them; do not delete them to go green.
+
+## An OR locator cannot name a row that shares its id with every sibling (2026-09-24)
+
+The Following steer picks Instagram's "Following" row out of the title dropdown. `NodeLocator` ORs its
+three handles (ids, texts, contentDescriptions), which is right for the Reels tab — match `clips_tab`
+OR the description "Reels", whichever this build exposes — and wrong here, in both directions at once:
+
+- **Id alone is ambiguous.** Every row in that menu carries `context_menu_item_label`, so an id-first
+  lookup returns whichever row is first in the tree. The committed `logo-menu` dump holds both
+  "Following" and "Favorites", so a coin decided which one Nudge tapped inside somebody else's app.
+- **Text alone is dangerous.** `findAccessibilityNodeInfosByText` is a case-insensitive SUBSTRING search
+  over the whole tree, so a feed caption containing "following" matches, and the clickable ancestor of
+  a caption is the post.
+
+Only both together identify the row, so `NodeLocator` gained an opt-in `scopedLabel` (id AND label) that
+`HostNodeFinder` honours **with no fallback to a text search** — falling back would reintroduce the
+caption case at exactly the moment we are most likely to be on the feed.
+
+- **The flag is DECLARED, never derived, and that is the whole lesson.** The first version computed it as
+  "has ids AND has labels", which silently swept up the Reels tab locator and turned its deliberate
+  locale fallback into a requirement: the cover would have stopped appearing for every user whose
+  content-description is not the English string. Inferring intent from which fields happen to be
+  populated is not a shortcut, it is a second meaning for the same data.
+- **The counterfactual is what makes the flag provably load-bearing.** A test asserting "the finder
+  returns Following" passed under OR too, because the first OR match in that dump happens to be a
+  Following-labelled node. The test that earns its keep runs production's own `matches` over the same
+  dump and asserts it hits MORE than one row, one of them Favorites.
+- **One matching rule, one function.** The scoped/unscoped branch was briefly written out twice, once in
+  `HostNodeFinder` for real nodes and once in the fixture reader for dumps. Two copies is how a fixture
+  agrees with its author instead of with the device: the reader would select "Following" under OR while
+  production selected whichever row came first, green about the wrong thing. Both now call
+  `NodeLocator.matchesNode`.
+
+## A JVM test cannot see anything an android CONSTRUCTOR assigns (2026-09-24)
+
+Two `TabCoverOverlayManagerTest` cases failed with `expected:<216> but was:<0>` and "the cover must never
+steal input focus". The window was built with `WindowManager.LayoutParams(w, h, type, flags, format)` —
+and that five-argument constructor is the only thing those five assignments go through. In this module's
+unit-test target an android constructor body is a no-op stub, so `width`, `height`, `type`, `flags` and
+`format` all read back as 0, while the `x`/`y` writes in the trailing `apply` block survived because plain
+field writes need no android implementation. So exactly the flag set that IS the feature was the part no
+test could assert.
+
+The fix is a production change, not a test workaround: assign every field individually in the `apply`
+block. Behaviour is identical because the constructor was only doing those assignments, and the window's
+whole contract becomes assertable. **The two tempting shortcuts are both traps:**
+`unitTests.isReturnDefaultValues = true` would turn every unmocked android call into a silent 0/null
+under ~1550 existing tests, and Robolectric was already tried and reverted here (see the 2026-09-21
+entry). Weakening the assertions was never an option — touchable, not focusable, laid out in screen
+coordinates is the feature.
+
+Same family, same day: `@Database`'s `version` cannot be read by reflection either. Room declares the
+annotation with BINARY retention, so `NudgeDatabase::class.java.getAnnotation(Database::class.java)`
+returns null and a migration test "deriving" the version NPEs. The answer is not a hand-kept constant in
+the test (that is the fixture-honesty failure this file records for `PassthroughTest`) but ONE
+declaration both readers share: `NUDGE_DB_VERSION`, which the annotation itself is built from.
+
+## Parallel agents in ONE worktree must serialise gradle (2026-09-24)
+
+Four lanes sharing a worktree ran gradle concurrently and corrupted each other: `Unable to delete
+directory ... transformDebugClassesWithAsm ... a process is still writing to the target directory`, then
+`NoClassDefFoundError` on classes that were plainly on disk, then a "full suite" run reporting 40 FAILED
+lines whose own result XML said `failures="0"` and which had written only 9 of 148 result files.
+
+**A test failure you cannot reproduce under a lock is not a test failure.** Every gradle invocation goes
+behind `flock /tmp/nudge-gradle.lock`, and a `NoClassDefFoundError` on an existing class means
+`rm -rf app/build/intermediates/classes` and rerun, not a hunt through the source. Two further notes for
+whoever automates this: `./gradlew test --tests '<glob>'` is rejected outright ("Unknown command-line
+option '--tests'") because `test` is the aggregate task — the variant task `testDebugUnitTest` is the one
+that accepts the filter — and a bare `./gradlew test` as a workaround makes the contention much worse.

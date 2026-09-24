@@ -315,4 +315,73 @@ class TabCoverOverlayManagerTest {
         verify(exactly = 1) { windowManager.removeView(coverView) }
         assertFalse(manager.isVisible())
     }
+
+    // ------------------------------------------------------------------------------------------
+    // shownPlacement: the one answer to "where is the cover", which TabCoverDecider reads.
+    // ------------------------------------------------------------------------------------------
+
+    /**
+     * `shownPlacement() != null` must mean exactly `isVisible()`, in both directions, at every point
+     * in the lifecycle. The manager holds no policy — `TabCoverDecider.decide(…, shown)` is what turns
+     * a placement into "leave it alone" versus "reposition" — so a `shownPlacement` that outlived its
+     * window would tell the decider a cover is already correctly placed when there is no cover at all,
+     * and the decider would answer `None` forever: the tab would stay visible and the feature would be
+     * silently dead. The reverse drift is a cover nothing can reposition.
+     *
+     * Asserted as an invariant swept across the whole lifecycle rather than at one moment, because the
+     * two values are written by different lines and it is the transitions that would let them part.
+     */
+    @Test
+    fun `shownPlacement is non-null exactly when the cover is visible`() {
+        fun assertAgree(where: String) {
+            assertEquals(
+                "shownPlacement() != null must equal isVisible() ($where)",
+                manager.isVisible(),
+                manager.shownPlacement() != null
+            )
+        }
+
+        assertAgree("before anything")
+        show(clipsTab)
+        assertAgree("after a show")
+        show(wholeBar)
+        assertAgree("after a move")
+        manager.apply(instagram, TabCoverEffect.None, navColor, reelsLabel)
+        assertAgree("after a None")
+        manager.onForegroundSignal(ForegroundSignal.NotForeground(instagram))
+        assertAgree("after a signal that keeps it")
+        manager.hide()
+        assertAgree("after a hide")
+        manager.onForegroundSignal(ForegroundSignal.AppWindow("com.google.android.keep"))
+        assertAgree("after a teardown signal on an already-hidden cover")
+    }
+
+    /** The placement handed to the decider must be the one actually on screen, move included. */
+    @Test
+    fun `shownPlacement reports the placement the window currently has`() {
+        assertNull(manager.shownPlacement())
+
+        show(clipsTab)
+        assertEquals(clipsTab, manager.shownPlacement())
+
+        show(wholeBar)
+        assertEquals("a move must update what the decider is told", wholeBar, manager.shownPlacement())
+
+        manager.hide()
+        assertNull(manager.shownPlacement())
+    }
+
+    /**
+     * A failed show must not leave a placement behind. It is the case where the two values are most
+     * likely to part: the placement is known before the window exists, so an early assignment would
+     * survive the `addView` that threw.
+     */
+    @Test
+    fun `a failed show leaves no placement for the decider to trust`() {
+        every { windowManager.addView(any(), any()) } throws IllegalStateException("bad token")
+        show(clipsTab)
+
+        assertFalse(manager.isVisible())
+        assertNull(manager.shownPlacement())
+    }
 }
