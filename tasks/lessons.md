@@ -816,3 +816,40 @@ behind `flock /tmp/nudge-gradle.lock`, and a `NoClassDefFoundError` on an existi
 whoever automates this: `./gradlew test --tests '<glob>'` is rejected outright ("Unknown command-line
 option '--tests'") because `test` is the aggregate task — the variant task `testDebugUnitTest` is the one
 that accepts the filter — and a bare `./gradlew test` as a workaround makes the contention much worse.
+
+## A correct state machine, an unreachable branch: the CADENCE was the bug (2026-09-24)
+
+The Following steer clicked Instagram's dropdown and then never clicked "Following". The menu hung
+open over the user's feed until they pressed back. `FollowingSteer` was not wrong — all 26 of its
+tests passed, including the one asserting that a pending attempt yields `ClickFollowing` the moment
+the menu appears. Two things outside it were:
+
+- **The dropdown is a POPUP in its own window.** We searched `rootInActiveWindow` only, so the menu
+  was invisible to us while plainly on screen. `rootInActiveWindow` is not "the screen"; it is one
+  window, and which one it is during a popup is not ours to assume. The recorded dump of that exact
+  moment contained the popup ALONE, with none of the activity's chrome — the evidence was sitting in
+  the fixture the whole time and was read as "the menu classifies as UNKNOWN" instead of "these are
+  two different windows".
+- **The observation was gated behind a debounce LONGER than the timeout it was racing.** Pending
+  attempts were resolved from the 2 s-debounced feature path against a 1.5 s timeout, so the one look
+  the debounce permitted always arrived after the attempt had died. Unreachable by construction, on
+  every device, always.
+
+**The general trap: a unit test that calls the decision function directly cannot see the rate at
+which production calls it.** Every test here supplied its own timestamps, so the 1.5 s-vs-2 s
+relationship — two constants, two files, never named together — was invisible to all of them. When a
+decision is time-bounded, something must pin the bound against the CADENCE of its real caller, and it
+must read both numbers out of production rather than restating either.
+
+Two corollaries worth keeping:
+
+- **Giving up on an ACTION is not the same as giving up on its SIDE EFFECTS.** "Fail silently, never
+  retry" was the right policy for the steer and the wrong one for the menu: we opened that dropdown,
+  so we close it. A half-performed interaction inside someone else's app is worse than not acting.
+  Any code that performs a multi-step interaction elsewhere owes an undo for the steps it completed.
+- **Our own synthetic action comes back as a user event.** `performAction(ACTION_CLICK)` is reported
+  as a real `TYPE_VIEW_CLICKED` carrying the host app's package, and the interaction counter dutifully
+  counted the blocker's own taps as the user's. That is issue #28 from the other direction — there
+  the phantom user was autoplaying video, here it is us. Anything that acts on another app must mark
+  its own actions before performing them, and the suppression window must be consumed by ONE event,
+  because over-suppressing silently under-counts the user and that is the worse failure.
