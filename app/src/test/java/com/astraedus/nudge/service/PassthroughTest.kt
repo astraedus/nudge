@@ -185,6 +185,32 @@ class PassthroughTest {
         assertNull(manager.lastPackage)
     }
 
+    /**
+     * DEVICE-OBSERVED REGRESSION, reproduced at the model layer: complete a delay, press Home, come
+     * straight back, and the block must be there. No screen-off anywhere in this stream.
+     */
+    @Test
+    fun `going home revokes a completed grant with no screen-off involved`() {
+        val reddit = "com.reddit.frontpage"
+        val launcher = "com.google.android.apps.nexuslauncher"
+
+        manager.onForegroundSignal(signalFor(reddit, A11yEventType.WINDOW_STATE_CHANGED), 0)
+        manager.grant(reddit)
+        assertTrue(manager.shouldSkipForegroundEvaluation(reddit))
+
+        manager.onForegroundSignal(
+            signalFor(launcher, A11yEventType.WINDOW_STATE_CHANGED, launcherPackages = setOf(launcher)),
+            2_000
+        )
+        assertFalse("Home must revoke at once", manager.shouldSkipForegroundEvaluation(reddit))
+
+        manager.onForegroundSignal(signalFor(reddit, A11yEventType.WINDOW_STATE_CHANGED), 4_000)
+        assertFalse(
+            "coming straight back from Home must still be blocked",
+            manager.shouldSkipForegroundEvaluation(reddit)
+        )
+    }
+
     /** A screen-off with nothing granted and no sitting must stay a no-op. */
     @Test
     fun `a screen-off with no sitting changes nothing`() {
