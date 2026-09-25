@@ -38,11 +38,12 @@ class PassthroughTest {
     private fun signalFor(
         packageName: String,
         type: A11yEventType,
-        currentImePackage: String? = null
+        currentImePackage: String? = null,
+        launcherPackages: Set<String> = emptySet()
     ): ForegroundSignal = classifier.classify(
         AccessibilityEventRecord(type = type, packageName = packageName),
         currentImePackage = currentImePackage,
-        launcherPackages = emptySet(),
+        launcherPackages = launcherPackages,
         pipOnlyPackages = emptySet()
     )
 
@@ -86,6 +87,181 @@ class PassthroughTest {
 
         assertTrue(manager.shouldSkipForegroundEvaluation("com.example.alpha"))
         assertFalse(manager.shouldSkipForegroundEvaluation("com.example.beta"))
+    }
+
+    // --- ISSUE #54: a completed hold survives the screen timing out ------------------------------
+
+    /**
+     * The reported flow, replayed as the service runs it.
+     *
+     * A Nudge user, by email 2026-09-24, on the HOLD mode he asked for in #35: *"I hold 60 second to
+     * unlock and then after 3-5 minute of use it again Askin for hold and also even after just 1
+     * minute ahead asking for hold to unlock ... I have some client info on it and chat with them"*.
+     *
+     * Phrased in [PassthroughManager.shouldSkipForegroundEvaluation] because that is literally the
+     * early return in `evaluateForegroundPackage` that stands between the user and a second hold: it
+     * is false here iff the overlay comes back. Every signal is CLASSIFIED from an event rather than
+     * hand-built, so the keyguard has to genuinely land as a `SystemSurface` and the app's return as
+     * a genuine `AppWindow` for this to pass.
+     *
+     * The screen-off is injected directly because `ACTION_SCREEN_OFF` is a broadcast and never
+     * enters the accessibility stream at all — which is also why no captured event log could ever
+     * have contained this bug.
+     */
+    @Test
+    fun `a completed hold survives a display timeout the user comes straight back from`() {
+        val reddit = "com.reddit.frontpage"
+        val keyguard = "com.android.systemui"
+
+        // The user arrives, meets the 60s HOLD, completes it. `onTimerComplete` grants.
+        manager.onForegroundSignal(signalFor(reddit, A11yEventType.WINDOW_STATE_CHANGED), 0)
+        manager.grant(reddit)
+        assertTrue(manager.shouldSkipForegroundEvaluation(reddit))
+
+        // They read a client chat for 40 seconds without touching anything. The display times out.
+        manager.onScreenOff(40_000)
+
+        // They tap the screen, pass the keyguard, and are back where they were.
+        manager.onForegroundSignal(signalFor(keyguard, A11yEventType.WINDOW_STATE_CHANGED), 42_000)
+        manager.onForegroundSignal(signalFor(reddit, A11yEventType.WINDOW_STATE_CHANGED), 42_500)
+
+        assertTrue(
+            "a 40-second display timeout is not a departure; the hold must not be charged again",
+            manager.shouldSkipForegroundEvaluation(reddit)
+        )
+    }
+
+    /**
+     * **The counterfactual, on the same stream.** Backlog F5 is the reason the screen-off end cause
+     * exists: *complete Instagram's delay, lock the phone, unlock hours later straight back into
+     * Instagram, no delay.* Only the duration differs from the test above, and the answer flips — so
+     * the fix cannot have been "stop revoking on screen-off", which is the way it would most
+     * plausibly have been got wrong.
+     */
+    @Test
+    fun `a phone locked past the return window still costs a fresh block`() {
+        val reddit = "com.reddit.frontpage"
+
+        manager.onForegroundSignal(signalFor(reddit, A11yEventType.WINDOW_STATE_CHANGED), 0)
+        manager.grant(reddit)
+
+        manager.onScreenOff(40_000)
+        manager.onForegroundSignal(
+            signalFor(reddit, A11yEventType.WINDOW_STATE_CHANGED),
+            40_000 + SittingTracker.PASSTHROUGH_RETURN_WINDOW_MS
+        )
+
+        assertFalse(
+            "F5: a sitting cannot span a genuinely locked phone",
+            manager.shouldSkipForegroundEvaluation(reddit)
+        )
+        assertNull(manager.lastPackage)
+    }
+
+    /**
+     * Unlocking to the launcher instead of back into the app is a real departure and still revokes.
+     * Home is the one gesture that unambiguously means "I am leaving"; #54's fix is that a
+     * screen-off is not that gesture, and it must not have made Home into one either.
+     */
+    @Test
+    fun `unlocking to the launcher after a screen-off still revokes the grant`() {
+        val reddit = "com.reddit.frontpage"
+        val launcher = "com.google.android.apps.nexuslauncher"
+
+        manager.onForegroundSignal(signalFor(reddit, A11yEventType.WINDOW_STATE_CHANGED), 0)
+        manager.grant(reddit)
+
+        manager.onScreenOff(5_000)
+        manager.onForegroundSignal(
+            signalFor(
+                launcher,
+                A11yEventType.WINDOW_STATE_CHANGED,
+                launcherPackages = setOf(launcher)
+            ),
+            6_000
+        )
+
+        assertFalse(manager.shouldSkipForegroundEvaluation(reddit))
+        assertNull(manager.lastPackage)
+    }
+
+    /**
+     * DEVICE-OBSERVED REGRESSION, reproduced at the model layer: complete a delay, press Home, come
+     * straight back, and the block must be there. No screen-off anywhere in this stream.
+     */
+    @Test
+    fun `going home revokes a completed grant with no screen-off involved`() {
+        val reddit = "com.reddit.frontpage"
+        val launcher = "com.google.android.apps.nexuslauncher"
+
+        manager.onForegroundSignal(signalFor(reddit, A11yEventType.WINDOW_STATE_CHANGED), 0)
+        manager.grant(reddit)
+        assertTrue(manager.shouldSkipForegroundEvaluation(reddit))
+
+        manager.onForegroundSignal(
+            signalFor(launcher, A11yEventType.WINDOW_STATE_CHANGED, launcherPackages = setOf(launcher)),
+            2_000
+        )
+        assertFalse("Home must revoke at once", manager.shouldSkipForegroundEvaluation(reddit))
+
+        manager.onForegroundSignal(signalFor(reddit, A11yEventType.WINDOW_STATE_CHANGED), 4_000)
+        assertFalse(
+            "coming straight back from Home must still be blocked",
+            manager.shouldSkipForegroundEvaluation(reddit)
+        )
+    }
+
+    /**
+     * The full device sequence a slow QA run actually produces, with the display timeout in it.
+     *
+     * A bench run of "complete the delay, press Home, reopen" failed on this change and looked like
+     * a Home regression. It was not reproducible at this layer, and the reason is in this stream:
+     * an agent driving the phone takes tens of seconds per step while the Pixel blanks the display
+     * after thirty, so the screen times out BETWEEN getting inside the app and pressing Home. Before
+     * #54 that timeout revoked the grant, and the block the run then saw was credited to Home
+     * without Home having done anything. After #54 it correctly does not.
+     *
+     * So this pins the thing that actually matters and that the bench run could not see: with a
+     * display timeout in the middle, a REAL Home still revokes, and the app is still blocked on
+     * return. If a future change breaks Home behind a screen-off, this fails here rather than
+     * costing another device round.
+     */
+    @Test
+    fun `a display timeout before going home does not save the grant from home`() {
+        val reddit = "com.reddit.frontpage"
+        val launcher = "com.google.android.apps.nexuslauncher"
+
+        manager.onForegroundSignal(signalFor(reddit, A11yEventType.WINDOW_STATE_CHANGED), 0)
+        manager.grant(reddit)
+
+        // The display times out while the user sits there, then they touch it and are back.
+        manager.onScreenOff(30_000)
+        manager.onForegroundSignal(signalFor(reddit, A11yEventType.WINDOW_STATE_CHANGED), 35_000)
+        assertTrue(
+            "the timeout itself is not a departure; that is the whole of #54",
+            manager.shouldSkipForegroundEvaluation(reddit)
+        )
+
+        // NOW they actually go home, screen on, deliberately.
+        manager.onForegroundSignal(
+            signalFor(launcher, A11yEventType.WINDOW_STATE_CHANGED, launcherPackages = setOf(launcher)),
+            40_000
+        )
+        assertFalse("Home is still a departure, timeout or no timeout", manager.shouldSkipForegroundEvaluation(reddit))
+
+        manager.onForegroundSignal(signalFor(reddit, A11yEventType.WINDOW_STATE_CHANGED), 42_000)
+        assertFalse(
+            "and coming back from Home still costs a fresh block",
+            manager.shouldSkipForegroundEvaluation(reddit)
+        )
+    }
+
+    /** A screen-off with nothing granted and no sitting must stay a no-op. */
+    @Test
+    fun `a screen-off with no sitting changes nothing`() {
+        assertNull(manager.lastPackage)
+        manager.onScreenOff(1_000)
+        assertNull(manager.lastPackage)
     }
 
     @Test

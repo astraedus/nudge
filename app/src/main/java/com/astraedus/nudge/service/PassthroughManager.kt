@@ -120,8 +120,20 @@ class PassthroughManager @Inject constructor() {
     fun onForegroundSignal(signal: ForegroundSignal, nowMs: Long): SittingEvent =
         applyAndNotify(sitting.onSignal(signal, nowMs))
 
-    /** The screen went off: no sitting survives a locked phone (backlog F5). */
-    fun onScreenOff(): SittingEvent = applyAndNotify(sitting.onScreenOff())
+    /**
+     * The screen went off: start measuring the absence.
+     *
+     * No sitting survives a locked PHONE (backlog F5) — but every sitting must survive a display
+     * TIMEOUT, and the two arrive as the same broadcast. [SittingTracker.onScreenOff] therefore
+     * starts the away clock instead of ending outright, and the grant is revoked on the user's
+     * return only if they were gone past the return window ([issue
+     * #54](https://github.com/astraedus/nudge/issues/54)).
+     *
+     * @param nowMs the same MONOTONIC clock [onForegroundSignal] is given. A wall clock would be
+     *   wrong twice over here: it can jump, and the absence being measured is exactly the interval
+     *   in which the device may have slept.
+     */
+    fun onScreenOff(nowMs: Long): SittingEvent = applyAndNotify(sitting.onScreenOff(nowMs))
 
     private fun applyAndNotify(event: SittingEvent): SittingEvent {
         revokeIfSittingEnded(event)

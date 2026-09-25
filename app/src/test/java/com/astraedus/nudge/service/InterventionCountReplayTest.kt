@@ -5,6 +5,9 @@ import com.astraedus.nudge.domain.events.A11yEventType
 import com.astraedus.nudge.domain.events.AccessibilityEventRecord
 import com.astraedus.nudge.domain.events.EventClassifier
 import com.astraedus.nudge.domain.events.ForegroundSignal
+import com.astraedus.nudge.domain.sitting.SittingEndCause
+import com.astraedus.nudge.domain.sitting.SittingEvent
+import com.astraedus.nudge.domain.sitting.SittingTracker
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -102,6 +105,18 @@ class InterventionCountReplayTest {
 
         val guard = BlockLaunchGuard().also { it.nowMs = { clock } }
 
+        /**
+         * The REAL sitting model, because since [#54](https://github.com/astraedus/nudge/issues/54)
+         * it is what decides whether a screen-off was a departure at all.
+         *
+         * The service does not report a screen-off departure when the broadcast arrives any more --
+         * it reports one when this tracker ends the sitting with cause `SCREEN_OFF`, which happens
+         * on the user's RETURN and only if they were away past the return window. Modelling that
+         * with a boolean here would be modelling the answer; the real tracker is three lines and
+         * cannot drift from the code it stands in for.
+         */
+        private val sitting = SittingTracker()
+
         /** What the Interventions screen counts. */
         var rows = 0
             private set
@@ -137,7 +152,10 @@ class InterventionCountReplayTest {
                 launcherPackages = setOf(launcher),
                 pipOnlyPackages = emptySet()
             )
+            // `applyForegroundSignal`'s order: the guard first, then the sitting, so a sitting that
+            // ends on THIS signal ends the arrival the guard has just carried forward.
             guard.onForegroundSignal(signal)
+            reactToSitting(sitting.onSignal(signal, clock))
 
             if (signal is ForegroundSignal.PipOnly) return
 
@@ -167,9 +185,32 @@ class InterventionCountReplayTest {
             if (record.type.isWindowChange) evaluate(packageName)
         }
 
-        /** `ACTION_SCREEN_OFF` is a broadcast, not an accessibility event. */
+        /**
+         * `ACTION_SCREEN_OFF` is a broadcast, not an accessibility event.
+         *
+         * It starts the away clock and reports NOTHING on its own (#54). Whether it was a departure
+         * is answered by the next app window, through [reactToSitting].
+         */
         fun screenOff() {
-            guard.onDeparture("screen_off")
+            reactToSitting(sitting.onScreenOff(clock))
+        }
+
+        /**
+         * `NudgeAccessibilityService.onSittingEnded`: a sitting that ended on cause `SCREEN_OFF` is
+         * the one departure the accessibility stream can never describe AND whose verdict is not
+         * known when its evidence arrives.
+         *
+         * Home and another-app-held-foreground are absent here for the same reason they are absent
+         * in production: `BlockLaunchGate.arrivalAfterSignal` has already ended the arrival on the
+         * very signal that fed the tracker.
+         */
+        private fun reactToSitting(event: SittingEvent) {
+            val ended = when (event) {
+                is SittingEvent.Unchanged -> null
+                is SittingEvent.Ended -> event
+                is SittingEvent.Started -> event.ended
+            }
+            if (ended?.cause == SittingEndCause.SCREEN_OFF) guard.onDeparture("screen_off")
         }
 
         private fun evaluate(packageName: String) {
@@ -397,6 +438,50 @@ class InterventionCountReplayTest {
         device.window(blocked)
 
         assertEquals("a locked phone ends the arrival, so this is a new one", 2, device.rows)
+    }
+
+    /**
+     * ISSUE [#54](https://github.com/astraedus/nudge/issues/54), **the counting side**, and the
+     * counterfactual for it on one stream.
+     *
+     * #54 gave a screen-off the return window a foreign app window already had, so that a display
+     * timeout mid-use stops costing a fresh confrontation. That is an ENFORCEMENT change, and a
+     * fix that stopped there would have left the two halves of this app disagreeing about what a
+     * departure is: the overlay would forgive the timeout while the counter still charged for it.
+     *
+     * The case where that disagreement is visible is a block the user has NOT completed. There is no
+     * grant to protect them, so the overlay comes back either way and the only question left is
+     * whether it is the SAME confrontation. It is — they never went anywhere; the display blanked
+     * while they read the overlay — and #36's invariant is explicit that a row needs a genuine
+     * departure. Under the unconditional `onDeparture("screen_off")` this replaces, this stream
+     * wrote two.
+     *
+     * Both rows below are the identical sequence at the two durations either side of the window, so
+     * the pass cannot come from "screen-offs stopped counting": the long one must still write its
+     * second row, which is backlog F5 and the test above.
+     */
+    @Test
+    fun `whether a screen-off is a second intervention is decided by its length`() {
+        val window = SittingTracker.PASSTHROUGH_RETURN_WINDOW_MS
+        listOf(
+            Triple("a display timeout while reading the overlay", 40_000L, 1),
+            Triple("a phone genuinely put down", window, 2)
+        ).forEach { (label, awayMs, expectedRows) ->
+            clock = 10_000L
+            val device = deviceBlocking(delayRule)
+
+            device.window(blocked)
+            device.deliverOverlayWindows()
+            // The screen going off stops the overlay: `BlockOverlayActivity.onStop`, which is one
+            // half of the loop #36 was about, and the reason this case reaches a second launch.
+            device.liveOverlay!!.stopWithoutFinishing()
+            device.screenOff()
+
+            tick(awayMs)
+            device.window(blocked)
+
+            assertEquals(label, expectedRows, device.rows)
+        }
     }
 
     // ----------------------------------------------------- H2: the walk-away fail-safe pops back
@@ -640,6 +725,11 @@ class InterventionCountReplayTest {
      * Rows: what happened between the two blocks. Columns: which kind of block. The answer is the
      * same in every cell and that is the point — the rule is about the ARRIVAL, not about the
      * mechanism that produced the launch, which is why a sixth loop cannot bring the count back.
+     *
+     * Since [#54](https://github.com/astraedus/nudge/issues/54) one row is a PAIR: a screen-off is
+     * a departure or not depending on how long it lasted, so it appears at both ends of the return
+     * window and is the one row whose two halves disagree. Everything else still answers on the
+     * signal alone.
      */
     @Test
     fun `a second block counts only when the user genuinely left and came back`() {
@@ -660,7 +750,15 @@ class InterventionCountReplayTest {
             Triple("the user opened Nudge itself", { d: Device ->
                 d.window(nudge, mainActivityClass)
             }, true),
-            Triple("the screen went off", { d: Device -> d.screenOff() }, true),
+            // #54 SPLITS THIS ROW. It used to read `"the screen went off" -> true`, on four seconds
+            // of absence, because the broadcast alone was the departure. It is now the duration
+            // that answers, so the matrix asks at both ends of the window and the two answers
+            // differ — which is the whole of #54 stated once per block kind.
+            Triple("the screen blanked and came straight back", { d: Device -> d.screenOff() }, false),
+            Triple("the phone was locked and picked up much later", { d: Device ->
+                d.screenOff()
+                tick(SittingTracker.PASSTHROUGH_RETURN_WINDOW_MS)
+            }, true),
             Triple("only our own block overlay appeared", { d: Device ->
                 d.deliverOverlayWindows()
             }, false),
