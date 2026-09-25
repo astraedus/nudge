@@ -933,3 +933,49 @@ shipping since at least 1.18.0.
   `ProtectionStatus` reads the OS *bound* list and treats the settings string as intent only — the
   design the `mCrashedServices` retraction in `service-lifecycle-and-watchdog.md` produced. Verifying
   that cost one grep; building a second alarm would have cost a day.
+
+## 2026-09-25, issue #64: a clock nothing could stop (hold re-prompts with the screen on)
+
+The #35/#54 reporter came back the day after we shipped #54: the hold re-prompts minutes later with
+the screen ON, while he is still inside the app, in three different apps. Not #54, and not a
+duplicate of it.
+
+- **A field named for a duration is a claim about what it MEASURES. Check that the thing which
+  cancels it can actually arrive.** `SittingTracker.awaySinceMs` was documented as "how long the
+  user has been away", but it was started by one foreign window event and cancellable only by
+  another `AppWindow` for the sitting's own package. `AppWindow` means *a window transition
+  happened*, not *the user is here* -- so for a user scrolling a feed, reading, or typing, **no
+  cancelling event existed at all**. It was not a clock, it was a fuse: armed by any sub-flow, and
+  defusable only by an in-app navigation inside the window. The class doc, the tests and the issue
+  history all described the intended quantity; nothing checked that it was measurable. Every test
+  fed it window events, which is the one input under which the name is true.
+- **When one subsystem's answer contradicts another's about the SAME question, that is the bug,
+  before any repro.** While the fuse burned, `InteractionCounter` was counting that user's taps and
+  scrolls as *what he did inside app X* and feeding them to auto-kick. Two subsystems, one question
+  (*is the user in app X?*), opposite answers. #54 was the same shape one cause over
+  (enforcement forgiving a display timeout while counting still charged for it), and finding it
+  cost a grep, not a device. **Ask what else in the app already knows the answer** -- here the
+  evidence the sitting model needed was already flowing past it, on the same thread, in the same
+  `when`.
+- **Fix it with new EVIDENCE, not by flipping a documented judgement call.** The tempting fix was to
+  require *proven* absence (`lastAwayEvidence - awaySince >= window`), which would have broken
+  `returning after longer than the return window restarts the sitting` -- a test whose docstring
+  says exactly why the ambiguity is resolved the way it is. A test that pins a deliberate choice is
+  not in the way; it is telling you the change belongs somewhere else. Adding `onInteraction` left
+  every existing assertion untouched.
+- **Route new evidence through the EXISTING branch, not a rule of its own.** An interaction runs the
+  same "the user came back" path a window event runs, so it cancels a short absence AND ends a long
+  one. A second rule ("interactions only ever cancel") would have read as more cautious and would
+  have opened a bypass: a stray event from a backgrounded app could have resurrected a grant. One
+  fact, one branch, one direction of error.
+- **A pure-model fix nobody calls is a silent no-op with a green suite**, and here the wiring was
+  invisible by construction: a click classifies as `NotForeground`, so it reaches no branch that
+  touches the sitting. What caught it in advance was an existing DISCOVERY test --
+  `every sitting-model call from the service uses the monotonic clock` reads `PassthroughManager`'s
+  signatures and fails if a clock-taking method has no call site. Written for #54's clock, it gated
+  #64's wiring for free. Discovery tests keep paying; a hand-list pins yesterday's bug.
+- **The reporter ruling a cause out is data, not noise.** "The screen does not turn off between
+  these two holds" is what stopped this being filed as a #54 duplicate and closed. Quote a user
+  verbatim in the issue: his numbered steps are the test plan, and "sometimes after a few minutes"
+  is the detail that says *armed at an unpredictable moment*, which is what a one-shot timestamp
+  with no expiry looks like from outside.
