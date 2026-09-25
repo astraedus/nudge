@@ -24,6 +24,7 @@ import com.astraedus.nudge.domain.events.EventClassifier
 import com.astraedus.nudge.domain.events.ForegroundSignal
 import com.astraedus.nudge.domain.interaction.SyntheticClickWindow
 import com.astraedus.nudge.domain.lock.StrictModeEscapeGuard
+import com.astraedus.nudge.domain.sitting.SittingEndCause
 import com.astraedus.nudge.domain.sitting.SittingEvent
 import com.astraedus.nudge.domain.model.BlockDecision
 import com.astraedus.nudge.domain.model.BlockMode
@@ -597,17 +598,16 @@ class NudgeAccessibilityService : AccessibilityService() {
                 // only clock that both counts through sleep and cannot be jumped from Settings.
                 // Pinned by `EventDispatchOrderContractTest`.
                 entryPoint.passthroughManager().onScreenOff(sittingClock())
-                // The ARRIVAL (issue #36) still ends here, immediately, and deliberately does NOT
-                // wait for the window above. The two answer different questions: the sitting
-                // governs whether the user is BLOCKED again, where a false revoke interrupts
-                // someone mid-use, and the arrival governs only whether a block that happens
-                // anyway is WORTH A ROW, where the safe direction is to count. A short screen-off
-                // now writes no row regardless, because there is no second block to count. It
-                // arrives here rather than through the signal pipeline because a screen-off is a
-                // broadcast and not an accessibility event at all -- and because the overlay's own
-                // `onStop`/`finish()` on screen-off is one half of the loop that produced 2500
-                // interventions in a day.
-                entryPoint.blockLaunchGuard().onDeparture("screen_off")
+                // The ARRIVAL (issue #36) deliberately does NOT end here any more. It used to, on
+                // the same premise the sitting used to run on -- that the broadcast itself is the
+                // departure -- and leaving it behind would have split the app's definition of
+                // "the user left" in two: enforcement would forgive a display timeout while
+                // counting still charged for it, so a user who blanked the screen mid-hold and
+                // came straight back would meet the SAME overlay and be counted TWICE for it.
+                // That is #36's invariant ("no row without a genuine departure") failing on #54's
+                // own definition of genuine. The departure is now raised from [onSittingEvent],
+                // when the sitting actually ends on cause SCREEN_OFF -- one definition, both
+                // consumers. See that method for why the other two end causes do not route there.
                 // The awareness overlays and the clocks belong to a screen nobody is looking at.
                 hideAllOverlays()
             }
@@ -1257,9 +1257,9 @@ class NudgeAccessibilityService : AccessibilityService() {
     private fun onSittingEvent(event: SittingEvent) {
         when (event) {
             is SittingEvent.Unchanged -> return
-            is SittingEvent.Ended -> logSittingEnded(event)
+            is SittingEvent.Ended -> onSittingEnded(event)
             is SittingEvent.Started -> {
-                event.ended?.let(::logSittingEnded)
+                event.ended?.let(::onSittingEnded)
                 entryPoint.nudgeLogger().i("sitting started package=${event.packageName}")
             }
         }
@@ -1268,10 +1268,36 @@ class NudgeAccessibilityService : AccessibilityService() {
         interactionHandler.onSittingChanged()
     }
 
-    private fun logSittingEnded(ended: SittingEvent.Ended) {
+    /**
+     * A sitting ended: log it, and for the one cause that cannot reach [BlockLaunchGuard] any other
+     * way, report the departure ([#54](https://github.com/astraedus/nudge/issues/54)).
+     *
+     * A screen-off is the only end cause whose evidence never enters the accessibility stream --
+     * `ACTION_SCREEN_OFF` is a broadcast -- AND whose verdict is not known when that evidence
+     * arrives. Since #54, a screen-off merely starts the away clock, and whether it was a departure
+     * at all is decided on the user's RETURN, by [com.astraedus.nudge.domain.sitting.SittingTracker]'s return window. This is where
+     * that verdict lands, so it is where the arrival has to end.
+     *
+     * The other two causes are deliberately absent, and their absence is not an oversight:
+     *  - [SittingEndCause.WENT_HOME] and [SittingEndCause.ANOTHER_APP_HELD_FOREGROUND] both arrive
+     *    as ordinary [ForegroundSignal]s, and `BlockLaunchGate.arrivalAfterSignal` already ends the
+     *    arrival on the launcher window and on a foreign app window -- at once, and on the SAME
+     *    signal that feeds the sitting. Routing them through here as well would not add a departure;
+     *    it would only make the arrival for an app switch end TWICE, once eagerly and once two
+     *    minutes later, which is a difference no consumer can observe and a second source of truth
+     *    nobody needs.
+     *  - Their windows also differ ON PURPOSE. The arrival ends the moment another app is in front,
+     *    while the sitting holds for two minutes; the two answer different questions (*is this block
+     *    worth a ROW* versus *is the user still in this app*) and the safe direction differs for
+     *    each. #54 changes only which of them a screen-off belongs to.
+     */
+    private fun onSittingEnded(ended: SittingEvent.Ended) {
         entryPoint.nudgeLogger().i(
             "sitting ended package=${ended.packageName} cause=${ended.cause} — passthrough revoked"
         )
+        if (ended.cause == SittingEndCause.SCREEN_OFF) {
+            entryPoint.blockLaunchGuard().onDeparture("screen_off")
+        }
     }
 
     private fun isOwnAppWindowEvent(event: AccessibilityEvent): Boolean {

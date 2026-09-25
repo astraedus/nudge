@@ -318,6 +318,21 @@ class BlockOverlayLaunchContractTest {
      * accessibility event at all. Miss either report and the arrival invariant silently stops
      * covering the case that mattered: a user leaving via one of these two paths and coming straight
      * back would be read as the SAME arrival, and owed a fresh confrontation would get none.
+     *
+     * ## Where the screen-off one moved to, and why ([#54](https://github.com/astraedus/nudge/issues/54))
+     *
+     * It used to sit in the screen-off receiver, beside the sitting call, because the broadcast WAS
+     * the departure for both. Since #54 it is not: a screen-off merely starts the away clock, and
+     * whether the user actually left is decided on their RETURN by the return window. So the two
+     * consumers had to either share that verdict or split the app's definition of "the user left" in
+     * half -- and the half that kept the old rule would have re-counted a user who blanked the
+     * screen mid-hold and came straight back to the SAME overlay, which is #36's own invariant
+     * failing on #54's own definition of a genuine departure.
+     *
+     * The report therefore now hangs off the sitting ENDING with cause `SCREEN_OFF`, which is the
+     * moment that verdict exists. This test moved with it rather than being deleted: what it pins is
+     * unchanged in substance -- both un-streamable departures are still reported exactly once each,
+     * and the screen-off one is still gated on real evidence rather than fired unconditionally.
      */
     @Test
     fun `both un-streamable departures are reported`() {
@@ -329,7 +344,7 @@ class BlockOverlayLaunchContractTest {
             Regex("""blockLaunchGuard\(\)\.onDeparture\(""").findAll(code).count()
         )
         val ownUiCheck = index(code, "isOwnAppWindowEvent(event)")
-        val screenOff = index(code, "Intent.ACTION_SCREEN_OFF) return")
+        val screenOffVerdict = index(code, "SittingEndCause.SCREEN_OFF")
         val departures = Regex("""blockLaunchGuard\(\)\.onDeparture\(""")
             .findAll(code).map { it.range.first }.toList()
         assertTrue(
@@ -338,10 +353,20 @@ class BlockOverlayLaunchContractTest {
             departures.any { it in ownUiCheck..(ownUiCheck + 400) }
         )
         assertTrue(
-            "the other onDeparture must sit inside the screen-off receiver -- a screen-off is a " +
-                "broadcast, not an accessibility event, so it cannot arrive through the signal " +
-                "pipeline at all",
-            departures.any { it in screenOff..(screenOff + 400) }
+            "the other onDeparture must be gated on the sitting having ENDED with cause " +
+                "SCREEN_OFF (#54). A screen-off is a broadcast and cannot arrive through the " +
+                "signal pipeline, but since #54 it is also not a departure until the return " +
+                "window says so -- firing it on the broadcast again would re-count a user who " +
+                "blanked the screen mid-block and came straight back to the same overlay",
+            departures.any { it in screenOffVerdict..(screenOffVerdict + 400) }
+        )
+        assertTrue(
+            "the screen-off receiver must NOT report a departure of its own any more: that is " +
+                "exactly the unconditional call #54 removed, and re-adding it beside the gated " +
+                "one would restore the double count while this test still counted two",
+            departures.none {
+                it in index(code, "Intent.ACTION_SCREEN_OFF) return").let { s -> s..(s + 400) }
+            }
         )
     }
 
