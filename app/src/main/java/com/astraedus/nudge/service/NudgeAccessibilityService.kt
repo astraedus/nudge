@@ -1673,8 +1673,16 @@ class NudgeAccessibilityService : AccessibilityService() {
         webClock.start(key) { tickWebTime(it) }
     }
 
-    /** End the current web session: no domain is in front, so nothing should be on its clock. */
+    /**
+     * End the current web session: no domain is in front, so nothing should be on its clock.
+     *
+     * Guarded for the same reason as [stopForegroundTimeTicker], and it was the same latent crash:
+     * [onDestroy] calls this, and `webClock.isRunning` is read even when `activeWebSessionKey` is
+     * already null, so a teardown before [onServiceConnected] would have thrown here too the moment
+     * the clock above it was fixed ([#57](https://github.com/astraedus/nudge/issues/57)).
+     */
     private fun endWebSession(reason: String) {
+        if (!::webClock.isInitialized || !::webSessionUsageProvider.isInitialized) return
         if (activeWebSessionKey == null && !webClock.isRunning) return
         activeWebSessionKey = null
         webSessionUsageProvider.browserPackage = null
@@ -2436,8 +2444,19 @@ class NudgeAccessibilityService : AccessibilityService() {
         foregroundClock.start(packageName) { tickForegroundTime(it) }
     }
 
+    /**
+     * Stops the foreground-time clock, if there is one yet.
+     *
+     * The guard is not defensive noise: [onDestroy] calls this, and a service can be created and
+     * destroyed without [onServiceConnected] ever running (install-over, force stop, a
+     * memory-pressure kill and rebind, a fast permission toggle). Reading the unassigned `lateinit`
+     * threw out of `onDestroy`, which Android records as a **crashed** accessibility service — and
+     * a crashed service is never rebound, so every rule silently stopped enforcing with nothing
+     * shown to the user ([#57](https://github.com/astraedus/nudge/issues/57)). Same shape as
+     * [hideAllOverlays]'s guards; `ServiceTeardownContractTest` discovers new instances of it.
+     */
     private fun stopForegroundTimeTicker(reason: String) {
-        foregroundClock.stop(reason)
+        if (::foregroundClock.isInitialized) foregroundClock.stop(reason)
     }
 
     /**
@@ -2514,33 +2533,53 @@ class NudgeAccessibilityService : AccessibilityService() {
 
     override fun onInterrupt() {}
 
+    /**
+     * Teardown, as a sequence of steps that cannot take each other — or the service — down.
+     *
+     * Every statement goes through [ServiceTeardown] rather than running bare, because a throw out
+     * of `onDestroy` is the worst failure this app has: Android reports *"Unable to stop service"*
+     * and lists the component under `Crashed services:`, it is never rebound, and **every rule
+     * becomes a silent no-op** ([#57](https://github.com/astraedus/nudge/issues/57)). It also skips
+     * whatever teardown came after it — before this, an uninitialised clock on the third line meant
+     * the scope was never cancelled and the overlay managers kept a dead service as their context.
+     *
+     * Nothing here is allowed to depend on a completed [onServiceConnected]: a service can be
+     * created and destroyed without one. The ordering that *is* load-bearing is unchanged — the
+     * instance is cleared first (so anything reading connection state during the rest of teardown
+     * gets the truth), and the scope is cancelled last.
+     */
     override fun onDestroy() {
         super.onDestroy()
-        if (instance === this) instance = null
+        val teardown = ServiceTeardown { step, error ->
+            // runCatching: `entryPoint` is a lazy Hilt lookup, and a logger that throws while
+            // reporting a teardown failure must not become the crash it was reporting.
+            runCatching { entryPoint.nudgeLogger().e("teardown step failed step=$step", error) }
+        }
+        teardown.step("clear_instance") { if (instance === this) instance = null }
         // The other direction: blocking has just stopped, and a screen sitting on a green tick
         // needs to stop claiming otherwise.
-        AccessibilityConnectionSignal.onConnectionChanged()
-        stopForegroundTimeTicker("service_destroyed")
-        endWebSession("service_destroyed")
-        try {
+        teardown.step("connection_signal") { AccessibilityConnectionSignal.onConnectionChanged() }
+        teardown.step("stop_foreground_clock") { stopForegroundTimeTicker("service_destroyed") }
+        teardown.step("end_web_session") { endWebSession("service_destroyed") }
+        // The observer and receiver may never have registered (registration failed, or the connect
+        // never happened) — unregistering an unregistered one throws, and is nothing to report.
+        teardown.step("unregister_ime_observer") {
             contentResolver.unregisterContentObserver(imeSettingObserver)
-        } catch (_: Exception) {
-            // Observer may never have registered (register failed) — ignore.
         }
-        try {
-            unregisterReceiver(screenOffReceiver)
-        } catch (_: Exception) {
-            // Receiver may never have registered (register failed) — ignore.
+        teardown.step("unregister_screen_off_receiver") { unregisterReceiver(screenOffReceiver) }
+        teardown.step("clear_sitting_reaction") { entryPoint.passthroughManager().setSittingReaction(null) }
+        teardown.step("clear_counter_overlay") { entryPoint.counterOverlayManager().clearServiceContext() }
+        teardown.step("clear_time_remaining_overlay") {
+            entryPoint.timeRemainingOverlayManager().clearServiceContext()
         }
-        entryPoint.passthroughManager().setSittingReaction(null)
-        entryPoint.counterOverlayManager().clearServiceContext()
-        entryPoint.timeRemainingOverlayManager().clearServiceContext()
-        entryPoint.tabCoverOverlayManager().clearServiceContext()
-        passthroughManagerInstance = null
-        if (grayscaleActiveForPackage != null) {
-            entryPoint.grayscaleManager().disableGrayscale()
-            grayscaleActiveForPackage = null
+        teardown.step("clear_tab_cover_overlay") { entryPoint.tabCoverOverlayManager().clearServiceContext() }
+        teardown.step("clear_passthrough_instance") { passthroughManagerInstance = null }
+        teardown.step("disable_grayscale") {
+            if (grayscaleActiveForPackage != null) {
+                entryPoint.grayscaleManager().disableGrayscale()
+                grayscaleActiveForPackage = null
+            }
         }
-        serviceScope.cancel()
+        teardown.step("cancel_scope") { serviceScope.cancel() }
     }
 }

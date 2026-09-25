@@ -2,6 +2,24 @@
 
 All notable changes to Nudge are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.18.2] - 2026-09-25
+
+### Fixed
+- **Blocking could switch itself off completely, silently, and nothing told you.** With the wrong
+  timing — an app update installing over the top, a force stop, Android reclaiming memory and
+  starting Nudge again, or the accessibility permission being turned off and straight back on —
+  Nudge's blocking service could fall over while shutting down, because it had never finished
+  starting up. Android writes a service off as crashed when that happens and never brings it back,
+  so every rule you had set quietly stopped doing anything at all: no block screens, no delays, no
+  daily limits, and nothing on screen to say so
+  ([#57](https://github.com/astraedus/nudge/issues/57)). It presented as "the block screen just did
+  not appear", and it had been shipping since at least 1.18.0. Two things changed. The shutdown no
+  longer reaches for anything that might not exist yet. And no part of a shutdown can take the
+  service down with it any more — each step stands on its own, so one going wrong can neither
+  crash the service nor skip the steps after it, which is what used to leave the leftovers of a
+  block hanging around as well. Nudge's own "blocking has stopped" alert did already catch this on
+  its next check, so if you ever saw that notification and could not work out why, this was why.
+
 ## [1.18.1] - 2026-09-25
 
 ### Fixed
