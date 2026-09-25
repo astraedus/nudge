@@ -2,6 +2,12 @@
 
 All notable changes to Nudge are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.18.1] - 2026-09-25
+
+### Fixed
+- **A delay or a hold you have already done survives your screen going dark.** A user who had asked for Hold mode wrote in to say it was asking again a minute or two after he had held his sixty seconds, while he was still in the app, reading client messages ([#54](https://github.com/astraedus/nudge/issues/54)). He had not gone anywhere: Android turns the display off when you stop *touching* it, not when you stop *looking* at it, and thirty seconds of reading is enough. Nudge treated that as putting the phone down and took your pass away, so unlocking straight back into the app you never left cost the whole wait again. A screen going off now starts the same two-minute clock that already covers switching to another app and coming back — blank the screen and pick it straight back up and you are still where you were; put the phone down properly and come back later and it asks again, exactly as before. Going to the home screen or your recent apps still ends it at once, because that is you leaving on purpose. This was never specific to Hold: a countdown has had it since the day the pass was introduced, and nobody reported it because paying fifteen seconds again is annoying where paying sixty seconds of holding is broken.
+- **And a screen that blinks while a block is up no longer counts as a second block.** The same fix, on the other side: if the display timed out while you were sitting in front of a nudge screen you had not finished, you met the same screen again when you came back — which is right, you had not done it yet — but Nudge wrote it down in your history as a second, separate time it had stopped you. One arrival is still one entry.
+
 ## [1.18.0] - 2026-09-22
 
 ### Added
