@@ -211,6 +211,51 @@ class PassthroughTest {
         )
     }
 
+    /**
+     * The full device sequence a slow QA run actually produces, with the display timeout in it.
+     *
+     * A bench run of "complete the delay, press Home, reopen" failed on this change and looked like
+     * a Home regression. It was not reproducible at this layer, and the reason is in this stream:
+     * an agent driving the phone takes tens of seconds per step while the Pixel blanks the display
+     * after thirty, so the screen times out BETWEEN getting inside the app and pressing Home. Before
+     * #54 that timeout revoked the grant, and the block the run then saw was credited to Home
+     * without Home having done anything. After #54 it correctly does not.
+     *
+     * So this pins the thing that actually matters and that the bench run could not see: with a
+     * display timeout in the middle, a REAL Home still revokes, and the app is still blocked on
+     * return. If a future change breaks Home behind a screen-off, this fails here rather than
+     * costing another device round.
+     */
+    @Test
+    fun `a display timeout before going home does not save the grant from home`() {
+        val reddit = "com.reddit.frontpage"
+        val launcher = "com.google.android.apps.nexuslauncher"
+
+        manager.onForegroundSignal(signalFor(reddit, A11yEventType.WINDOW_STATE_CHANGED), 0)
+        manager.grant(reddit)
+
+        // The display times out while the user sits there, then they touch it and are back.
+        manager.onScreenOff(30_000)
+        manager.onForegroundSignal(signalFor(reddit, A11yEventType.WINDOW_STATE_CHANGED), 35_000)
+        assertTrue(
+            "the timeout itself is not a departure; that is the whole of #54",
+            manager.shouldSkipForegroundEvaluation(reddit)
+        )
+
+        // NOW they actually go home, screen on, deliberately.
+        manager.onForegroundSignal(
+            signalFor(launcher, A11yEventType.WINDOW_STATE_CHANGED, launcherPackages = setOf(launcher)),
+            40_000
+        )
+        assertFalse("Home is still a departure, timeout or no timeout", manager.shouldSkipForegroundEvaluation(reddit))
+
+        manager.onForegroundSignal(signalFor(reddit, A11yEventType.WINDOW_STATE_CHANGED), 42_000)
+        assertFalse(
+            "and coming back from Home still costs a fresh block",
+            manager.shouldSkipForegroundEvaluation(reddit)
+        )
+    }
+
     /** A screen-off with nothing granted and no sitting must stay a no-op. */
     @Test
     fun `a screen-off with no sitting changes nothing`() {
