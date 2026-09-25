@@ -366,6 +366,48 @@ class EventDispatchOrderContractTest {
         )
     }
 
+    /**
+     * ISSUE [#64](https://github.com/astraedus/nudge/issues/64)'s wiring, and it is a source-level
+     * pin because the model change is invisible without it.
+     *
+     * A click or a scroll classifies as `NotForeground`, so it reaches no branch that touches the
+     * sitting — which is exactly why an away clock armed by a Custom Tab or a share sheet could only
+     * ever be cancelled by an in-app NAVIGATION, and a user who just kept scrolling was charged their
+     * whole hold again minutes later. `SittingTracker.onInteraction` is only worth anything if this
+     * branch calls it: a pure-model fix nobody calls is a silent no-op with a green suite.
+     *
+     * The ORDER matters too. If the interaction is the evidence that ends a long absence, the sitting
+     * transition must be announced — and `InteractionCounter`'s per-source state reset — before this
+     * same event is counted, or the first event of the new session lands in the old session's
+     * primary-source election.
+     *
+     * And it must sit under the synthetic-click guard: a tap WE performed (the Following steer) is
+     * reported by the platform exactly like a finger, and letting our own click prove the user is
+     * present would be issue #28's mistake from the other direction, with the blocker as the
+     * phantom user.
+     */
+    @Test
+    fun `a real interaction feeds the sitting before it is counted`() {
+        val branchStart = indexIn(dispatchCode, "A11yEventType.VIEW_CLICKED,")
+        val branchEnd = indexIn(dispatchCode, "A11yEventType.OTHER ->")
+        assertTrue("the interaction branch must precede the OTHER branch", branchStart < branchEnd)
+        val branch = dispatchCode.substring(branchStart, branchEnd)
+
+        val sitting = branch.indexOf("passthroughManager().onInteraction(")
+        val counted = branch.indexOf("interactionHandler.handleInteraction(")
+        val notOurs = branch.indexOf("} else {")
+        assertTrue(
+            "a click or a scroll must reach the sitting model, or #64's fix is a no-op nobody calls",
+            sitting >= 0
+        )
+        assertTrue("the interaction must still be counted", counted >= 0)
+        assertTrue("our own synthetic clicks must not prove the user is present", sitting > notOurs)
+        assertTrue(
+            "the sitting must be updated before the counter is told, like every other path here",
+            sitting < counted
+        )
+    }
+
     // --- the sitting model's clock (#54) ---------------------------------------------------------
 
     /**

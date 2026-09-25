@@ -256,6 +256,91 @@ class PassthroughTest {
         )
     }
 
+    /**
+     * ISSUE [#64](https://github.com/astraedus/nudge/issues/64) at the GRANT level: the hold the user
+     * paid for must survive a sub-flow they came back from, even when the return never arrives as a
+     * window event.
+     *
+     * Reported by email 2026-09-25 — *"the hold requirement itself is being triggered again while I
+     * am still actively using the app and my phone screen has remained ON the entire time"* — across
+     * Reddit, Gemini and Files. Reddit opens links in a Chrome Custom Tab, which arms the away clock
+     * by design (issue #28 allows that, because the RETURN is supposed to cancel it). [#58](https://github.com/astraedus/nudge/issues/58)
+     * measured on the bench Pixel 3 that the same gesture on the same build sometimes delivers only
+     * a content change and no `WINDOW_STATE_CHANGED`, so the return is modelled here as arriving
+     * with no window event at all — which is precisely the case the old model had no answer for.
+     *
+     * Phrased in [PassthroughManager.shouldSkipForegroundEvaluation] for the same reason the #54
+     * test is: it is literally the early return in `evaluateForegroundPackage` standing between this
+     * user and a second sixty-second hold.
+     */
+    @Test
+    fun `a completed hold survives a sub-flow when only the scrolling proves the user came back`() {
+        val reddit = "com.reddit.frontpage"
+        val customTab = "com.android.chrome"
+
+        manager.onForegroundSignal(signalFor(reddit, A11yEventType.WINDOW_STATE_CHANGED), 0)
+        manager.grant(reddit)
+
+        // They tap a link. The Custom Tab is another app in front, so the away clock starts.
+        manager.onForegroundSignal(signalFor(customTab, A11yEventType.WINDOW_STATE_CHANGED), 20_000)
+
+        // They close it and carry on scrolling Reddit — and the return arrives only as interaction,
+        // never as a window event (#58's measured delivery flakiness).
+        manager.onInteraction(reddit, 40_000)
+        manager.onInteraction(reddit, 55_000)
+
+        // Six minutes later they open a post, which IS a window event.
+        manager.onForegroundSignal(signalFor(reddit, A11yEventType.WINDOW_STATE_CHANGED), 400_000)
+
+        assertTrue(
+            "they never left; opening a post must not cost the sixty-second hold again",
+            manager.shouldSkipForegroundEvaluation(reddit)
+        )
+    }
+
+    /**
+     * **The counterfactual, on the same stream minus the scrolling.** This is the bug as shipped: with
+     * no interaction to close the absence, the away clock armed by the Custom Tab is still running
+     * six minutes later and the post tap is read as a return from a long departure. It also proves
+     * the test above is not passing because the sub-flow quietly stopped arming the clock.
+     */
+    @Test
+    fun `without that evidence the same sub-flow revokes the hold six minutes later`() {
+        val reddit = "com.reddit.frontpage"
+        val customTab = "com.android.chrome"
+
+        manager.onForegroundSignal(signalFor(reddit, A11yEventType.WINDOW_STATE_CHANGED), 0)
+        manager.grant(reddit)
+        manager.onForegroundSignal(signalFor(customTab, A11yEventType.WINDOW_STATE_CHANGED), 20_000)
+        manager.onForegroundSignal(signalFor(reddit, A11yEventType.WINDOW_STATE_CHANGED), 400_000)
+
+        assertFalse(
+            "an absence nobody contradicted is still an absence",
+            manager.shouldSkipForegroundEvaluation(reddit)
+        )
+    }
+
+    /**
+     * The bypass direction, at the grant level. A stray interaction event from an app the user left
+     * long ago must not resurrect their grant — which is why an interaction runs the same return
+     * branch a window event runs instead of merely cancelling the clock.
+     */
+    @Test
+    fun `an interaction arriving after a real departure revokes rather than rescues`() {
+        val reddit = "com.reddit.frontpage"
+
+        manager.onForegroundSignal(signalFor(reddit, A11yEventType.WINDOW_STATE_CHANGED), 0)
+        manager.grant(reddit)
+        manager.onForegroundSignal(signalFor("com.whatsapp", A11yEventType.WINDOW_STATE_CHANGED), 10_000)
+
+        manager.onInteraction(reddit, 10_000 + SittingTracker.PASSTHROUGH_RETURN_WINDOW_MS + 1)
+
+        assertFalse(
+            "ten minutes in another app is a departure however the evidence of return arrives",
+            manager.shouldSkipForegroundEvaluation(reddit)
+        )
+    }
+
     /** A screen-off with nothing granted and no sitting must stay a no-op. */
     @Test
     fun `a screen-off with no sitting changes nothing`() {

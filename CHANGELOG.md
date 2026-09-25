@@ -2,6 +2,24 @@
 
 All notable changes to Nudge are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Fixed
+- **A hold you had already completed could be demanded again, minutes later, while you were still
+  sitting in the app.** Screen on, never left, nothing tapped that would explain it — and then the
+  block screen, asking for the full sixty seconds over again
+  ([#64](https://github.com/astraedus/nudge/issues/64)). The cause was how Nudge decides you have
+  left an app. Opening a link in a Chrome tab from Reddit, sending a file from Files, raising a share
+  sheet or a permission dialog all start a two-minute clock, which is correct — it is what keeps a
+  quick trip out to a photo picker from costing you a second delay. Coming back was supposed to stop
+  that clock, but the only thing Nudge accepted as "you are back" was a change of screen inside the
+  app. Just *using* it — scrolling, reading, typing — counted for nothing, so the clock quietly kept
+  running while you sat there, and the next time you opened a post or a folder it was read as you
+  returning from a two-minute absence. Nudge now counts your taps and swipes inside an app as proof
+  you are in it, which is what its own on-screen counter had been doing all along. Leaving properly
+  still costs a fresh block: an absence that really has run past the window ends the session no
+  matter which way the evidence arrives.
+
 ## [1.18.2] - 2026-09-25
 
 ### Fixed
