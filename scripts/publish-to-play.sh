@@ -101,15 +101,39 @@ fi
 echo "AAB: $AAB ($(du -h "$AAB" | cut -f1))"
 
 # --- 2. release notes from CHANGELOG (Play caps at 500 chars/locale) ----------
+# The CHANGELOG is MARKDOWN and the store field is PLAIN TEXT, so every markup form has to be
+# flattened or it ships verbatim: v1.18.1's LIVE notes read "...reading client messages
+# ([#54](https://github.com/astraedus/nudge/issues/54)). He had not...". Issue parentheticals go
+# entirely (a bare issue number means nothing to a store reader and eats the 500-char budget),
+# any other link keeps its text, and the emphasis/code markers are stripped.
 NOTES="$(awk -v ver="$VERSION" '
   $0 ~ "^## \\[" ver "\\]" {grab=1; next}
   grab && /^## \[/ {exit}
   grab {print}
-' "$ROOT/CHANGELOG.md" | sed 's/\*\*//g; s/^- /• /' | sed '/^### /d' | grep -v '^[[:space:]]*$')"
+' "$ROOT/CHANGELOG.md" \
+  | sed '/^### /d' \
+  | sed -E 's/\(\[#[0-9]+\]\([^)]*\)\)//g' \
+  | sed -E 's/\[([^]]*)\]\([^)]*\)/\1/g' \
+  | sed 's/\*\*//g; s/\*//g; s/`//g; s/^- /• /' \
+  | sed -E 's/[[:space:]]+([.,)])/\1/g' \
+  | grep -v '^[[:space:]]*$')"
 [ -n "$NOTES" ] && NOTES="What's new in v${VERSION}:
 ${NOTES}" || NOTES="Bug fixes and improvements (v${VERSION})."
-# Google Play hard-caps release notes at 500 chars/locale; trim the FINAL string.
-NOTES="${NOTES:0:497}"
+# Google Play hard-caps release notes at 500 chars/locale; trim the FINAL string. Cut back to the
+# last sentence rather than mid-word: a hard 497-byte slice would have shipped "no block screens,
+# no delays, no daily limits, an" on v1.18.2. A cap is not a reason to publish a fragment.
+if [ "${#NOTES}" -gt 497 ]; then
+  NOTES="${NOTES:0:497}"
+  # Whole-string parameter expansion, NOT sed: the notes are MULTI-LINE, and a line-oriented
+  # 's/[^.!?]*$//' strips the tail of EVERY line instead of the tail of the text (it mangled the
+  # whole block on the first attempt). '${NOTES##*[.!?]}' is everything after the last sentence
+  # end, so removing that as a suffix leaves the last complete sentence.
+  TRIMMED="${NOTES%"${NOTES##*[.!?]}"}"
+  # Fail-safe: if the 497-byte window holds no sentence end at all (one very long bullet), fall
+  # back to the last whole WORD plus an ellipsis rather than shipping half a word.
+  [ "${#TRIMMED}" -lt 200 ] && TRIMMED="${NOTES% *}…"
+  NOTES="$TRIMMED"
+fi
 echo "----- release notes -----"; echo "$NOTES"; echo "-------------------------"
 
 # --- 3. preflight (offline secret/compliance scan) ----------------------------
