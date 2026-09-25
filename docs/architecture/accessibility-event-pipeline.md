@@ -217,6 +217,47 @@ the sitting. Their windows also differ on purpose — the arrival ends the momen
 front while the sitting holds for two minutes, because *is this block worth a row* and *is the user
 still in this app* have different safe directions.
 
+**An absence is cancelled by PRESENCE, not only by a navigation (issue [#64](https://github.com/astraedus/nudge/issues/64)).**
+The away clock is evidence of absence, and until 1.18.2 the only evidence of PRESENCE the model would
+accept was another `AppWindow` — which means *a window transition happened*, not *the user is here*
+(`EventClassifier` returns `NotForeground` for everything that is not a window change). A user
+actively using their app without changing windows — scrolling a feed, reading, typing — therefore had
+no way to contradict an absence they were not having.
+
+So one ordinary sub-flow armed a **fuse with no expiry**. A Chrome Custom Tab opened from Reddit, an
+"open with" chooser from Files, a share sheet, a permission dialog: all of them start the clock by
+design, on the premise (#28's) that the RETURN cancels it. When the return did not arrive as a window
+event — #58 measured that exact delivery flakiness on the bench Pixel 3, same gesture, same build —
+the clock kept burning, and the user's next in-app navigation, minutes later, was read as a return
+from a two-minute absence. The grant went and the block came back while they sat exactly where they
+had been. Reported by the #35 / #54 user on 2026-09-25 in Reddit, Gemini and Files, paying a fresh
+sixty-second HOLD each time, screen never off.
+
+The app was also contradicting itself for the whole of that window: `InteractionCounter` was counting
+those same taps and scrolls as *what the user did inside app X* and feeding them to auto-kick. One
+question, two opposite answers — the same split #54 found between enforcement and counting.
+
+`SittingTracker.onInteraction` closes it, and routes through the **same** "the user came back" branch
+`onAppWindow` uses rather than getting a rule of its own:
+
+| The interaction is | and the away clock is | so |
+|---|---|---|
+| in the sitting's app | running, under the window | cancelled, the sitting survives — the reported bug |
+| in the sitting's app | running, past the window | the sitting ENDS exactly as a window event would end it — no bypass is opened |
+| in another app, or there is no sitting | anything | nothing at all |
+
+A stray event from a backgrounded app can therefore only ever revoke **sooner**, never grant. An
+interaction in a foreign app is deliberately inert: it is weaker evidence than a window about what is
+in FRONT (a question this model has never owned), and the failure direction here is always to miss a
+revoke rather than interrupt someone mid-use. A foreign app that really is in front says so with a
+window event.
+
+**What this does not close.** If the fuse is armed spuriously and the user then goes past the return
+window without touching the app at all, their next touch or navigation still ends the sitting. The
+complete fix is to verify the foreign app is *still* in front instead of inferring it from one event
+— `docs/BACKLOG.md` records the mechanism (`UsageEvents.Event.getTaskRootPackageName()`, API 29+,
+which tells a sub-flow from a real switch outright).
+
 What the sitting does **not** do: decide whether to block. A foreign app window is still evaluated
 immediately and blocked on its own merits — opening a blocked app from a picker blocks at once, not
 five minutes later. The sitting governs only whose *grant* is alive.
@@ -371,7 +412,7 @@ fields, never from per-app knowledge**, so a stock `androidx` RecyclerView is th
 
 | Test | Pins |
 |---|---|
-| `SittingTrackerTest` | every branch of the model; one test per reported sub-flow; that no non-app signal can end a sitting |
+| `SittingTrackerTest` | every branch of the model; one test per reported sub-flow; that no non-app signal can end a sitting; that an interaction inside the app cancels an absence (#64) while one past the window still ends the sitting — with the counterfactual that the pre-fix path really did leave the clock burning |
 | `EventClassifierTest` | every `ForegroundSignal` is reachable; the PiP gate is ahead of everything; an empty launcher set classifies nothing as Home; an awareness overlay is not `OwnUi` and every OTHER window of ours still is |
 | `AwarenessOverlayContractTest` | the overlays are built only from views that carry the identity, and the identity is derived from a real class |
 | `OwnClassNamespaceContractTest` | the applicationId and the namespace are different strings, production derives the namespace, and comparing a class name against the applicationId (issue #33) still cannot match |
@@ -379,7 +420,7 @@ fields, never from per-app knowledge**, so a stock `androidx` RecyclerView is th
 | `InteractionCounterTest` | every counting branch, the primary-source election, the mode rules |
 | `A11yCaptureReplayTest` | the real device streams, each against its own oracle — plus counterfactuals showing the OLD rule really does fail each capture, so a passing fixture cannot be passing by luck |
 | `AccessibilityEventCodecTest` | encoder/decoder round trip, escaping, forward compatibility |
-| `EventDispatchOrderContractTest` | classify-once and sitting-once above every early return; no branch re-derives the classification; `evaluateForegroundPackage` never clears the passthrough again |
+| `EventDispatchOrderContractTest` | classify-once and sitting-once above every early return; no branch re-derives the classification; `evaluateForegroundPackage` never clears the passthrough again; a click or a scroll actually REACHES the sitting model (#64), under the synthetic-click guard and before the counter is told — a pure-model fix nobody calls is a silent no-op with a green suite |
 | `HomeScreenPassthroughContractTest` | the Home / system-surface distinction, the Strict Mode guard's position, the global toggle's position |
 
 The counterfactual tests are worth the extra lines. `the old event-rate rule really would have

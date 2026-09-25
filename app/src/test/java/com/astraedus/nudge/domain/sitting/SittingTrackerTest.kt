@@ -318,6 +318,128 @@ class SittingTrackerTest {
         assertEquals(SittingEvent.Unchanged, t.app(keep, 1_000 + window))
     }
 
+    // --- presence: an interaction inside the app (#64) -------------------------------------------
+
+    /**
+     * ISSUE [#64](https://github.com/astraedus/nudge/issues/64), the reported case, smallest form.
+     *
+     * The reporter of #35 and #54, by email 2026-09-25: *"the hold requirement itself is being
+     * triggered again while I am still actively using the app and my phone screen has remained ON
+     * the entire time ... after some apparently random amount of time — sometimes after a few
+     * minutes — Nudge suddenly appears again"*, in Reddit, Gemini and Files alike.
+     *
+     * One ordinary sub-flow (a Custom Tab, a share sheet, an "open with" chooser) armed the away
+     * clock. Nothing the user then did could cancel it, because scrolling and tapping classify as
+     * `NotForeground` and only an `AppWindow` could reach the clock — so their next in-app
+     * navigation, minutes later, was read as a return from a long absence and charged them the whole
+     * hold again.
+     */
+    @Test
+    fun `an interaction in the app cancels an away clock a sub-flow armed`() {
+        val t = tracker()
+        t.app(keep, 0)
+        t.app(shareSheet, 1_000)
+        assertEquals("the sub-flow must still arm the clock", 1_000L, t.awaySinceMs)
+
+        // The user is back and scrolling. This is the evidence the model could not hear.
+        assertEquals(SittingEvent.Unchanged, t.onInteraction(keep, 4_000))
+        assertNull("a touch inside the app closes the absence", t.awaySinceMs)
+
+        // ...so the navigation they make five minutes later is just a navigation.
+        assertEquals(SittingEvent.Unchanged, t.app(keep, 4_000 + window + 1))
+        assertEquals(keep, t.currentApp)
+    }
+
+    /**
+     * **The counterfactual, on the same sequence.** A scroll is exactly what `EventClassifier` calls
+     * [ForegroundSignal.NotForeground], so feeding one in as a signal is the pre-fix behaviour
+     * expressed in production types: the model cannot hear it, the fuse keeps burning, and the next
+     * navigation detonates it. Without this the test above could pass for the wrong reason — e.g. if
+     * a sub-flow had quietly stopped arming the clock at all.
+     */
+    @Test
+    fun `pre-fix, nothing the user did inside the app could reach the away clock`() {
+        val t = tracker()
+        t.app(keep, 0)
+        t.app(shareSheet, 1_000)
+
+        t.onSignal(ForegroundSignal.NotForeground(keep), 4_000)
+        assertEquals("the pre-fix path leaves the clock running", 1_000L, t.awaySinceMs)
+
+        val event = t.app(keep, 4_000 + window + 1)
+        assertEquals(
+            "pre-fix, the next navigation ended the sitting and revoked the hold",
+            SittingEvent.Started(keep, SittingEvent.Ended(keep, SittingEndCause.ANOTHER_APP_HELD_FOREGROUND)),
+            event
+        )
+    }
+
+    /**
+     * NO NEW BYPASS, which is the whole reason an interaction routes through the same return branch
+     * a window event does rather than simply cancelling the clock.
+     *
+     * If a stray event really does arrive from an app the user left ten minutes ago, the absence is
+     * read exactly as a window event would read it and the grant goes. The change can only ever
+     * revoke SOONER, never hand anyone a free pass.
+     */
+    @Test
+    fun `an interaction after a genuine absence still ends the sitting`() {
+        val t = tracker()
+        t.app(keep, 0)
+        t.app("com.other.app", 1_000)
+
+        assertEquals(
+            SittingEvent.Started(keep, SittingEvent.Ended(keep, SittingEndCause.ANOTHER_APP_HELD_FOREGROUND)),
+            t.onInteraction(keep, 1_000 + window + 1)
+        )
+    }
+
+    /**
+     * An interaction is weaker evidence than a window about what is in FRONT — this model has never
+     * owned that question — so one in a foreign app says nothing and must leave the clock alone. The
+     * foreign app that really is in front will say so with a window event, which is what already
+     * ends the sitting.
+     */
+    @Test
+    fun `an interaction in another app leaves the away clock alone`() {
+        val t = tracker()
+        t.app(keep, 0)
+        t.app(picker, 1_000)
+
+        assertEquals(SittingEvent.Unchanged, t.onInteraction(picker, 2_000))
+        assertEquals("the absence is still being measured", 1_000L, t.awaySinceMs)
+        assertEquals(keep, t.currentApp)
+
+        assertTrue(
+            "a real departure must still end the sitting",
+            t.app(picker, 1_000 + window) is SittingEvent.Started
+        )
+    }
+
+    /** An interaction can only ever CLOSE an absence. It never starts a sitting or moves one. */
+    @Test
+    fun `an interaction cannot start a sitting`() {
+        val t = tracker()
+        assertEquals(SittingEvent.Unchanged, t.onInteraction(keep, 1_000))
+        assertNull(t.currentApp)
+    }
+
+    /**
+     * The #54 family from the presence side. A display timeout blanks the screen while the user
+     * reads; they tap to wake and carry on in the same app. The tap closes the absence just as their
+     * next window event would, so a later navigation is not charged for a departure nobody made.
+     */
+    @Test
+    fun `an interaction after a display timeout the user returned from closes the absence`() {
+        val t = tracker()
+        t.app(keep, 0)
+        t.onScreenOff(30_000)
+
+        assertEquals(SittingEvent.Unchanged, t.onInteraction(keep, 45_000))
+        assertNull(t.awaySinceMs)
+        assertEquals(SittingEvent.Unchanged, t.app(keep, 45_000 + window + 1))
+    }
+
     // --- signals that must be structurally incapable of ending a sitting ---------------------
 
     @Test
