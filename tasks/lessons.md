@@ -894,3 +894,42 @@ regression.** The bench run failed a case (Home should revoke instantly) whose c
 does not touch, and the agent's proposed mechanism was contradicted by the source and by passing unit
 tests. The cheap settling move is an A/B against the previous build, not a revert on the strength of a
 plausible story.
+
+## A crash in `onDestroy` is not a crash, it is a silent uninstall (2026-09-25, issue #57)
+
+`stopForegroundTimeTicker` read `lateinit var foregroundClock`, which only `onServiceConnected`
+assigns, and `onDestroy` called it unconditionally. A service created and destroyed without a
+completed connect therefore threw out of `onDestroy` — and that is a special crash: Android wraps
+it as *"Unable to stop service"*, files the component in `mCrashedServices`, and **never retries the
+bind**. Every rule stopped enforcing, permanently, with nothing on screen to say so. It had been
+shipping since at least 1.18.0.
+
+- **Weight a crash by what it kills, not by how it looks.** An uninitialised-`lateinit` read is the
+  kind of thing a reviewer waves through as a null-safety nit. In a teardown callback of the one
+  component that enforces everything, it is the worst outcome this app has: total feature loss that
+  looks like nothing at all. Ask "who never comes back if this throws" before deciding a throw is
+  cheap.
+- **Fixing the reported field would have shipped the same bug a second time.** There were two
+  unguarded reads, and the second hid behind `if (activeWebSessionKey == null && !webClock.isRunning)`
+  — which evaluates the clock precisely when the first half is TRUE. `&&` short-circuits in the
+  unhelpful direction there. The issue predicted this ("a hand-list will rot; prefer a test that
+  discovers them") and it was right: the guard is now an invariant that parses the file, computes
+  `onDestroy`'s call closure and demands a guard for every `lateinit` it can reach. Write the rule
+  over the CLASS, and it finds the instance you did not look for.
+- **`dumpsys dropbox --print` is the device-free repro, and it is dated.** The traces carry the
+  versionCode, so one read proved this was present on v53 as well as v54 and was NOT a #54
+  regression. That is what kept it from being chased through unrelated code a second time; during
+  #54's QA, before anyone looked at the dropbox, it presented as "the block screen just did not
+  appear". Logcat had already rotated. Reach for the dropbox before theorising.
+- **Teardown is the one place where catching everything is unambiguously correct.** Nothing after a
+  teardown failure can observe it, so a throw there buys nothing and costs two things: the crashed
+  state above, and every step BELOW the throw — here `serviceScope` was never cancelled and all
+  three overlay managers kept a dead service as their context. `Throwable`, not `Exception`: a
+  `NoSuchMethodError` from an API-level mistake leaves the service equally dead. Containment then
+  makes ORDER the only remaining variable, so the two orderings that matter (instance cleared first,
+  scope cancelled last) are pinned by test rather than by comment.
+- **Check the alarm before assuming you need one.** The issue's second half asked whether anything
+  notices a crashed service or whether it reads as healthy. It already notices, because
+  `ProtectionStatus` reads the OS *bound* list and treats the settings string as intent only — the
+  design the `mCrashedServices` retraction in `service-lifecycle-and-watchdog.md` produced. Verifying
+  that cost one grep; building a second alarm would have cost a day.
