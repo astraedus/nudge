@@ -853,3 +853,44 @@ Two corollaries worth keeping:
   the phantom user was autoplaying video, here it is us. Anything that acts on another app must mark
   its own actions before performing them, and the suppression window must be consumed by ONE event,
   because over-suppressing silently under-counts the user and that is the worse failure.
+
+## A signal's MEANING can be right while its VERDICT is premature (2026-09-25, issue #54)
+
+The screen-off receiver carried its own justification in a comment: *"a screen-off is not a timer, it
+is an observation that the user stopped using the phone, which is exactly the evidence the grant's
+lifetime needs."* That sentence is persuasive, it is written at the call site, and it was wrong in one
+word. A screen-off IS evidence the user stopped **touching** the phone. Android's display timeout runs
+on input, not attention, and the Pixel default is 30 seconds, so a user reading a client chat inside a
+blocked app produced the identical broadcast as a user putting the phone in a pocket. The model then
+charged a full 60-second hold for the first one.
+
+**The tell was in the model itself, not on the device.** `SCREEN_OFF` was the only one of three end
+causes with no grace window, while the model already ruled that another app holding the foreground for
+110 seconds was NOT a departure. A blank screen returning to the SAME app is strictly less of a
+departure than that. An asymmetry like that is a question worth asking before a user has to report it:
+**when one member of a small enumeration is handled differently from its siblings, either the reason
+is written down or it is a bug.** Here the reason was written down and it was the bug.
+
+Three things to carry forward:
+
+- **A broadcast that two different user intentions both produce cannot be a verdict on its own.** A
+  lock and a display timeout are the same `ACTION_SCREEN_OFF`; only the LENGTH of the absence separates
+  them, so the length has to be what decides. The fix was not a new signal or a new list. It was
+  routing an existing signal into the clock the model already had.
+- **Fixing enforcement without fixing counting splits one definition into two.** The sitting's
+  "departure" and `BlockLaunchGuard`'s arrival both meant *the user left*. Giving only the sitting a
+  return window left the counter charging a second `wasBlocked` row for a screen that blanked while the
+  user sat in front of an overlay they had not finished. That is #36's own invariant failing on #54's
+  definition. **When you change what a word means, grep every consumer of that word.** The departure
+  now hangs off `SittingEvent.Ended(cause = SCREEN_OFF)`, so there is one verdict and two readers of it.
+- **Some bugs cannot be captured, and that has to be stated rather than skipped.** `docs/testing-strategy.md`
+  rule (c) wants an `a11y-capture.sh` recording before the fix is designed. `ACTION_SCREEN_OFF` is a
+  broadcast and never enters the accessibility stream, so no capture could ever have contained this
+  bug. That is also exactly why every existing replay test stayed green through it. The honest move is
+  to say why the capture is absent, not to produce one that proves nothing.
+
+Also worth remembering from the device QA on this fix: **a device FAIL is not automatically a
+regression.** The bench run failed a case (Home should revoke instantly) whose code path this change
+does not touch, and the agent's proposed mechanism was contradicted by the source and by passing unit
+tests. The cheap settling move is an A/B against the previous build, not a revert on the strength of a
+plausible story.

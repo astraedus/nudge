@@ -150,11 +150,11 @@ order itself hidden.
 `domain/sitting/SittingTracker` owns one question: *is the user still in a sitting with app X?* A
 sitting ends for three reasons and no others.
 
-| Cause | Passthrough grant | Interaction count / time baseline |
-|---|---|---|
-| `WENT_HOME` | revoked | **untouched** — a trip home must not refill a time budget |
-| `SCREEN_OFF` | revoked | **untouched**, same reason |
-| `ANOTHER_APP_HELD_FOREGROUND` | revoked | reset once `InteractionTracker.SESSION_EXPIRY_MS` also passes |
+| Cause | Ends on | Passthrough grant | Interaction count / time baseline |
+|---|---|---|---|
+| `WENT_HOME` | the gesture itself, at once | revoked | **untouched** — a trip home must not refill a time budget |
+| `SCREEN_OFF` | the screen having been off for ≥ the return window when the user comes back | revoked | reset on return |
+| `ANOTHER_APP_HELD_FOREGROUND` | that app holding the foreground for ≥ the return window | revoked | reset once `InteractionTracker.SESSION_EXPIRY_MS` also passes |
 
 **Two windows, not one.** The sitting's return window (`SittingTracker.PASSTHROUGH_RETURN_WINDOW_MS`,
 2 minutes) is deliberately NOT `InteractionTracker.SESSION_EXPIRY_MS` (5 minutes), though sharing one
@@ -176,6 +176,46 @@ and every one of those lists has since sprung.
 it used to be; a locked phone (backlog F5: *complete Instagram's delay, lock, unlock hours later
 straight back into Instagram, no delay*) now costs a fresh delay where it used to cost nothing. Net,
 the model is stricter where it matters and looser only where it was wrong.
+
+**A screen-off is an ABSENCE, not a departure (issue #54).** `SCREEN_OFF` used to end the sitting the
+instant the broadcast arrived, with no return window at all, on the premise written into the receiver
+that raises it: *a screen-off is not a timer, it is an observation that the user stopped using the
+phone*. The user who asked for HOLD mode (#35) falsified that by email on 2026-09-24 — he was holding
+sixty seconds, getting in, and paying again a minute later while still in the app reading client
+chats. Android blanks the display on lack of **input**, not lack of attention, and the Pixel default
+is 30 seconds, so reading inside the blocked app timed the screen out and unlocking straight back
+into it read as a brand-new arrival.
+
+It was the one end cause with no grace, and it was the *inconsistent* one: this model already rules
+that another app holding the foreground for 110 seconds is not a departure (the whole of #28), and a
+screen that blanked for 40 seconds and came back to the SAME app is strictly less of a departure than
+that. So a screen-off now starts the away clock exactly as a foreign app window does, and the same
+`PASSTHROUGH_RETURN_WINDOW_MS` decides on the user's return. F5 is untouched, because *hours* is far
+past the window; what changed is only the case where nobody went anywhere. The bug predates HOLD by
+every release the sitting model has shipped — a DELAY always had it — and went unreported because
+paying a 15-second countdown again reads as annoying where paying 60 seconds of sustained attention
+again reads as broken.
+
+It is a clock **start** rather than an end for a second reason: there is no `ACTION_SCREEN_ON` in this
+model and none is needed. `awaySinceMs` is read on the next app window, and its clock
+(`SystemClock.elapsedRealtime()`) counts while the device sleeps, so the absence measures itself.
+Whichever absence starts the clock also owns it: the **first** evidence wins, both the timestamp and
+the reported cause, so a user who switches apps and then lets the screen time out left when they
+switched, and a phone that blanks every thirty seconds cannot extend one departure forever.
+
+**The counting side shares that verdict.** `BlockLaunchGuard.onDeparture("screen_off")` used to fire
+unconditionally from the screen-off receiver, on the same premise. Leaving it there would have split
+this app's definition of *the user left* in two — enforcement forgiving a display timeout while
+counting still charged for it — and the split is visible on a block the user has **not** completed:
+no grant protects them, so the overlay comes back either way, and #36's invariant (*no `wasBlocked`
+row without a genuine departure*) then failed on #54's own definition. The departure is now raised
+from `NudgeAccessibilityService.onSittingEnded`, gated on the sitting having ended with cause
+`SCREEN_OFF`, which is the moment the verdict exists. `WENT_HOME` and `ANOTHER_APP_HELD_FOREGROUND`
+deliberately do not route there: both arrive as ordinary `ForegroundSignal`s and
+`BlockLaunchGate.arrivalAfterSignal` already ends the arrival on them, on the very signal that feeds
+the sitting. Their windows also differ on purpose — the arrival ends the moment another app is in
+front while the sitting holds for two minutes, because *is this block worth a row* and *is the user
+still in this app* have different safe directions.
 
 What the sitting does **not** do: decide whether to block. A foreign app window is still evaluated
 immediately and blocked on its own merits — opening a blocked app from a picker blocks at once, not
