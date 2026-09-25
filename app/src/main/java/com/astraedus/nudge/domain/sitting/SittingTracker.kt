@@ -115,6 +115,15 @@ sealed interface SittingEvent {
  * Nobody reported it because paying a 15-second countdown again reads as annoying, while paying 60
  * seconds of sustained attention again reads as broken.
  *
+ * ## An absence is cancelled by PRESENCE, not only by a navigation ([#64](https://github.com/astraedus/nudge/issues/64))
+ *
+ * The away clock above is evidence of absence. The only evidence of PRESENCE this model used to
+ * accept was another [ForegroundSignal.AppWindow] — i.e. a window transition — so a user actively
+ * using their app without changing windows could not cancel an absence they were not having. One
+ * ordinary sub-flow therefore armed a fuse that their next navigation, minutes later, detonated.
+ * [onInteraction] closes that: a click or a scroll inside the sitting's app is the user, present,
+ * now, and it is folded into the SAME return branch a window event goes through.
+ *
  * ## What this does NOT do
  *
  * It never decides whether an app should be blocked. A foreign app window is still evaluated
@@ -238,6 +247,54 @@ class SittingTracker(
     }
 
     /**
+     * A view inside [packageName] was clicked or scrolled: the user is demonstrably THERE.
+     *
+     * ## The bug this closes ([#64](https://github.com/astraedus/nudge/issues/64))
+     *
+     * Before this, [awaySinceMs] could only ever be cancelled by a [ForegroundSignal.AppWindow] —
+     * and an `AppWindow` means *a window transition happened*, not *the user is here*
+     * (`EventClassifier` returns `NotForeground` for everything that is not a window change). A user
+     * who is actively using an app without changing windows — scrolling a feed, reading, typing —
+     * produces only scrolls, clicks and content changes, and **none of them could touch the clock**.
+     *
+     * So one foreign window event — a Chrome Custom Tab opened from Reddit, a share sheet, an "open
+     * with" chooser, a permission dialog — armed a fuse with no expiry that only an in-app
+     * NAVIGATION could defuse. If the next navigation came more than [returnWindowMs] later, it was
+     * read as *"they came back from a two-minute absence"*, the grant was revoked and the user was
+     * re-blocked while sitting exactly where they had been the whole time. The reporter of
+     * [#35](https://github.com/astraedus/nudge/issues/35) and
+     * [#54](https://github.com/astraedus/nudge/issues/54) hit it on 2026-09-25 in Reddit, Gemini and
+     * Files, paying a fresh sixty-second HOLD each time, screen never off.
+     *
+     * The app was also contradicting itself for the whole of that window:
+     * [com.astraedus.nudge.domain.interaction.InteractionCounter] was counting those very taps and
+     * scrolls as *what the user did inside app X* and feeding them to auto-kick. One question, two
+     * opposite answers — the same split #54 found between enforcement and counting.
+     *
+     * ## Why it routes through the SAME branch as a window
+     *
+     * An interaction is not given a rule of its own (see [onEvidenceOfPresence]). Routed through the
+     * return branch it is one-directional in both directions that matter:
+     *
+     *  - clock running and UNDER the window → cancelled, the sitting survives — the bug above;
+     *  - clock running and PAST the window → the sitting ends exactly as it would on a window event,
+     *    so a genuine long departure is still charged and **no bypass is opened**. A stray event from
+     *    a backgrounded app cannot hand anyone a free pass; it can only revoke sooner.
+     *
+     * An interaction in a DIFFERENT app does nothing at all. It is weaker evidence than a window
+     * event about what is in FRONT (this app never owned the foreground question), and the failure
+     * direction this subsystem always picks is to miss a revoke rather than interrupt someone
+     * mid-use. A foreign app that really is in front will say so with a window event.
+     *
+     * @param nowMs the same MONOTONIC clock [onSignal] is given.
+     */
+    fun onInteraction(packageName: String, nowMs: Long): SittingEvent {
+        val current = currentApp ?: return SittingEvent.Unchanged
+        if (packageName != current) return SittingEvent.Unchanged
+        return onEvidenceOfPresence(current, nowMs)
+    }
+
+    /**
      * The user completed a block for [packageName], so they are unambiguously sitting with it now.
      *
      * Called when a grant is earned. Without this, completing a delay for app B while the tracker
@@ -291,19 +348,11 @@ class SittingTracker(
             return SittingEvent.Started(packageName, null)
         }
 
-        if (packageName == current) {
-            // The user came back. Whether that ends the sitting depends only on how long they were
-            // gone — the SAME question InteractionTracker asks, so the two answers cannot diverge.
-            // How they were away (another app in front, or the screen dark) changes only what the
-            // end event is CALLED; the threshold is one threshold, which is issue #54's fix.
-            val awaySince = awaySinceMs
-            val cause = awayCause
-            awaySinceMs = null
-            if (awaySince != null && nowMs - awaySince >= returnWindowMs) {
-                return SittingEvent.Started(packageName, SittingEvent.Ended(current, cause))
-            }
-            return SittingEvent.Unchanged
-        }
+        // The user came back. Whether that ends the sitting depends only on how long they were
+        // gone — the SAME question InteractionTracker asks, so the two answers cannot diverge.
+        // How they were away (another app in front, or the screen dark) changes only what the
+        // end event is CALLED; the threshold is one threshold, which is issue #54's fix.
+        if (packageName == current) return onEvidenceOfPresence(current, nowMs)
 
         // A different app is in front. Start (or keep) the away clock; the sitting survives until
         // that clock passes the return window. THIS is the line that fixes #28: a picker, a share
@@ -316,6 +365,26 @@ class SittingTracker(
         currentApp = packageName
         awaySinceMs = null
         return SittingEvent.Started(packageName, SittingEvent.Ended(current, cause))
+    }
+
+    /**
+     * One event has proved the user is in [current] right now. Close the absence, or end the sitting
+     * if it was too long to forgive.
+     *
+     * Shared by the two kinds of evidence — a window of theirs came forward ([onAppWindow]), and a
+     * view of theirs was touched ([onInteraction]) — **deliberately, rather than giving the second
+     * one a rule of its own.** The two are the same fact arriving by different routes, and this
+     * subsystem's whole history is one question ("what is on screen?") answered independently in
+     * several places until the answers disagreed. A second rule here is how that starts again.
+     */
+    private fun onEvidenceOfPresence(current: String, nowMs: Long): SittingEvent {
+        val awaySince = awaySinceMs
+        val cause = awayCause
+        awaySinceMs = null
+        if (awaySince != null && nowMs - awaySince >= returnWindowMs) {
+            return SittingEvent.Started(current, SittingEvent.Ended(current, cause))
+        }
+        return SittingEvent.Unchanged
     }
 
     /**

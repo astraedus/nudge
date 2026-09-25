@@ -135,6 +135,23 @@ class PassthroughManager @Inject constructor() {
      */
     fun onScreenOff(nowMs: Long): SittingEvent = applyAndNotify(sitting.onScreenOff(nowMs))
 
+    /**
+     * A view inside [packageName] was clicked or scrolled.
+     *
+     * The grant's other input is evidence of ABSENCE; this is the evidence of PRESENCE that was
+     * missing ([issue #64](https://github.com/astraedus/nudge/issues/64)). Without it, a user
+     * scrolling a feed could not cancel an away clock a sub-flow had armed, and their next in-app
+     * navigation revoked a hold they had paid for while they sat in the app the whole time.
+     *
+     * Routed through [applyAndNotify] like every other sitting input, so an interaction that lands
+     * past the return window revokes exactly as a window event would — this can only ever revoke
+     * sooner, never grant.
+     *
+     * @param nowMs the same MONOTONIC clock [onForegroundSignal] is given.
+     */
+    fun onInteraction(packageName: String, nowMs: Long): SittingEvent =
+        applyAndNotify(sitting.onInteraction(packageName, nowMs))
+
     private fun applyAndNotify(event: SittingEvent): SittingEvent {
         revokeIfSittingEnded(event)
         sittingReaction?.invoke(event)

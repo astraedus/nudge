@@ -1195,6 +1195,15 @@ class NudgeAccessibilityService : AccessibilityService() {
                 if (ours) {
                     entryPoint.nudgeLogger().d("interaction ignored reason=our_own_click")
                 } else {
+                    // THE SITTING FIRST, exactly as every other path into this service does it.
+                    // A touch inside the app the user is sitting in is the one piece of evidence
+                    // the sitting model had no way to hear: `EventClassifier` calls a click or a
+                    // scroll `NotForeground`, so before issue #64 an away clock armed by a Custom
+                    // Tab or a share sheet could only be cancelled by an in-app NAVIGATION, and a
+                    // user who just kept scrolling paid their whole hold again minutes later.
+                    // Counting these events as "what the user did in app X" while telling the
+                    // sitting they had left it was one question with two answers.
+                    entryPoint.passthroughManager().onInteraction(packageName, sittingClock())
                     interactionHandler.handleInteraction(record) {
                         eventRecordFactory.readSourceViewId(event)
                     }
