@@ -349,3 +349,51 @@ carried, extracted so it can be tested rather than eyeballed: the failure is log
 the coroutine's name and swallowed. `CrashSafeScopeTest` asserts the outcomes and carries the
 counterfactual that makes them mean something — the same throwing coroutine on a bare
 `SupervisorJob` scope DOES reach the default uncaught handler, and on this one never does.
+
+## Teardown cannot take the service down either ([#57](https://github.com/astraedus/nudge/issues/57), v1.18.2)
+
+The sibling of F7 above, one callback later, and worse. `foregroundClock` is a `lateinit` that only
+`onServiceConnected` assigns; `onDestroy` called `stopForegroundTimeTicker` unconditionally, and that
+read it. So any teardown of a service that never completed a connect threw
+`UninitializedPropertyAccessException` out of `onDestroy`, Android wrapped it as **"Unable to stop
+service"**, and the component landed in `mCrashedServices` — which, per the retraction in *Known
+limits* above, is **never retried**. Every rule became a silent no-op with nothing shown to the user.
+The bench Pixel's dropbox held four of these traces, three on 1.18.1 and one on 1.18.0, so this had
+been shipping for at least two releases. It was found while QAing #54 and presented as "the block
+screen just did not appear", which cost several rounds chasing a phantom regression in unrelated code.
+
+It is reachable from install-over / `MY_PACKAGE_REPLACED`, a force stop, a memory-pressure kill and
+rebind (BACKLOG F8 records this service churning on the bench device under exactly that), or a user
+toggling the permission quickly.
+
+Two layers of fix, because the field guard alone only fixes the field:
+
+- **Every `lateinit` teardown can reach is guarded**, the shape `hideAllOverlays` already used. There
+  were **two**, not one: `endWebSession` reads `webClock.isRunning` even when `activeWebSessionKey`
+  is already null, so it would have thrown in the same place the moment the clock above it was fixed.
+- **`onDestroy` runs every statement through `ServiceTeardown`**, which contains and reports each
+  step's failure by name. A throw in teardown can buy nothing — nothing after it can observe a
+  failure — and it was costing both the crashed-service state and the steps *below* the throw:
+  before this, the uninitialised clock on the third line meant `serviceScope` was never cancelled and
+  all three overlay managers kept a dead service as their context. `Throwable`, not `Exception`: a
+  `NoSuchMethodError` from an API-level mistake leaves the service equally crashed.
+
+Ordering is the only thing left to get wrong, so the two load-bearing ones are pinned: the instance
+is cleared **first** (anything reading connection state during the rest of teardown gets the truth)
+and the scope is cancelled **last**.
+
+`ServiceTeardownTest` owns the behaviour (a step throwing `UninitializedPropertyAccessException` does
+not escape, and the steps after it still run). `ServiceTeardownContractTest` owns the invariant and
+**discovers** it rather than listing it — it parses the service, computes which functions `onDestroy`
+can actually reach, and requires a guard for every `lateinit` any of them touches, plus that
+`onDestroy` holds nothing but contained steps. A new field, or a new call added to `onDestroy`, is
+covered the day it is written. Both carry counterfactuals: removing either guard fails them.
+
+**The watchdog already noticed this state, and that was checked rather than assumed.**
+`ProtectionStatus.isAccessibilityServiceConnected` reads
+`AccessibilityManager.getEnabledAccessibilityServiceList` — the server-side bound list, which a
+crashed service is absent from — so `ProtectionCheck` raises the "blocking has stopped" alert on its
+next cycle. The settings string, which survives a crash, is only ever read as *intent*. That is the
+design the retraction in *Known limits* produced, and this bug is the first real-world case it was
+built for. (`NudgeAccessibilityService.isConnected()`, the `instance != null` reading, has no
+production callers — nothing user-facing hangs off it.)
