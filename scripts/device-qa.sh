@@ -632,6 +632,23 @@ nudge_route_home() {
   ash am start -n "${APP_ID}/${NAMESPACE}.MainActivity" \
     --es nudge.nav_route home >/dev/null 2>&1
   sleep 3
+  # The deep link is not always enough: a resumed MainActivity that is already on `home`'s
+  # back stack can consume the intent without popping the Compose stack, leaving a sub-screen
+  # in front. Every sub-screen's top bar carries a "Back" control and the dashboard carries
+  # none, so up to four optional Back presses pop any stack and are a no-op once there.
+  # Bounded deliberately: a `while not on dashboard` loop would spin forever the day Back
+  # exits the app instead.
+  local i
+  for ((i = 0; i < 4; i++)); do
+    ui_snapshot
+    ui_has "Quick Actions" && return 0
+    ui_has "Manage Apps" && return 0
+    ash input keyevent KEYCODE_BACK >/dev/null 2>&1
+    sleep 1
+  done
+  # Not fatal: the dashboard's own content may simply be scrolled out of view, and callers
+  # scroll for what they need.
+  return 0
 }
 
 # Count matches in the logcat capture started by start_logcat.
@@ -952,21 +969,30 @@ case_daily_limit_refresh() {
   ash monkey -p "$LIMIT_PKG" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
   shot 40-calculator-open
 
-  info "burning the 1-minute budget with ${LIMIT_BURN_SECS}s of real foreground time …"
-  sleep "$LIMIT_BURN_SECS"
-  # Leaving closes the foreground span, and re-entering is the event that makes the engine
-  # re-read usage and notice the budget is gone.
-  go_home
-  wait_fg "$LAUNCHER_PKG" 10 || { fail "Home did not reach the launcher"; stop_logcat; return 1; }
-  ash monkey -p "$LIMIT_PKG" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
-
+  # The budget is OS-owned usage (`queryEvents`), so it is NOT reset by `pm clear` and survives
+  # between runs: on a second run the same day it is already spent. Check before paying for it —
+  # this is the single biggest saving available in `all`, worth ~80s on every re-run.
   local i limited=0
-  for ((i = 0; i < LIMIT_WAIT_SECS; i += 3)); do
-    if (( $(log_count "block package=${LIMIT_PKG} reason=time_budget_exceeded") > 0 )); then
-      limited=1; break
-    fi
-    sleep 3
+  for ((i = 0; i < 8; i += 2)); do
+    (( $(log_count "block package=${LIMIT_PKG} reason=time_budget_exceeded") > 0 )) && { limited=1; break; }
+    sleep 2
   done
+
+  if (( limited )); then
+    info "today's Calculator budget was already spent — no burn needed"
+  else
+    info "burning the 1-minute budget with ${LIMIT_BURN_SECS}s of real foreground time …"
+    sleep "$LIMIT_BURN_SECS"
+    # Leaving closes the foreground span, and re-entering is the event that makes the engine
+    # re-read usage and notice the budget is gone.
+    go_home
+    wait_fg "$LAUNCHER_PKG" 10 || { fail "Home did not reach the launcher"; stop_logcat; return 1; }
+    ash monkey -p "$LIMIT_PKG" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
+    for ((i = 0; i < LIMIT_WAIT_SECS; i += 3)); do
+      (( $(log_count "block package=${LIMIT_PKG} reason=time_budget_exceeded") > 0 )) && { limited=1; break; }
+      sleep 3
+    done
+  fi
   if (( limited == 0 )); then
     fail "re-entering ${LIMIT_PKG} after ${LIMIT_BURN_SECS}s of use did not trigger the 1-minute limit"
     grep -E "evaluate package=${LIMIT_PKG}" "$LOGCAT_FILE" 2>/dev/null | tail -3 >&2
