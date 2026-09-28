@@ -66,9 +66,13 @@ appId: dev.astraedus.nudge
     times: 7
     commands:
       - tapOn: "Version"
-- extendedWaitUntil:
-    visible: "Developer Options"
-    timeout: 10000
+# The Developer Options section is APPENDED below "Source Code & Feedback" and "License",
+# i.e. off-screen at the moment it appears — `assertVisible` on it fails on a screen where
+# the taps worked perfectly. Scroll to the row we actually need.
+- scrollUntilVisible:
+    element:
+      text: "Debug Logging"
+    direction: DOWN
 - tapOn: "Debug Logging"
 - takeScreenshot: 05-debug-logging
 
@@ -102,8 +106,11 @@ appId: dev.astraedus.nudge
 # "Not blocked · 1min limit". Asserting those strings checks the VALUES the later cases
 # depend on, not merely that an import dialog said success.
 - pressKey: Back
+# "Nudge" is the Home top-bar title, so it is the right anchor here: Compose Navigation
+# restores Home's SCROLL POSITION, and we scrolled down to reach Settings — anything
+# further up the dashboard (e.g. "Screen Time") is legitimately off-screen on return.
 - extendedWaitUntil:
-    visible: "Screen Time"
+    visible: "Nudge"
     timeout: 15000
 - scrollUntilVisible:
     element:

@@ -115,7 +115,10 @@ SAVED_OP_OVERLAY=""
 SAVED_OP_USAGE=""
 STATE_SAVED=0
 LOCK_HELD=0
-LOCK_OWNER="device-qa-${RUN_TS}"
+# Overridable so a caller that ALREADY holds the Pixel lock can hand it down instead of
+# being locked out by itself: `~/bin/device-lock.sh` keys a holder on owner+pid, and every
+# agent in one Claude session shares the pid.
+LOCK_OWNER="${QA_LOCK_OWNER:-device-qa-${RUN_TS}}"
 LOGCAT_PID=""
 SAMPLER_PID=""
 
@@ -160,9 +163,15 @@ take_lock() {
     die "device lock held by another agent: ${out}"
   fi
   info "Device lock: ${out}"
-  # Only release what we actually took. An `inherited` lock belongs to the calling
-  # session, and releasing it would hand the phone to a peer mid-run.
-  if [[ "$out" == *inherited* ]]; then LOCK_HELD=0; else LOCK_HELD=1; fi
+  # Only release what we actually took. An `inherited` or `re-entrant` lock belongs to the
+  # caller, and releasing it at our exit would hand the phone to a peer mid-run — the
+  # caller is still using it (this is why QA_LOCK_OWNER exists).
+  if [[ "$out" == *inherited* || "$out" == *re-entrant* ]]; then
+    LOCK_HELD=0
+    info "Lock belongs to the caller; this run will not release it."
+  else
+    LOCK_HELD=1
+  fi
 }
 
 connect_device() {
@@ -203,25 +212,51 @@ pin_screen() {
 # The OS-level route, not the UI one: onboarding's permission screens are a Play-policy
 # surface and the `setup` flow still walks them, but a Maestro flow cannot drive the
 # system accessibility Settings list reliably, so the grant itself is set here.
-ensure_grants() {
+
+a11y_is_bound() {
+  ash dumpsys accessibility 2>/dev/null |
+    tr -d '\r' | grep -A3 'Bound services' | grep 'NudgeAccessibilityService' >/dev/null
+}
+
+apply_grants() {
   ash settings put secure enabled_accessibility_services "$A11Y_COMPONENT" >/dev/null 2>&1
   ash settings put secure accessibility_enabled 1 >/dev/null 2>&1
   ash appops set "$APP_ID" SYSTEM_ALERT_WINDOW allow >/dev/null 2>&1
   ash appops set "$APP_ID" GET_USAGE_STATS allow >/dev/null 2>&1
   ash pm grant "$APP_ID" android.permission.POST_NOTIFICATIONS >/dev/null 2>&1 || true
+}
 
-  # Bound, not merely enabled: the settings string is INTENT, the bound list is REALITY,
-  # and the gap between them is exactly the fault the watchdog exists for.
-  local i
-  for i in $(seq 1 20); do
-    if ash dumpsys accessibility 2>/dev/null |
-       tr -d '\r' | grep -A3 'Bound services' | grep -q 'NudgeAccessibilityService'; then
-      info "Accessibility service bound."
+# Applies the grants and proves they STUCK.
+#
+# The re-check is not belt-and-braces, it is the whole point. Measured on the bench:
+# `pm clear` deletes `enabled_accessibility_services` outright, and a `settings put` issued
+# straight afterwards binds the service — and is then silently PRUNED again the moment the
+# app is first launched, because AccessibilityManagerService re-reads the setting against an
+# installed-services snapshot our write had raced. Observed at 23:36:54 with MainActivity in
+# front, ~11s after a confirmed-bound grant. A single apply-and-check therefore reports
+# success for a device that is unprotected by the time the first case runs.
+ensure_grants() {
+  local attempt
+  for attempt in 1 2 3; do
+    apply_grants
+    local i
+    for i in $(seq 1 15); do
+      a11y_is_bound && break
+      sleep 1
+    done
+    if ! a11y_is_bound; then
+      warn "attempt ${attempt}: accessibility service did not bind within 15s"
+      continue
+    fi
+    # Give the OS the window in which it does the pruning, then look again.
+    sleep 4
+    if a11y_is_bound; then
+      info "Accessibility service bound (stable after attempt ${attempt})."
       return 0
     fi
-    sleep 1
+    warn "attempt ${attempt}: the grant was pruned after binding; re-applying"
   done
-  warn "accessibility service did not appear under 'Bound services' within 20s"
+  fail "accessibility service would not stay bound after 3 attempts"
   return 1
 }
 
@@ -279,7 +314,7 @@ install_apk() {
       ;;
   esac
 
-  ash pm list packages 2>/dev/null | tr -d '\r' | grep -qx "package:${APP_ID}" ||
+  ash pm list packages 2>/dev/null | tr -d '\r' | grep -x "package:${APP_ID}" >/dev/null ||
     die "$APP_ID is not installed"
 
   local got want
@@ -419,7 +454,7 @@ read_blocked_counts() { # -> "<blocked> <walkedaway>", empty if not found
 }
 
 has_watchdog_receiver() {
-  ash dumpsys package "$APP_ID" 2>/dev/null | tr -d '\r' | grep -q 'WatchdogDebugReceiver'
+  ash dumpsys package "$APP_ID" 2>/dev/null | tr -d '\r' | grep 'WatchdogDebugReceiver' >/dev/null
 }
 
 nudge_notif_records() { # prints "<count> <mUpdateTimeMs of id=1>"
@@ -454,14 +489,12 @@ case_setup() {
   ash am force-stop "$YOUTUBE_PKG" >/dev/null 2>&1
   ash am force-stop "$LIMIT_PKG" >/dev/null 2>&1
   run_flow .maestro/nudge-setup.yaml || return 1
-  # Debug logging is a DataStore preference wiped by pm clear, and on a release build
-  # NudgeLogger emits nothing without it (util/NudgeLogger.kt: BuildConfig.DEBUG ||
-  # the preference). The home-reopen case greps those lines, so prove it took.
-  if ! ash dumpsys accessibility 2>/dev/null | tr -d '\r' |
-       grep -A3 'Bound services' | grep -q 'NudgeAccessibilityService'; then
-    fail "accessibility service is not bound after setup"
-    return 1
-  fi
+  # The first launch after `pm clear` is what prunes the accessibility grant (see
+  # `ensure_grants`), and that launch happens INSIDE the flow above — so the grant is
+  # re-established here, after it, rather than merely asserted. Blocking is dead without
+  # it, and every later case would fail for the wrong reason.
+  ensure_grants || return 1
+  CASE_NOTE="onboarding walked, 2 fixture rules imported, debug logging on"
   return 0
 }
 
@@ -657,7 +690,7 @@ case_refusal_alert() {
   grep -q 'service start REFUSED by platform' <<<"$second" ||
     warn "cycle 2 did not carry the '(service start REFUSED by platform)' suffix"
   if ! ash dumpsys notification --noredact 2>/dev/null | tr -d '\r' |
-       grep -q 'nudge_protection_alerts'; then
+       grep 'nudge_protection_alerts' >/dev/null; then
     fail "no notification on channel nudge_protection_alerts — the verdict was reached but the post was dropped"
     rc=1
   else
@@ -669,7 +702,7 @@ case_refusal_alert() {
   launch_nudge_home
   sleep 3
   if ash dumpsys activity services "$APP_ID" 2>/dev/null | tr -d '\r' |
-     grep -q 'NudgeMonitorService'; then
+     grep 'NudgeMonitorService' >/dev/null; then
     info "NudgeMonitorService is running again after opening Nudge."
   else
     fail "NudgeMonitorService did not come back after MainActivity resumed"
@@ -689,6 +722,14 @@ run_case() { # name
   declare -F "$fn" >/dev/null || { fail "unknown case: $name"; return 2; }
   CASE_NOTE=""
   printf '\n[qa] ══ %s ══\n' "$name"
+  # Every case needs a bound accessibility service as a PRECONDITION, not as something
+  # `setup` arranged once — `notif-idle` deliberately revokes it mid-case, and the OS can
+  # prune it on its own. Checked (and repaired) per case so a failure lands on the case
+  # that actually broke, not on the next one.
+  if [[ "$name" != "setup" ]] && ! a11y_is_bound; then
+    warn "accessibility service was not bound entering '${name}' — repairing"
+    ensure_grants || { record "$name" FAIL 0 "precondition: accessibility service would not bind"; return 0; }
+  fi
   start=$(date +%s)
   "$fn"; rc=$?
   end=$(date +%s)
