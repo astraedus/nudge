@@ -43,7 +43,8 @@
 #   ADB_SERIAL=192.168.1.68:5555   bench Pixel 3 (auto-reconnects)
 #   NOTIF_IDLE_SECS=300            idle window for the notif-idle case (#63)
 #   HOME_REOPEN_TRIALS=5           repeats inside the home-reopen case (#58)
-#   LIMIT_WAIT_SECS=150            how long to wait for the 1-minute daily limit to fire
+#   LIMIT_BURN_SECS=70             foreground time spent exhausting the 1-minute daily limit
+#   LIMIT_WAIT_SECS=45             how long to wait, after re-entry, for the limit to fire
 #   QA_LOCK_OWNER=<name>           reuse a Pixel lock the caller already holds
 #   EXPECT_VERSION_CODE=<n>        default: parsed from app/build.gradle.kts
 #   SKIP_VERSION_CHECK=1           accept whatever versionCode is installed
@@ -74,9 +75,12 @@ ADB_SERIAL="${ADB_SERIAL:-192.168.1.68:5555}"
 APK="${APK:-main}"
 NOTIF_IDLE_SECS="${NOTIF_IDLE_SECS:-300}"
 HOME_REOPEN_TRIALS="${HOME_REOPEN_TRIALS:-5}"
-# The 1-minute Calculator budget is spent by real foreground time and noticed by a clock that
-# ticks every 30s (`FOREGROUND_TICK_MS`), so the worst case is ~90s. 150s is that plus slack.
-LIMIT_WAIT_SECS="${LIMIT_WAIT_SECS:-150}"
+# Real foreground time spent in Calculator to exhaust its 1-minute budget. 70s, not 60: the
+# budget is compared against a `queryEvents` span, and the launch itself is not free.
+LIMIT_BURN_SECS="${LIMIT_BURN_SECS:-70}"
+# How long to wait, after re-entering, for the engine to notice. One window-state event is all
+# it takes, so this is generous slack rather than a duty cycle.
+LIMIT_WAIT_SECS="${LIMIT_WAIT_SECS:-45}"
 MAESTRO_BIN="${MAESTRO_BIN:-${HOME}/.maestro/bin/maestro}"
 GH_REPO="${GH_REPO:-astraedus/nudge}"
 
@@ -926,9 +930,19 @@ case_walkaway_count() {
 # ── daily-limit-refresh (#50): raising the limit must not leave the stale screen behind ──
 #
 # The fixture gives Calculator a 1-minute budget and mode NONE ("Not blocked"), so the app
-# opens freely and the limit is the only gate. The block arrives unattended: the service runs
-# a 30s foreground-time clock (`FOREGROUND_TICK_MS`) whose `onTimeLimitExceeded` launches the
-# overlay. We wait for that real trigger rather than provoking a fake one.
+# opens freely and the limit is the only gate.
+#
+# THE BUDGET IS ENFORCED ON RE-ENTRY, NOT MID-SESSION, and that is a product fact rather than a
+# harness compromise. The 30-second foreground clock that could notice a budget running out
+# while you sit in the app is gated on
+# `autoKickAfterMinutes != null || (showTimeRemaining && dailyLimitMinutes != null)`
+# (`CounterCacheRefresher.needsForegroundTimeTick`) — so with a plain daily limit and no
+# time-remaining overlay, nothing re-evaluates until the next window-state event. Measured: 150s
+# sitting in Calculator produced exactly ONE evaluation, at t=0, `dailyUsageMs=93`.
+#
+# That is also precisely issue #50's scenario — the user spends the budget, leaves, comes back,
+# and meets the limit screen — so the case burns the budget, leaves, and re-enters. No optional
+# feature has to be switched on for it to work.
 case_daily_limit_refresh() {
   local rc=0
   go_home
@@ -938,16 +952,24 @@ case_daily_limit_refresh() {
   ash monkey -p "$LIMIT_PKG" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
   shot 40-calculator-open
 
-  info "burning the 1-minute budget (up to ${LIMIT_WAIT_SECS}s; the clock ticks every 30s) …"
+  info "burning the 1-minute budget with ${LIMIT_BURN_SECS}s of real foreground time …"
+  sleep "$LIMIT_BURN_SECS"
+  # Leaving closes the foreground span, and re-entering is the event that makes the engine
+  # re-read usage and notice the budget is gone.
+  go_home
+  wait_fg "$LAUNCHER_PKG" 10 || { fail "Home did not reach the launcher"; stop_logcat; return 1; }
+  ash monkey -p "$LIMIT_PKG" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
+
   local i limited=0
-  for ((i = 0; i < LIMIT_WAIT_SECS; i += 5)); do
+  for ((i = 0; i < LIMIT_WAIT_SECS; i += 3)); do
     if (( $(log_count "block package=${LIMIT_PKG} reason=time_budget_exceeded") > 0 )); then
       limited=1; break
     fi
-    sleep 5
+    sleep 3
   done
   if (( limited == 0 )); then
-    fail "the 1-minute daily limit never fired for ${LIMIT_PKG} within ${LIMIT_WAIT_SECS}s"
+    fail "re-entering ${LIMIT_PKG} after ${LIMIT_BURN_SECS}s of use did not trigger the 1-minute limit"
+    grep -E "evaluate package=${LIMIT_PKG}" "$LOGCAT_FILE" 2>/dev/null | tail -3 >&2
     stop_logcat; return 1
   fi
   info "BlockEngine: time_budget_exceeded"
@@ -1246,7 +1268,9 @@ print_table() {
 }
 
 usage() {
-  sed -n '2,45p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  # Prints the header block, however long it grows — a hardcoded end line silently truncated
+  # the usage text the moment the header gained a paragraph.
+  awk 'NR>1 { if ($0 !~ /^#/) exit; sub(/^# ?/, ""); print }' "${BASH_SOURCE[0]}"
   printf 'cases: %s\n' "${ALL_CASES[*]}"
 }
 

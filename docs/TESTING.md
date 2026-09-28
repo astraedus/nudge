@@ -161,6 +161,15 @@ logging, and imports `.maestro/fixtures/rules.json` — Nudge's own UI, where no
 - **Debug logging is a DataStore preference, wiped by `pm clear`.** On a release build
   `NudgeLogger` emits nothing without it (`BuildConfig.DEBUG || the preference`), and the log
   oracle goes silent. The setup flow re-arms it through Settings → Version ×7 → Debug Logging.
+- **A daily limit is enforced on RE-ENTRY, not mid-session** — unless the rule also has a
+  time-based auto-kick or the time-remaining overlay. The 30-second foreground clock that would
+  otherwise notice a budget running out while you sit in the app is gated on
+  `autoKickAfterMinutes != null || (showTimeRemaining && dailyLimitMinutes != null)`
+  (`CounterCacheRefresher.needsForegroundTimeTick`). Measured: 150s sitting in Calculator on a
+  plain 1-minute limit produced exactly ONE evaluation, at t=0, `dailyUsageMs=93`. So
+  `daily-limit-refresh` burns the budget, leaves, and comes back — which is
+  [#50](https://github.com/astraedus/nudge/issues/50)'s own scenario and needs no optional
+  feature switched on. Worth knowing before filing "the limit didn't stop me" as a bug.
 
 ### What it does not cover
 
