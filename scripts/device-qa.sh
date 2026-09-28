@@ -370,27 +370,53 @@ start_sampler() {
   cat >"${WORK}/sampler.sh" <<'SAMPLER'
 #!/usr/bin/env bash
 # args: outfile interval_secs
+# Emits one line per sample: "<group> <cpu_pct_of_one_core> <rss_kib> <ncpu> <sysbusy_pct>"
+#
+# CPU% is computed from /proc/<pid>/stat DELTAS, not from `ps -o %cpu`: ps reports a LIFETIME
+# average, which for a JVM that spikes then idles under-reports the peak by an order of
+# magnitude — and the peak is precisely what "does this make the laptop laggy" is asking about.
+# Groups are summed per sample, because the harness's cost is spread over the maestro JVM
+# plus a fleet of short-lived adb clients, and either alone understates it.
 out="$1"; iv="${2:-2}"
-clk=$(getconf CLK_TCK)
-ncpu=$(nproc)
+clk=$(getconf CLK_TCK); ncpu=$(nproc)
 declare -A prev_t prev_w
+prev_idle=0; prev_tot=0
+group_of() { case "$1" in *maestro*|*java*) echo maestro ;; *adb*) echo adb ;; *) echo other ;; esac; }
+
 while :; do
-  for pid in $(pgrep -f 'maestro' 2>/dev/null); do
+  # Whole-machine busy%, so the report can say what share of the laptop this run used.
+  read -ra c < /proc/stat
+  idle=$(( ${c[4]} + ${c[5]} )); tot=0
+  for v in "${c[@]:1:8}"; do tot=$(( tot + v )); done
+  sysbusy=0
+  if (( prev_tot > 0 && tot > prev_tot )); then
+    sysbusy=$(awk -v di=$(( idle - prev_idle )) -v dt=$(( tot - prev_tot )) \
+      'BEGIN{printf "%.1f", (1 - di/dt) * 100}')
+  fi
+  prev_idle=$idle; prev_tot=$tot
+
+  declare -A cpu_sum rss_sum
+  cpu_sum=(); rss_sum=()
+  for pid in $(pgrep -f '[m]aestro|[a]db' 2>/dev/null); do
     st="/proc/${pid}/stat"; [[ -r "$st" ]] || continue
+    cmd="$(tr '\0' ' ' < "/proc/${pid}/cmdline" 2>/dev/null)"
+    g="$(group_of "$cmd")"
     read -ra f < "$st" || continue
-    # utime=14 stime=15 (1-indexed) -> f[13] f[14]
-    ticks=$(( ${f[13]:-0} + ${f[14]:-0} ))
+    ticks=$(( ${f[13]:-0} + ${f[14]:-0} ))   # utime + stime (1-indexed 14,15)
     now=$(date +%s%3N)
     if [[ -n "${prev_t[$pid]:-}" ]]; then
-      dt=$(( now - prev_w[$pid] ))
-      dticks=$(( ticks - prev_t[$pid] ))
+      dt=$(( now - prev_w[$pid] )); dticks=$(( ticks - prev_t[$pid] ))
       if (( dt > 0 )); then
-        cpu=$(awk -v d="$dticks" -v c="$clk" -v t="$dt" 'BEGIN{printf "%.1f", (d/c)/(t/1000)*100}')
-        rss=$(awk '/^VmRSS:/{print $2}' "/proc/${pid}/status" 2>/dev/null)
-        echo "${pid} ${cpu} ${rss:-0} ${ncpu}" >> "$out"
+        cpu_sum[$g]=$(awk -v a="${cpu_sum[$g]:-0}" -v d="$dticks" -v c="$clk" -v t="$dt" \
+          'BEGIN{printf "%.1f", a + (d/c)/(t/1000)*100}')
       fi
     fi
+    rss=$(awk '/^VmRSS:/{print $2}' "/proc/${pid}/status" 2>/dev/null)
+    rss_sum[$g]=$(( ${rss_sum[$g]:-0} + ${rss:-0} ))
     prev_t[$pid]=$ticks; prev_w[$pid]=$now
+  done
+  for g in "${!rss_sum[@]}"; do
+    echo "${g} ${cpu_sum[$g]:-0} ${rss_sum[$g]} ${ncpu} ${sysbusy}" >> "$out"
   done
   sleep "$iv"
 done
@@ -403,12 +429,25 @@ SAMPLER
 
 report_load() {
   if [[ ! -s "$SAMPLER_FILE" ]]; then
-    echo "laptop load: not sampled (no maestro process seen)"
+    echo "laptop load: not sampled"
     return
   fi
-  awk '{ if ($2+0 > pc) pc=$2+0; if ($3+0 > pr) pr=$3+0; n++; s+=$2+0; ncpu=$4 }
-       END { printf "laptop load (maestro JVM, %d samples @2s, %d cores): peak CPU %.1f%% of one core (%.1f%% of the machine), mean %.1f%%, peak RSS %.0f MiB\n",
-                    n, ncpu, pc, pc/ncpu, s/n, pr/1024 }' "$SAMPLER_FILE"
+  awk '
+    { g=$1
+      if ($2+0 > pc[g]) pc[g]=$2+0
+      if ($3+0 > pr[g]) pr[g]=$3+0
+      s[g]+=$2+0; n[g]++
+      ncpu=$4
+      if ($5+0 > peaksys) peaksys=$5+0
+      syssum+=$5+0; sysn++
+    }
+    END {
+      printf "laptop load (%d cores, sampled every 2s):\n", ncpu
+      for (g in pc)
+        printf "  %-8s peak %6.1f%% of one core (%4.1f%% of the machine), mean %5.1f%%, peak RSS %5.0f MiB\n",
+               g, pc[g], pc[g]/ncpu, s[g]/n[g], pr[g]/1024
+      printf "  whole machine: peak %.1f%% busy, mean %.1f%% busy\n", peaksys, (sysn ? syssum/sysn : 0)
+    }' "$SAMPLER_FILE"
 }
 
 # ─── Maestro ──────────────────────────────────────────────────────────────────
@@ -579,7 +618,20 @@ nudge_route_home() {
 }
 
 # Count matches in the logcat capture started by start_logcat.
-log_count() { grep -cF "$1" "$LOGCAT_FILE" 2>/dev/null || echo 0; }
+# NOT `grep -c … || echo 0`: grep -c already prints 0 when there is no match AND exits 1, so
+# the fallback appends a SECOND zero and every arithmetic comparison downstream dies with
+# `((: 0\n0 > 0: syntax error`.
+log_count() {
+  local n
+  n="$(grep -cF "$1" "$LOGCAT_FILE" 2>/dev/null)"
+  printf '%s' "${n:-0}"
+}
+
+log_count_re() { # same, for a pattern that needs a regex
+  local n
+  n="$(grep -cE "$1" "$LOGCAT_FILE" 2>/dev/null)"
+  printf '%s' "${n:-0}"
+}
 
 # Opens Nudge's dashboard. Deliberately does NOT force-stop it first.
 #
@@ -765,15 +817,24 @@ case_home_reopen() {
       sleep 1
     done
     if (( ok == 0 )); then
-      fail "trial ${trial}: re-opening ${YOUTUBE_PKG} after Home was NOT blocked — issue #58 regressed"
-      shot "2${trial}-reopen-not-blocked"
+      fail "trial ${trial}: re-opening ${YOUTUBE_PKG} after Home produced NO block decision — issue #58 regressed"
+      shot "2${trial}-reopen-no-decision"
       rc=1; break
     fi
-    ui_wait_text "I changed my mind" 8 && shot "2${trial}-trial-reblocked"
-
-    # 4. leave the device in the state the next trial expects (a walk-away revokes the grant)
-    ui_tap_text "I changed my mind" || true
-    sleep 2
+    # A DECISION IS NOT A BLOCK. `BlockEngine` logging `reason=delay_rule` only means the
+    # verdict was reached; the overlay launch can still be refused afterwards with
+    # `DROP_FOREGROUND_MOVED`, and then the user is sitting in the app unblocked with a
+    # perfectly healthy-looking decision in the log. That ambiguity is what cost the v1.12.0
+    # cycle, so the user-visible half is asserted separately.
+    if ui_wait_text "I changed my mind" 10; then
+      shot "2${trial}-trial-reblocked"
+    else
+      fail "trial ${trial}: the block was DECIDED but no overlay reached the screen — the launch was dropped and never redeemed"
+      shot "2${trial}-reopen-overlay-missing"
+      rc=1; break
+    fi
+    # No cleanup tap: the next trial opens with `go_home`, which is what revokes the grant.
+    # Tapping "I changed my mind" here raced the 5s countdown and only produced noise.
   done
 
   sleep 2
@@ -782,18 +843,20 @@ case_home_reopen() {
 
   local went_home dropped redeemed
   went_home="$(log_count "sitting ended package=${YOUTUBE_PKG} cause=WENT_HOME")"
-  dropped="$(grep -c "block overlay launch dropped target=${YOUTUBE_PKG}.*reason=DROP_FOREGROUND_MOVED" "$LOGCAT_FILE" 2>/dev/null || echo 0)"
+  dropped="$(log_count_re "block overlay launch dropped target=${YOUTUBE_PKG}.*reason=DROP_FOREGROUND_MOVED")"
   redeemed="$(log_count "re-evaluating a dropped block target=${YOUTUBE_PKG}")"
   info "logcat totals: WENT_HOME=${went_home} DROP_FOREGROUND_MOVED=${dropped} redeemed=${redeemed}"
   if (( went_home < HOME_REOPEN_TRIALS )); then
     fail "only ${went_home}/${HOME_REOPEN_TRIALS} trials logged 'cause=WENT_HOME'"
     rc=1
   fi
-  # A dropped launch is only benign if the settle re-asked the question. One that was never
-  # re-evaluated is a user left unblocked — the exact shape of #58.
+  # dropped/redeemed are DIAGNOSTICS, not a gate, and `dropped <= redeemed` would be the wrong
+  # invariant: a deferral is correctly DISCARDED when the user genuinely leaves, so a run that
+  # presses Home as often as this one does will always show more drops than redemptions. The
+  # thing that actually matters — did a dropped launch leave the user in the app unblocked — is
+  # asserted per trial above, on the overlay reaching the screen.
   if (( dropped > redeemed )); then
-    fail "${dropped} launches dropped as DROP_FOREGROUND_MOVED but only ${redeemed} re-evaluated"
-    rc=1
+    info "note: ${dropped} drops vs ${redeemed} redemptions. Expected here (every Home press discards a deferral); the per-trial overlay assertion is the gate."
   fi
   CASE_NOTE="${HOME_REOPEN_TRIALS} trials · WENT_HOME=${went_home} dropped=${dropped} redeemed=${redeemed}"
   return $rc

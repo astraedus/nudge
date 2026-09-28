@@ -221,7 +221,7 @@ After any feature addition or significant change:
 2. Run `./gradlew test` and verify ALL tests pass (not just new ones)
 3. Build debug APK: `./gradlew assembleDebug`
 4. Install on Pixel 3: `adb -s 192.168.1.68:5555 install -r app/build/outputs/apk/debug/app-debug.apk`
-5. **QA on device** — spawn `device-tester` agent with specific test cases. PASS required before push.
+5. **QA on device** — run `scripts/device-qa.sh all` (scripted gate: 8 cases, minutes, PASS/FAIL table, nonzero exit; screenshots to `~/Pictures/screenshots/nudge/qa-<ts>/`). PASS required before push. `device-tester` only for exploratory cases the script does not cover. **Never rebuild it as a Maestro suite** — `UiAutomation` suppresses all other accessibility services, and Nudge is one; why, and the ADB+logcat oracle that replaces it: `docs/TESTING.md` → "L6 — Release-gate device QA".
 6. If QA passes: bump `versionCode` + `versionName` (patch) in `app/build.gradle.kts`
 7. Update CHANGELOG.md with version + date + changes (the DEV-facing record)
 8. **Write the user-facing store notes** — `fastlane/metadata/android/en-US/changelogs/<versionCode>.txt`: what was fixed and what you'll notice, plain text, ≤ 500 bytes, `• ` per line, no markdown/issue numbers/URLs. Check with `scripts/check-store-notes.sh` (CI fails the build without it). See **Releasing → Store release notes**.

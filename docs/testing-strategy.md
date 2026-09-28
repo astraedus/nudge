@@ -27,7 +27,7 @@ today, both currently optional, and between them they cover 8 of the 18 defects.
 | the overlay came back / stayed / skipped its countdown / needed two taps | **L3** pure lifecycle decision |
 | the code is right and the shipped data or copy is wrong | **L4** data/asset gate |
 | works on the bench Pixel, crashes on an older phone | **L5** lint |
-| OEM launcher timing, PiP, the service dying overnight | **L6** bench device — confirm here, never discover here |
+| OEM launcher timing, PiP, the service dying overnight | **L6** bench device — `scripts/device-qa.sh all` for the recurring checks, `device-tester` for the rest. Confirm here, never discover here |
 | a test fails only on one variant, one runner, or one ordering | not a layer — **rule (f)**: shared process state, and the reported test is the victim |
 
 ---
@@ -162,11 +162,20 @@ correctness errors is a list of bugs nobody reads again.
 Settings still showed a green tick — "enabled" and "actually bound" only diverge under real memory
 pressure).
 
+**The recurring checks at this layer are SCRIPTED: `scripts/device-qa.sh all`** (8 cases, minutes,
+PASS/FAIL table, nonzero exit). Run it before any hand-walk; `device-tester` is for the
+exploratory cases the script does not cover, judged from the screenshots it dumps. Crucially, this
+layer is **not** a Maestro suite and must not become one: a `UiAutomation` session suppresses every
+other accessibility service, and Nudge *is* one — so a Maestro flow silently disables the feature
+under test. The measurement, the ADB-plus-logcat oracle that replaces it, and the four device facts
+it encodes are in `docs/TESTING.md` → "L6 — Release-gate device QA".
+
 **This layer confirms a fix; it is a poor place to discover one.** #26 never reproduced here once.
 Rules: the bench Pixel carries a **release-signed** build (a plain debug build has different
-signature and grant behaviour); **only one agent drives the device at a time**; QA is delegated to
-`device-tester` with concrete cases and expected outcomes, never tap-walked by the author. When the
-device does show you something, the output of that session is a **capture** (L2), not a memory.
+signature and grant behaviour); **only one agent drives the device at a time** (`device-qa.sh`
+takes the shared lock itself); anything the script does not cover is delegated to `device-tester`
+with concrete cases and expected outcomes, never tap-walked by the author. When the device does
+show you something, the output of that session is a **capture** (L2), not a memory.
 
 **Cost:** a device cycle, serialised. Never in CI.
 

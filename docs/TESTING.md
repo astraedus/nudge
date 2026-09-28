@@ -86,3 +86,86 @@ Coverage targets (aspirational, enforce on new code):
 - Domain layer: >90% line coverage
 - Data layer (repositories, DAOs): >70%
 - UI ViewModels: key state transitions tested
+
+## L6 — Release-gate device QA is `scripts/device-qa.sh all`
+
+Every release up to v1.18.3 was device-verified by an LLM (`device-tester`) walking the bench
+Pixel from a prose brief: **60–100 minutes a run, four runs in September alone**, and a
+different walk every time. The recurring checks are now a script.
+
+```bash
+scripts/device-qa.sh all          # the gate; nonzero exit on any FAIL
+scripts/device-qa.sh delay-block  # one case, while iterating
+scripts/device-qa.sh list
+APK=installed scripts/device-qa.sh all   # validate the build already on the bench
+```
+
+It resolves the ADB serial, takes the shared Pixel lock, installs the APK under test
+(`APK=main` | `release` | `installed` | `debug` | a path), verifies the `versionCode`, applies
+the accessibility / overlay / usage grants at OS level, pins the screen, runs the cases, copies
+every screenshot to `~/Pictures/screenshots/nudge/qa-<ts>/`, prints a PASS/FAIL table with
+per-case durations, and restores every setting it touched on any exit path.
+
+**The cases**: `setup` (first-run onboarding + the two fixture rules) · `delay-block` ·
+`home-reopen` ([#58](https://github.com/astraedus/nudge/issues/58), 5 trials) ·
+`walkaway-count` · `daily-limit-refresh` ([#50](https://github.com/astraedus/nudge/issues/50)) ·
+`notif-idle` ([#63](https://github.com/astraedus/nudge/issues/63)) · `crash-check` ·
+`refusal-alert` ([#62](https://github.com/astraedus/nudge/issues/62)).
+
+### Why it is not a Maestro suite, and must not become one
+
+Maestro — and every other UiAutomator-based driver — connects a `UiAutomation` session, and
+**Android suppresses all other accessibility services while one is connected** unless the client
+passes `FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES`, which Maestro does not. Nudge *is* an
+accessibility service. Measured on the bench:
+
+| | `Bound services` | YouTube launch | `BlockEngine` lines |
+|---|---|---|---|
+| during a Maestro session | `{}` | opens instantly | 0 |
+| after it exits | populated | blocked for 5s | 6 |
+
+So a Maestro flow **disables the feature under test**, and does it silently — it reads as a
+flaky assertion, which is very likely why this harness did not already exist. Blocking behaviour
+is therefore driven with plain ADB and asserted against two non-invasive oracles: the foreground
+activity (`dumpsys activity activities`) and the service's own decision log
+(`block package=… reason=delay_rule delaySeconds=5`). That log line is *stronger* evidence than
+an on-screen string — it names the rule that fired.
+
+**But a decision is not a block.** The overlay launch can still be refused after the verdict
+with `DROP_FOREGROUND_MOVED`, leaving the user in the app unblocked under a healthy-looking log
+— the ambiguity that cost the v1.12.0 cycle. So every block assertion checks both halves: the
+decision in the log, and the overlay actually reaching the screen.
+
+Reading the screen is safe; holding a driver session open is not. A bare `uiautomator dump` was
+measured across repeated calls with the service staying bound and a block on screen completing
+normally, so it is used to read on-screen copy and to locate targets at runtime — coordinates
+are derived from the matched node's bounds, never fixed geometry.
+
+`.maestro/nudge-setup.yaml` is the one Maestro flow kept: it walks onboarding, turns on debug
+logging, and imports `.maestro/fixtures/rules.json` — Nudge's own UI, where nothing is blocked.
+
+### Four device facts the script encodes (and you will otherwise rediscover)
+
+- **A completed countdown grants passthrough, and it survives a force-stop.** Re-opening the app
+  logs `skip evaluation … reason=passthrough` and opens it free. Only leaving to the launcher
+  revokes it — which is [#58](https://github.com/astraedus/nudge/issues/58)'s whole subject. So
+  every block-expecting case starts from Home, and a case that does not is asserting on its
+  predecessor's leftovers.
+- **Force-stopping `dev.astraedus.nudge` leaves the accessibility service unbound** and Android
+  does not rebind it. Nothing in the harness may force-stop Nudge; blocking stays dead until the
+  grant is re-applied.
+- **`pm clear` deletes `enabled_accessibility_services`**, and a write straight afterwards binds
+  the service only for it to be pruned again on the app's first launch (the write raced
+  `AccessibilityManagerService`'s installed-services refresh). The grant is re-applied *after*
+  setup and re-checked as a precondition of every case.
+- **Debug logging is a DataStore preference, wiped by `pm clear`.** On a release build
+  `NudgeLogger` emits nothing without it (`BuildConfig.DEBUG || the preference`), and the log
+  oracle goes silent. The setup flow re-arms it through Settings → Version ×7 → Debug Logging.
+
+### What it does not cover
+
+`refusal-alert` needs the debug-only `WatchdogDebugReceiver` (`app/src/debug/`), absent from any
+release APK; on a release build the case reports **SKIP** and `APK=debug` is the mode that
+exercises it. Exploratory judgement — does this screen *look* right, is this copy good — remains
+`device-tester`'s job, working from the screenshots the script dumps. This script covers the
+recurring checks; it does not replace taste.
