@@ -1,13 +1,28 @@
 #!/usr/bin/env bash
 # device-qa.sh — Nudge's SCRIPTED release-gate device QA.
 #
-# Replaces the 60–100 minute LLM tap-walk that gated every release with a deterministic
-# Maestro + ADB run that finishes in minutes and exits nonzero on any failure.
+# Replaces the 60–100 minute LLM tap-walk that gated every release with a deterministic run
+# that finishes in minutes, prints a PASS/FAIL table, and exits nonzero on any failure.
 #
 #   scripts/device-qa.sh            # every case (same as `all`)
 #   scripts/device-qa.sh all
 #   scripts/device-qa.sh delay-block
 #   scripts/device-qa.sh list
+#
+# ── WHY MOST OF THIS IS NOT MAESTRO (the central design fact) ─────────────────
+# Maestro — and every other UiAutomator-based driver — connects a `UiAutomation` session, and
+# Android SUPPRESSES ALL OTHER ACCESSIBILITY SERVICES while one is connected (opting out needs
+# `FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES`, which Maestro does not pass). Nudge IS an
+# accessibility service, so a Maestro flow silently DISABLES THE FEATURE UNDER TEST. Measured:
+# during a Maestro session `Bound services:{}`, YouTube opens instantly, zero evaluation lines;
+# the moment it exits, the same launch is blocked for 5s. See the long comment above `ui_dump`.
+#
+# So blocking behaviour is driven with plain ADB, and asserted against two non-invasive
+# oracles — the foreground activity (`dumpsys activity activities`) and the service's own
+# decision log (`block package=… reason=delay_rule delaySeconds=5`) — with `uiautomator dump`
+# used only to read on-screen copy and to LOCATE tap targets at runtime (never fixed
+# coordinates). `.maestro/nudge-setup.yaml` is the one Maestro flow kept, because it drives
+# only Nudge's own UI (onboarding, Settings, backup import) where nothing needs to be blocked.
 #
 # ── Which APK is under test (APK=) ────────────────────────────────────────────
 #   APK=main       (default) download `nudge-main.apk` from the rolling `main-latest`
@@ -57,6 +72,9 @@ ADB_SERIAL="${ADB_SERIAL:-192.168.1.68:5555}"
 APK="${APK:-main}"
 NOTIF_IDLE_SECS="${NOTIF_IDLE_SECS:-300}"
 HOME_REOPEN_TRIALS="${HOME_REOPEN_TRIALS:-5}"
+# The 1-minute Calculator budget is spent by real foreground time and noticed by a clock that
+# ticks every 30s (`FOREGROUND_TICK_MS`), so the worst case is ~90s. 150s is that plus slack.
+LIMIT_WAIT_SECS="${LIMIT_WAIT_SECS:-150}"
 MAESTRO_BIN="${MAESTRO_BIN:-${HOME}/.maestro/bin/maestro}"
 GH_REPO="${GH_REPO:-astraedus/nudge}"
 
@@ -422,11 +440,146 @@ start_logcat() {
   sleep 1
 }
 
-# ─── Small device helpers ─────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# Element-located UI driving, and the logcat DECISION oracle
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# WHY THIS IS NOT MAESTRO — read before "modernising" any of it.
+#
+# Maestro (and every other UiAutomator-based driver) connects a `UiAutomation` session, and
+# Android SUPPRESSES ALL OTHER ACCESSIBILITY SERVICES for as long as one is connected unless
+# the client passes `FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES`, which Maestro's driver does
+# not. Nudge IS an accessibility service. Measured on the bench, unambiguously:
+#
+#   during a Maestro session:  `Bound services:{}` · YouTube opens instantly ·
+#                              ZERO evaluation lines in logcat · no block
+#   after it exits:            service bound · YouTube blocked for 5s · 6 evaluation lines
+#
+# So a Maestro flow cannot observe Nudge blocking ANYTHING: it disables the feature under
+# test. It fails as a flaky-looking assertion, which is presumably why this harness did not
+# already exist. `.maestro/nudge-setup.yaml` is kept because it drives only Nudge's OWN UI
+# (onboarding, Settings, the backup import) where no blocking is involved.
+#
+# A BARE `uiautomator dump` is a different matter and was measured too: the session is
+# short-lived, `Bound services` stays populated across repeated dumps, and a block already on
+# screen completes and grants passthrough normally. So reading the tree is safe; holding a
+# driver session open is not.
+#
+# The oracle is therefore stronger than a text assertion would have been:
+#   · `dumpsys activity activities` → which activity is in front (no a11y involved at all)
+#   · logcat, e.g. `block package=… reason=delay_rule delaySeconds=5` from BlockEngine →
+#     WHICH RULE fired, not merely that something appeared
+#   · `uiautomator dump` → the on-screen copy, and the tap targets
+# Taps are `input tap` at coordinates DERIVED AT RUNTIME from the dumped node's bounds —
+# element-located, never hardcoded geometry.
+
 ui_dump() { # prints the uiautomator XML of whatever is on screen
   ash uiautomator dump /sdcard/nudge-qa-dump.xml >/dev/null 2>&1
   ash cat /sdcard/nudge-qa-dump.xml 2>/dev/null | tr -d '\r'
 }
+
+# Writes the node-locator helper once. Python because an XML attribute soup is exactly what
+# regex-in-shell gets wrong, and python3 is a hard dependency of this laptop anyway.
+write_locator() {
+  cat >"${WORK}/locate.py" <<'PYEOF'
+"""Print "<cx> <cy>" for the first node whose text or content-desc EXACTLY equals the
+needle, else nothing. Exact match on purpose: "Delay" must not select "Delay Duration",
+and "5s" must not select "15s"."""
+import re
+import sys
+
+xml = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+needle = sys.argv[2]
+for attrs in re.findall(r"<node([^>]*)>", xml):
+    def attr(name):
+        m = re.search(r'\b%s="([^"]*)"' % name, attrs)
+        return m.group(1) if m else ""
+    if needle not in (attr("text"), attr("content-desc")):
+        continue
+    b = re.match(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", attr("bounds") or "")
+    if not b:
+        continue
+    x1, y1, x2, y2 = (int(g) for g in b.groups())
+    print((x1 + x2) // 2, (y1 + y2) // 2)
+    break
+PYEOF
+}
+
+UI_XML=""
+ui_snapshot() { UI_XML="${WORK}/ui.xml"; ui_dump >"$UI_XML"; }
+
+# Is this exact string on screen right now? (Uses the last snapshot.)
+ui_has() { grep -qF "\"$1\"" "$UI_XML" 2>/dev/null; }
+
+ui_wait_text() { # text timeout_secs
+  local needle="$1" timeout="${2:-15}" i
+  for ((i = 0; i < timeout; i++)); do
+    ui_snapshot
+    ui_has "$needle" && return 0
+    sleep 1
+  done
+  return 1
+}
+
+ui_tap_text() { # text — taps the centre of the matching node
+  local needle="$1" xy
+  ui_snapshot
+  xy="$(python3 "${WORK}/locate.py" "$UI_XML" "$needle")"
+  if [[ -z "$xy" ]]; then
+    fail "cannot tap '${needle}': not on screen"
+    return 1
+  fi
+  # shellcheck disable=SC2086
+  ash input tap $xy >/dev/null 2>&1
+  sleep 1
+}
+
+go_home() {
+  ash input keyevent KEYCODE_HOME >/dev/null 2>&1
+  sleep 2
+}
+
+wait_fg() { # package timeout_secs
+  local want="$1" timeout="${2:-20}" i
+  for ((i = 0; i < timeout; i++)); do
+    [[ "$(foreground_package)" == "$want" ]] && return 0
+    sleep 1
+  done
+  return 1
+}
+
+shot() { # name — a screenshot straight into the album, no Maestro involved
+  ash screencap -p /sdcard/nudge-qa-shot.png >/dev/null 2>&1
+  adbs pull /sdcard/nudge-qa-shot.png "${ALBUM}/$1.png" >/dev/null 2>&1
+}
+
+scroll_to_text() { # text max_swipes — swipe up until the text is on screen
+  local needle="$1" tries="${2:-6}" i
+  for ((i = 0; i < tries; i++)); do
+    ui_snapshot
+    ui_has "$needle" && return 0
+    ash input swipe 540 1500 540 700 300 >/dev/null 2>&1
+    sleep 1
+  done
+  ui_snapshot
+  ui_has "$needle"
+}
+
+# Puts Nudge on its DASHBOARD, wherever it happened to be.
+#
+# Nudge is a single-activity Compose app, so a plain launch resumes whatever screen it last
+# showed — which no case may assume (a step that depends on where its predecessor stopped is
+# a latent order dependency). `nudge.nav_route` is the app's own widget deep-link extra
+# (ui/widget/WidgetDeepLink.kt) and "home" is in its allowlist, so this is a supported entry
+# point rather than a test-only back door.
+nudge_route_home() {
+  ash am start -n "${APP_ID}/${NAMESPACE}.MainActivity" \
+    --es nudge.nav_route home >/dev/null 2>&1
+  sleep 3
+}
+
+# Count matches in the logcat capture started by start_logcat.
+log_count() { grep -cF "$1" "$LOGCAT_FILE" 2>/dev/null || echo 0; }
 
 # Opens Nudge's dashboard. Deliberately does NOT force-stop it first.
 #
@@ -509,96 +662,275 @@ foreground_package() {
     sed -n 's/.*mResumedActivity.*u0 \([^/]*\)\/.*/\1/p' | head -1
 }
 
+
+# ── delay-block: a DELAY rule really gates the app, and really lets it through ──
+#
+# Always starts from HOME. A completed countdown GRANTS PASSTHROUGH, and that grant survives
+# a force-stop-and-relaunch — the service logs `skip evaluation … reason=passthrough` and the
+# app opens free. Only leaving to the launcher revokes it (that is issue #58's subject). A
+# case that expects a block without going Home first asserts on its predecessor's leftovers.
 case_delay_block() {
-  run_flow .maestro/nudge-delay-block.yaml || return 1
-  # The flow proved the overlay came and went; this proves WHAT it let through. Asserted
-  # here rather than in the flow because every string in YouTube's own a11y tree belongs
-  # to a third party that ships a new build weekly, and a release gate must not fail
-  # because Google renamed a tab.
-  local fg
-  fg="$(foreground_package)"
-  info "foreground after the countdown: ${fg}"
-  CASE_NOTE="countdown completed, foreground=${fg}"
-  if [[ "$fg" != "$YOUTUBE_PKG" ]]; then
-    fail "the delay completed but ${YOUTUBE_PKG} is not in front (got '${fg}')"
-    return 1
+  local rc=0
+  go_home
+  wait_fg "$LAUNCHER_PKG" 10 || { fail "Home did not reach the launcher"; return 1; }
+  start_logcat
+  ash am force-stop "$YOUTUBE_PKG" >/dev/null 2>&1
+  sleep 1
+  ash monkey -p "$YOUTUBE_PKG" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
+
+  # The decision, from BlockEngine's own log line: this proves WHICH RULE fired, where an
+  # on-screen text assertion would only prove that something appeared.
+  local i=0 decided=0
+  for ((i = 0; i < 20; i++)); do
+    if (( $(log_count "block package=${YOUTUBE_PKG} reason=delay_rule delaySeconds=5") > 0 )); then
+      decided=1; break
+    fi
+    sleep 1
+  done
+  if (( decided == 0 )); then
+    fail "no 'reason=delay_rule delaySeconds=5' decision for ${YOUTUBE_PKG} — the app was not gated"
+    stop_logcat; return 1
   fi
-  return 0
+  info "BlockEngine: delay_rule delaySeconds=5"
+
+  # And the overlay the user actually sees. "I changed my mind" is unique to the delay
+  # screen; the hard-block screen says "Go Back" instead.
+  if ui_wait_text "I changed my mind" 8; then
+    shot 10-delay-overlay
+    ui_has "YouTube" || { fail "the delay overlay does not name the app"; rc=1; }
+  else
+    fail "the delay overlay never showed 'I changed my mind'"
+    rc=1
+  fi
+
+  # Wait the countdown out. The overlay disappearing is the completion signal; a wall-clock
+  # sleep would be the wrong model, since DelayContent only ticks while it is on screen (#8).
+  if wait_fg "$YOUTUBE_PKG" 30; then
+    shot 11-youtube-open
+    info "countdown completed, ${YOUTUBE_PKG} in front"
+  else
+    fail "the countdown finished but ${YOUTUBE_PKG} never came to the front (got '$(foreground_package)')"
+    rc=1
+  fi
+  stop_logcat
+  cp -f "$LOGCAT_FILE" "${ALBUM}/logcat-delay-block.txt" 2>/dev/null || true
+  CASE_NOTE="delay_rule delaySeconds=5 fired; overlay shown; app opened after the countdown"
+  return $rc
 }
 
+# ── home-reopen (#58): a trip HOME must revoke the passthrough the countdown granted ──
+#
+# The bug was a RACE, so one green trial proves nothing — hence HOME_REOPEN_TRIALS (5) and
+# the per-trial log assertions rather than a single end-of-run grep.
 case_home_reopen() {
+  local rc=0 trial blocks_before blocks_after
   start_logcat
-  local rc=0
-  run_flow .maestro/nudge-home-reopen.yaml -e TRIALS="$HOME_REOPEN_TRIALS" || rc=1
+  for ((trial = 1; trial <= HOME_REOPEN_TRIALS; trial++)); do
+    info "trial ${trial}/${HOME_REOPEN_TRIALS}"
+    go_home
+    wait_fg "$LAUNCHER_PKG" 10 || { fail "trial ${trial}: Home did not reach the launcher"; rc=1; break; }
+
+    # 1. open it and let the countdown through
+    blocks_before="$(log_count "block package=${YOUTUBE_PKG} reason=delay_rule")"
+    ash monkey -p "$YOUTUBE_PKG" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
+    local i ok=0
+    for ((i = 0; i < 20; i++)); do
+      (( $(log_count "block package=${YOUTUBE_PKG} reason=delay_rule") > blocks_before )) && { ok=1; break; }
+      sleep 1
+    done
+    (( ok )) || { fail "trial ${trial}: the first launch was not blocked"; rc=1; break; }
+    wait_fg "$YOUTUBE_PKG" 30 || { fail "trial ${trial}: the countdown never let YouTube through"; rc=1; break; }
+
+    # 2. use the app, then leave
+    sleep 5
+    local homes_before
+    homes_before="$(log_count "sitting ended package=${YOUTUBE_PKG} cause=WENT_HOME")"
+    go_home
+    wait_fg "$LAUNCHER_PKG" 10 || { fail "trial ${trial}: Home did not reach the launcher"; rc=1; break; }
+    # The revocation itself, per trial. Asserted HERE rather than counted at the end so a
+    # failure names the trial that broke.
+    local j revoked=0
+    for ((j = 0; j < 10; j++)); do
+      (( $(log_count "sitting ended package=${YOUTUBE_PKG} cause=WENT_HOME") > homes_before )) && { revoked=1; break; }
+      sleep 1
+    done
+    (( revoked )) || { fail "trial ${trial}: no 'sitting ended … cause=WENT_HOME' — the grant was not revoked"; rc=1; break; }
+
+    # 3. re-open it. THIS is the assertion the issue is about.
+    blocks_after="$(log_count "block package=${YOUTUBE_PKG} reason=delay_rule")"
+    ash monkey -p "$YOUTUBE_PKG" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
+    ok=0
+    for ((i = 0; i < 20; i++)); do
+      (( $(log_count "block package=${YOUTUBE_PKG} reason=delay_rule") > blocks_after )) && { ok=1; break; }
+      sleep 1
+    done
+    if (( ok == 0 )); then
+      fail "trial ${trial}: re-opening ${YOUTUBE_PKG} after Home was NOT blocked — issue #58 regressed"
+      shot "2${trial}-reopen-not-blocked"
+      rc=1; break
+    fi
+    ui_wait_text "I changed my mind" 8 && shot "2${trial}-trial-reblocked"
+
+    # 4. leave the device in the state the next trial expects (a walk-away revokes the grant)
+    ui_tap_text "I changed my mind" || true
+    sleep 2
+  done
+
   sleep 2
   stop_logcat
   cp -f "$LOGCAT_FILE" "${ALBUM}/logcat-home-reopen.txt" 2>/dev/null || true
 
   local went_home dropped redeemed
-  went_home="$(grep -c "sitting ended package=${YOUTUBE_PKG} cause=WENT_HOME" "$LOGCAT_FILE")"
-  dropped="$(grep -c "block overlay launch dropped target=${YOUTUBE_PKG}.*reason=DROP_FOREGROUND_MOVED" "$LOGCAT_FILE")"
-  redeemed="$(grep -c "re-evaluating a dropped block target=${YOUTUBE_PKG}" "$LOGCAT_FILE")"
-  info "logcat: WENT_HOME=${went_home} DROP_FOREGROUND_MOVED=${dropped} redeemed=${redeemed} (trials=${HOME_REOPEN_TRIALS})"
-
+  went_home="$(log_count "sitting ended package=${YOUTUBE_PKG} cause=WENT_HOME")"
+  dropped="$(grep -c "block overlay launch dropped target=${YOUTUBE_PKG}.*reason=DROP_FOREGROUND_MOVED" "$LOGCAT_FILE" 2>/dev/null || echo 0)"
+  redeemed="$(log_count "re-evaluating a dropped block target=${YOUTUBE_PKG}")"
+  info "logcat totals: WENT_HOME=${went_home} DROP_FOREGROUND_MOVED=${dropped} redeemed=${redeemed}"
   if (( went_home < HOME_REOPEN_TRIALS )); then
-    fail "only ${went_home}/${HOME_REOPEN_TRIALS} trials logged 'cause=WENT_HOME' — the grant was not revoked on every Home press"
+    fail "only ${went_home}/${HOME_REOPEN_TRIALS} trials logged 'cause=WENT_HOME'"
     rc=1
   fi
+  # A dropped launch is only benign if the settle re-asked the question. One that was never
+  # re-evaluated is a user left unblocked — the exact shape of #58.
   if (( dropped > redeemed )); then
-    fail "${dropped} launches dropped as DROP_FOREGROUND_MOVED but only ${redeemed} were re-evaluated — issue #58 regressed"
+    fail "${dropped} launches dropped as DROP_FOREGROUND_MOVED but only ${redeemed} re-evaluated"
     rc=1
   fi
-  CASE_NOTE="WENT_HOME=${went_home}/${HOME_REOPEN_TRIALS} dropped=${dropped} redeemed=${redeemed}"
+  CASE_NOTE="${HOME_REOPEN_TRIALS} trials · WENT_HOME=${went_home} dropped=${dropped} redeemed=${redeemed}"
   return $rc
 }
 
+# ── walkaway-count: 3 declined launches must move BOTH dashboard counters by exactly +3 ──
+#
+# "Blocked" counts confrontations SHOWN and "Walked Away" the ones declined, so a decline
+# moves both exactly once (HomeViewModel's KDoc: the raw `wasBlocked` count used to
+# double-count a walk-away).
 case_walkaway_count() {
-  launch_nudge_home
+  local rc=0 i
+  nudge_route_home
   local before after b_before b_after w_before w_after
   before="$(read_blocked_counts)" || { fail "could not read the week summary on the dashboard"; return 1; }
   b_before="${before% *}"; w_before="${before#* }"
   info "before: blocked=${b_before} walkedAway=${w_before}"
 
-  run_flow .maestro/nudge-walkaway-count.yaml || return 1
+  for ((i = 1; i <= 3; i++)); do
+    go_home
+    wait_fg "$LAUNCHER_PKG" 10 || { fail "decline ${i}: Home did not reach the launcher"; return 1; }
+    ash monkey -p "$YOUTUBE_PKG" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
+    if ! ui_wait_text "I changed my mind" 20; then
+      fail "decline ${i}: no delay overlay to decline"
+      return 1
+    fi
+    shot "3${i}-walkaway-block"
+    ui_tap_text "I changed my mind" || return 1
+    sleep 2
+    # Declining must LEAVE the app, not just dismiss the overlay on top of it — the
+    # "'I changed my mind' can leave the user inside the blocked app" report.
+    if ! wait_fg "$LAUNCHER_PKG" 10; then
+      fail "decline ${i}: the launcher is not in front (got '$(foreground_package)') — the decline did not leave the app"
+      return 1
+    fi
+  done
 
-  # Declining must LEAVE the app, not merely dismiss the overlay on top of it — #26 and
-  # the "'I changed my mind' can leave the user inside the blocked app" report.
-  local fg
-  fg="$(foreground_package)"
-  if [[ "$fg" != "$LAUNCHER_PKG" ]]; then
-    fail "after declining, the launcher is not in front (got '${fg}') — the decline did not leave the app"
-    return 1
-  fi
-
-  launch_nudge_home
+  nudge_route_home
   after="$(read_blocked_counts)" || { fail "could not re-read the week summary"; return 1; }
   b_after="${after% *}"; w_after="${after#* }"
   info "after:  blocked=${b_after} walkedAway=${w_after}"
+  shot 34-dashboard-after
 
   CASE_NOTE="blocked ${b_before}->${b_after}, walkedAway ${w_before}->${w_after}"
   local db=$(( b_after - b_before )) dw=$(( w_after - w_before ))
-  local rc=0
   (( db == 3 )) || { fail "Blocked moved by ${db}, expected +3"; rc=1; }
   (( dw == 3 )) || { fail "Walked away moved by ${dw}, expected +3"; rc=1; }
   return $rc
 }
 
+# ── daily-limit-refresh (#50): raising the limit must not leave the stale screen behind ──
+#
+# The fixture gives Calculator a 1-minute budget and mode NONE ("Not blocked"), so the app
+# opens freely and the limit is the only gate. The block arrives unattended: the service runs
+# a 30s foreground-time clock (`FOREGROUND_TICK_MS`) whose `onTimeLimitExceeded` launches the
+# overlay. We wait for that real trigger rather than provoking a fake one.
 case_daily_limit_refresh() {
-  # There is no dwell to arrange: the accessibility service runs a 30-second
-  # foreground-time clock whose `onTimeLimitExceeded` launches the overlay, so the flow
-  # sits in Calculator and waits for the REAL trigger rather than provoking a fake one.
-  run_flow .maestro/nudge-daily-limit-refresh.yaml || return 1
+  local rc=0
+  go_home
+  start_logcat
+  ash am force-stop "$LIMIT_PKG" >/dev/null 2>&1
+  sleep 1
+  ash monkey -p "$LIMIT_PKG" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
+  shot 40-calculator-open
+
+  info "burning the 1-minute budget (up to ${LIMIT_WAIT_SECS}s; the clock ticks every 30s) …"
+  local i limited=0
+  for ((i = 0; i < LIMIT_WAIT_SECS; i += 5)); do
+    if (( $(log_count "block package=${LIMIT_PKG} reason=time_budget_exceeded") > 0 )); then
+      limited=1; break
+    fi
+    sleep 5
+  done
+  if (( limited == 0 )); then
+    fail "the 1-minute daily limit never fired for ${LIMIT_PKG} within ${LIMIT_WAIT_SECS}s"
+    stop_logcat; return 1
+  fi
+  info "BlockEngine: time_budget_exceeded"
+
+  # "Daily limit reached" is its OWN screen, not a plain hard block: the service passes that
+  # as the rule name and HardBlockContent shows the line only when the remaining budget has
+  # actually reached zero. So it is the right string to assert, and to assert the absence of.
+  if ui_wait_text "Daily limit reached" 15; then
+    shot 41-daily-limit-reached
+  else
+    fail "the limit fired but the 'Daily limit reached' screen never appeared"
+    rc=1
+  fi
+  ui_tap_text "Go Back" || rc=1
+  sleep 2
+
+  # Raise the limit 1m -> 2h. Chip taps only: the "Daily Time Limit" switch is already ON
+  # (the fixture set a limit), so its chips are on screen and no Compose Switch — which has
+  # no text node of its own and cannot be reached by an element selector — is needed.
+  nudge_route_home
+  ui_wait_text "Manage Apps" 5 || scroll_to_text "Manage Apps" 6
+  ui_tap_text "Manage Apps" || return 1
+  ui_wait_text "Search apps..." 10 || { fail "the app list did not open"; return 1; }
+  ui_tap_text "Search apps..." || return 1
+  # A PREFIX, not the full name: the search field's own text is a node too, so typing
+  # "Calculator" makes the field itself the first match for the app name.
+  ash input text "Calcul" >/dev/null 2>&1
+  sleep 2
+  ash input keyevent KEYCODE_BACK >/dev/null 2>&1   # dismiss the IME; its suggestion strip
+  sleep 1                                            # sits over the result list
+  ui_tap_text "Calculator" || return 1
+  ui_wait_text "Daily Time Limit" 10 || { fail "the app config screen did not open"; return 1; }
+  ui_has "1m" || warn "the daily-limit chip does not read '1m' (fixture drift?)"
+  ui_tap_text "2h" || return 1
+  shot 42-limit-raised
+  ui_tap_text "Save" || return 1
+  sleep 2
+
+  # Cold-launch Calculator. The stale screen must NOT be back.
+  go_home
+  ash am force-stop "$LIMIT_PKG" >/dev/null 2>&1
+  sleep 1
+  ash monkey -p "$LIMIT_PKG" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
+  sleep 5
+  ui_snapshot
+  shot 43-calculator-not-stale
+  if ui_has "Daily limit reached"; then
+    fail "after raising the limit to 2h, the stale 'Daily limit reached' screen came back — issue #50 regressed"
+    rc=1
+  fi
   local fg
   fg="$(foreground_package)"
-  CASE_NOTE="limit raised 1m->2h, cold launch clean, foreground=${fg}"
   if [[ "$fg" != "$LIMIT_PKG" ]]; then
     fail "after raising the limit, ${LIMIT_PKG} is not in front (got '${fg}') — something re-blocked it"
-    return 1
+    rc=1
   fi
-  return 0
+  stop_logcat
+  cp -f "$LOGCAT_FILE" "${ALBUM}/logcat-daily-limit.txt" 2>/dev/null || true
+  CASE_NOTE="time_budget_exceeded fired, limit raised 1m->2h, cold launch clean (fg=${fg})"
+  return $rc
 }
 
-# ── notif-idle (#63): the ongoing notification must not be re-posted on a timer ──
 case_notif_idle() {
   local rc=0
   local r0 r1 c0 u0 c1 u1
@@ -802,6 +1134,7 @@ main() {
   ensure_grants || warn "grants incomplete — cases may fail for the wrong reason"
   crash_baseline
   mkdir -p "$ALBUM"
+  write_locator
   start_sampler
   info "album: ${ALBUM}"
   info "work:  ${WORK}"
