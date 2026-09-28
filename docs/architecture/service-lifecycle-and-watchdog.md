@@ -414,6 +414,31 @@ Then open Nudge: the resume retry starts the service, and
 `adb shell dumpsys activity services dev.astraedus.nudge | grep NudgeMonitorService` shows it
 running again. Restore with `appops set ... allow`.
 
+**That recipe does not work as written on the bench Pixel 3 (API 31), measured 2026-09-29** while
+scripting `refusal-alert` in `scripts/device-qa.sh`. Two facts fight each other:
+
+- **`am force-stop` does not merely unbind the accessibility service — it prunes our component out
+  of `enabled_accessibility_services`**, the same pruning `pm clear` triggers. So the very next
+  broadcast arrives with `granted=false`, and `faultToReport` correctly answers
+  `ACCESSIBILITY_DISABLED`, which **outranks** a refused start by design. Observed:
+  `cycle 1: granted=false … reported=ACCESSIBILITY_DISABLED (service start REFUSED by platform)`,
+  then `cycle 2: reported=none` because cycle 1 had already spent the 12-hour cooldown.
+- **Re-granting accessibility to get past that heals the service.** `onServiceConnected` starts the
+  monitor and on this device that start SUCCEEDS even with `SYSTEM_ALERT_WINDOW` denied — three
+  consecutive runs returned `granted=true connected=true monitorRunning=true … notify=none
+  dismiss=true`, i.e. perfectly healthy, with no refused start left to report. (Which is also a
+  caution about the exemption table above: whatever the documented rule, on API 31 the rebind path
+  got its foreground-service start through.)
+
+So the state this fault describes is **not reachable on the bench by this route** — the same honest
+dead end recorded for `ACCESSIBILITY_CRASHED` above, and the same rule applies: do NOT fake the
+fault or add a QA-only hold to force it. `scripts/device-qa.sh`'s `refusal-alert` therefore reports
+**SKIP with that reason** when the snapshot comes back healthy, and FAILs only when the state WAS
+reached and the verdict is still wrong. The alert itself stays pinned by `ProtectionAlertCopyTest`
+(iterates the real enum, so a fault cannot ship without copy) and `ServiceLifecycleContractTest`.
+If you want this covered on a device, the missing ingredient is a way to keep the monitor service
+dead while accessibility is alive — not a louder assertion.
+
 ## The notification is posted on CHANGE, and health is re-evaluated on EVENTS ([#63](https://github.com/astraedus/nudge/issues/63), v1.18.3)
 
 A user on a Pixel 10 Pro / Android 17 read his own battery with BetterBatteryStats and sent us the

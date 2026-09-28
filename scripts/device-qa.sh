@@ -1389,6 +1389,32 @@ case_refusal_alert() {
   sleep 3
   second="$(ash am broadcast -a "$WATCHDOG_ACTION" -n "$WATCHDOG_RECEIVER" 2>&1 | tr -d '\r')"
   info "cycle 2: ${second}"
+  # THE BENCH CANNOT ALWAYS REACH THIS STATE, and that is a SKIP, not a FAIL.
+  #
+  # #62 needs granted+connected TRUE with the monitor service DEAD and its restart REFUSED.
+  # Getting there on this device is a vice:
+  #   - `am force-stop` prunes our component out of `enabled_accessibility_services`, so without
+  #     a re-grant the snapshot is `granted=false` and the watchdog correctly reports
+  #     ACCESSIBILITY_DISABLED, which OUTRANKS a refused start by design.
+  #   - but re-granting rebinds the service, whose `onServiceConnected` starts the monitor — and
+  #     on this Pixel 3 / API 31 that start SUCCEEDS even with SYSTEM_ALERT_WINDOW denied
+  #     (measured three times: `monitorRunning=true … notify=none dismiss=true`, i.e. healthy).
+  # So the two preconditions fight each other here. This is the same honest dead end the
+  # subsystem doc records for ACCESSIBILITY_CRASHED ("What could NOT be verified on the bench"),
+  # and its rule applies: DO NOT fake the fault or add a QA-only hold to force it. A test path
+  # that runs different code than production proves nothing about production.
+  #
+  # Reporting FAIL here would be a false accusation against a build whose alert path is pinned by
+  # `ProtectionAlertCopyTest` (iterates the real enum, so a fault cannot ship without copy) and
+  # `ServiceLifecycleContractTest`. So: SKIP with the reason when the state is unreachable, and
+  # FAIL only when the state WAS reached and the verdict is still wrong — which is the only
+  # reading that distinguishes the app being broken from the bench being unable to ask.
+  if grep -q 'monitorRunning=true' <<<"$second"; then
+    ash appops set "$APP_ID" SYSTEM_ALERT_WINDOW allow >/dev/null 2>&1
+    ensure_grants >/dev/null 2>&1 || true
+    CASE_NOTE="state unreachable on this device: re-granting accessibility (required, else ACCESSIBILITY_DISABLED outranks) lets NudgeMonitorService start even with the overlay denied, so no refused start remains. Alert path pinned by ProtectionAlertCopyTest + ServiceLifecycleContractTest."
+    return 77
+  fi
   grep -q 'reported=MONITOR_START_BLOCKED' <<<"$second" ||
     { fail "cycle 2 did not report MONITOR_START_BLOCKED: ${second}"; rc=1; }
   grep -q 'service start REFUSED by platform' <<<"$second" ||
