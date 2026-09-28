@@ -60,31 +60,11 @@ appId: dev.astraedus.nudge
 - tapOn: "Settings"
 - scrollUntilVisible:
     element:
-      text: "Version"
-    direction: DOWN
-- repeat:
-    times: 7
-    commands:
-      - tapOn: "Version"
-# The Developer Options section is APPENDED below "Source Code & Feedback" and "License",
-# i.e. off-screen at the moment it appears — `assertVisible` on it fails on a screen where
-# the taps worked perfectly. Scroll to the row we actually need.
-- scrollUntilVisible:
-    element:
-      text: "Debug Logging"
-    direction: DOWN
-- tapOn: "Debug Logging"
-- takeScreenshot: 05-debug-logging
-
-# ─── Import the rule fixture ──────────────────────────────────────────────────
-- scrollUntilVisible:
-    element:
       text: "Import backup"
     direction: DOWN
 - tapOn: "Import backup"
-# ACTION_OPEN_DOCUMENT filtered to JSON opens DocumentsUI on Recent, where the file the
-# runner just pushed is listed by name. Tapping by NAME means the ordering of that list
-# does not matter.
+# ACTION_OPEN_DOCUMENT filtered to JSON opens DocumentsUI on Recent, where the file the runner
+# just pushed is listed by name. Tapping by NAME means the ordering of that list does not matter.
 - extendedWaitUntil:
     visible: "nudge-qa-rules.json"
     timeout: 30000
@@ -100,6 +80,32 @@ appId: dev.astraedus.nudge
     timeout: 25000
 - takeScreenshot: 08-import-complete
 - tapOn: "OK"
+
+# ─── Developer Options → Debug Logging ────────────────────────────────────────
+# Done AFTER the import, and that order is load-bearing: the Backup rows sit ABOVE the
+# Version row in Settings, and Developer Options is appended BELOW both. Doing the developer
+# taps first leaves the list scrolled to its bottom, and the later
+# `scrollUntilVisible … direction: DOWN` for "Import backup" then searches away from it — which
+# passed on a release build only because the row happened to still be on screen, and failed on a
+# debug build whose extra developer row pushed it out. One monotonic downward pass, no
+# dependency on where a previous tap left the scroll.
+- scrollUntilVisible:
+    element:
+      text: "Version"
+    direction: DOWN
+- repeat:
+    times: 7
+    commands:
+      - tapOn: "Version"
+# The Developer Options section is APPENDED below "Source Code & Feedback" and "License",
+# i.e. off-screen at the moment it appears — `assertVisible` on it fails on a screen where
+# the taps worked perfectly. Scroll to the row we actually need.
+- scrollUntilVisible:
+    element:
+      text: "Debug Logging"
+    direction: DOWN
+- tapOn: "Debug Logging"
+- takeScreenshot: 05-debug-logging
 
 # ─── Prove the fixtures actually landed ───────────────────────────────────────
 # `ActiveRulesViewModel.buildSummaryText` renders a rule as "Delay 5s" and

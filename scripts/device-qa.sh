@@ -27,7 +27,10 @@
 # ── Which APK is under test (APK=) ────────────────────────────────────────────
 #   APK=main       (default) download `nudge-main.apk` from the rolling `main-latest`
 #                  GitHub prerelease and install it. This is what CI built from main.
-#   APK=release    download the APK asset of the newest `v*` GitHub release.
+#   APK=release    download the APK asset of the `v<versionName>` release matching THIS working
+#                  tree, and refuse to start if that release does not exist yet (CI may still be
+#                  building it). NOT "the newest v* tag": while a tag is building, the newest
+#                  release is the PREVIOUS version, which would silently downgrade the bench.
 #   APK=installed  install nothing; drive whatever build is already on the device.
 #                  This is the RELEASE-GATE mode: it validates the exact artefact a
 #                  human/CI put on the bench.
@@ -350,12 +353,21 @@ install_apk() {
       do_install "${WORK}/nudge-main.apk"
       ;;
     release)
-      local tag
-      tag="$(gh release list --repo "$GH_REPO" --limit 30 --json tagName \
-             --jq '[.[] | select(.tagName | startswith("v"))][0].tagName')" ||
-        die "gh release list failed"
-      [[ -n "$tag" ]] || die "no v* release found on $GH_REPO"
-      info "Downloading the APK asset of $tag …"
+      # THE RELEASE OF **THIS** VERSION, not "whatever the newest tag happens to be".
+      #
+      # `[0].tagName` was wrong and would silently downgrade the bench: while CI is still
+      # building the tag you just pushed, the newest v* release is the PREVIOUS version, so
+      # `APK=release` fetched v1.18.2 / versionCode 55 and then died on a versionCode check
+      # against a working tree that says 56 — after installing it. A restore step that leaves
+      # the device on the wrong build and calls it a failure is worse than refusing to start.
+      local want_name tag
+      want_name="$(sed -n 's/.*versionName *= *"\([^"]*\)".*/\1/p' \
+                   "${REPO_ROOT}/app/build.gradle.kts" | head -1)"
+      tag="v${want_name}"
+      info "Resolving the release for this working tree: ${tag}"
+      if ! gh release view "$tag" --repo "$GH_REPO" >/dev/null 2>&1; then
+        die "release ${tag} does not exist yet on ${GH_REPO} (CI may still be building it). Wait for it, or use APK=main for the rolling main-latest build, which tracks this commit."
+      fi
       gh release download "$tag" --repo "$GH_REPO" --pattern '*.apk' \
         --dir "$WORK" --clobber >/dev/null || die "gh release download ($tag) failed"
       do_install "$(find "$WORK" -maxdepth 1 -name '*.apk' | head -1)"
@@ -1304,6 +1316,22 @@ case_refusal_alert() {
     return 77   # SKIP
   fi
   local rc=0 first second
+  # PRECONDITION: accessibility must be HEALTHY. `faultToReport` ranks an accessibility fault
+  # ABOVE a refused service start on purpose — `ACCESSIBILITY_DISABLED` means blocking is
+  # actually dead, which is worse — so with the grant missing the watchdog correctly reports
+  # ACCESSIBILITY_DISABLED and this case would "fail" on a perfectly good build. Observed
+  # exactly that when an earlier step left the service unbound:
+  #   cycle 1: granted=false … reported=ACCESSIBILITY_DISABLED (service start REFUSED by platform)
+  #   cycle 2: wasDegraded=true … reported=none        (cycle 1 had spent the 12h cooldown)
+  # Same lesson as `revoke_a11y`: check the precondition, and blame the harness when it is the
+  # harness. Never report "the app did not raise the fault" for a state the app was never in.
+  if ! a11y_is_bound; then
+    warn "accessibility is not bound entering refusal-alert — repairing before injecting"
+    ensure_grants || {
+      fail "PRECONDITION UNMET: accessibility will not bind, so the watchdog would report ACCESSIBILITY_DISABLED (which outranks MONITOR_START_BLOCKED). Harness problem, not an app problem."
+      return 1
+    }
+  fi
   ash appops set "$APP_ID" SYSTEM_ALERT_WINDOW deny >/dev/null 2>&1
   ash am force-stop "$APP_ID" >/dev/null 2>&1
   sleep 2
