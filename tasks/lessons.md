@@ -1150,3 +1150,61 @@ was about (the target settling in front), never a retry timer.
 (`NonNullableMutableLiveDataDetector`) is a stale build cache, not a finding in the diff --
 `rm -rf app/build/intermediates/lint*` and rerun. It appeared only after merging `origin/main` into
 a worktree whose lint model had already been built.
+
+## Building the scripted device gate (`scripts/device-qa.sh`, 2026-09-29)
+
+**The obvious tool for device QA cannot test this app, and it fails silently.** Maestro — and any
+UiAutomator-based driver — connects a `UiAutomation` session, and Android suppresses every other
+accessibility service while one is connected unless the client passes
+`FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES`, which Maestro does not. Nudge IS an accessibility
+service, so a Maestro flow disables the feature it is testing: during a session `Bound services:{}`,
+YouTube opens instantly, `BlockEngine` logs nothing; the instant the session exits, the same launch
+is blocked for 5s. It presents as a flaky assertion, never as an error — which is why the harness the
+dev-agent brief had asked for since June was never built. **Any future on-device automation for this
+repo must not hold a driver session open.** A bare `uiautomator dump` is fine (short-lived; the
+service stays bound across repeated dumps).
+
+**Four device facts that cost a debugging round each, all now commented at the line that needs them:**
+
+- **A completed countdown grants passthrough, and the grant SURVIVES a force-stop.** Re-launching
+  logs `skip evaluation … reason=passthrough`. Only leaving to the launcher revokes it. Any test that
+  expects a block and does not first go Home is asserting on its predecessor's leftovers — and this
+  is what made the first `delay-block` case fail on a perfectly healthy build.
+- **`am force-stop dev.astraedus.nudge` leaves the accessibility service UNBOUND**, and Android does
+  not rebind it. Blocking stays dead until the grant is re-applied. Never force-stop Nudge in a test.
+- **`pm clear` deletes `enabled_accessibility_services`.** A `settings put` straight afterwards binds
+  the service and is then PRUNED again on the app's first launch — the write raced
+  `AccessibilityManagerService`'s installed-services refresh. Apply-then-verify-it-stuck, or every
+  later case fails for the wrong reason. (Observed: bound at t+2s, empty at t+11s with MainActivity
+  in front.)
+- **Debug logging is a DataStore preference that `pm clear` wipes.** On a release build `NudgeLogger`
+  emits nothing without it, so any log-based oracle goes silent.
+
+**A DECISION IS NOT A BLOCK.** `BlockEngine` logging `reason=delay_rule` only means the verdict was
+reached; the overlay launch can still be refused with `DROP_FOREGROUND_MOVED` afterwards, leaving the
+user in the app with a healthy-looking log. Assert the verdict AND that the overlay reached the
+screen. Conversely `dropped <= redeemed` is the WRONG invariant — a deferral is correctly discarded
+when the user genuinely leaves, so a test that presses Home ten times will always show more drops
+than redemptions. Gate on the user-visible fact, keep the counts as diagnostics.
+
+**Locate and tap from the SAME snapshot.** Waiting for text and then re-dumping inside the tap put
+two dumps ~2-3s apart, and against a 5-second overlay the target was routinely gone by the second
+one — "cannot tap 'I changed my mind': not on screen" on a screen where it had just been seen.
+
+**Two UI-automation traps on this app specifically:** a Compose `Switch` has no text node of its own,
+so no element selector can reach it (`rightOf` a label finds the InfoButton instead) — which is why
+the QA fixtures are IMPORTED from `.maestro/fixtures/rules.json` rather than built through the rule
+editor. And searching an app list for a full app name makes the search FIELD the first match for that
+name; type a prefix, and `hideKeyboard` first, because Gboard's suggestion strip sits over the
+result list and swallows the tap.
+
+**Product characteristic surfaced, not a regression:** a daily limit is enforced on RE-ENTRY, not
+mid-session, unless the rule also has a time-based auto-kick or the time-remaining overlay — the 30s
+foreground clock is gated on `needsForegroundTimeTick`. 150s sitting in Calculator on a plain
+1-minute limit produced exactly one evaluation, at t=0, `dailyUsageMs=93`.
+
+**Process:** never edit a shell script while a long run of it is in flight (bash reads scripts
+incrementally). And `/tmp` on this laptop is a 3.6G tmpfs other lanes fill: Maestro died with
+`java.io.IOException: No space left on device`, so the runner works under `~/.cache` and points the
+JVM's `java.io.tmpdir` there. Finally, `grep -c … || echo 0` prints TWO zeros (grep already prints 0
+and exits 1), and every downstream `((…))` then dies with `syntax error`.
