@@ -62,12 +62,19 @@ GH_REPO="${GH_REPO:-astraedus/nudge}"
 
 RUN_TS="$(date +%Y%m%d-%H%M%S)"
 ALBUM="${HOME}/Pictures/screenshots/nudge/qa-${RUN_TS}"
-WORK="$(mktemp -d "${TMPDIR:-/tmp}/nudge-qa-${RUN_TS}-XXXX")"
+# Work dir is deliberately NOT under /tmp. On this laptop /tmp is a 3.6G tmpfs that other
+# lanes fill with screenshot and build scratch, and Maestro died mid-run with
+# `java.io.IOException: No space left on device` at 265M free. ~/.cache is on the 229G
+# root filesystem, and Maestro's own JVM temp dir is pointed here too.
+mkdir -p "${HOME}/.cache/nudge-qa"
+WORK="$(mktemp -d "${HOME}/.cache/nudge-qa/run-${RUN_TS}-XXXX")"
 LOGCAT_FILE="${WORK}/logcat.txt"
 SAMPLER_FILE="${WORK}/load.txt"
+FIXTURE_DEVICE_PATH="/sdcard/Download/nudge-qa-rules.json"
 
 export PATH="${HOME}/.maestro/bin:${PATH}"
 export MAESTRO_CLI_NO_ANALYTICS=true
+export MAESTRO_OPTS="${MAESTRO_OPTS:-} -Djava.io.tmpdir=${WORK}"
 
 # ─── Case registry — order is the run order for `all` ──────────────────────────
 ALL_CASES=(
@@ -430,7 +437,16 @@ nudge_notif_records() { # prints "<count> <mUpdateTimeMs of id=1>"
 # CASES
 # ═══════════════════════════════════════════════════════════════════════════════
 
+push_fixture() {
+  adbs push "${REPO_ROOT}/.maestro/fixtures/rules.json" "$FIXTURE_DEVICE_PATH" >/dev/null 2>&1 ||
+    { fail "could not push the rule fixture to the device"; return 1; }
+  ash am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE \
+    -d "file://${FIXTURE_DEVICE_PATH}" >/dev/null 2>&1
+  info "fixture pushed: ${FIXTURE_DEVICE_PATH}"
+}
+
 case_setup() {
+  push_fixture || return 1
   info "pm clear — every case starts from a first-run install."
   ash pm clear "$APP_ID" >/dev/null 2>&1
   sleep 2
@@ -449,8 +465,26 @@ case_setup() {
   return 0
 }
 
+foreground_package() {
+  ash dumpsys activity activities 2>/dev/null | tr -d '\r' |
+    sed -n 's/.*mResumedActivity.*u0 \([^/]*\)\/.*/\1/p' | head -1
+}
+
 case_delay_block() {
-  run_flow .maestro/nudge-delay-block.yaml
+  run_flow .maestro/nudge-delay-block.yaml || return 1
+  # The flow proved the overlay came and went; this proves WHAT it let through. Asserted
+  # here rather than in the flow because every string in YouTube's own a11y tree belongs
+  # to a third party that ships a new build weekly, and a release gate must not fail
+  # because Google renamed a tab.
+  local fg
+  fg="$(foreground_package)"
+  info "foreground after the countdown: ${fg}"
+  CASE_NOTE="countdown completed, foreground=${fg}"
+  if [[ "$fg" != "$YOUTUBE_PKG" ]]; then
+    fail "the delay completed but ${YOUTUBE_PKG} is not in front (got '${fg}')"
+    return 1
+  fi
+  return 0
 }
 
 case_home_reopen() {
@@ -488,6 +522,15 @@ case_walkaway_count() {
 
   run_flow .maestro/nudge-walkaway-count.yaml || return 1
 
+  # Declining must LEAVE the app, not merely dismiss the overlay on top of it — #26 and
+  # the "'I changed my mind' can leave the user inside the blocked app" report.
+  local fg
+  fg="$(foreground_package)"
+  if [[ "$fg" != "$LAUNCHER_PKG" ]]; then
+    fail "after declining, the launcher is not in front (got '${fg}') — the decline did not leave the app"
+    return 1
+  fi
+
   launch_nudge_home
   after="$(read_blocked_counts)" || { fail "could not re-read the week summary"; return 1; }
   b_after="${after% *}"; w_after="${after#* }"
@@ -502,7 +545,18 @@ case_walkaway_count() {
 }
 
 case_daily_limit_refresh() {
-  run_flow .maestro/nudge-daily-limit-refresh.yaml -e LIMIT_SECS="${LIMIT_ACCRUE_SECS:-75}"
+  # There is no dwell to arrange: the accessibility service runs a 30-second
+  # foreground-time clock whose `onTimeLimitExceeded` launches the overlay, so the flow
+  # sits in Calculator and waits for the REAL trigger rather than provoking a fake one.
+  run_flow .maestro/nudge-daily-limit-refresh.yaml || return 1
+  local fg
+  fg="$(foreground_package)"
+  CASE_NOTE="limit raised 1m->2h, cold launch clean, foreground=${fg}"
+  if [[ "$fg" != "$LIMIT_PKG" ]]; then
+    fail "after raising the limit, ${LIMIT_PKG} is not in front (got '${fg}') — something re-blocked it"
+    return 1
+  fi
+  return 0
 }
 
 # ── notif-idle (#63): the ongoing notification must not be re-posted on a timer ──
@@ -530,10 +584,10 @@ case_notif_idle() {
   # accessibility grant changes the copy, so exactly ONE re-post is owed; restoring it
   # owes exactly one more. A notification that never updates is as broken as one that
   # updates every 90 seconds.
-  local saved="$SAVED_A11Y_SERVICES" mid mu mc back bu
+  local saved="$SAVED_A11Y_SERVICES" mid mu back bu
   ash settings put secure enabled_accessibility_services "" >/dev/null 2>&1
   sleep 10
-  mid="$(nudge_notif_records)"; mc="${mid% *}"; mu="${mid#* }"
+  mid="$(nudge_notif_records)"; mu="${mid#* }"
   if [[ "$mu" == "$u1" ]]; then
     fail "the ongoing notification did NOT update after the accessibility grant was revoked — it is claiming Nudge is active while it is not"
     rc=1
