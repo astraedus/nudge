@@ -1335,6 +1335,24 @@ case_refusal_alert() {
   ash appops set "$APP_ID" SYSTEM_ALERT_WINDOW deny >/dev/null 2>&1
   ash am force-stop "$APP_ID" >/dev/null 2>&1
   sleep 2
+  # RE-GRANT AFTER THE FORCE-STOP. `am force-stop` does not merely unbind the accessibility
+  # service — it clears our component out of `enabled_accessibility_services` entirely, the same
+  # pruning `pm clear` triggers. So the snapshot arrives as `granted=false connected=false`, the
+  # watchdog correctly reports ACCESSIBILITY_DISABLED (which outranks a refused service start),
+  # and the case never reaches the state #62 is about. Measured twice:
+  #   cycle 1: granted=false … reported=ACCESSIBILITY_DISABLED (service start REFUSED by platform)
+  #   cycle 2: wasDegraded=true … reported=none   (cycle 1 had already spent the 12h cooldown)
+  # docs/architecture/service-lifecycle-and-watchdog.md's recipe omits this step; on this device
+  # it is required. What #62 needs is granted+connected TRUE with monitorRunning FALSE — i.e. the
+  # service alive but its foreground-service start refused, which is the configuration the whole
+  # fault describes. Re-granting cannot accidentally heal it: `onServiceConnected`'s own start
+  # attempt is refused by the same denied overlay permission, so `isRunning` stays false.
+  ensure_grants >/dev/null 2>&1 || {
+    fail "PRECONDITION UNMET: could not restore the accessibility grant after the force-stop. Harness problem, not an app problem."
+    ash appops set "$APP_ID" SYSTEM_ALERT_WINDOW allow >/dev/null 2>&1
+    return 1
+  }
+  info "grant restored after the force-stop; snapshot should now read granted=true connected=true monitorRunning=false"
   # --ez reset true clears the degraded flag and the 12-hour alert cooldown, which is
   # what makes this case re-runnable instead of testable twice a day.
   first="$(ash am broadcast -a "$WATCHDOG_ACTION" -n "$WATCHDOG_RECEIVER" --ez reset true 2>&1 | tr -d '\r')"
