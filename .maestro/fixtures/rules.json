@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "exportedAt": 1759000000000,
+  "rules": [
+    {
+      "packageName": "com.google.android.youtube",
+      "groupName": null,
+      "mode": "DELAY",
+      "delaySeconds": 5,
+      "dailyLimitMinutes": null,
+      "enabled": true,
+      "scheduleDays": null,
+      "scheduleStartMinute": null,
+      "scheduleEndMinute": null,
+      "inAppFeatures": null,
+      "grayscale": false,
+      "showCounter": false,
+      "autoKickAfter": null,
+      "showTimeRemaining": false,
+      "autoKickCooldownSeconds": 60,
+      "webDomains": null,
+      "autoKickAfterMinutes": null,
+      "webBlockMode": null,
+      "tabVanish": false,
+      "followingSteer": false
+    },
+    {
+      "packageName": "com.google.android.calculator",
+      "groupName": null,
+      "mode": "NONE",
+      "delaySeconds": 15,
+      "dailyLimitMinutes": 1,
+      "enabled": true,
+      "scheduleDays": null,
+      "scheduleStartMinute": null,
+      "scheduleEndMinute": null,
+      "inAppFeatures": null,
+      "grayscale": false,
+      "showCounter": false,
+      "autoKickAfter": null,
+      "showTimeRemaining": false,
+      "autoKickCooldownSeconds": 60,
+      "webDomains": null,
+      "autoKickAfterMinutes": null,
+      "webBlockMode": null,
+      "tabVanish": false,
+      "followingSteer": false
+    }
+  ],
+  "groups": [],
+  "history": []
+}
