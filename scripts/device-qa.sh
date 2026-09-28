@@ -43,6 +43,8 @@
 #   ADB_SERIAL=192.168.1.68:5555   bench Pixel 3 (auto-reconnects)
 #   NOTIF_IDLE_SECS=300            idle window for the notif-idle case (#63)
 #   HOME_REOPEN_TRIALS=5           repeats inside the home-reopen case (#58)
+#   LIMIT_WAIT_SECS=150            how long to wait for the 1-minute daily limit to fire
+#   QA_LOCK_OWNER=<name>           reuse a Pixel lock the caller already holds
 #   EXPECT_VERSION_CODE=<n>        default: parsed from app/build.gradle.kts
 #   SKIP_VERSION_CHECK=1           accept whatever versionCode is installed
 #   KEEP_SCREENSHOTS_IN_REPO=1     don't move Maestro's PNGs out of the repo root
@@ -560,17 +562,27 @@ ui_wait_text() { # text timeout_secs
   return 1
 }
 
-ui_tap_text() { # text — taps the centre of the matching node
-  local needle="$1" xy
-  ui_snapshot
-  xy="$(python3 "${WORK}/locate.py" "$UI_XML" "$needle")"
-  if [[ -z "$xy" ]]; then
-    fail "cannot tap '${needle}': not on screen"
-    return 1
-  fi
-  # shellcheck disable=SC2086
-  ash input tap $xy >/dev/null 2>&1
-  sleep 1
+ui_tap_text() { # text [timeout_secs] — locate and tap in ONE pass, retrying until timeout
+  #
+  # Locating and tapping must share ONE snapshot. The first version waited for the text with
+  # `ui_wait_text` and then re-dumped inside the tap — two dumps, ~2-3s apart — and against a
+  # 5-second delay overlay the target was routinely gone by the second one ("cannot tap 'I
+  # changed my mind': not on screen" on a screen where it had just been seen). Tapping the
+  # coordinates from the snapshot that found the node removes that race.
+  local needle="$1" timeout="${2:-15}" xy i
+  for ((i = 0; i < timeout; i++)); do
+    ui_snapshot
+    xy="$(python3 "${WORK}/locate.py" "$UI_XML" "$needle")"
+    if [[ -n "$xy" ]]; then
+      # shellcheck disable=SC2086
+      ash input tap $xy >/dev/null 2>&1
+      sleep 1
+      return 0
+    fi
+    sleep 1
+  done
+  fail "cannot tap '${needle}': not on screen within ${timeout}s"
+  return 1
 }
 
 go_home() {
@@ -879,12 +891,15 @@ case_walkaway_count() {
     go_home
     wait_fg "$LAUNCHER_PKG" 10 || { fail "decline ${i}: Home did not reach the launcher"; return 1; }
     ash monkey -p "$YOUTUBE_PKG" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
-    if ! ui_wait_text "I changed my mind" 20; then
+    # Tap FIRST, screenshot after. The overlay only lives for the 5s countdown, so spending a
+    # `screencap` on the critical path is what loses the race — and the tap succeeding is
+    # itself proof the overlay was there.
+    if ! ui_tap_text "I changed my mind" 20; then
       fail "decline ${i}: no delay overlay to decline"
+      shot "3${i}-walkaway-missing"
       return 1
     fi
-    shot "3${i}-walkaway-block"
-    ui_tap_text "I changed my mind" || return 1
+    shot "3${i}-walkaway-declined"
     sleep 2
     # Declining must LEAVE the app, not just dismiss the overlay on top of it — the
     # "'I changed my mind' can leave the user inside the blocked app" report.
@@ -999,10 +1014,25 @@ case_notif_idle() {
   local r0 r1 c0 u0 c1 u1
   r0="$(nudge_notif_records)"; c0="${r0% *}"; u0="${r0#* }"
   [[ "$u0" == "0" ]] && { fail "no nudge notification record found (id=1, channel=nudge_monitor)"; return 1; }
-  info "baseline: records=${c0} mUpdateTimeMs=${u0}; sleeping ${NOTIF_IDLE_SECS}s with the screen off"
+  info "baseline: records=${c0} mUpdateTimeMs=${u0}; idling ${NOTIF_IDLE_SECS}s with the screen off"
+  # `svc power stayon true` — which this runner sets so the other cases can drive the UI —
+  # keeps the screen awake while charging and would win against KEYCODE_SLEEP, leaving this
+  # case measuring an AWAKE phone and quietly proving nothing. Drop it for the idle window,
+  # verify the screen actually went off, and put it back afterwards.
+  ash svc power stayon false >/dev/null 2>&1
+  sleep 1
   ash input keyevent KEYCODE_SLEEP >/dev/null 2>&1
+  sleep 3
+  local wake
+  wake="$(ash dumpsys power 2>/dev/null | tr -d '\r' | sed -n 's/.*mWakefulness=\([A-Za-z]*\).*/\1/p' | head -1)"
+  if [[ "$wake" == "Awake" ]]; then
+    warn "the screen did not go off (mWakefulness=${wake}); #63 is about an IDLE phone, so this reading is weaker than it looks"
+  else
+    info "screen off (mWakefulness=${wake})"
+  fi
   sleep "$NOTIF_IDLE_SECS"
   "${HOME}/bin/astra-pixel-unlock.sh" >/dev/null 2>&1 || true
+  ash svc power stayon true >/dev/null 2>&1
   r1="$(nudge_notif_records)"; c1="${r1% *}"; u1="${r1#* }"
   info "after idle: records=${c1} mUpdateTimeMs=${u1}"
   if [[ "$u1" != "$u0" ]]; then
@@ -1018,7 +1048,9 @@ case_notif_idle() {
   # accessibility grant changes the copy, so exactly ONE re-post is owed; restoring it
   # owes exactly one more. A notification that never updates is as broken as one that
   # updates every 90 seconds.
-  local saved="$SAVED_A11Y_SERVICES" mid mu back bu
+  # ONE post on the change, then quiet again — that pair is the invariant, and checking only
+  # the first half would pass a build that re-posts on a timer the moment anything happens.
+  local saved="$SAVED_A11Y_SERVICES" mid mu settle su back bu
   ash settings put secure enabled_accessibility_services "" >/dev/null 2>&1
   sleep 10
   mid="$(nudge_notif_records)"; mu="${mid#* }"
@@ -1027,6 +1059,15 @@ case_notif_idle() {
     rc=1
   else
     info "grant revoked -> notification updated (${u1} -> ${mu}), as designed"
+    sleep 12
+    settle="$(nudge_notif_records)"; su="${settle#* }"
+    if [[ "$su" != "$mu" ]]; then
+      fail "the notification kept re-posting after the state settled (${mu} -> ${su}) — that is #63"
+      rc=1
+    else
+      info "and then went quiet, as designed"
+    fi
+    mu="$su"
   fi
   ash settings put secure enabled_accessibility_services "$saved" >/dev/null 2>&1
   ash settings put secure accessibility_enabled 1 >/dev/null 2>&1
@@ -1039,7 +1080,7 @@ case_notif_idle() {
     info "grant restored -> notification updated (${mu} -> ${bu})"
   fi
   ensure_grants >/dev/null 2>&1 || warn "accessibility service did not rebind after the toggle"
-  CASE_NOTE="idle ${NOTIF_IDLE_SECS}s: mUpdateTimeMs unchanged; change-driven re-post seen twice"
+  CASE_NOTE="idle ${NOTIF_IDLE_SECS}s: mUpdateTimeMs unchanged; then posted on grant revoke, went quiet, posted on restore"
   return $rc
 }
 
