@@ -7,6 +7,16 @@
 # they are NOT assertable; the app label and that button are.
 appId: com.google.android.youtube
 ---
+# START FROM HOME, always. A completed countdown GRANTS PASSTHROUGH for the app, and that
+# grant survives a force-stop-and-relaunch — the service logs
+# `skip evaluation package=com.google.android.youtube reason=passthrough` and the app opens
+# free. Only leaving to the launcher revokes it (that is issue #58's whole subject). So a
+# case that expects a block and does not first go Home is asserting on the previous case's
+# leftovers, and will fail for a reason that has nothing to do with the build.
+- pressKey: Home
+- extendedWaitUntil:
+    visible: "Voice search"
+    timeout: 15000
 - launchApp:
     appId: "com.google.android.youtube"
     stopApp: true

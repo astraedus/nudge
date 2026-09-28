@@ -15,6 +15,12 @@
 # (HomeViewModel's KDoc — the raw `wasBlocked` count used to double-count a walk-away).
 appId: com.google.android.youtube
 ---
+# Home first: a live passthrough grant from an earlier completed countdown would let the
+# first launch through unblocked, and this case counts BLOCKS.
+- pressKey: Home
+- extendedWaitUntil:
+    visible: "Voice search"
+    timeout: 15000
 - repeat:
     times: 3
     commands:

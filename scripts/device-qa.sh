@@ -428,8 +428,14 @@ ui_dump() { # prints the uiautomator XML of whatever is on screen
   ash cat /sdcard/nudge-qa-dump.xml 2>/dev/null | tr -d '\r'
 }
 
+# Opens Nudge's dashboard. Deliberately does NOT force-stop it first.
+#
+# `am force-stop dev.astraedus.nudge` leaves the accessibility service UNBOUND and Android
+# does not rebind it — measured on the bench: after a force-stop, a YouTube launch produced
+# no evaluation at all and `Bound services:{}` stayed empty until the grant was re-applied.
+# So a force-stop here would silently disarm every later case. The dashboard's ViewModels
+# re-collect on resume, so a plain launch already shows current data.
 launch_nudge_home() {
-  ash am force-stop "$APP_ID" >/dev/null 2>&1
   ash monkey -p "$APP_ID" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
   sleep 3
 }

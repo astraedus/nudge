@@ -13,6 +13,13 @@
 # code path (and an easier one).
 appId: com.google.android.youtube
 ---
+# Start from the launcher so trial 1 begins from the same state as trials 2..N: a completed
+# countdown leaves a PASSTHROUGH grant that survives a force-stop, and only leaving to Home
+# revokes it.
+- pressKey: Home
+- extendedWaitUntil:
+    visible: "Voice search"
+    timeout: 15000
 - repeat:
     times: ${TRIALS}
     commands:

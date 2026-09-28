@@ -34,11 +34,26 @@ appId: com.google.android.calculator
 # Chip taps only. The "Daily Time Limit" switch is already ON (the fixture set a limit),
 # so its chips are on screen and no Compose `Switch` has to be reached — which is the
 # whole reason the fixture carries the limit instead of the flow enabling it.
+# `stopApp: false` is load-bearing: `am force-stop dev.astraedus.nudge` leaves the
+# accessibility service UNBOUND, and Android does not rebind it — so a force-stop here
+# would disarm the blocking this case is about to re-test (and every case after it).
 - launchApp:
     appId: "dev.astraedus.nudge"
-    stopApp: true
+    stopApp: false
+# Nudge is a single-activity Compose app, so resuming it lands on whatever screen it was
+# last showing — which is NOT something this case may assume (a step that depends on where
+# its predecessor stopped is a latent order dependency). Every sub-screen's top bar carries
+# a "Back" control and the dashboard carries none, so up to four optional Back taps pop any
+# stack to the dashboard and are a no-op once already there. Bounded on purpose: a
+# `while notVisible` loop here would spin forever the day Back exits the app instead.
+- repeat:
+    times: 4
+    commands:
+      - tapOn:
+          text: "Back"
+          optional: true
 - extendedWaitUntil:
-    visible: "Screen Time"
+    visible: "Nudge"
     timeout: 20000
 - scrollUntilVisible:
     element:
