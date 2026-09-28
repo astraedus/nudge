@@ -279,3 +279,46 @@ Device QA of the screentime fix on the Pixel 3 (which has "stay awake while char
   on the Shorts shelf INSIDE Subscriptions, which scrolls and so cannot be covered the same way. Also worth
   surfacing as a tip rather than code: turning off YouTube watch history blanks the Home feed entirely
   (Google-documented), which is a stronger intervention than any steer we can perform.
+
+## [ ] A daily limit is enforced on RE-ENTRY, not mid-session (measured 2026-09-29, building the scripted device gate)
+
+**Product decision owed**, not a bug report: either route mid-session enforcement through the tick
+path that already exists, or document re-entry as the intended behaviour and say so in the rule
+editor's Daily Time Limit copy.
+
+**What was measured.** With Calculator on a plain 1-minute daily limit (`mode=NONE`,
+`showTimeRemaining=false`, no time-based auto-kick), **150 seconds of continuous foreground time
+produced exactly ONE evaluation** — at t=0, `dailyUsageMs=93`. The budget was never re-read, so the
+app was never blocked. Leaving and coming back trips it immediately.
+
+**Why.** The 30-second foreground clock that would notice a budget running out mid-session is gated
+on `CounterCacheRefresher.needsForegroundTimeTick`:
+
+```kotlin
+autoKickAfterMinutes != null || (showTimeRemaining && dailyLimitMinutes != null)
+```
+
+A daily limit alone satisfies neither arm, so `updateForegroundTimeTicker` stops the clock with
+`no_clock_config` and nothing re-evaluates until the next `TYPE_WINDOW_STATE_CHANGED`. The gate reads
+as deliberate — its KDoc is about the time-remaining overlay and the time-based auto-kick, the two
+features that *display* a running number — so the daily limit may simply never have been considered a
+consumer of that clock.
+
+**User-visible consequence.** Someone who sets "30 minutes of Instagram a day" and turns nothing else
+on can sit in Instagram past the 30 minutes indefinitely, as long as they never switch away. The
+budget is enforced the next time they open the app. That is a defensible design (the block lands when
+they reach for the app, which is when a nudge is useful) but it is not what the control's wording
+implies.
+
+**If mid-session enforcement is wanted**, the cheap version is adding `dailyLimitMinutes != null` as a
+third arm of `needsForegroundTimeTick` — `tickForegroundTime` already refreshes the daily-limit block,
+so the plumbing exists. Cost: a 30-second clock now runs for every rule that carries a limit, on a
+3GB Pixel 3, which is exactly the trade `FOREGROUND_TICK_MS`'s comment is weighing. Owed with it: a
+unit test at the `needsForegroundTimeTick` layer (pure, L1) pinning which rule shapes clock, because
+that predicate is the whole behaviour.
+
+**Not a gate concern either way.** `scripts/device-qa.sh`'s `daily-limit-refresh` case deliberately
+burns the budget, leaves, and re-enters — that is
+[#50](https://github.com/astraedus/nudge/issues/50)'s own scenario (spend, leave, come back, meet the
+stale screen), so the case tests the stale-overlay fix and not enforcement timing. If the timing
+changes, that case keeps passing unchanged.

@@ -632,22 +632,23 @@ nudge_route_home() {
   ash am start -n "${APP_ID}/${NAMESPACE}.MainActivity" \
     --es nudge.nav_route home >/dev/null 2>&1
   sleep 3
-  # The deep link is not always enough: a resumed MainActivity that is already on `home`'s
-  # back stack can consume the intent without popping the Compose stack, leaving a sub-screen
-  # in front. Every sub-screen's top bar carries a "Back" control and the dashboard carries
-  # none, so up to four optional Back presses pop any stack and are a no-op once there.
-  # Bounded deliberately: a `while not on dashboard` loop would spin forever the day Back
-  # exits the app instead.
+  # The deep link is not always enough: a resumed MainActivity already on `home`'s back stack
+  # can consume the intent without popping the Compose stack, leaving a sub-screen in front.
+  #
+  # The predicate is "IS A BACK CONTROL PRESENT", not "can I see some dashboard content". Every
+  # sub-screen's TopAppBar has `navigationIcon = IconButton { Icon(ArrowBack, "Back") }`; the
+  # dashboard's (HomeScreen.kt) has no navigationIcon at all. Probing for dashboard CONTENT
+  # instead is the bug this comment exists to prevent: "Quick Actions" and "Manage Apps" are
+  # both BELOW THE FOLD, so on a freshly-cleared dashboard neither was found, four Back presses
+  # fired, and the app was closed — which failed walkaway-count and daily-limit-refresh in the
+  # first full run with "could not read the week summary".
   local i
   for ((i = 0; i < 4; i++)); do
     ui_snapshot
-    ui_has "Quick Actions" && return 0
-    ui_has "Manage Apps" && return 0
+    ui_has "Back" || return 0     # no Back control => we are on the dashboard
     ash input keyevent KEYCODE_BACK >/dev/null 2>&1
     sleep 1
   done
-  # Not fatal: the dashboard's own content may simply be scrolled out of view, and callers
-  # scroll for what they need.
   return 0
 }
 
@@ -667,7 +668,12 @@ log_count_re() { # same, for a pattern that needs a regex
   printf '%s' "${n:-0}"
 }
 
-# Opens Nudge's dashboard. Deliberately does NOT force-stop it first.
+# Brings Nudge to the foreground, wherever it was. The lighter sibling of `nudge_route_home`,
+# and NOT a duplicate of it: `refusal-alert` only needs MainActivity to become VISIBLE (that
+# visibility is itself the legal foreground moment that lets the service restart), not to be on
+# any particular screen — so it must not pay for the route deep-link and the Back-press probing.
+#
+# Deliberately does NOT force-stop Nudge first.
 #
 # `am force-stop dev.astraedus.nudge` leaves the accessibility service UNBOUND and Android
 # does not rebind it — measured on the bench: after a force-stop, a YouTube launch produced
@@ -957,9 +963,12 @@ case_walkaway_count() {
 # time-remaining overlay, nothing re-evaluates until the next window-state event. Measured: 150s
 # sitting in Calculator produced exactly ONE evaluation, at t=0, `dailyUsageMs=93`.
 #
-# That is also precisely issue #50's scenario — the user spends the budget, leaves, comes back,
-# and meets the limit screen — so the case burns the budget, leaves, and re-enters. No optional
-# feature has to be switched on for it to work.
+# THE PRECONDITION IS EXPLICIT AND DELIBERATE: this case trips the limit by LEAVING AND
+# RE-ENTERING, never by waiting in the app. That keeps it a test of
+# [#50](https://github.com/astraedus/nudge/issues/50) — the stale "Daily limit reached" overlay
+# surviving a raised limit — and NOT a test of enforcement timing, which is an open product
+# decision (docs/BACKLOG.md, 2026-09-29). If mid-session enforcement is added later, this case
+# keeps passing unchanged, which is the point of drawing the line here.
 case_daily_limit_refresh() {
   local rc=0
   go_home
@@ -1096,16 +1105,83 @@ restore_daily_limit() {
   info "Calculator daily limit restored to 1m."
 }
 
+# ── notif-idle (#63): the ongoing notification is posted on CHANGE, never on a timer ──
+#
+# Two halves, and the ORDER matters.
+#
+# The change-driven half runs FIRST, while the process is certainly alive and the device awake.
+# Running it after the idle window (the first arrangement) failed both its assertions, and not
+# because the build was wrong: `NudgeMonitorService` re-evaluates health on EVENTS — an unbind
+# fires `AccessibilityConnectionSignal` from the accessibility service's own `onDestroy`, a
+# rebind from `onServiceConnected` — with `HEALTH_POLL_INTERVAL_MS` (FIVE MINUTES) as the only
+# backstop. Coming out of 300s of doze, the monitor process may legitimately be gone, which is
+# exactly what #63's battery fix wants; there is then nobody left to re-post, and a 10-second
+# expectation is measuring the harness, not the app. So: prove the posting-on-change behaviour
+# while it is observable, then prove the silence separately.
+#
+# A logcat capture is kept either way, because "did not re-post" and "was never asked to
+# re-post" are indistinguishable from `dumpsys notification` alone.
 case_notif_idle() {
-  local rc=0
-  local r0 r1 c0 u0 c1 u1
+  local rc=0 r0 u0 c0
+  start_logcat
   r0="$(nudge_notif_records)"; c0="${r0% *}"; u0="${r0#* }"
   [[ "$u0" == "0" ]] && { fail "no nudge notification record found (id=1, channel=nudge_monitor)"; return 1; }
-  info "baseline: records=${c0} mUpdateTimeMs=${u0}; idling ${NOTIF_IDLE_SECS}s with the screen off"
-  # `svc power stayon true` — which this runner sets so the other cases can drive the UI —
-  # keeps the screen awake while charging and would win against KEYCODE_SLEEP, leaving this
-  # case measuring an AWAKE phone and quietly proving nothing. Drop it for the idle window,
-  # verify the screen actually went off, and put it back afterwards.
+  info "baseline: records=${c0} mUpdateTimeMs=${u0}"
+
+  # ── Half 1: it MUST post when the state changes ──
+  # Revoking the accessibility grant makes the notification's claim ("Nudge is active") false,
+  # so exactly one re-post is owed. A notification that never updates is as broken as one that
+  # updates every 90 seconds — it is the bug #23 reported from the other side, a green tick over
+  # dead enforcement.
+  local saved="$SAVED_A11Y_SERVICES" mu su bu
+  ash settings put secure enabled_accessibility_services "" >/dev/null 2>&1
+  mu="$(wait_notif_change "$u0" 45)"
+  if [[ -z "$mu" ]]; then
+    fail "the ongoing notification did NOT update after the accessibility grant was revoked — it is claiming Nudge is active while it is not"
+    grep -E 'NudgeMonitorService|StatusNotificationGate|AccessibilityConnection' "$LOGCAT_FILE" 2>/dev/null | tail -5 >&2
+    rc=1
+    mu="$u0"
+  else
+    info "grant revoked -> notification updated (${u0} -> ${mu}), as designed"
+    # ...and then stops. One post per change is the whole invariant; checking only the first
+    # half would pass a build that re-posts on a timer the moment anything happens.
+    sleep 12
+    su="$(nudge_notif_records)"; su="${su#* }"
+    if [[ "$su" != "$mu" ]]; then
+      fail "the notification kept re-posting after the state settled (${mu} -> ${su}) — that is #63"
+      rc=1
+    else
+      info "and then went quiet, as designed"
+    fi
+    mu="$su"
+  fi
+
+  # Restore the grant — one more owed post — guarding against a literal "null", which is what
+  # `settings get` prints for an unset key and what the exit trap already refuses to write back.
+  if [[ -n "$saved" && "$saved" != "null" ]]; then
+    ash settings put secure enabled_accessibility_services "$saved" >/dev/null 2>&1
+  else
+    ash settings put secure enabled_accessibility_services "$A11Y_COMPONENT" >/dev/null 2>&1
+  fi
+  ash settings put secure accessibility_enabled 1 >/dev/null 2>&1
+  bu="$(wait_notif_change "$mu" 45)"
+  if [[ -z "$bu" ]]; then
+    fail "the ongoing notification did NOT update after the grant was restored"
+    rc=1
+    bu="$mu"
+  else
+    info "grant restored -> notification updated (${mu} -> ${bu})"
+  fi
+  ensure_grants >/dev/null 2>&1 || warn "accessibility service did not rebind after the toggle"
+
+  # ── Half 2: it must NOT post while nothing changes. This is the #63 gate. ──
+  # `svc power stayon true` — which this runner sets so the other cases can drive the UI — keeps
+  # the screen awake while charging and would win against KEYCODE_SLEEP, leaving this half
+  # measuring an AWAKE phone and quietly proving nothing.
+  local before_idle
+  before_idle="$(nudge_notif_records)"
+  local ci="${before_idle% *}" ui="${before_idle#* }"
+  info "idling ${NOTIF_IDLE_SECS}s with the screen off (from mUpdateTimeMs=${ui})"
   ash svc power stayon false >/dev/null 2>&1
   sleep 1
   ash input keyevent KEYCODE_SLEEP >/dev/null 2>&1
@@ -1120,55 +1196,38 @@ case_notif_idle() {
   sleep "$NOTIF_IDLE_SECS"
   "${HOME}/bin/astra-pixel-unlock.sh" >/dev/null 2>&1 || true
   ash svc power stayon true >/dev/null 2>&1
-  r1="$(nudge_notif_records)"; c1="${r1% *}"; u1="${r1#* }"
-  info "after idle: records=${c1} mUpdateTimeMs=${u1}"
-  if [[ "$u1" != "$u0" ]]; then
-    fail "the ongoing notification was re-posted while idle (mUpdateTimeMs ${u0} -> ${u1}) — #63 regressed"
+
+  local after_idle cf uf
+  after_idle="$(nudge_notif_records)"; cf="${after_idle% *}"; uf="${after_idle#* }"
+  info "after idle: records=${cf} mUpdateTimeMs=${uf}"
+  if [[ "$uf" != "$ui" ]]; then
+    fail "the ongoing notification was re-posted while idle (mUpdateTimeMs ${ui} -> ${uf}) — #63 regressed"
     rc=1
   fi
-  if [[ "$c1" != "$c0" ]]; then
-    fail "nudge notification count changed while idle (${c0} -> ${c1})"
+  if [[ "$cf" != "$ci" ]]; then
+    fail "nudge notification count changed while idle (${ci} -> ${cf})"
     rc=1
   fi
 
-  # The other half of #63: posting on CHANGE must still happen. Revoking the
-  # accessibility grant changes the copy, so exactly ONE re-post is owed; restoring it
-  # owes exactly one more. A notification that never updates is as broken as one that
-  # updates every 90 seconds.
-  # ONE post on the change, then quiet again — that pair is the invariant, and checking only
-  # the first half would pass a build that re-posts on a timer the moment anything happens.
-  local saved="$SAVED_A11Y_SERVICES" mid mu settle su back bu
-  ash settings put secure enabled_accessibility_services "" >/dev/null 2>&1
-  sleep 10
-  mid="$(nudge_notif_records)"; mu="${mid#* }"
-  if [[ "$mu" == "$u1" ]]; then
-    fail "the ongoing notification did NOT update after the accessibility grant was revoked — it is claiming Nudge is active while it is not"
-    rc=1
-  else
-    info "grant revoked -> notification updated (${u1} -> ${mu}), as designed"
-    sleep 12
-    settle="$(nudge_notif_records)"; su="${settle#* }"
-    if [[ "$su" != "$mu" ]]; then
-      fail "the notification kept re-posting after the state settled (${mu} -> ${su}) — that is #63"
-      rc=1
-    else
-      info "and then went quiet, as designed"
-    fi
-    mu="$su"
-  fi
-  ash settings put secure enabled_accessibility_services "$saved" >/dev/null 2>&1
-  ash settings put secure accessibility_enabled 1 >/dev/null 2>&1
-  sleep 10
-  back="$(nudge_notif_records)"; bu="${back#* }"
-  if [[ "$bu" == "$mu" ]]; then
-    fail "the ongoing notification did NOT update after the grant was restored"
-    rc=1
-  else
-    info "grant restored -> notification updated (${mu} -> ${bu})"
-  fi
-  ensure_grants >/dev/null 2>&1 || warn "accessibility service did not rebind after the toggle"
-  CASE_NOTE="idle ${NOTIF_IDLE_SECS}s: mUpdateTimeMs unchanged; then posted on grant revoke, went quiet, posted on restore"
+  stop_logcat
+  cp -f "$LOGCAT_FILE" "${ALBUM}/logcat-notif-idle.txt" 2>/dev/null || true
+  CASE_NOTE="posted on grant revoke, went quiet, posted on restore; then ${NOTIF_IDLE_SECS}s idle with mUpdateTimeMs unchanged"
   return $rc
+}
+
+# Polls for the ongoing notification's mUpdateTimeMs to move off `$1`, up to `$2` seconds.
+# Prints the new value, or nothing if it never moved.
+wait_notif_change() { # previous_update_ms timeout_secs
+  local prev="$1" timeout="${2:-45}" i now
+  for ((i = 0; i < timeout; i += 3)); do
+    now="$(nudge_notif_records)"; now="${now#* }"
+    if [[ "$now" != "$prev" && "$now" != "0" ]]; then
+      printf '%s' "$now"
+      return 0
+    fi
+    sleep 3
+  done
+  return 1
 }
 
 CRASH_BASELINE=""
