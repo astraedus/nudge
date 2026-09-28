@@ -243,6 +243,36 @@ a11y_is_bound() {
     tr -d '\r' | grep -A3 'Bound services' | grep 'NudgeAccessibilityService' >/dev/null
 }
 
+# Turns the accessibility grant OFF, and PROVES it went off. Returns 1 if it could not.
+#
+# `ash settings put secure enabled_accessibility_services ""` DOES NOT WORK and does not say so
+# usefully: `adb shell` joins argv with spaces without re-quoting, so the empty token vanishes,
+# `settings` receives three arguments and answers `Bad arguments` on stderr with exit 255 — and
+# the key is left untouched. Measured. The value has to be quoted for the DEVICE's shell, i.e.
+# passed as ONE string.
+#
+# This cost two false failures: `notif-idle` reported "the ongoing notification did NOT update
+# after the accessibility grant was revoked — it is claiming Nudge is active while it is not",
+# which reads exactly like issue #23, on a build where the grant had never been revoked at all
+# (the logcat capture showed the service still logging happily throughout). Hence the
+# verification: A FAULT-INJECTION TEST MUST CONFIRM THE FAULT TOOK EFFECT BEFORE ASSERTING ON
+# THE REACTION, or it invents product bugs. "Could not inject the fault" and "the app ignored
+# the fault" must never be reported by the same message.
+revoke_a11y() {
+  local out i
+  out="$(ash "settings put secure enabled_accessibility_services ''" 2>&1)"
+  if [[ -n "$out" ]]; then
+    fail "could not clear enabled_accessibility_services: ${out}"
+    return 1
+  fi
+  for ((i = 0; i < 10; i++)); do
+    a11y_is_bound || return 0
+    sleep 1
+  done
+  fail "FAULT NOT INJECTED: the accessibility service is still bound after clearing the setting — this is a harness problem, NOT an app problem"
+  return 1
+}
+
 apply_grants() {
   ash settings put secure enabled_accessibility_services "$A11Y_COMPONENT" >/dev/null 2>&1
   ash settings put secure accessibility_enabled 1 >/dev/null 2>&1
@@ -1134,7 +1164,11 @@ case_notif_idle() {
   # updates every 90 seconds — it is the bug #23 reported from the other side, a green tick over
   # dead enforcement.
   local saved="$SAVED_A11Y_SERVICES" mu su bu
-  ash settings put secure enabled_accessibility_services "" >/dev/null 2>&1
+  if ! revoke_a11y; then
+    stop_logcat
+    return 1
+  fi
+  info "accessibility grant revoked and the service is confirmed UNBOUND"
   mu="$(wait_notif_change "$u0" 45)"
   if [[ -z "$mu" ]]; then
     fail "the ongoing notification did NOT update after the accessibility grant was revoked — it is claiming Nudge is active while it is not"

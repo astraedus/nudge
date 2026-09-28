@@ -1208,3 +1208,26 @@ incrementally). And `/tmp` on this laptop is a 3.6G tmpfs other lanes fill: Maes
 `java.io.IOException: No space left on device`, so the runner works under `~/.cache` and points the
 JVM's `java.io.tmpdir` there. Finally, `grep -c … || echo 0` prints TWO zeros (grep already prints 0
 and exits 1), and every downstream `((…))` then dies with `syntax error`.
+
+**A fault-injection test must CONFIRM the fault took effect before asserting on the reaction — or
+it invents product bugs.** `notif-idle` twice reported *"the ongoing notification did NOT update
+after the accessibility grant was revoked — it is claiming Nudge is active while it is not"*, which
+reads exactly like issue #23, on a build where **the grant had never been revoked at all**. Cause:
+`adb shell settings put secure enabled_accessibility_services ""` does not work. `adb shell` joins
+argv with spaces without re-quoting, so the empty token vanishes, `settings` receives three
+arguments and answers `Bad arguments` on stderr with exit 255, and the key is left untouched. The
+value has to be quoted for the DEVICE's shell — passed as ONE string:
+`adb shell "settings put secure enabled_accessibility_services ''"`. Verified: form A leaves
+`Bound services` populated, form B empties it.
+
+Two compounding mistakes made it silent: the harness sent the command as `>/dev/null 2>&1`, discarding
+both `Bad arguments` and exit 255; and it then asserted on the app's reaction without checking the
+precondition. **In a test harness, never discard the exit status of a state-changing command, and
+never let "could not inject the fault" and "the app ignored the fault" share one error message.**
+`revoke_a11y` now polls `Bound services` until the service is actually gone and fails with
+`FAULT NOT INJECTED … this is a harness problem, NOT an app problem` if it is not.
+
+The thing that settled it in one read was the logcat capture the case keeps: the app process went on
+logging `counter cache refreshed` every 60s throughout the window in which it was supposedly
+disabled. **Capture the log for any case that asserts the app reacted to something** — "did not
+react" and "was never asked to react" are indistinguishable from `dumpsys` alone.
