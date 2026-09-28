@@ -21,3 +21,8 @@ extension/.output/
 extension/.wxt/
 
 .claude/worktrees/
+
+# Device-QA screenshots. `scripts/device-qa.sh` MOVES Maestro's PNGs out of the repo root
+# into ~/Pictures/screenshots/nudge/qa-<ts>/, but a run killed mid-flow leaves them here,
+# where the next `git add -A` would sweep them into an unrelated commit.
+/[0-9][0-9]-*.png
