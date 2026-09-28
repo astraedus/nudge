@@ -45,7 +45,14 @@
 #   HOME_REOPEN_TRIALS=5           repeats inside the home-reopen case (#58)
 #   LIMIT_BURN_SECS=70             foreground time spent exhausting the 1-minute daily limit
 #   LIMIT_WAIT_SECS=45             how long to wait, after re-entry, for the limit to fire
-#   QA_LOCK_OWNER=<name>           reuse a Pixel lock the caller already holds
+#   QA_LOCK_OWNER=<name>           reuse a Pixel lock the caller already holds. ONLY works when
+#                                  this script runs in the caller's own process tree:
+#                                  `device-lock.sh` keys a holder on owner AND pid, and under
+#                                  `nohup … &` the anchor pid differs, so the caller's own lock
+#                                  is reported as "held by another agent" and the run dies at
+#                                  step one. Backgrounded runs should simply let the script
+#                                  take its own lock (it releases what it took, and leaves a
+#                                  caller's lock alone).
 #   EXPECT_VERSION_CODE=<n>        default: parsed from app/build.gradle.kts
 #   SKIP_VERSION_CHECK=1           accept whatever versionCode is installed
 #   KEEP_SCREENSHOTS_IN_REPO=1     don't move Maestro's PNGs out of the repo root
