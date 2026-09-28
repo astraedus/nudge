@@ -1,0 +1,72 @@
+# nudge-daily-limit-refresh.yaml — issue #50: after the daily limit is raised, a cold
+# launch must NOT be met by the stale "Daily limit reached" screen the old budget wrote.
+#
+# The fixture gives Calculator a 1-minute budget and mode NONE ("Not blocked"), so the
+# app opens freely and the limit is the only gate. The block arrives unattended: the
+# accessibility service runs a 30-second foreground-time clock
+# (`FOREGROUND_TICK_MS`) whose `onTimeLimitExceeded` launches the overlay, so this flow
+# simply sits in the app and waits for it rather than trying to provoke it.
+#
+# "Daily limit reached" is its own screen, not a plain hard block — the service passes it
+# as the rule name and `HardBlockContent` shows the line only when the remaining budget
+# has actually reached zero. That is why it is the right string to assert on and to
+# assert the ABSENCE of afterwards.
+appId: com.google.android.calculator
+---
+- launchApp:
+    appId: "com.google.android.calculator"
+    stopApp: true
+- takeScreenshot: 40-calculator-open
+
+# ── Burn the 1-minute budget. Up to 3 ticks of the 30s clock, plus slack. ──
+- extendedWaitUntil:
+    visible: "Daily limit reached"
+    timeout: 150000
+- assertVisible: "Go Back"
+- takeScreenshot: 41-daily-limit-reached
+
+- tapOn: "Go Back"
+- extendedWaitUntil:
+    visible: "Voice search"
+    timeout: 15000
+
+# ── Raise the limit: 1m → 2h. ──
+# Chip taps only. The "Daily Time Limit" switch is already ON (the fixture set a limit),
+# so its chips are on screen and no Compose `Switch` has to be reached — which is the
+# whole reason the fixture carries the limit instead of the flow enabling it.
+- launchApp:
+    appId: "dev.astraedus.nudge"
+    stopApp: true
+- extendedWaitUntil:
+    visible: "Screen Time"
+    timeout: 20000
+- scrollUntilVisible:
+    element:
+      text: "Manage Apps"
+    direction: DOWN
+- tapOn: "Manage Apps"
+- assertVisible: "Search apps..."
+- tapOn: "Search apps..."
+- inputText: "Calcul"
+- hideKeyboard
+- tapOn: "Calculator"
+- extendedWaitUntil:
+    visible: "Daily Time Limit"
+    timeout: 15000
+- assertVisible: "1m"
+- tapOn: "2h"
+- assertVisible: "2h"
+- takeScreenshot: 42-limit-raised
+- tapOn: "Save"
+- pressKey: Back
+- pressKey: Back
+
+# ── Cold-launch Calculator. The stale screen must NOT be back. ──
+- launchApp:
+    appId: "com.google.android.calculator"
+    stopApp: true
+- waitForAnimationToEnd:
+    timeout: 4000
+- assertNotVisible: "Daily limit reached"
+- assertNotVisible: "Go Back"
+- takeScreenshot: 43-calculator-not-stale
