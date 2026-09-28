@@ -283,6 +283,30 @@ revoke_a11y() {
   return 1
 }
 
+# Re-establish ONLY the accessibility grant, and prove it bound. Touches no appops.
+#
+# The narrow sibling of `ensure_grants`, and the distinction is load-bearing: `apply_grants` sets
+# `SYSTEM_ALERT_WINDOW allow`, so calling the composite helper from `refusal-alert` UNDID the very
+# denial that case injects — and since that permission is the foreground-service-start exemption,
+# the start then succeeded and the snapshot came back completely healthy
+# (`monitorRunning=true … notify=none dismiss=true`), i.e. no fault to report. A fault-injection
+# test must not call a helper that restores more state than it needs.
+ensure_a11y_bound() {
+  local attempt i
+  for attempt in 1 2 3; do
+    ash settings put secure enabled_accessibility_services "$A11Y_COMPONENT" >/dev/null 2>&1
+    ash settings put secure accessibility_enabled 1 >/dev/null 2>&1
+    for ((i = 0; i < 15; i++)); do
+      a11y_is_bound && break
+      sleep 1
+    done
+    a11y_is_bound || continue
+    sleep 4
+    a11y_is_bound && return 0
+  done
+  return 1
+}
+
 apply_grants() {
   ash settings put secure enabled_accessibility_services "$A11Y_COMPONENT" >/dev/null 2>&1
   ash settings put secure accessibility_enabled 1 >/dev/null 2>&1
@@ -1347,12 +1371,17 @@ case_refusal_alert() {
   # service alive but its foreground-service start refused, which is the configuration the whole
   # fault describes. Re-granting cannot accidentally heal it: `onServiceConnected`'s own start
   # attempt is refused by the same denied overlay permission, so `isRunning` stays false.
-  ensure_grants >/dev/null 2>&1 || {
+  # `ensure_a11y_bound`, NOT `ensure_grants`: the composite helper would set
+  # `SYSTEM_ALERT_WINDOW allow` and undo the denial three lines above — and because that
+  # permission IS the foreground-service-start exemption, the start then succeeds and the
+  # snapshot comes back healthy (`monitorRunning=true … notify=none dismiss=true`), with no
+  # fault left to report. Measured.
+  ensure_a11y_bound || {
     fail "PRECONDITION UNMET: could not restore the accessibility grant after the force-stop. Harness problem, not an app problem."
     ash appops set "$APP_ID" SYSTEM_ALERT_WINDOW allow >/dev/null 2>&1
     return 1
   }
-  info "grant restored after the force-stop; snapshot should now read granted=true connected=true monitorRunning=false"
+  info "grant restored (overlay still DENIED); snapshot should read granted=true connected=true monitorRunning=false"
   # --ez reset true clears the degraded flag and the 12-hour alert cooldown, which is
   # what makes this case re-runnable instead of testable twice a day.
   first="$(ash am broadcast -a "$WATCHDOG_ACTION" -n "$WATCHDOG_RECEIVER" --ez reset true 2>&1 | tr -d '\r')"
