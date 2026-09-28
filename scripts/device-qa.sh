@@ -138,6 +138,7 @@ LOCK_HELD=0
 # Overridable so a caller that ALREADY holds the Pixel lock can hand it down instead of
 # being locked out by itself: `~/bin/device-lock.sh` keys a holder on owner+pid, and every
 # agent in one Claude session shares the pid.
+RUNNING_ALL=0
 LOCK_OWNER="${QA_LOCK_OWNER:-device-qa-${RUN_TS}}"
 LOGCAT_PID=""
 SAMPLER_PID=""
@@ -1005,8 +1006,46 @@ case_daily_limit_refresh() {
   fi
   stop_logcat
   cp -f "$LOGCAT_FILE" "${ALBUM}/logcat-daily-limit.txt" 2>/dev/null || true
-  CASE_NOTE="time_budget_exceeded fired, limit raised 1m->2h, cold launch clean (fg=${fg})"
+
+  # Put the fixture back to 1 minute. Without this the case CONSUMES its own precondition —
+  # a second run would sit at a 2-hour budget waiting for a limit that cannot fire, and fail
+  # for a reason that has nothing to do with the build. Restoring here keeps the case
+  # re-runnable on its own, not only as part of `all` (which re-imports via `setup`). The
+  # Custom dialog is the only route back: the presets start at 15m.
+  # Inside `all`, `setup` re-imports the fixture on the next run, so paying ~40s to restore it
+  # here would be pure waste. Standalone, nothing else will.
+  if [[ "${RUNNING_ALL:-0}" == "1" ]]; then
+    info "part of 'all' — leaving the limit at 2h; the next run's setup re-imports the fixture."
+  else
+    restore_daily_limit || warn "could not restore the 1-minute Calculator limit — run 'setup' before re-running this case"
+  fi
+  CASE_NOTE="time_budget_exceeded fired, limit raised 1m->2h, cold launch clean (fg=${fg}), fixture restored"
   return $rc
+}
+
+restore_daily_limit() {
+  nudge_route_home
+  ui_wait_text "Manage Apps" 5 || scroll_to_text "Manage Apps" 6
+  ui_tap_text "Manage Apps" 10 || return 1
+  ui_tap_text "Search apps..." 10 || return 1
+  ash input text "Calcul" >/dev/null 2>&1
+  sleep 2
+  ash input keyevent KEYCODE_BACK >/dev/null 2>&1
+  sleep 1
+  ui_tap_text "Calculator" 10 || return 1
+  ui_wait_text "Daily Time Limit" 10 || return 1
+  ui_tap_text "Custom" 8 || return 1
+  ui_wait_text "Custom Daily Limit" 8 || return 1
+  # The field is pre-filled with the current value, so clear it before typing.
+  ui_tap_text "Value (minutes)" 5 || true
+  local i
+  for ((i = 0; i < 6; i++)); do ash input keyevent KEYCODE_DEL >/dev/null 2>&1; done
+  ash input text "1" >/dev/null 2>&1
+  sleep 1
+  ui_tap_text "Set" 8 || return 1
+  ui_tap_text "Save" 8 || return 1
+  sleep 2
+  info "Calculator daily limit restored to 1m."
 }
 
 case_notif_idle() {
@@ -1221,6 +1260,7 @@ main() {
   local cases=()
   if [[ "$target" == "all" ]]; then
     cases=("${ALL_CASES[@]}")
+    RUNNING_ALL=1
   else
     # shellcheck disable=SC2076
     [[ " ${ALL_CASES[*]} " == *" ${target} "* ]] || die "unknown case '${target}'. Try: ${ALL_CASES[*]}"
