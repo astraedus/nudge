@@ -241,11 +241,44 @@ appop_mode() { # op -> allow|deny|ignore|default
     sed -n 's/^[A-Z_]*: \([a-z]*\).*/\1/p'
 }
 
+# Is the phone actually awake and past the keyguard RIGHT NOW?
+#
+# Two separate facts and both are needed: `mWakefulness=Dozing` with `mDreamingLockscreen=false`
+# is a dark screen nobody can drive, and an awake screen still showing the PIN pad drives nothing
+# but the PIN pad. A missing `mDreamingLockscreen` line is read as "not locked", because the
+# question this asks is "is the keyguard in the way", and absence of evidence for a keyguard is
+# the right default on an OS version that does not print it.
+screen_is_usable() {
+  ash dumpsys power 2>/dev/null | tr -d '\r' | grep -q "mWakefulness=Awake" || return 1
+  ! ash dumpsys window 2>/dev/null | tr -d '\r' | grep -q "mDreamingLockscreen=true"
+}
+
+# Wake and UNLOCK the phone, then PROVE it, and refuse to run at all if it did not work.
+#
+# THE UNLOCK USED TO BE A `|| warn`, and that is how a whole gate run is wasted: on 2026-09-29 the
+# phone was dozing on its lock screen, the helper failed, the run warned and carried on, and every
+# case failed against a BLACK SCREEN — a full table of FAILs whose screenshots show nothing, which
+# is indistinguishable from a real regression until someone opens the album. A gate that knows it
+# might be blind must not start; `die` here costs one line of output instead of twenty minutes and
+# a false bug report.
+#
+# The PIN is known (1337) and lives in `~/bin/astra-pixel-unlock.sh` — never a reason to wait for a
+# human. Two attempts, because the helper's own wake can race a device that is mid-doze.
 pin_screen() {
-  "${HOME}/bin/astra-pixel-unlock.sh" >/dev/null 2>&1 || warn "unlock helper reported a problem"
-  ash settings put system screen_off_timeout 1800000 >/dev/null 2>&1
-  ash svc power stayon true >/dev/null 2>&1
-  info "Screen pinned (stayon, 30-minute timeout)."
+  local i
+  for i in 1 2; do
+    "${HOME}/bin/astra-pixel-unlock.sh" >/dev/null 2>&1 ||
+      warn "unlock helper reported a problem (attempt ${i})"
+    ash settings put system screen_off_timeout 1800000 >/dev/null 2>&1
+    ash svc power stayon true >/dev/null 2>&1
+    sleep 2
+    if screen_is_usable; then
+      info "Screen pinned (awake, unlocked, stayon, 30-minute timeout)."
+      return 0
+    fi
+    warn "the screen is still asleep or behind the keyguard; retrying the unlock"
+  done
+  die "the phone will not wake/unlock, so every case would run against a black screen and FAIL for the wrong reason. Run ~/bin/astra-pixel-unlock.sh by hand and look at the device."
 }
 
 # ─── Grants ───────────────────────────────────────────────────────────────────
