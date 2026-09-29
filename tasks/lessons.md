@@ -1231,3 +1231,71 @@ The thing that settled it in one read was the logcat capture the case keeps: the
 logging `counter cache refreshed` every 60s throughout the window in which it was supposedly
 disabled. **Capture the log for any case that asserts the app reacted to something** — "did not
 react" and "was never asked to react" are indistinguishable from `dumpsys` alone.
+
+## A UI-tree dump DESTROYS our accessibility service, and the clock did not come back (2026-09-29)
+
+Building `daily-limit-midsession` (v1.18.4), the case failed twice with *"sat 105s inside Calculator
+and the limit never fired mid-session"* — a perfect description of the bug the feature had just
+fixed. It was not the feature. From the case's own capture:
+
+```
+15:17:44.905  adbd … 'ui automator dump …'
+15:17:45.634  app clock stopped key=…calculator reason=service_destroyed
+15:17:46.806  accessibility service connected
+              (no clock again for the remaining 100 seconds)
+```
+
+Two lessons, and the second one is the product bug.
+
+**1. `device-qa.sh`'s header says a bare dump is safe. That holds for READING A SCREEN AFTER A
+BLOCK, which is all the other cases do with it.** It does not hold for a case whose subject lives
+INSIDE the service: the dump tears the service down for ~1.2s and Android rebinds it. A case that
+measures a clock, a session counter, or anything else the service owns must use only the
+non-invasive oracles — `dumpsys activity activities` for who is in front, and the service's own
+logcat for what it decided. Screenshots are fine (`screencap` opens no accessibility session).
+
+**2. The clock is started ONLY from `evaluateForegroundPackage`, i.e. from a window EVENT — and a
+user sitting still produces none.** So any rebind (this dump, but also the memory-pressure rebinds
+`service-lifecycle-and-watchdog.md` already records) cancelled the foreground clock and nothing
+restarted it until the user next switched apps. The time-based auto-kick stopped, the time-remaining
+overlay froze, and the mid-session daily limit stopped being enforced — with nothing logged and
+nothing on screen. `onServiceConnected` now restarts the clock for the live foreground window, after
+the eager cache populate. **Whenever state is rebuilt on reconnect, ask what RESTARTS it for a user
+who is doing nothing; "the next event will fix it" is false for anyone sitting still.**
+
+**3. A failing case must save its logcat.** The first failure did not, and every later case calls
+`start_logcat`, which TRUNCATES the shared file — so the evidence was gone by the time the table
+printed, and it cost a device cycle. "The clock never ticked", "it ticked and the budget had not
+crossed" and "it blocked and the grep missed it" are three different bugs that only the capture
+tells apart.
+
+## `pm clear` raises the keyguard, with the screen still on (2026-09-29)
+
+Two full gate runs reported all nine cases FAILING, starting with *"Mindful app usage through gentle
+friction is not visible"* — which reads as an onboarding regression. `setup`'s own `pm clear` puts
+the lock screen up; clearing the data of the app that owns the running accessibility service is
+enough to do it. Measured by sampling the device every 5s across that line:
+
+```
+14:40:07  wake=Awake stayOn=7 keyguard=false fg=com.google.android.calculator
+14:40:13  wake=Awake stayOn=7 keyguard=true  fg=
+```
+
+Because the SCREEN stays on, nothing downstream looks obviously wrong. `case_setup` now re-unlocks
+after `pm clear`, and `run_case` checks the screen before EVERY case next to the accessibility
+precondition — a case that runs against a dark or locked phone fails on the device's power state and
+says nothing about the build, so the failure must land on the case that hit it.
+
+Related: the startup unlock used to be `|| warn`, so a run could start blind and produce a full table
+of FAILs with black screenshots. It now dies instead. **A gate that knows it might be blind must not
+start.**
+
+## `grep -q` under `set -o pipefail` reads a MATCH as a failure (2026-09-29)
+
+The screen guard added above refused to start against a phone that was provably awake and unlocked.
+`grep -q` exits the instant it matches, which SIGPIPEs the `dumpsys` still writing upstream, so the
+pipeline's status is 141 — and `device-qa.sh` runs under `pipefail`. Measured side by side under the
+script's own shell options on an awake, unlocked phone: the `grep -q` form answers "NOT usable", a
+`case "$text" in *needle*)` form answers "usable". The rest of the file sidesteps this by ending in
+`>/dev/null` (which reads the stream to EOF) or by grepping a FILE. **In this script, never end a
+pipeline in `grep -q`.**
