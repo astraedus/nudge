@@ -4,6 +4,33 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+### Fixed
+- **A daily time limit now stops you the moment it runs out, not the next time you open the app.**
+  Set "30 minutes of Instagram a day" and stay past the 30 minutes without ever switching away, and
+  Nudge used to sit there: the budget was only re-read on the next app entry, so the 30-second clock
+  that would have noticed it running out mid-session never ran at all for a plain daily limit
+  (measured: 150 seconds of continuous foreground time on a 1-minute budget produced exactly one
+  evaluation, at t=0). A daily limit now arms that clock on its own — the enforcement itself already
+  lived on the tick path, only the gate deciding who gets a clock excluded it — so the block lands
+  within about 30 seconds of the budget crossing zero, the same overshoot the time-based auto-kick
+  already has. A delay, hold or breathing pass completed just before the budget runs out is cleared
+  at the same moment, so it cannot be used to outlive the limit.
+- **A daily-limit block now writes a row.** It logged nothing before, so it never showed up in the
+  "Blocked" tile or the insight pages even though it had stopped you. **This changes what those
+  numbers mean going forward**: a week that spans this upgrade is not directly comparable to one
+  before it, because the earlier half is missing daily-limit blocks the later half will include. The
+  auto-kick cooldown's DELAY overlay still logs nothing — that half of the gap stays open.
+- **Turning auto-kick off while keeping a daily limit could leave the auto-kick cooldown running
+  anyway.** The cooldown's authority used to be "this package has an entry in the counter cache", and
+  a daily limit alone now puts a package there (see above) — so a user with no auto-kick configured
+  at all could still get ejected by a cooldown left over from before. The cooldown now checks whether
+  anything still configures an auto-kick, not just whether the package is tracked.
+- **Walking from an app with the interaction counter or time-remaining overlay showing into a
+  tracked app that wants neither could leave the previous app's overlay floating on screen.** Latent
+  since the time-based auto-kick shipped, and far more reachable now that a plain daily limit puts a
+  package in the cache too. Both awareness overlays are hidden explicitly for a tracked app that asks
+  for neither.
+
 ## [1.18.3] - 2026-09-27
 
 ### Changed

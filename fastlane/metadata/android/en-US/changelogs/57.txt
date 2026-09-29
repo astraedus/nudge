@@ -1,0 +1,1 @@
+• Daily time limits now stop you the moment they run out, even while you are still in the app, instead of the next time you open it. Those blocks also show up in your stats now.

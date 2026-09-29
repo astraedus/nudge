@@ -35,7 +35,7 @@ Entries marked `[x]` shipped, the version is noted so the history stays readable
 - [ ] **Browsers bypass whole-app block rules** — a DELAY/HARD_BLOCK rule on Chrome never fires via the whole-app pipeline because browser packages route straight to per-URL web-domain evaluation. This is *by design* per the web-domain architecture (whole-app blocking a browser would nuke all browsing), but the UX is surprising — a rule silently does nothing unless "Block on web too" + a domain rule exist. Consider surfacing this in the rule editor when the target is a known browser.
 - [ ] **System permission dialog can render over `BlockOverlayActivity`** — e.g. Camera's location-permission prompt kept re-appearing on top of the block overlay, leaving the blocked app's UI visible underneath even though the decision was correctly `HARD_BLOCK`. Overlay z-order / re-assert on `TYPE_WINDOW_STATE_CHANGED` for the permission-controller package.
 - [x] ~~**"I changed my mind" can leave the user inside the blocked app**~~ — **RESOLVED in v1.13.0** (2026-08-20). `navigateHome()` did `startActivity(HOME)` then `finish()`; this activity is singleInstance in its own task with an empty taskAffinity, so finishing pops back to the task underneath — the blocked app — and whichever the system reached first decided where the user landed. Now prefers `GLOBAL_ACTION_HOME`. See "The walk-away path".
-- [ ] **Two of the three overlay launch paths write no "overlay shown" `UsageEvent`** (found 2026-08-20 while root-causing the walk-away report; DB-verified on device). Only `handleDecision` (the rule-block path) logs the shown row — the **auto-kick cooldown** DELAY overlay (`NudgeAccessibilityService.evaluateForegroundPackage`) and the **daily-limit** HARD_BLOCK overlay (`TimeRemainingHandler`) log nothing. So those blocks are invisible to the "Blocked" tile and the insight pages, and a walk-away from one lands as a LONE `userChangedMind=1` row with no matching shown row. `InsightsCalculator` survives it by construction (`attempts = max(shown, walkAways)` is exactly this guard), but the tiles under-report real blocks. Decide deliberately whether those paths should log — it changes historical stat semantics.
+- [ ] **The auto-kick cooldown DELAY overlay writes no "overlay shown" `UsageEvent`** (found 2026-08-20 while root-causing the walk-away report; DB-verified on device). Originally two of the three overlay launch paths logged nothing — the **auto-kick cooldown** DELAY overlay (`NudgeAccessibilityService.evaluateForegroundPackage`) and the **daily-limit** HARD_BLOCK overlay (`TimeRemainingHandler`). **The daily-limit path is fixed as of v1.18.4**: it now writes its row through the same shared `countBlockShown` (`claimConfrontation` + `logEvent`) the rule-block path uses, so it appears in the "Blocked" tile and the insight pages — with the caveat that a week spanning the v1.18.4 upgrade is not directly comparable, since the earlier half of it is missing daily-limit blocks the later half will include. The **auto-kick cooldown DELAY path still logs nothing** and stays open: a walk-away from it still lands as a LONE `userChangedMind=1` row with no matching shown row. `InsightsCalculator` survives it by construction (`attempts = max(shown, walkAways)` is exactly this guard), but the tiles under-report real blocks from this one path. Decide deliberately whether it should log too — it changes historical stat semantics the same way the daily-limit path just did.
 - [x] ~~**Export/Import is hard to discover**~~ (v1.12.0 QA, 2026-08-20) — **RESOLVED in v1.17.3**: Settings gained a "Backup" section with Save backup / Share backup / Import backup, hosting the same `ui/backup/BackupViewModel` the Active Rules menu now hosts, so there is still exactly one import flow and one Strict Mode gate on it. `BackupEntryPointsContractTest` pins both entry points and, by discovery rather than a hand-list, that any screen wiring the pickers also renders the dialogs. Manage Apps deliberately NOT given a third copy of the menu — two findable places is the fix, three is clutter. Original note: backup/restore lived only in the Active Rules screen's overflow menu, and Active Rules itself is reachable only by tapping the "Active Apps" stat card on Home. A trained QA agent doing an exhaustive search concluded the feature didn't exist (checked Quick Actions, Manage Apps, Settings, rule editor). Cheap fixes: mirror Export/Import as Settings items, and/or add the overflow menu to Manage Apps too. Data-portability is exactly what users reach for before wiping/switching devices — it shouldn't be findable only via a stat card.
 - [x] ~~**Export cannot save the backup to the device — only "send" it somewhere**~~ (found 2026-08-20 while device-verifying history export) — **RESOLVED in v1.17.3**: "Save backup" uses the `CreateDocument("application/json")` contract and writes through the returned `Uri` in mode `"wt"` (`"w"` does not truncate everywhere, and a half-overwritten backup is corrupt while looking saved); a refused write is reported as a failure rather than as nothing; the export runs only once a destination exists, so cancelling the picker costs nothing; files are offered as `nudge-backup-<ISO date>.json`; Share stays as the second option. See `docs/architecture/export-import.md`. Original note: Export fired `ACTION_SEND`, and "Save to Files"/"Save to device" is NOT an `ACTION_SEND` target on Android: it only appears for `ACTION_CREATE_DOCUMENT`. Enumerated on the Pixel 3, the entire share sheet was Drive, Gmail, KDE Connect, Telegram, Bitwarden, Discord — every one of them sends the file to a *cloud or another device*. So a user of a zero-internet-permission privacy app has no way to put their own backup in their own Downloads folder, and the file the app writes lives in `cacheDir` where the system may evict it. Import already uses `ACTION_OPEN_DOCUMENT`, so the symmetric fix is small: `ACTION_CREATE_DOCUMENT` ("Save backup") writing through the returned `Uri`, keeping Share as a second option. This matters more now that the file carries the user's whole block history, not just rules.
 - [ ] **Strict Mode does not gate the Content Filter toggles in Settings** (found while building the settings export, 2026-08-27; pre-existing). `SettingsWeakening.LockedToggle` covers only `STRICT_MODE` and `EMERGENCY_PASS`, so a user under Strict Mode can walk into Settings and switch "Block restricted websites" (or its strict-keyword sub-toggle) straight off with no challenge — a protection-weakening flip the lock is supposed to bite on. **Importing** those same settings IS gated (`ImportedSettingsWeakening` treats the content filter as an axis), so the import path is deliberately STRICTER than the screen; being stricter is never a vulnerability, but it is an inconsistency, and the screen is the easier of the two to reach. The fix is small — two more `LockedToggle` members and the same `requiresUnlock` call the escape-hatch toggle already makes — but it changes existing UX (turning the filter off would start costing a challenge), so it is a product call rather than a bug fix. Decide deliberately.
@@ -280,45 +280,56 @@ Device QA of the screentime fix on the Pixel 3 (which has "stay awake while char
   surfacing as a tip rather than code: turning off YouTube watch history blanks the Home feed entirely
   (Google-documented), which is a stronger intervention than any steer we can perform.
 
-## [ ] A daily limit is enforced on RE-ENTRY, not mid-session (measured 2026-09-29, building the scripted device gate)
+## [x] ~~A daily limit is enforced on RE-ENTRY, not mid-session~~ - RESOLVED in v1.18.4
 
-**Product decision owed**, not a bug report: either route mid-session enforcement through the tick
-path that already exists, or document re-entry as the intended behaviour and say so in the rule
-editor's Daily Time Limit copy.
-
-**What was measured.** With Calculator on a plain 1-minute daily limit (`mode=NONE`,
+**What was measured (2026-09-29).** With Calculator on a plain 1-minute daily limit (`mode=NONE`,
 `showTimeRemaining=false`, no time-based auto-kick), **150 seconds of continuous foreground time
 produced exactly ONE evaluation** — at t=0, `dailyUsageMs=93`. The budget was never re-read, so the
 app was never blocked. Leaving and coming back trips it immediately.
 
-**Why.** The 30-second foreground clock that would notice a budget running out mid-session is gated
+**Why.** The 30-second foreground clock that would notice a budget running out mid-session was gated
 on `CounterCacheRefresher.needsForegroundTimeTick`:
 
 ```kotlin
 autoKickAfterMinutes != null || (showTimeRemaining && dailyLimitMinutes != null)
 ```
 
-A daily limit alone satisfies neither arm, so `updateForegroundTimeTicker` stops the clock with
-`no_clock_config` and nothing re-evaluates until the next `TYPE_WINDOW_STATE_CHANGED`. The gate reads
-as deliberate — its KDoc is about the time-remaining overlay and the time-based auto-kick, the two
-features that *display* a running number — so the daily limit may simply never have been considered a
+A daily limit alone satisfied neither arm, so `updateForegroundTimeTicker` stopped the clock with
+`no_clock_config` and nothing re-evaluated until the next `TYPE_WINDOW_STATE_CHANGED`. The gate read
+as deliberate — its KDoc was about the time-remaining overlay and the time-based auto-kick, the two
+features that *display* a running number — so the daily limit had simply never been considered a
 consumer of that clock.
 
-**User-visible consequence.** Someone who sets "30 minutes of Instagram a day" and turns nothing else
-on can sit in Instagram past the 30 minutes indefinitely, as long as they never switch away. The
-budget is enforced the next time they open the app. That is a defensible design (the block lands when
-they reach for the app, which is when a nudge is useful) but it is not what the control's wording
-implies.
+**Decided and shipped in v1.18.4: mid-session enforcement, not documented re-entry.** "Daily limits
+should definitely be enforced even mid session" (product call, 2026-09-29). `dailyLimitMinutes !=
+null` is now the second arm of `needsForegroundTimeTick` on its own — `showTimeRemaining` no longer
+gates it — and of the cache loader's filter, so any rule carrying a daily limit gets the existing
+30-second clock while its app is in the foreground; the enforcement itself already lived on the tick
+path in `TimeRemainingHandler`, only the gate excluded it. A completed delay/hold/breathing
+passthrough grant is cleared before the block launches, so it cannot be used to outlive the budget.
 
-**If mid-session enforcement is wanted**, the cheap version is adding `dailyLimitMinutes != null` as a
-third arm of `needsForegroundTimeTick` — `tickForegroundTime` already refreshes the daily-limit block,
-so the plumbing exists. Cost: a 30-second clock now runs for every rule that carries a limit, on a
-3GB Pixel 3, which is exactly the trade `FOREGROUND_TICK_MS`'s comment is weighing. Owed with it: a
-unit test at the `needsForegroundTimeTick` layer (pure, L1) pinning which rule shapes clock, because
-that predicate is the whole behaviour.
+**Granularity: once per tick, up to 30 seconds after the budget crosses zero.** Same overshoot the
+time-based auto-kick already accepts, and for the same reason — a tighter poll costs more on a 3GB
+Pixel 3 than the overshoot is worth. Pinned at L1 (`CounterCacheRefresherMergeTest`'s
+`needsForegroundTimeTick` rows, including the counterfactual that a rule with no limit, no overlay
+and no auto-kick still spins no timer; `TimeRemainingHandlerTest`), in the #36 row model
+(`InterventionCountReplayTest`) and at L6 (`scripts/device-qa.sh daily-limit-midsession`). The rule
+editor and app-config copy now say the block lands as soon as the budget runs out, even if you are
+still inside the app.
 
-**Not a gate concern either way.** `scripts/device-qa.sh`'s `daily-limit-refresh` case deliberately
-burns the budget, leaves, and re-enters — that is
-[#50](https://github.com/astraedus/nudge/issues/50)'s own scenario (spend, leave, come back, meet the
-stale screen), so the case tests the stale-overlay fix and not enforcement timing. If the timing
-changes, that case keeps passing unchanged.
+**Shipped alongside it, because the same gap in the same code path made them visible together**: the
+daily-limit `HARD_BLOCK` now writes exactly one `wasBlocked` row per arrival (was: none — see the
+overlay-launch-paths entry above), and `CooldownGate`'s authority narrowed from "the counter cache
+holds an entry" to `CounterCacheEntry.configuresAutoKick`, because a daily limit alone now puts a
+package in the cache and bare membership would otherwise have kept an armed auto-kick cooldown
+enforcing after a user turned auto-kick off while keeping the limit.
+
+**The gate covers both timings now, in two cases that stay separate on purpose.**
+`daily-limit-refresh` still tests [#50](https://github.com/astraedus/nudge/issues/50)'s own scenario
+(spend, leave, come back, meet the stale screen) and passed unchanged through this fix, which is what
+drawing the line there was for. The new `daily-limit-midsession` case owns the timing: it DERIVES its
+limit from the `dailyUsageMs` the engine logs (the budget is OS-owned usage that no `pm clear`
+resets, so "budget remaining at entry" cannot be a constant on a second run of the day), sits in
+Calculator without leaving for `remaining + 45s` — one tick of slack, not 20s — watching logcat rather
+than the UI tree, and asserts the Blocked tile moves by exactly +1 for the whole episode including a
+re-front of the app that must show the limit again without counting again.
