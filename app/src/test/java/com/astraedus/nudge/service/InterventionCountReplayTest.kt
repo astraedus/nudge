@@ -247,41 +247,29 @@ class InterventionCountReplayTest {
             val decisionKey =
                 if (block.dailyLimited) dailyLimitKey(block.attributed) else delayKey(block.target)
             if (!launchBlockOverlay(block.target, decisionKey)) return
-            countBlockShown(
-                target = block.target,
+            val counted = guard.claimConfrontation(
+                targetPackage = block.target,
                 key = BlockLaunchGate.confrontationKey(
                     attributedPackage = block.attributed,
                     featureKey = block.featureKey,
                     webDomain = block.webDomain
                 )
             )
+            if (counted) rows++
         }
 
         /**
-         * `TimeRemainingHandler.maybeUpdate` finding the budget at zero, and the service's
-         * `onTimeLimitExceeded` callback: launch the daily-limit HARD_BLOCK, then claim, then write.
+         * ONE 30-second foreground-clock tick that finds the daily budget at zero:
+         * `TimeRemainingHandler.maybeUpdate` -> the service's `onTimeLimitExceeded` ->
+         * `enforceExhaustedBudget` -> a re-evaluation -> the SAME [handleBlockDecision].
          *
-         * One call is ONE 30-second foreground-clock tick. Nothing about it is user input, which is
-         * exactly why it belongs in this file: since v1.18.4 a plain daily limit spins that clock,
-         * so this is now a path that can fire over and over while the phone sits untouched, and
-         * before the #36 claim existed every one of those firings would have written a row.
-         *
-         * The DIFFERENT fingerprint is production's ([`dailyLimitKey`], mode HARD_BLOCK + `|daily`)
-         * while the confrontation key is the bare package: a daily budget is per app, and the same
-         * sitting must not be counted twice because the screen the user met changed.
+         * Delegating rather than re-implementing is the whole v1.18.4 shape, which is why this looks
+         * trivial: the clock REPORTS, the rules decide, and the block that follows is an ordinary
+         * one. What earns it a name here is that nothing about it is user input. A plain daily limit
+         * now spins that clock, so this is a path that fires over and over while the phone sits
+         * untouched, and one row per firing is the issue #36 report.
          */
-        fun dailyLimitTick(block: Block) {
-            if (!launchBlockOverlay(block.target, dailyLimitKey(block.attributed))) return
-            countBlockShown(
-                target = block.target,
-                key = BlockLaunchGate.confrontationKey(attributedPackage = block.attributed)
-            )
-        }
-
-        /** `NudgeAccessibilityService.countBlockShown`: the one claim-then-write, shared. */
-        private fun countBlockShown(target: String, key: String) {
-            if (guard.claimConfrontation(targetPackage = target, key = key)) rows++
-        }
+        fun dailyLimitTick(block: Block) = handleBlockDecision(block)
 
         private fun launchBlockOverlay(target: String, decisionKey: String): Boolean {
             val decision = guard.decide(target, decisionKey)
@@ -443,7 +431,7 @@ class InterventionCountReplayTest {
 
     /**
      * The tick keeps arriving. It must keep ENFORCING and stop COUNTING -- the two halves of the
-     * claim (`countBlockShown` refuses a row, never a block).
+     * claim (the claim refuses a row, never a block).
      *
      * The loop modelled is H1's, driven by the clock instead of by a re-entry: the overlay is
      * stopped without finishing (screen-off, or the blocked app's task winning the race back), the

@@ -16,10 +16,17 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
   already has. A delay, hold or breathing pass completed just before the budget runs out is cleared
   at the same moment, so it cannot be used to outlive the limit.
 - **A daily-limit block now writes a row.** It logged nothing before, so it never showed up in the
-  "Blocked" tile or the insight pages even though it had stopped you. **This changes what those
-  numbers mean going forward**: a week that spans this upgrade is not directly comparable to one
-  before it, because the earlier half is missing daily-limit blocks the later half will include. The
-  auto-kick cooldown's DELAY overlay still logs nothing — that half of the gap stays open.
+  "Blocked" tile or the insight pages even though it had stopped you. The cause was structural: that
+  path was a second implementation of "block this app", separate from the one every other block goes
+  through. The clock now REPORTS the spent budget and the service re-evaluates the rules
+  (`enforceExhaustedBudget`), so the launch gate, the one-row-per-arrival invariant and the row
+  itself are the ordinary block path's. It also means a limit you have just raised, or a rule you
+  have just switched off, can no longer be enforced from a stale 10-second cache snapshot, and a
+  budget that turns out not to be spent produces nothing rather than a spurious countdown.
+  **This changes what those numbers mean going forward**: a week that spans this upgrade is not
+  directly comparable to one before it, because the earlier half is missing daily-limit blocks the
+  later half will include. The auto-kick cooldown's DELAY overlay still logs nothing — that half of
+  the gap stays open.
 - **Turning auto-kick off while keeping a daily limit could leave the auto-kick cooldown running
   anyway.** The cooldown's authority used to be "this package has an entry in the counter cache", and
   a daily limit alone now puts a package there (see above) — so a user with no auto-kick configured

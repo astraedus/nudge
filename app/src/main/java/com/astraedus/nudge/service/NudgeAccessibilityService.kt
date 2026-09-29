@@ -850,61 +850,29 @@ class NudgeAccessibilityService : AccessibilityService() {
             passthroughManager = passthrough,
             logger = entryPoint.nudgeLogger(),
             serviceScope = serviceScope,
-            // The daily-limit hard block is the fourth block-overlay launch site, and the one most
-            // likely to land late: it fires from a 30-second clock tick rather than from a
-            // foreground event, so the user can easily be elsewhere by the time the usage read comes
-            // back. It used to own a Context and build its own intent, which put a launch outside
-            // this service and therefore outside any gate. It goes through [launchBlockOverlay] now,
-            // like the other three.
+            // THE CLOCK REPORTS, IT DOES NOT DECIDE (v1.18.4).
+            //
+            // This used to own a Context and start `BlockOverlayActivity` itself, then (still
+            // wrongly) build its own launch inside this service: either way it was a SECOND
+            // implementation of "block this app", which is why it wrote no `UsageEvent` for two
+            // versions while the rule path did (`docs/BACKLOG.md`). It now hands the fact back to
+            // [enforceExhaustedBudget], which re-derives the decision from the rules and goes
+            // through [handleDecision] like every other block -- one launch gate, one arrival
+            // invariant, one row.
             onTimeLimitExceeded = { limitedPackage, dailyLimitMinutes ->
-                // Logged unconditionally, BEFORE the gate can drop the launch. This is the only
+                // Logged unconditionally and BEFORE the re-evaluation can decline. This is the only
                 // enforcement in the app with no user action behind it, so "the budget ran out and
-                // we refused to show it" and "the budget never ran out" have to be distinguishable
-                // in logcat -- the ambiguity that cost this repo a release cycle twice. It is also
-                // the device gate's oracle for the mid-session case, and deliberately NOT the
-                // engine's `reason=time_budget_exceeded` wording: the two paths are different
-                // mechanisms (one re-entry event, one clock tick) and a shared substring would make
-                // a grep for either match both.
+                // the rules no longer agree" and "the budget never ran out" have to be
+                // distinguishable in logcat -- the ambiguity that cost this repo a release cycle
+                // twice. It is also the device gate's oracle for the mid-session case, and
+                // deliberately NOT the engine's `reason=time_budget_exceeded` wording: the two are
+                // different TRIGGERS for the same decision (a foreground event vs a clock tick) and
+                // a shared substring would make a grep for either match both.
                 entryPoint.nudgeLogger().i(
                     "block package=$limitedPackage reason=daily_limit_reached " +
                         "limitMinutes=$dailyLimitMinutes source=foreground_clock"
                 )
-                val launched = launchBlockOverlay(
-                    targetPackage = limitedPackage,
-                    attributedPackage = limitedPackage,
-                    // The daily-limit variant is a DIFFERENT SCREEN from a plain hard block -- its
-                    // own copy, its own reason -- and it is the one issue #50 was reported on, so
-                    // it says so here rather than collapsing into the mode alone.
-                    decisionKey = BlockLaunchGate.decisionFingerprint(
-                        attributedPackage = limitedPackage,
-                        blockMode = "HARD_BLOCK",
-                        dailyLimited = true
-                    )
-                ) {
-                    putExtra(BlockOverlayActivity.EXTRA_BLOCK_MODE, "HARD_BLOCK")
-                    putExtra(BlockOverlayActivity.EXTRA_PACKAGE_NAME, limitedPackage)
-                    putExtra(BlockOverlayActivity.EXTRA_RULE_NAME, "Daily limit reached")
-                    putExtra(BlockOverlayActivity.EXTRA_DAILY_TIME_REMAINING_MS, 0L)
-                    putExtra(BlockOverlayActivity.EXTRA_DAILY_LIMIT_MINUTES, dailyLimitMinutes)
-                }
-                // A daily-limit block is a genuine confrontation and now writes its row, through
-                // the same claim as the rule-block path -- so it appears in the Blocked tile and
-                // the insight pages (it logged nothing at all before: `docs/BACKLOG.md`), and so
-                // the 30-second clock behind it cannot re-count the same sitting once per tick.
-                // The key carries no feature and no domain: a daily budget is per app.
-                if (launched) {
-                    serviceScope.launch {
-                        countBlockShown(
-                            targetPackage = limitedPackage,
-                            attributedPackage = limitedPackage,
-                            blockMode = "HARD_BLOCK",
-                            confrontationKey = BlockLaunchGate.confrontationKey(
-                                attributedPackage = limitedPackage
-                            ),
-                            detail = "source=daily_limit"
-                        )
-                    }
-                }
+                serviceScope.launch { enforceExhaustedBudget(limitedPackage) }
                 Unit
             }
         )
@@ -2586,19 +2554,42 @@ class NudgeAccessibilityService : AccessibilityService() {
                     grayscaleActiveForPackage = packageName
                 }
 
-                // ONE CONFRONTATION PER ARRIVAL (issue #36). It sits BELOW the launch and below
-                // grayscale on purpose -- see [countBlockShown], which owns the invariant now that
-                // the daily-limit path shares it.
-                countBlockShown(
+                // ONE CONFRONTATION PER ARRIVAL (issue #36), and it sits BELOW the launch and below
+                // grayscale on purpose: this refuses a ROW, never a block. The overlay is already
+                // on its way, and it should be -- somebody still sitting in a blocked app should go
+                // on meeting the block. What must not go on is the COUNT rising for a confrontation
+                // the user never walked into.
+                //
+                // The 2500-in-a-day report is what happens without it. Nothing above this line
+                // answers "has the user arrived here since the last time we counted them", so every
+                // mechanism that can re-launch an overlay by itself -- an overlay stopped and
+                // finished by a screen-off or a re-fronting app, a re-delivery through
+                // `onNewIntent`, the walk-away fail-safe popping the app back, and since v1.18.4
+                // the 30-second foreground clock behind a spent daily budget -- also re-counted it,
+                // once per iteration, for as long as it ran.
+                val counted = entryPoint.blockLaunchGuard().claimConfrontation(
                     targetPackage = web?.browserPackage ?: packageName,
-                    attributedPackage = packageName,
-                    blockMode = decision.mode.name,
-                    confrontationKey = BlockLaunchGate.confrontationKey(
+                    key = BlockLaunchGate.confrontationKey(
                         attributedPackage = packageName,
                         featureKey = featureKey,
                         webDomain = web?.domain
-                    ),
-                    detail = "feature=$featureKey domain=${web?.domain}"
+                    )
+                )
+                if (!counted) {
+                    entryPoint.nudgeLogger().i(
+                        "block shown but NOT counted package=$packageName " +
+                            "reason=already_counted_this_arrival feature=$featureKey " +
+                            "domain=${web?.domain}"
+                    )
+                    return
+                }
+
+                entryPoint.usageRepository().logEvent(
+                    UsageEvent(
+                        packageName = packageName,
+                        wasBlocked = true,
+                        blockMode = decision.mode.name
+                    )
                 )
             }
 
@@ -2611,57 +2602,41 @@ class NudgeAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * Claim the right to write the `UsageEvent` for a block that has just been shown, and write it.
-     * ONE CONFRONTATION PER ARRIVAL (issue [#36](https://github.com/astraedus/nudge/issues/36)).
+     * The foreground clock says [packageName]'s daily budget has run out while the user is still
+     * sitting in it (v1.18.4). RE-EVALUATE, and let the ordinary block path do the rest.
      *
-     * **This refuses a ROW, never a block.** Every caller has already shown the overlay by the time
-     * it gets here, and it should have -- somebody still sitting in a blocked app should go on
-     * meeting the block. What must not go on is the COUNT rising for a confrontation the user never
-     * walked into. The 2500-in-a-day report is what happens without the claim: nothing in a launch
-     * path answers "has the user arrived here since the last time we counted them", so every
-     * mechanism that can re-launch an overlay by itself -- an overlay stopped and finished by a
-     * screen-off or a re-fronting app, a re-delivery through `onNewIntent`, the walk-away fail-safe
-     * popping the app back, a 30-second clock tick -- also re-counted it, once per iteration.
+     * ## Why this re-evaluates instead of launching the overlay itself
+     * The clock's trigger is read off `CounterCacheRefresher`, which is a snapshot refreshed on a
+     * 10-second timer -- so "the budget is spent" is a belief that can be up to ten seconds stale,
+     * and acting on it directly is the [#50](https://github.com/astraedus/nudge/issues/50) shape:
+     * a user who has just RAISED their limit (or switched the rule off) would be blocked with the
+     * old one, from a timer, with nothing they did to trigger it. Asking
+     * `EvaluateBlockUseCase` re-derives the answer from the database, which also means the schedule
+     * window, the rule's enabled flag and the usage read are all the CURRENT ones.
      *
-     * **Shared, because "which launches write a row" had already drifted.** Of the four block
-     * overlay launches, only the rule-block path logged one, so the daily-limit HARD_BLOCK and the
-     * auto-kick cooldown DELAY were invisible to the Blocked tile and the insight pages
-     * (`docs/BACKLOG.md`, DB-verified on device 2026-08-20). A second copy of claim-then-log is
-     * also a second place to forget the claim, and the daily-limit path is the one that fires from a
-     * timer, i.e. the one most able to fire repeatedly without the user doing anything.
+     * It also means there is exactly one enforcement path in this service: the reason the
+     * daily-limit block wrote no `UsageEvent` for two versions (`docs/BACKLOG.md`) was that it was a
+     * SECOND implementation of "block this app", and a second implementation is what drifts. The
+     * row, the `claimConfrontation` arrival invariant, grayscale and the launch gate now come from
+     * [handleDecision] for free.
      *
-     * @param targetPackage the app the user is sitting in (the browser, for a web block) -- what
-     *   the arrival is keyed on, and whose departure opens the next one.
-     * @param attributedPackage what the row is recorded against: the app whose rule matched.
-     * @param detail extra key=value pairs for the "not counted" line, so a dropped row still says
-     *   which confrontation it belonged to.
+     * ## It may only ever ESCALATE to a HARD_BLOCK
+     * If the rules no longer say hard-block, this does nothing at all -- and in particular it must
+     * never act on a DELAY/HOLD/BREATHING answer. A budget that turns out NOT to be spent would
+     * otherwise put a countdown in front of someone who is already inside the app and has done
+     * nothing, which is a worse bug than the one this fixes. Same failure direction as the rest of
+     * the clock: when the evidence has gone stale, do nothing.
      */
-    private suspend fun countBlockShown(
-        targetPackage: String,
-        attributedPackage: String,
-        blockMode: String,
-        confrontationKey: String,
-        detail: String
-    ) {
-        val counted = entryPoint.blockLaunchGuard().claimConfrontation(
-            targetPackage = targetPackage,
-            key = confrontationKey
-        )
-        if (!counted) {
+    private suspend fun enforceExhaustedBudget(packageName: String) {
+        val decision = entryPoint.evaluateBlockUseCase().invoke(packageName)
+        if (decision !is BlockDecision.Block || decision.mode != BlockMode.HARD_BLOCK) {
             entryPoint.nudgeLogger().i(
-                "block shown but NOT counted package=$attributedPackage " +
-                    "reason=already_counted_this_arrival $detail"
+                "daily limit NOT enforced package=$packageName " +
+                    "reason=rules_disagree decision=$decision"
             )
             return
         }
-
-        entryPoint.usageRepository().logEvent(
-            UsageEvent(
-                packageName = attributedPackage,
-                wasBlocked = true,
-                blockMode = blockMode
-            )
-        )
+        handleDecision(decision, packageName)
     }
 
     /**

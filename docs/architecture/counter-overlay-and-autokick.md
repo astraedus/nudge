@@ -206,14 +206,34 @@ only suppresses the event-driven evaluation path (`shouldSkipForegroundEvaluatio
 the tick path consulted it, so without this a user would meet the block here and then walk straight
 back into the app on the next event.
 
-**One row per arrival, not per tick.** The daily-limit `HARD_BLOCK` used to log nothing at all (the
-overlay-launch-paths gap in `docs/BACKLOG.md`), and a clock-driven launch is the one launch path most
-able to fire repeatedly with the user doing nothing — a naive per-launch log would have double- or
-triple-counted a single sitting across ticks. It now goes through the same claim-then-log the
-rule-block path used, pulled out into a shared `NudgeAccessibilityService.countBlockShown`: claim the
-arrival via `BlockLaunchGuard.claimConfrontation`, and only a successful claim writes the
-`wasBlocked` `UsageEvent`. The claim refuses a ROW, never a block — someone still sitting in an
-exhausted budget goes on meeting the limit screen, they are just not counted again for it. **Stat-semantics consequence, stated plainly**: from v1.18.4 on, daily-limit blocks
+**The clock REPORTS, it does not enforce — and that is what fixed the missing row.** The daily-limit
+`HARD_BLOCK` used to log no `UsageEvent` at all (the overlay-launch-paths gap in `docs/BACKLOG.md`),
+and the reason was structural rather than an oversight: this path was a SECOND implementation of
+"block this app". It first started `BlockOverlayActivity` itself (outside the launch gate, issue #31),
+then built its own `launchBlockOverlay` call inside the service — and a second implementation is the
+thing that drifts. `TimeRemainingHandler`'s callback now hands the FACT back and
+`NudgeAccessibilityService.enforceExhaustedBudget` re-evaluates:
+
+- **Re-derive, never trust the snapshot.** The trigger is read off `CounterCacheRefresher`, a
+  10-second snapshot, so "the budget is spent" can be up to ten seconds stale. Acting on it directly
+  is [#50](https://github.com/astraedus/nudge/issues/50)'s own shape from the other side: a user who
+  has just RAISED their limit, or switched the rule off, would be blocked with the old one, from a
+  timer, having done nothing. `EvaluateBlockUseCase` re-reads the rules, the schedule window, the
+  enabled flag and the usage total, all current. (It reads the budget from the same
+  `UsageRepository.getDailyForegroundTimeMs` the trigger does, so the two can only disagree about the
+  LIMIT, never about the minutes.)
+- **It may only ESCALATE to a HARD_BLOCK.** If the re-evaluation comes back DELAY/HOLD/BREATHING —
+  i.e. the budget is not actually spent — it does nothing and says so
+  (`daily limit NOT enforced … reason=rules_disagree`). Putting a countdown in front of someone who is
+  already inside the app and has touched nothing would be a worse bug than the one this fixes; same
+  fail-toward-nothing direction as the rest of the clock.
+- **Everything else comes free**, which is the point: the launch gate, grayscale, the
+  `claimConfrontation` arrival invariant and the `wasBlocked` row are `handleDecision`'s, unchanged.
+  So the row is ONE per arrival however many times the clock re-fires, and the claim refuses a ROW
+  and never a block — someone still sitting in an exhausted budget goes on meeting the limit screen,
+  they are just not counted again for it (issue #36).
+- There are now THREE `launchBlockOverlay` call sites, not four (`BlockOverlayLaunchContractTest`
+  floors it at three): the rule block, the auto-kick cooldown, the web auto-kick cooldown. **Stat-semantics consequence, stated plainly**: from v1.18.4 on, daily-limit blocks
 appear in the dashboard "Blocked" tile and the insight pages; history from before this version does
 not contain them, so a week spanning the upgrade is not comparable to one entirely on either side of
 it. The auto-kick cooldown's DELAY overlay is the other of the two paths that gap named, and it still
@@ -252,7 +272,8 @@ rule with no limit / no overlay / no auto-kick still spins no timer, which is th
 enforced; a completed delay grant cannot outlive the budget). L2/L3:
 `InterventionCountReplayTest` — the tick path in the #36 row model: one row for a budget that runs out
 mid-session, one row across 40 clock-driven re-launches while `launches` climbs past 40, two rows for
-a genuine leave-and-return. Source level: `BlockOverlayLaunchContractTest` (one claim, one row writer,
-both inside `countBlockShown`; the daily-limit callback records only what it showed). L6:
+a genuine leave-and-return. Source level: `BlockOverlayLaunchContractTest` (the clock's callback
+launches, claims and logs NOTHING itself; `enforceExhaustedBudget` re-evaluates and may only escalate
+to a HARD_BLOCK; one `wasBlocked` writer in the service, still). L6:
 `scripts/device-qa.sh daily-limit-midsession`, which sits in Calculator with a derived budget and
 asserts the limit screen arrives without leaving the app, for exactly +1 on the Blocked tile.

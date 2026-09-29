@@ -145,7 +145,12 @@ class BlockOverlayLaunchContractTest {
     fun `every launch site names the block it is showing, and the parameter has no default`() {
         val code = stripComments(service)
         val callSites = Regex("""launchBlockOverlay\(""").findAll(code).count() - 1 // the decl
-        assertTrue("there must be launch sites to check", callSites >= 4)
+        // THREE, not four: v1.18.4 removed the daily-limit launch site, which now re-evaluates and
+        // reaches `handleDecision`'s launch instead of owning one (see "the clock reports a spent
+        // budget and lets the rules decide"). The remaining three are the rule block, the auto-kick
+        // cooldown and the web auto-kick cooldown. A FLOOR, not a count: this is only here so the
+        // two assertions below cannot pass by finding nothing.
+        assertTrue("there must be launch sites to check (found $callSites)", callSites >= 3)
         assertEquals(
             "every launchBlockOverlay call must pass a decisionKey; a launch that does not say " +
                 "which block it is cannot be told apart from a stale pending overlay",
@@ -267,73 +272,67 @@ class BlockOverlayLaunchContractTest {
      */
     @Test
     fun `the count is gated, and the gate is between the launch and the row`() {
-        // Scoped to ONE function each, because the claim and the row moved into `countBlockShown`
-        // when the daily-limit path started sharing them. Reading "everything after
-        // handleDecision" would find them in the function below and pass whatever handleDecision
-        // itself did -- a grep that answers a question about a body it is not reading.
-        val decision = functionBody("private suspend fun handleDecision(")
+        // Scoped with `functionBody`, not `substring(indexOf(...))`: the latter reaches the end of
+        // the FILE, so the three indices below could be satisfied by a neighbouring function's code
+        // and this test would pass whatever handleDecision itself did.
+        val body = functionBody("private suspend fun handleDecision(")
+        val launch = index(body, "launchBlockOverlay(")
+        val claim = index(body, "claimConfrontation(")
+        val recorded = index(body, "wasBlocked = true")
         assertTrue(
-            "handleDecision must launch before it counts -- counting first would drop rows for " +
-                "blocks the gate refused to show",
-            index(decision, "launchBlockOverlay(") < index(decision, "countBlockShown(")
-        )
-
-        val counter = functionBody("private suspend fun countBlockShown(")
-        assertTrue(
-            "the order inside the shared counter must be claim, then row -- a claim below (or " +
-                "missing) the row lets the storm keep inflating the count",
-            index(counter, "claimConfrontation(") < index(counter, "wasBlocked = true")
+            "the order must be launch, then claim, then row -- a claim above the launch drops " +
+                "rows for blocks nobody saw, a claim below (or missing) the row lets the storm " +
+                "keep inflating the count",
+            launch < claim && claim < recorded
         )
     }
 
     /**
-     * ONE claim, ONE row writer, and both inside `countBlockShown`.
+     * THE CLOCK REPORTS, IT DOES NOT ENFORCE (v1.18.4).
      *
-     * This is the structural half of the v1.18.4 counting fix. Of the four block-overlay launches,
-     * only the rule-block path ever wrote a row, so the daily-limit HARD_BLOCK and the auto-kick
-     * cooldown DELAY were invisible to the Blocked tile and the insight pages (`docs/BACKLOG.md`,
-     * DB-verified on device 2026-08-20). Wiring the daily-limit path up as a SECOND copy of
-     * claim-then-log would have been a second place to forget the claim -- and that path fires from
-     * a 30-second clock, i.e. it is the one most able to fire repeatedly with nobody touching the
-     * phone. So there is one copy, and this says so in the only terms that cannot drift: a claim or
-     * a blocked row anywhere else in the service fails here.
+     * A daily budget running out mid-session is noticed by a 30-second clock, and until v1.18.4 that
+     * path built its own block: first by starting the activity itself, then by calling
+     * `launchBlockOverlay` directly. Either way it was a SECOND implementation of "block this app",
+     * which is exactly why it wrote no `UsageEvent` for two versions while the rule path did
+     * (`docs/BACKLOG.md`, DB-verified on device 2026-08-20) — a second implementation is the thing
+     * that drifts.
+     *
+     * It now reports the fact and re-evaluates, so the row, the arrival invariant, grayscale and the
+     * launch gate all come from `handleDecision`. Two properties are load-bearing and both are
+     * asserted: the callback enforces NOTHING itself, and the re-evaluation may only escalate to a
+     * HARD_BLOCK (acting on a DELAY answer would put a countdown in front of someone already inside
+     * the app, from a timer, having done nothing).
      */
     @Test
-    fun `the claim and the row live in one shared function`() {
-        val code = stripComments(service)
-        assertEquals(
-            "every block path must count through countBlockShown -- a second claimConfrontation " +
-                "call site is a second place to get the order wrong",
-            1,
-            Regex("""claimConfrontation\(""").findAll(code).count()
-        )
-        val counter = functionBody("private suspend fun countBlockShown(")
-        assertTrue(
-            "and that one claim must be the shared counter's own",
-            counter.contains("claimConfrontation(")
-        )
-    }
-
-    /**
-     * The daily-limit hard block is a genuine confrontation, so it writes its row -- and only when
-     * the gate actually showed it.
-     *
-     * It fires from a clock tick rather than a foreground event, so it is both the launch most
-     * likely to be dropped (the user can be elsewhere by the time the usage read returns) and the
-     * one most able to repeat. Counting an unshown block is the stat inflation issue #19 measured;
-     * counting every tick of a shown one is issue #36.
-     */
-    @Test
-    fun `the daily-limit launch records the block it showed, and only if it showed`() {
+    fun `the clock reports a spent budget and lets the rules decide`() {
         val callback = stripComments(service)
             .substringAfter("onTimeLimitExceeded = {")
             .substringBefore("autoKickExecutor = AutoKickExecutor(")
-        val launch = index(callback, "launchBlockOverlay(")
-        val guardOnLaunched = index(callback, "if (launched)")
-        val count = index(callback, "countBlockShown(")
+        assertFalse(
+            "the clock's callback must not launch, gate or count anything itself -- that is the " +
+                "second implementation this fix removed",
+            callback.contains("launchBlockOverlay(") ||
+                callback.contains("claimConfrontation(") ||
+                callback.contains("logEvent(")
+        )
         assertTrue(
-            "the order must be launch, then the launched check, then the row",
-            launch < guardOnLaunched && guardOnLaunched < count
+            "it must hand the fact to enforceExhaustedBudget",
+            callback.contains("enforceExhaustedBudget(")
+        )
+
+        val enforce = functionBody("private suspend fun enforceExhaustedBudget(")
+        assertTrue(
+            "which must RE-DERIVE the decision from the rules rather than trust the 10-second " +
+                "counter-cache snapshot (a raised or removed limit is issue #50's own shape)",
+            enforce.contains("evaluateBlockUseCase().invoke(")
+        )
+        assertTrue(
+            "and may only ever escalate to a HARD_BLOCK",
+            enforce.contains("decision.mode != BlockMode.HARD_BLOCK")
+        )
+        assertTrue(
+            "and then goes through the one block path",
+            enforce.contains("handleDecision(")
         )
     }
 
@@ -345,23 +344,21 @@ class BlockOverlayLaunchContractTest {
      */
     @Test
     fun `the row is the only thing the arrival invariant may refuse`() {
-        val counter = functionBody("private suspend fun countBlockShown(")
+        val body = functionBody("private suspend fun handleDecision(")
+        val claim = index(body, "claimConfrontation(")
+        val recorded = index(body, "wasBlocked = true")
         assertFalse(
             "weakening enforcement here is the failure this forbids: when the invariant says " +
-                "'no row', the overlay must already be shown, so the shared counter may not " +
-                "launch, hide or go home -- it may only decline to write",
-            counter.contains("startActivity") ||
-                counter.contains("launchBlockOverlay(") ||
-                counter.contains("goHome")
+                "'no row', the overlay must still already be shown, so no startActivity may sit " +
+                "between the claim and the row",
+            body.substring(claim, recorded).contains("startActivity")
         )
-
-        val decision = functionBody("private suspend fun handleDecision(")
         assertEquals(
             "launchBlockOverlay must be called exactly once in handleDecision, and unconditionally " +
-                "ahead of the count -- gating the launch itself behind the claim would let the " +
-                "arrival invariant suppress the block, not just its row",
+                "ahead of the claim -- gating the launch itself behind claimConfrontation would let " +
+                "the arrival invariant suppress the block, not just its row",
             1,
-            Regex("""launchBlockOverlay\(""").findAll(decision).count()
+            Regex("""launchBlockOverlay\(""").findAll(body).count()
         )
     }
 
