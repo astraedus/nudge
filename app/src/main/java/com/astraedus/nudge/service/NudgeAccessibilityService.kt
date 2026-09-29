@@ -857,7 +857,19 @@ class NudgeAccessibilityService : AccessibilityService() {
             // this service and therefore outside any gate. It goes through [launchBlockOverlay] now,
             // like the other three.
             onTimeLimitExceeded = { limitedPackage, dailyLimitMinutes ->
-                launchBlockOverlay(
+                // Logged unconditionally, BEFORE the gate can drop the launch. This is the only
+                // enforcement in the app with no user action behind it, so "the budget ran out and
+                // we refused to show it" and "the budget never ran out" have to be distinguishable
+                // in logcat -- the ambiguity that cost this repo a release cycle twice. It is also
+                // the device gate's oracle for the mid-session case, and deliberately NOT the
+                // engine's `reason=time_budget_exceeded` wording: the two paths are different
+                // mechanisms (one re-entry event, one clock tick) and a shared substring would make
+                // a grep for either match both.
+                entryPoint.nudgeLogger().i(
+                    "block package=$limitedPackage reason=daily_limit_reached " +
+                        "limitMinutes=$dailyLimitMinutes source=foreground_clock"
+                )
+                val launched = launchBlockOverlay(
                     targetPackage = limitedPackage,
                     attributedPackage = limitedPackage,
                     // The daily-limit variant is a DIFFERENT SCREEN from a plain hard block -- its
@@ -874,6 +886,24 @@ class NudgeAccessibilityService : AccessibilityService() {
                     putExtra(BlockOverlayActivity.EXTRA_RULE_NAME, "Daily limit reached")
                     putExtra(BlockOverlayActivity.EXTRA_DAILY_TIME_REMAINING_MS, 0L)
                     putExtra(BlockOverlayActivity.EXTRA_DAILY_LIMIT_MINUTES, dailyLimitMinutes)
+                }
+                // A daily-limit block is a genuine confrontation and now writes its row, through
+                // the same claim as the rule-block path -- so it appears in the Blocked tile and
+                // the insight pages (it logged nothing at all before: `docs/BACKLOG.md`), and so
+                // the 30-second clock behind it cannot re-count the same sitting once per tick.
+                // The key carries no feature and no domain: a daily budget is per app.
+                if (launched) {
+                    serviceScope.launch {
+                        countBlockShown(
+                            targetPackage = limitedPackage,
+                            attributedPackage = limitedPackage,
+                            blockMode = "HARD_BLOCK",
+                            confrontationKey = BlockLaunchGate.confrontationKey(
+                                attributedPackage = limitedPackage
+                            ),
+                            detail = "source=daily_limit"
+                        )
+                    }
                 }
                 Unit
             }
@@ -1480,6 +1510,15 @@ class NudgeAccessibilityService : AccessibilityService() {
             // happened to fire again. The session's own reset paths clear it.
             interactionHandler.onAppChanged(packageName)
             timeRemainingHandler.resetDebounce()
+            // TRACKED IS NOT THE SAME AS WANTS-AN-OVERLAY, and only the branch above ever said so.
+            //
+            // `clearOverlays` hides both awareness overlays for an UNtracked app, and nothing did
+            // it for a tracked app that wants neither -- so walking from an app with the counter on
+            // into one without it left the previous app's counter floating over it. Latent since
+            // v1.10.0 for time-kick-only rules; a daily limit alone now puts a package in the cache
+            // too, which is a far more common shape, so the hide is made explicit here rather than
+            // left to a membership test that no longer answers this question.
+            hideUnwantedAwarenessOverlays(packageName)
         }
 
         // Start/stop the foreground-time clock for this app. Deliberately BEFORE the emergency-pass,
@@ -1506,14 +1545,19 @@ class NudgeAccessibilityService : AccessibilityService() {
         // exists, never remembered from one that used to: delete a rule (or turn its auto-kick off)
         // with a cooldown armed and the in-memory map would keep ejecting the user from an app
         // nothing is configured to block, invisibly, for the whole cooldown. See [CooldownGate].
-        val hasRuleEntry = counterCache.hasEntry(packageName)
-        if (CooldownGate.isStale(hasRuleEntry, tracker.isInCooldown(packageName))) {
+        //
+        // The authority is `configuresAutoKick`, NOT bare cache membership: since a daily limit
+        // alone now puts a package in the cache, membership would have said "some rule still wants
+        // this package" for a rule that cannot kick at all, and turning auto-kick off while keeping
+        // a limit would have left the armed cooldown enforcing. Same question, narrower evidence.
+        val autoKickConfigured = counterCache.getEntry(packageName)?.configuresAutoKick == true
+        if (CooldownGate.isStale(autoKickConfigured, tracker.isInCooldown(packageName))) {
             entryPoint.nudgeLogger().i(
                 "stale auto-kick cooldown dropped package=$packageName reason=no_rule_entry"
             )
             tracker.clearCooldown(packageName)
         }
-        if (CooldownGate.shouldEnforce(hasRuleEntry, tracker.isInCooldown(packageName))) {
+        if (CooldownGate.shouldEnforce(autoKickConfigured, tracker.isInCooldown(packageName))) {
             val remainingMs = tracker.getCooldownRemainingMs(packageName)
             val remainingSeconds = ((remainingMs + 999) / 1000).toInt().coerceAtLeast(1)
             entryPoint.nudgeLogger().i(
@@ -1708,14 +1752,17 @@ class NudgeAccessibilityService : AccessibilityService() {
         val tracker = entryPoint.interactionTracker()
         // Same gate as the app-level cooldown, for the same reason: a cooldown keyed on a domain no
         // rule enforces on any more is stale state, and acting on it blocks a site nothing blocks.
-        val hasRuleEntry = counterCache.getEntry(key) != null
-        if (CooldownGate.isStale(hasRuleEntry, tracker.isInCooldown(key))) {
+        // `configuresAutoKick`, not mere membership, for the same reason the app path uses it: a
+        // cache entry no longer implies anything can kick, and a web rule could hold an entry for
+        // another clock-driven reason (per-domain daily budgets are an open backlog item).
+        val autoKickConfigured = counterCache.getEntry(key)?.configuresAutoKick == true
+        if (CooldownGate.isStale(autoKickConfigured, tracker.isInCooldown(key))) {
             entryPoint.nudgeLogger().i(
                 "stale web auto-kick cooldown dropped domain=$domain reason=no_rule_entry"
             )
             tracker.clearCooldown(key)
         }
-        if (!CooldownGate.shouldEnforce(hasRuleEntry, tracker.isInCooldown(key))) return false
+        if (!CooldownGate.shouldEnforce(autoKickConfigured, tracker.isInCooldown(key))) return false
 
         val remainingMs = tracker.getCooldownRemainingMs(key)
         val remainingSeconds = ((remainingMs + 999) / 1000).toInt().coerceAtLeast(1)
@@ -2539,41 +2586,19 @@ class NudgeAccessibilityService : AccessibilityService() {
                     grayscaleActiveForPackage = packageName
                 }
 
-                // ONE CONFRONTATION PER ARRIVAL (issue #36), and it sits BELOW the launch and below
-                // grayscale on purpose: this refuses a ROW, never a block. The overlay is already
-                // on its way, and it should be -- somebody still sitting in a blocked app should go
-                // on meeting the block. What must not go on is the COUNT rising for a confrontation
-                // the user never walked into.
-                //
-                // The 2500-in-a-day report is what happens without it. Nothing above this line
-                // answers "has the user arrived here since the last time we counted them", so every
-                // mechanism that can re-launch an overlay by itself -- an overlay stopped and
-                // finished by a screen-off or a re-fronting app, a re-delivery through
-                // `onNewIntent`, the walk-away fail-safe popping the app back -- also re-counted it,
-                // once per iteration, for as long as it ran.
-                val counted = entryPoint.blockLaunchGuard().claimConfrontation(
+                // ONE CONFRONTATION PER ARRIVAL (issue #36). It sits BELOW the launch and below
+                // grayscale on purpose -- see [countBlockShown], which owns the invariant now that
+                // the daily-limit path shares it.
+                countBlockShown(
                     targetPackage = web?.browserPackage ?: packageName,
-                    key = BlockLaunchGate.confrontationKey(
+                    attributedPackage = packageName,
+                    blockMode = decision.mode.name,
+                    confrontationKey = BlockLaunchGate.confrontationKey(
                         attributedPackage = packageName,
                         featureKey = featureKey,
                         webDomain = web?.domain
-                    )
-                )
-                if (!counted) {
-                    entryPoint.nudgeLogger().i(
-                        "block shown but NOT counted package=$packageName " +
-                            "reason=already_counted_this_arrival feature=$featureKey " +
-                            "domain=${web?.domain}"
-                    )
-                    return
-                }
-
-                entryPoint.usageRepository().logEvent(
-                    UsageEvent(
-                        packageName = packageName,
-                        wasBlocked = true,
-                        blockMode = decision.mode.name
-                    )
+                    ),
+                    detail = "feature=$featureKey domain=${web?.domain}"
                 )
             }
 
@@ -2582,6 +2607,83 @@ class NudgeAccessibilityService : AccessibilityService() {
                     UsageEvent(packageName = packageName)
                 )
             }
+        }
+    }
+
+    /**
+     * Claim the right to write the `UsageEvent` for a block that has just been shown, and write it.
+     * ONE CONFRONTATION PER ARRIVAL (issue [#36](https://github.com/astraedus/nudge/issues/36)).
+     *
+     * **This refuses a ROW, never a block.** Every caller has already shown the overlay by the time
+     * it gets here, and it should have -- somebody still sitting in a blocked app should go on
+     * meeting the block. What must not go on is the COUNT rising for a confrontation the user never
+     * walked into. The 2500-in-a-day report is what happens without the claim: nothing in a launch
+     * path answers "has the user arrived here since the last time we counted them", so every
+     * mechanism that can re-launch an overlay by itself -- an overlay stopped and finished by a
+     * screen-off or a re-fronting app, a re-delivery through `onNewIntent`, the walk-away fail-safe
+     * popping the app back, a 30-second clock tick -- also re-counted it, once per iteration.
+     *
+     * **Shared, because "which launches write a row" had already drifted.** Of the four block
+     * overlay launches, only the rule-block path logged one, so the daily-limit HARD_BLOCK and the
+     * auto-kick cooldown DELAY were invisible to the Blocked tile and the insight pages
+     * (`docs/BACKLOG.md`, DB-verified on device 2026-08-20). A second copy of claim-then-log is
+     * also a second place to forget the claim, and the daily-limit path is the one that fires from a
+     * timer, i.e. the one most able to fire repeatedly without the user doing anything.
+     *
+     * @param targetPackage the app the user is sitting in (the browser, for a web block) -- what
+     *   the arrival is keyed on, and whose departure opens the next one.
+     * @param attributedPackage what the row is recorded against: the app whose rule matched.
+     * @param detail extra key=value pairs for the "not counted" line, so a dropped row still says
+     *   which confrontation it belonged to.
+     */
+    private suspend fun countBlockShown(
+        targetPackage: String,
+        attributedPackage: String,
+        blockMode: String,
+        confrontationKey: String,
+        detail: String
+    ) {
+        val counted = entryPoint.blockLaunchGuard().claimConfrontation(
+            targetPackage = targetPackage,
+            key = confrontationKey
+        )
+        if (!counted) {
+            entryPoint.nudgeLogger().i(
+                "block shown but NOT counted package=$attributedPackage " +
+                    "reason=already_counted_this_arrival $detail"
+            )
+            return
+        }
+
+        entryPoint.usageRepository().logEvent(
+            UsageEvent(
+                packageName = attributedPackage,
+                wasBlocked = true,
+                blockMode = blockMode
+            )
+        )
+    }
+
+    /**
+     * Hide the awareness overlays the app now in front did NOT ask for.
+     *
+     * `clearOverlays` does this for an app with no cache entry at all; this is the same job for a
+     * TRACKED app that wants none of them, which nothing did. It was reachable before v1.18.4 only
+     * for a time-kick-only rule; a daily limit alone now puts a package in the cache, so walking
+     * from a counter app into one with a plain budget would otherwise leave the previous app's
+     * counter floating over it.
+     *
+     * Deliberately asks the entry what it WANTS rather than testing membership -- membership is the
+     * question that stopped answering this one.
+     */
+    private fun hideUnwantedAwarenessOverlays(packageName: String) {
+        try {
+            if (!counterCache.isCounterEnabled(packageName)) interactionHandler.hideCounter()
+            if (counterCache.getEntry(packageName)?.showTimeRemaining != true) {
+                timeRemainingHandler.hide()
+            }
+        } catch (e: Exception) {
+            entryPoint.nudgeLogger().w("awareness overlay hide failed package=$packageName", e)
         }
     }
 
@@ -2665,8 +2767,19 @@ class NudgeAccessibilityService : AccessibilityService() {
         val rules = entryPoint.blockRuleRepository().getEnabledRules().first()
         val appEntries = rules
             // A time-based auto-kick needs no counter and no overlay, so it must be able to put
-            // a package in the cache on its own — otherwise the hot path would never see it.
-            .filter { it.showCounter || it.showTimeRemaining || it.autoKickAfterMinutes != null }
+            // a package in the cache on its own — otherwise the hot path would never see it. A
+            // DAILY LIMIT is the same case and was missing: it needs no counter and no overlay
+            // either, but without an entry `updateForegroundTimeTicker` has nothing to read and
+            // the budget is only enforced on the next window-state event, i.e. on re-entry. The
+            // predicate is deliberately the union of "wants a drawn overlay" and
+            // `CounterCacheEntry.needsForegroundTimeTick`, so nothing that needs the clock can be
+            // filtered out before the clock is ever asked about it.
+            .filter {
+                it.showCounter ||
+                    it.showTimeRemaining ||
+                    it.autoKickAfterMinutes != null ||
+                    it.dailyLimitMinutes != null
+            }
             .mapNotNull { rule ->
                 rule.packageName?.let { pkg ->
                     pkg to CounterCacheEntry(

@@ -5,7 +5,8 @@ import com.astraedus.nudge.domain.web.WebSessionKey
 /**
  * Per-package snapshot of everything the accessibility hot path needs to know about a rule WITHOUT
  * touching the database. One entry exists for every package that needs *any* foreground awareness:
- * the interaction counter, the time-remaining overlay, or a time-based auto-kick.
+ * the interaction counter, the time-remaining overlay, a time-based auto-kick, or a daily time
+ * limit (which needs the clock so the budget is enforced mid-session, not only on re-entry).
  *
  * [showCounter] is what decides whether the floating interaction counter is drawn — it is NOT the
  * same question as "does this package have an entry". A rule can want a time-based auto-kick (or a
@@ -24,11 +25,42 @@ data class CounterCacheEntry(
     /**
      * True when this package needs the periodic foreground-time tick — i.e. something here is driven
      * by a clock rather than by accessibility events. Without a tick, a passively-watched app
-     * (zero taps, zero scrolls) produces no events and neither the time-remaining overlay nor the
-     * time-based auto-kick would ever update.
+     * (zero taps, zero scrolls) produces no events and neither the time-remaining overlay, nor the
+     * time-based auto-kick, nor a daily budget running out would ever be noticed.
+     *
+     * **A daily limit is the third arm, and it was missing until v1.18.4.** The first two arms are
+     * the features that DISPLAY a running number, so the predicate read as "who needs the number
+     * refreshed" — and a plain daily limit (no time-remaining overlay, no time kick) satisfied
+     * neither. Measured on the bench: 150 seconds of continuous foreground time on a 1-minute
+     * budget produced exactly ONE evaluation, at t=0, so the limit was only enforced the next time
+     * the user re-opened the app. "Daily limits should definitely be enforced even mid session"
+     * (product call, 2026-09-29), so a budget is now a clock consumer in its own right; the
+     * enforcement itself already lived on the tick path in [TimeRemainingHandler].
+     *
+     * A package with neither still spins no timer — that is what keeps the clock off the battery
+     * for rules that need nothing from it ([#63](https://github.com/astraedus/nudge/issues/63)).
+     * Note the daily-limit arm SUBSUMES the old time-remaining arm rather than sitting beside it:
+     * the readout is only ever drawn for a rule that has a limit ([TimeRemainingHandler]), so
+     * `showTimeRemaining && dailyLimitMinutes != null` cannot be true without the second arm
+     * already being true, and spelling it out again would be a condition that can never decide
+     * anything.
      */
     val needsForegroundTimeTick: Boolean
-        get() = autoKickAfterMinutes != null || (showTimeRemaining && dailyLimitMinutes != null)
+        get() = autoKickAfterMinutes != null || dailyLimitMinutes != null
+
+    /**
+     * True when some rule actually configures an auto-kick for this package — the only thing that
+     * can justify an armed auto-kick cooldown.
+     *
+     * **Not the same question as cache membership**, and conflating them is a bug the way
+     * `hasEntry`/[showCounter] was. Since a daily limit alone puts a package in the cache (see
+     * [needsForegroundTimeTick]), membership no longer implies that anything here can kick — so a
+     * user who turns auto-kick OFF while keeping a daily limit would have kept an armed cooldown
+     * enforcing against a rule that no longer asks for it, which is precisely what
+     * [com.astraedus.nudge.domain.block.CooldownGate] exists to prevent.
+     */
+    val configuresAutoKick: Boolean
+        get() = autoKickAfter != null || autoKickAfterMinutes != null
 }
 
 class CounterCacheRefresher(

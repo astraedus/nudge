@@ -15,27 +15,38 @@ package com.astraedus.nudge.domain.block
  *
  * The repo has been here before. Every other enforcement decision is a function of a rule that
  * currently matches the foreground package; this one was a function of state left behind by a rule
- * that used to. The gate makes the cooldown's authority *derived* rather than *remembered*: no cache
- * entry for the package means no rule wants anything from it, so there is nothing to enforce.
+ * that used to. The gate makes the cooldown's authority *derived* rather than *remembered*: nothing
+ * currently configuring an auto-kick for the package means there is nothing to enforce.
+ *
+ * ## Why the authority is "configures an auto-kick" and not "is tracked at all"
+ * It was bare counter-cache membership, which was a good enough proxy while everything in that cache
+ * was an auto-kick or an awareness overlay. v1.18.4 put every rule carrying a DAILY LIMIT in the
+ * cache too (a budget needs the foreground clock, so it is enforced mid-session and not only on
+ * re-entry), and membership then stopped answering this question: a user who turned auto-kick off
+ * while keeping a daily limit would still have "an entry", so the armed cooldown would have gone on
+ * ejecting them — the defect in the paragraph above, re-entering through its own proxy.
+ * `CounterCacheEntry.configuresAutoKick` is the narrower evidence, and the only evidence.
  *
  * Pure, so the rule can be a unit test instead of a device session.
  */
 object CooldownGate {
 
     /**
-     * @param hasRuleEntry whether the counter cache currently holds an entry for this package, i.e.
-     *   some enabled rule still wants foreground awareness of it. This is the authority.
+     * @param autoKickConfigured whether some enabled rule still configures an auto-kick for this
+     *   package, by either trigger (interaction count or session minutes). This is the authority —
+     *   see the class KDoc for why it is not "the counter cache holds an entry".
      * @param isInCooldown whether an auto-kick cooldown timer is still running for the package.
      * @return true only when both agree. A cooldown without a rule behind it is stale state, and
      *   the caller must clear it rather than act on it.
      */
-    fun shouldEnforce(hasRuleEntry: Boolean, isInCooldown: Boolean): Boolean =
-        hasRuleEntry && isInCooldown
+    fun shouldEnforce(autoKickConfigured: Boolean, isInCooldown: Boolean): Boolean =
+        autoKickConfigured && isInCooldown
 
     /**
-     * True when a cooldown is armed for a package no rule covers any more — the caller should drop
-     * it so the map cannot accumulate enforcement authority for deleted rules.
+     * True when a cooldown is armed for a package nothing configures an auto-kick for any more — the
+     * caller should drop it so the map cannot accumulate enforcement authority for rules that have
+     * been deleted, disabled, or had their auto-kick switched off.
      */
-    fun isStale(hasRuleEntry: Boolean, isInCooldown: Boolean): Boolean =
-        !hasRuleEntry && isInCooldown
+    fun isStale(autoKickConfigured: Boolean, isInCooldown: Boolean): Boolean =
+        !autoKickConfigured && isInCooldown
 }
