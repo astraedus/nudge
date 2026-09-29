@@ -202,6 +202,107 @@ class TimeRemainingHandlerTest {
         assertFalse(overlayManager.visible)
     }
 
+    // --- maybeUpdate: a PLAIN daily limit (no readout) is still enforced, v1.18.4 ---
+    //
+    // The bug these rows pin: the readout's condition and the ENFORCEMENT's condition were the same
+    // condition. `showTimeRemaining && dailyLimitMinutes != null` gated both, so a rule that only
+    // set a budget was re-read by nothing on the clock, and the block landed on the user's next app
+    // entry instead of when their budget ran out. Measured on the bench: 150s of continuous
+    // foreground time on a 1-minute budget, one evaluation, no block.
+
+    @Test
+    fun `maybeUpdate hard-blocks a plain daily limit with no readout`() {
+        enablePackage("com.example.app", showTimeRemaining = false, dailyLimitMinutes = 30)
+        usageProvider.foregroundTimeMs = 31 * 60 * 1000L
+
+        handler.maybeUpdate("com.example.app")
+        testScope.advanceUntilIdle()
+
+        assertEquals(1, timeLimitExceededCalls.size)
+        assertEquals("com.example.app" to 30, timeLimitExceededCalls[0])
+    }
+
+    /**
+     * The counterfactual for the row above: enforcing without a readout must not START drawing one.
+     *
+     * The whole reason the two conditions were entangled is that this class is named after the
+     * overlay. If enforcement pulled the overlay along with it, every user who set a budget would
+     * get a floating number they never asked for.
+     */
+    @Test
+    fun `enforcing a plain daily limit draws no readout`() {
+        enablePackage("com.example.app", showTimeRemaining = false, dailyLimitMinutes = 30)
+        usageProvider.foregroundTimeMs = 31 * 60 * 1000L
+
+        handler.maybeUpdate("com.example.app")
+        testScope.advanceUntilIdle()
+
+        assertEquals(1, timeLimitExceededCalls.size)
+        assertEquals("the readout must never be drawn for a rule that did not ask for it", 0, overlayManager.updateCount)
+        assertFalse(overlayManager.visible)
+    }
+
+    @Test
+    fun `a plain daily limit with budget left blocks nothing`() {
+        enablePackage("com.example.app", showTimeRemaining = false, dailyLimitMinutes = 60)
+        usageProvider.foregroundTimeMs = 18 * 60 * 1000L
+
+        handler.maybeUpdate("com.example.app")
+        testScope.advanceUntilIdle()
+
+        assertTrue(timeLimitExceededCalls.isEmpty())
+        assertEquals(0, overlayManager.updateCount)
+    }
+
+    @Test
+    fun `no daily limit is never enforced, readout or not`() {
+        // The clock can reach this for a package tracked only for a time-based auto-kick. Reading a
+        // budget that does not exist must not invent one.
+        listOf(true, false).forEach { showTimeRemaining ->
+            timeLimitExceededCalls.clear()
+            handler.resetDebounce()
+            enablePackage("com.example.app", showTimeRemaining, dailyLimitMinutes = null)
+            usageProvider.foregroundTimeMs = 99 * 60 * 1000L
+
+            handler.maybeUpdate("com.example.app")
+            testScope.advanceUntilIdle()
+
+            assertTrue(
+                "showTimeRemaining=$showTimeRemaining with no limit must enforce nothing",
+                timeLimitExceededCalls.isEmpty()
+            )
+        }
+    }
+
+    /**
+     * THE GRANT, and it is the half a "completed delay" would otherwise defeat.
+     *
+     * A finished delay / hold / breathing grants passthrough, and passthrough suppresses the EVENT
+     * path (`shouldSkipForegroundEvaluation`). Nothing on the clock path consults the grant -- so
+     * the budget is enforced through it, which is the behaviour -- but the grant must also be DROPPED
+     * as the block goes up, or the user walks straight back into the app they were just removed
+     * from and the block is cosmetic.
+     */
+    @Test
+    fun `a completed delay grant does not let a user outlive their budget`() {
+        enablePackage("com.example.app", showTimeRemaining = false, dailyLimitMinutes = 30)
+        usageProvider.foregroundTimeMs = 31 * 60 * 1000L
+        passthroughManager.grant("com.example.app")
+        assertTrue(
+            "precondition: the grant really is suppressing the event path",
+            passthroughManager.shouldSkipForegroundEvaluation("com.example.app")
+        )
+
+        handler.maybeUpdate("com.example.app")
+        testScope.advanceUntilIdle()
+
+        assertEquals("the tick-path block is not suppressed by an active grant", 1, timeLimitExceededCalls.size)
+        assertFalse(
+            "the grant must be gone, or the user re-enters the app the block just took them out of",
+            passthroughManager.shouldSkipForegroundEvaluation("com.example.app")
+        )
+    }
+
     // --- resetDebounce ---
 
     @Test

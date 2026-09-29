@@ -302,6 +302,7 @@ fun RuleEditorScreen(
                         InfoButton(
                             "Set a daily usage budget for this app.\n\n" +
                             "Once you've used the app for this many minutes today, it switches to a hard block for the rest of the day -- regardless of what block mode you chose above.\n\n" +
+                            "The block lands as soon as the budget runs out, even if you're still inside the app.\n\n" +
                             "Example: Delay mode + 30 minute limit = you get a countdown each time you open the app, but after 30 minutes of total usage today, the app is fully blocked."
                         )
                     }

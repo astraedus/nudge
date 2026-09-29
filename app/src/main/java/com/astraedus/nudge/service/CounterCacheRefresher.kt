@@ -73,9 +73,16 @@ class CounterCacheRefresher(
     private var lastRefreshTime: Long = 0L
 
     /**
-     * True when this package is TRACKED at all (counter, time-remaining overlay, or time-kick).
-     * Use this for "should I keep foreground state for this app"; use [isCounterEnabled] for
-     * "should I draw / feed the interaction counter".
+     * True when this package is TRACKED at all (counter, time-remaining overlay, time-kick, or a
+     * daily limit). Use this for "should I keep foreground state for this app"; use
+     * [isCounterEnabled] for "should I draw / feed the interaction counter", and
+     * [CounterCacheEntry.configuresAutoKick] for "may an armed cooldown still enforce".
+     *
+     * Membership answers less than it used to, and deliberately: since a daily limit alone puts a
+     * package here, "tracked" now means only "something needs the foreground clock". Every other
+     * question has its own predicate above, because this one standing in for them is how a
+     * time-kick-only rule nearly grew a counter (v1.10.0) and how a limit-only rule would have kept
+     * a dead auto-kick cooldown alive (v1.18.4).
      */
     fun hasEntry(packageName: String): Boolean = packageName in enabledPackages
 

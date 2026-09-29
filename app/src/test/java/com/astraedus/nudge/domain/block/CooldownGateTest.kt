@@ -12,7 +12,7 @@ class CooldownGateTest {
 
     @Test
     fun `a live cooldown on a package a rule still covers enforces`() {
-        assertTrue(CooldownGate.shouldEnforce(hasRuleEntry = true, isInCooldown = true))
+        assertTrue(CooldownGate.shouldEnforce(autoKickConfigured = true, isInCooldown = true))
     }
 
     @Test
@@ -20,21 +20,21 @@ class CooldownGateTest {
         // The bug shape: the user deletes the rule (or turns its auto-kick off) while the cooldown
         // timer is still running. The in-memory map outlives the rule, and acting on it puts a
         // block overlay over an app nothing is configured to block, leaving no trace in the stats.
-        assertFalse(CooldownGate.shouldEnforce(hasRuleEntry = false, isInCooldown = true))
+        assertFalse(CooldownGate.shouldEnforce(autoKickConfigured = false, isInCooldown = true))
     }
 
     @Test
     fun `no cooldown never enforces, rule or not`() {
-        assertFalse(CooldownGate.shouldEnforce(hasRuleEntry = true, isInCooldown = false))
-        assertFalse(CooldownGate.shouldEnforce(hasRuleEntry = false, isInCooldown = false))
+        assertFalse(CooldownGate.shouldEnforce(autoKickConfigured = true, isInCooldown = false))
+        assertFalse(CooldownGate.shouldEnforce(autoKickConfigured = false, isInCooldown = false))
     }
 
     @Test
     fun `only a rule-less live cooldown is stale`() {
-        assertTrue(CooldownGate.isStale(hasRuleEntry = false, isInCooldown = true))
-        assertFalse(CooldownGate.isStale(hasRuleEntry = true, isInCooldown = true))
-        assertFalse(CooldownGate.isStale(hasRuleEntry = false, isInCooldown = false))
-        assertFalse(CooldownGate.isStale(hasRuleEntry = true, isInCooldown = false))
+        assertTrue(CooldownGate.isStale(autoKickConfigured = false, isInCooldown = true))
+        assertFalse(CooldownGate.isStale(autoKickConfigured = true, isInCooldown = true))
+        assertFalse(CooldownGate.isStale(autoKickConfigured = false, isInCooldown = false))
+        assertFalse(CooldownGate.isStale(autoKickConfigured = true, isInCooldown = false))
     }
 
     /**
@@ -43,12 +43,12 @@ class CooldownGateTest {
      */
     @Test
     fun `enforce and stale are mutually exclusive across the whole table`() {
-        listOf(true, false).forEach { hasRule ->
+        listOf(true, false).forEach { autoKick ->
             listOf(true, false).forEach { inCooldown ->
                 assertFalse(
-                    "hasRule=$hasRule inCooldown=$inCooldown was both enforceable and stale",
-                    CooldownGate.shouldEnforce(hasRule, inCooldown) &&
-                        CooldownGate.isStale(hasRule, inCooldown)
+                    "autoKick=$autoKick inCooldown=$inCooldown was both enforceable and stale",
+                    CooldownGate.shouldEnforce(autoKick, inCooldown) &&
+                        CooldownGate.isStale(autoKick, inCooldown)
                 )
             }
         }

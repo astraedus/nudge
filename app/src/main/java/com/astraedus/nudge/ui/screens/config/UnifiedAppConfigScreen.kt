@@ -155,7 +155,8 @@ fun UnifiedAppConfigScreen(
                         )
                         InfoButton(
                             "Set a daily usage budget for this app.\n\n" +
-                            "Once you've used the app for this many minutes today, it switches to a hard block for the rest of the day." +
+                            "Once you've used the app for this many minutes today, it switches to a hard block for the rest of the day. " +
+                            "The block lands as soon as the budget runs out, even if you're still inside the app." +
                             // Honest about the one direction that does not work rather than letting
                             // the budget silently never count web time. The reverse DOES work and is
                             // worth saying: spending the budget in the app closes the website too.

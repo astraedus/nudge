@@ -1,6 +1,7 @@
 package com.astraedus.nudge.service
 
 import com.astraedus.nudge.domain.block.BlockLaunchGate
+import com.astraedus.nudge.domain.block.dailyLimitKey
 import com.astraedus.nudge.domain.block.delayKey
 import com.astraedus.nudge.domain.events.A11yEventType
 import com.astraedus.nudge.domain.events.AccessibilityEventRecord
@@ -87,7 +88,14 @@ class InterventionCountReplayTest {
         val target: String,
         val attributed: String,
         val featureKey: String? = null,
-        val webDomain: String? = null
+        val webDomain: String? = null,
+        /**
+         * The daily-limit HARD_BLOCK is a DIFFERENT SCREEN from an ordinary block and carries its
+         * own decision fingerprint (issue #50), so the event path has to be able to say which it is
+         * showing -- otherwise a re-entry into an exhausted budget would be fingerprinted as a DELAY
+         * and could look like a duplicate of the limit screen already in flight.
+         */
+        val dailyLimited: Boolean = false
     )
 
     // ------------------------------------------------------------------------------- the harness
@@ -102,7 +110,20 @@ class InterventionCountReplayTest {
      * Nudge's package is modelled too, because that is what stops the debounce absorbing the
      * blocked app's next event — without it these loops would look slower than they are.
      */
-    private inner class Device(private val blocks: Map<String, Block>) {
+    private inner class Device(blocks: Map<String, Block>) {
+
+        /**
+         * Mutable, because a daily budget makes the RULES change with nothing edited: an app that
+         * evaluated to ALLOW at entry evaluates to a hard block once its minutes are spent. A test
+         * that could only express "blocked from the first event" could not describe a budget
+         * running out mid-session at all.
+         */
+        private val blocks = blocks.toMutableMap()
+
+        /** The budget for [block] has just been spent, so any evaluation now hard-blocks. */
+        fun budgetRunsOut(block: Block) {
+            blocks[block.target] = block
+        }
 
         val guard = BlockLaunchGuard().also { it.nowMs = { clock } }
 
@@ -223,25 +244,52 @@ class InterventionCountReplayTest {
 
         /** `handleDecision`'s `BlockDecision.Block` branch: launch, then claim, then write. */
         fun handleBlockDecision(block: Block) {
-            if (!launchBlockOverlay(block.target)) return
-            val counted = guard.claimConfrontation(
-                targetPackage = block.target,
+            val decisionKey =
+                if (block.dailyLimited) dailyLimitKey(block.attributed) else delayKey(block.target)
+            if (!launchBlockOverlay(block.target, decisionKey)) return
+            countBlockShown(
+                target = block.target,
                 key = BlockLaunchGate.confrontationKey(
                     attributedPackage = block.attributed,
                     featureKey = block.featureKey,
                     webDomain = block.webDomain
                 )
             )
-            if (counted) rows++
         }
 
-        private fun launchBlockOverlay(target: String): Boolean {
-            val decision = guard.decide(target, delayKey(target))
+        /**
+         * `TimeRemainingHandler.maybeUpdate` finding the budget at zero, and the service's
+         * `onTimeLimitExceeded` callback: launch the daily-limit HARD_BLOCK, then claim, then write.
+         *
+         * One call is ONE 30-second foreground-clock tick. Nothing about it is user input, which is
+         * exactly why it belongs in this file: since v1.18.4 a plain daily limit spins that clock,
+         * so this is now a path that can fire over and over while the phone sits untouched, and
+         * before the #36 claim existed every one of those firings would have written a row.
+         *
+         * The DIFFERENT fingerprint is production's ([`dailyLimitKey`], mode HARD_BLOCK + `|daily`)
+         * while the confrontation key is the bare package: a daily budget is per app, and the same
+         * sitting must not be counted twice because the screen the user met changed.
+         */
+        fun dailyLimitTick(block: Block) {
+            if (!launchBlockOverlay(block.target, dailyLimitKey(block.attributed))) return
+            countBlockShown(
+                target = block.target,
+                key = BlockLaunchGate.confrontationKey(attributedPackage = block.attributed)
+            )
+        }
+
+        /** `NudgeAccessibilityService.countBlockShown`: the one claim-then-write, shared. */
+        private fun countBlockShown(target: String, key: String) {
+            if (guard.claimConfrontation(targetPackage = target, key = key)) rows++
+        }
+
+        private fun launchBlockOverlay(target: String, decisionKey: String): Boolean {
+            val decision = guard.decide(target, decisionKey)
             guard.onLaunchAttempt(target, decision)?.let { storms += it }
             if (decision != BlockLaunchGate.Decision.LAUNCH) return false
             launches++
             overlayActive = true
-            guard.onOverlayLaunched(target, delayKey(target))
+            guard.onOverlayLaunched(target, decisionKey)
             startOverlayActivity(target)
             return true
         }
@@ -345,6 +393,128 @@ class InterventionCountReplayTest {
         Device(blocks.associateBy { it.target })
 
     private val delayRule = Block("rule DELAY", target = blocked, attributed = blocked)
+
+    /** An app-level NONE rule with a daily budget: nothing gates it until the minutes run out. */
+    private val dailyLimitRule = Block(
+        "daily limit HARD_BLOCK",
+        target = blocked,
+        attributed = blocked,
+        dailyLimited = true
+    )
+
+    // ------------------------------------------- the budget that runs out while the user sits (v1.18.4)
+
+    /**
+     * **THE MID-SESSION BUDGET, AND WHY IT BELONGS IN THIS FILE.**
+     *
+     * Until v1.18.4 a plain daily limit was only re-read on a window-state event, so it was
+     * enforced on re-entry and someone who never switched away outlived it (measured: 150s on a
+     * 1-minute budget, one evaluation). The fix makes a limit a consumer of the 30-second foreground
+     * clock -- which means the daily-limit HARD_BLOCK is now launched by a TIMER, from a phone
+     * nobody is touching, and can fire again every 30 seconds for as long as the user sits there.
+     *
+     * That is the issue #36 shape exactly, on a path that previously wrote no row at all (the other
+     * half of this change: `docs/BACKLOG.md`, "two of the three overlay launch paths write no
+     * 'overlay shown' UsageEvent"). So the row it now writes has to be ONE.
+     */
+    @Test
+    fun `a budget that runs out mid-session writes exactly one row`() {
+        val device = deviceBlocking()
+
+        // The user opens the app with minutes to spare. Nothing blocks: this is the entry the old
+        // behaviour was measured on, and it must stay an ALLOW.
+        device.window(blocked)
+        assertEquals("an app with budget left is not blocked on entry", 0, device.rows)
+
+        // Two ticks of the clock with the budget still running (`TimeKickEvaluator.WAIT`'s
+        // equivalent for the budget): the user is sitting still, and nothing has happened yet.
+        tick(30_000)
+        tick(30_000)
+        assertEquals(0, device.rows)
+
+        // The tick that finds the budget at zero.
+        device.budgetRunsOut(dailyLimitRule)
+        device.dailyLimitTick(dailyLimitRule)
+        device.deliverOverlayWindows()
+
+        assertEquals("the budget running out mid-session is one confrontation", 1, device.rows)
+        assertEquals(1, device.launches)
+    }
+
+    /**
+     * The tick keeps arriving. It must keep ENFORCING and stop COUNTING -- the two halves of the
+     * claim (`countBlockShown` refuses a row, never a block).
+     *
+     * The loop modelled is H1's, driven by the clock instead of by a re-entry: the overlay is
+     * stopped without finishing (screen-off, or the blocked app's task winning the race back), the
+     * app resumes underneath, and the next tick finds the budget still empty and blocks again. Every
+     * iteration is a real launch, and before the claim existed every one of them was a row.
+     */
+    @Test
+    fun `ticks that keep finding an empty budget keep blocking but never re-count`() {
+        val device = deviceBlocking()
+        device.window(blocked)
+        device.budgetRunsOut(dailyLimitRule)
+        device.dailyLimitTick(dailyLimitRule)
+        device.deliverOverlayWindows()
+        assertEquals(1, device.rows)
+
+        repeat(40) {
+            device.liveOverlay!!.stopWithoutFinishing()
+            tick(1_100)
+            device.window(blocked)
+            tick(30_000)
+            device.dailyLimitTick(dailyLimitRule)
+            device.deliverOverlayWindows()
+        }
+
+        assertTrue(
+            "counterfactual: the clock really does re-launch the limit screen, over and over, with " +
+                "nobody touching the phone -- and one row per launch is the 2500-a-day report " +
+                "(launches=${device.launches})",
+            device.launches > 40
+        )
+        assertEquals(
+            "the user arrived in this app ONCE, so the Blocked tile owes exactly one",
+            1,
+            device.rows
+        )
+    }
+
+    /**
+     * The overlay's own re-launch is not a new arrival, but the user coming BACK is -- otherwise the
+     * fix would be "stop counting daily limits", which is a worse lie than counting them twice.
+     *
+     * Note what ends the arrival here: Nudge's own block overlay does NOT
+     * ([BlockLaunchGate.arrivalAfterSignal]), the launcher does. So sitting through the limit screen
+     * and pushing the app back in front is the same confrontation, and going home first is not.
+     */
+    @Test
+    fun `re-entering an exhausted budget after going home is a second row`() {
+        val device = deviceBlocking()
+        device.window(blocked)
+        device.budgetRunsOut(dailyLimitRule)
+        device.dailyLimitTick(dailyLimitRule)
+        device.deliverOverlayWindows()
+        assertEquals(1, device.rows)
+
+        // Pushed back in front without ever leaving: the limit screen is shown again (correctly),
+        // and it is the same sitting, so it owes no row.
+        device.liveOverlay!!.stopWithoutFinishing()
+        tick(1_100)
+        device.window(blocked)
+        assertEquals("the same sitting must not be counted twice", 1, device.rows)
+
+        // A genuine departure, then a genuine return: the budget is still spent, the engine blocks
+        // on the way in, and that is a second confrontation.
+        device.liveOverlay?.stopWithoutFinishing()
+        tick(2_000)
+        device.window(launcher, "com.google.android.apps.nexuslauncher.NexusLauncherActivity")
+        tick(30_000)
+        device.window(blocked)
+
+        assertEquals("reaching for a blocked app again is a fresh confrontation", 2, device.rows)
+    }
 
     // ------------------------------------------------------ H1: the overlay dies, the app resumes
 
