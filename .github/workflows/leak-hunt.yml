@@ -4,8 +4,13 @@ name: Leak hunt (temporary, issue #53)
 # same runner image the Release workflow uses, with the LeakProbeHandler installed, so the
 # process-global coroutine-exception leak that only fires in CI is caught with its stack.
 
+# workflow_dispatch needs the file on the default branch, which this must never reach, so it
+# triggers on pushes to the hunt branch itself instead.
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - 'fix/53-second-leaker'
+      - 'hunt/**'
 
 jobs:
   hunt:
