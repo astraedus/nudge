@@ -258,6 +258,34 @@ previous app's counter floating on top of it. `hideUnwantedAwarenessOverlays` cl
 the entry what it wants (`isCounterEnabled`, `showTimeRemaining`) rather than testing membership — the
 same "ask the entry, don't infer from `hasEntry`" correction the `configuresAutoKick` split makes.
 
+**A REBIND USED TO END THE CLOCK FOR THE REST OF THE SITTING, and the new device case found it.**
+The clock is only ever started from `evaluateForegroundPackage`, i.e. from a window EVENT. A user
+sitting still produces none, and a rebind destroys the service instance and cancels the clock with
+it — so from that moment until they next switched apps there was no clock at all. Silent in every
+sense: nothing logged, nothing on screen, the time-based auto-kick simply stopping. Measured while
+building `daily-limit-midsession`, where one UI-tree dump from the harness was enough to cause it:
+
+```
+15:17:44.905  adbd … 'ui automator dump …'
+15:17:45.634  app clock stopped key=…calculator reason=service_destroyed
+15:17:46.806  accessibility service connected
+              (no clock again for the remaining 100 seconds of the sitting)
+```
+
+`onServiceConnected` now calls `restartForegroundClockAfterRebind()`, which reads the LIVE window
+(`rootInActiveWindow`, because a rebind is a new instance with no remembered `lastPackage`) and
+restarts the clock if that package needs one — **after** the eager `forceRefresh`, since before it
+the cache is empty and the restart would silently do nothing. The CLOCK only, never a full
+re-evaluation: a rebind is not evidence the user did anything, which is exactly the call
+`PassthroughManager.onObservationResumed` already makes, so this restores observation and lets the
+ordinary tick decide, gated and counted like any other block. Pinned by
+`ServiceLifecycleContractTest."a rebind restarts the foreground clock, after the cache is populated"`,
+which asserts the ORDER, because a restart placed before the populate looks like a fix and is not.
+
+This predates v1.18.4 — the time-based auto-kick and the time-remaining overlay have had it since
+v1.10.0 — but a daily limit is a far more common rule shape, so the fix ships with the feature that
+made it matter.
+
 **Granularity, stated where a user can be told it.** Enforcement rides the clock that already exists,
 so the block lands within one `FOREGROUND_TICK_MS` (30s) of the budget crossing zero — the same
 overshoot the time-based auto-kick documents above, and cheaper than a tighter poll on a 3GB Pixel 3.

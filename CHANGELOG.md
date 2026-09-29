@@ -27,6 +27,13 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
   directly comparable to one before it, because the earlier half is missing daily-limit blocks the
   later half will include. The auto-kick cooldown's DELAY overlay still logs nothing — that half of
   the gap stays open.
+- **After the accessibility service restarted, nothing was timed again until you switched apps.**
+  The foreground clock is only started by a window event, and someone sitting still produces none —
+  so a rebind (memory pressure, an OS-initiated restart) cancelled the clock and it never came back
+  for that sitting: the time-based auto-kick stopped, the time-remaining overlay froze, and the new
+  mid-session daily limit stopped being enforced. Nothing was logged and nothing looked broken; you
+  simply stopped being stopped. Reconnecting now restarts the clock for whatever app is already in
+  front. Found by the new device case, which triggered it accidentally in under four seconds.
 - **Turning auto-kick off while keeping a daily limit could leave the auto-kick cooldown running
   anyway.** The cooldown's authority used to be "this package has an entry in the counter cache", and
   a daily limit alone now puts a package there (see above) — so a user with no auto-kick configured
