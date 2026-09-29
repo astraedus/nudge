@@ -248,9 +248,19 @@ appop_mode() { # op -> allow|deny|ignore|default
 # but the PIN pad. A missing `mDreamingLockscreen` line is read as "not locked", because the
 # question this asks is "is the keyguard in the way", and absence of evidence for a keyguard is
 # the right default on an OS version that does not print it.
+# NOT `… | grep -q …`, and this is the whole reason this helper reads the way it does.
+# This script runs under `set -o pipefail`. `grep -q` exits the moment it MATCHES, which SIGPIPEs
+# the `dumpsys` still writing upstream, so the pipeline's status is 141 and a SUCCESSFUL match
+# reads as a failure. Measured: this guard refused to start against a phone that was awake and
+# unlocked, twice in a row. The rest of the file sidesteps it by ending in `>/dev/null` (which
+# reads the stream to EOF) or by grepping a FILE; here the answer is simply not to pipe at all.
 screen_is_usable() {
-  ash dumpsys power 2>/dev/null | tr -d '\r' | grep -q "mWakefulness=Awake" || return 1
-  ! ash dumpsys window 2>/dev/null | tr -d '\r' | grep -q "mDreamingLockscreen=true"
+  local power window
+  power="$(ash dumpsys power 2>/dev/null | tr -d '\r')"
+  window="$(ash dumpsys window 2>/dev/null | tr -d '\r')"
+  case "$power" in *"mWakefulness=Awake"*) ;; *) return 1 ;; esac
+  case "$window" in *"mDreamingLockscreen=true"*) return 1 ;; esac
+  return 0
 }
 
 # Wake and UNLOCK the phone, then PROVE it, and refuse to run at all if it did not work.
