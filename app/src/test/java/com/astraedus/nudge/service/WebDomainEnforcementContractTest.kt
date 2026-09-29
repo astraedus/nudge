@@ -117,9 +117,28 @@ class WebDomainEnforcementContractTest {
             "a web block must pass the browser as the passthrough package",
             service.contains("EXTRA_PASSTHROUGH_PACKAGE, it.browserPackage")
         )
+        // The evidence for "attributed to the rule's app" MOVED in v1.18.4, when the claim and the
+        // row became one shared `countBlockShown` so the daily-limit path could use them too. The
+        // row is now written from a parameter, so this asks the two questions that still decide it:
+        // handleDecision hands the rule's app in as the attribution while handing the BROWSER in as
+        // the target, and the shared writer records the attribution. Matching the old literal
+        // (`UsageEvent(\n … packageName = packageName,` at one exact indentation) would have gone on
+        // passing only as long as nobody reformatted the function.
+        val decision = service.substringAfter("private suspend fun handleDecision(")
+            .substringBefore("private suspend fun countBlockShown(")
         assertTrue(
-            "the UsageEvent must stay attributed to the rule's app, not the browser",
-            service.contains("UsageEvent(\n                        packageName = packageName,")
+            "the block must be ATTRIBUTED to the rule's app, so the stat lands on Instagram",
+            decision.contains("attributedPackage = packageName")
+        )
+        assertTrue(
+            "and TARGETED at the app the user is in, which for a web block is the browser",
+            decision.contains("targetPackage = web?.browserPackage ?: packageName")
+        )
+        assertTrue(
+            "the shared writer must record the attribution, never the target",
+            service.substringAfter("private suspend fun countBlockShown(")
+                .substringBefore("\n    /**")
+                .contains("packageName = attributedPackage")
         )
     }
 
