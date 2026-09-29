@@ -148,3 +148,19 @@ dependencies {
     androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
 }
+
+// TEMPORARY (issue #53 probe): attribute the LeakProbeHandler's stderr to the test that was
+// running when the leak happened, and point its log file somewhere predictable.
+tasks.withType<Test>().configureEach {
+    outputs.upToDateWhen { false }
+    systemProperty("nudge.leakprobe.out", "${rootProject.projectDir}/leak-probe-${name}.log")
+    listOf("nudge.leakhunter.only", "nudge.leakhunter.settleMs").forEach { key ->
+        providers.systemProperty(key).orNull?.let { systemProperty(key, it) }
+    }
+    testLogging {
+        events = setOf(org.gradle.api.tasks.testing.logging.TestLogEvent.STANDARD_ERROR)
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+        showStackTraces = true
+        showCauses = true
+    }
+}
