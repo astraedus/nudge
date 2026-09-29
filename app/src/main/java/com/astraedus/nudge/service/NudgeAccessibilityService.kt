@@ -1521,7 +1521,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         val autoKickConfigured = counterCache.getEntry(packageName)?.configuresAutoKick == true
         if (CooldownGate.isStale(autoKickConfigured, tracker.isInCooldown(packageName))) {
             entryPoint.nudgeLogger().i(
-                "stale auto-kick cooldown dropped package=$packageName reason=no_rule_entry"
+                "stale auto-kick cooldown dropped package=$packageName reason=no_auto_kick_configured"
             )
             tracker.clearCooldown(packageName)
         }
@@ -1726,7 +1726,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         val autoKickConfigured = counterCache.getEntry(key)?.configuresAutoKick == true
         if (CooldownGate.isStale(autoKickConfigured, tracker.isInCooldown(key))) {
             entryPoint.nudgeLogger().i(
-                "stale web auto-kick cooldown dropped domain=$domain reason=no_rule_entry"
+                "stale web auto-kick cooldown dropped domain=$domain reason=no_auto_kick_configured"
             )
             tracker.clearCooldown(key)
         }
