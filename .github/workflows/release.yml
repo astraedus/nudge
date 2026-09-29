@@ -62,6 +62,23 @@ jobs:
       - name: Run tests and lint
         run: ./gradlew test lintDebug
 
+      # A unit-test failure that only happens on a CI runner is only diagnosable from the report.
+      # Issue #53 fired twice on this step and both times the console line was all that survived:
+      # "HomeBlockedTileTest ... UncaughtExceptionsBeforeTest", with the exception that actually
+      # leaked — carried as a SUPPRESSED throwable, i.e. the offender's own stack — nowhere. The XML
+      # keeps it. 12 parallel runs of this suite were needed to catch it again; one artifact would
+      # have been enough. Only on failure, so a green run uploads nothing.
+      - name: Upload unit test reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-reports
+          path: |
+            app/build/reports/tests/**
+            app/build/test-results/**
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Decode keystore
         run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > nudge-release.keystore
 

@@ -6,9 +6,10 @@ import org.junit.Test
 import java.io.File
 
 /**
- * Pins the one rule that closes [#53](https://github.com/astraedus/nudge/issues/53):
+ * Pins the two rules that close [#53](https://github.com/astraedus/nudge/issues/53):
  * **a test that deliberately lets a coroutine exception go unhandled must drain the
- * process-global collector before it finishes.**
+ * process-global collector before it finishes**, and **a test that installs the Main dispatcher
+ * must do it through [MainDispatcherRule]**, which owns the same cleanup.
  *
  * There is no behavioural place to assert this from. The damage a leak does is to whichever test
  * `runTest`s next in the same JVM fork, which is decided by Gradle's class order — so a test that
@@ -72,6 +73,40 @@ class LeakedCoroutineExceptionsContractTest {
                 "kotlinx-coroutines-test's process-global ExceptionCollector queued it too -- the " +
                 "next runTest ANYWHERE in this fork then fails with UncaughtExceptionsBeforeTest " +
                 "(issue #53). Call LeakedCoroutineExceptions.drain() from @After",
+            emptyList<String>(),
+            offenders
+        )
+    }
+
+    /**
+     * The SECOND fork-global handle, and the one that reopened this issue on `v1.18.4`.
+     *
+     * `Dispatchers.setMain` is process-global, and its teardown is a trap rather than a cleanup: in
+     * a unit-test fork `Dispatchers.resetMain()` restores a dispatcher whose `isDispatchNeeded`
+     * **throws**, so any coroutine of the finished test still alive on `Dispatchers.Main` produces
+     * an uncaught `CompletionHandlerException` that lands in the same process-global collector and
+     * fails a later, unrelated test. [MainDispatcherRule] resets Main from `finished()` (after the
+     * class's own `@After`) and drains immediately afterwards.
+     *
+     * Checked as an ABSENCE over a discovered set rather than as a list of the six classes that do
+     * it today (rule (e) of `docs/testing-strategy.md`): a ViewModel test written next month is
+     * covered without anyone remembering to edit this file.
+     */
+    @Test
+    fun `no test installs the Main dispatcher by hand`() {
+        val offenders = testSources
+            .filterNot { it.name == "MainDispatcherRule.kt" }
+            .map { it to stripComments(it.readText()) }
+            .filter { (_, body) -> body.contains("setMain(") }
+            .map { (file, _) -> file.name }
+
+        assertEquals(
+            "use MainDispatcherRule instead of calling Dispatchers.setMain directly. It resets " +
+                "Main AFTER the class's own @After methods and then drains the process-global " +
+                "collector -- resetMain() restores a dispatcher that THROWS on dispatch, so a " +
+                "coroutine of this test still alive on Dispatchers.Main afterwards queues an " +
+                "uncaught CompletionHandlerException and fails an unrelated test later in the " +
+                "fork (issue #53, v1.18.4). See MainDispatcherResetLeakTest for the mechanism",
             emptyList<String>(),
             offenders
         )

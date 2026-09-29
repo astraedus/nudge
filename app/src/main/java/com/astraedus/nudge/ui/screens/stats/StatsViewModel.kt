@@ -3,6 +3,7 @@ package com.astraedus.nudge.ui.screens.stats
 import androidx.compose.runtime.Immutable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.astraedus.nudge.di.IoDispatcher
 import com.astraedus.nudge.data.db.entity.UsageEvent
 import com.astraedus.nudge.data.db.entity.isShownConfrontation
 import com.astraedus.nudge.data.repository.InstalledAppsRepository
@@ -13,7 +14,7 @@ import com.astraedus.nudge.domain.usage.WeeklyUsage
 import com.astraedus.nudge.ui.screens.stats.charts.DayData
 import com.astraedus.nudge.ui.screens.stats.charts.TrendDay
 import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -73,7 +74,8 @@ class StatsViewModel @Inject constructor(
     private val installedAppsRepository: InstalledAppsRepository,
     private val screenTimeProvider: ScreenTimeProvider,
     private val timeTracker: TimeTracker,
-    private val statsCalculator: StatsCalculator
+    private val statsCalculator: StatsCalculator,
+    @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) : ViewModel() {
 
     private val _selection = MutableStateFlow(StatsDaySelection.startingAt(LocalDate.now()))
@@ -269,6 +271,6 @@ class StatsViewModel @Inject constructor(
                 if (!isLive) break
                 delay(POLL_INTERVAL_MS)
             }
-        }.flowOn(Dispatchers.IO)
+        }.flowOn(ioDispatcher)
     }
 }

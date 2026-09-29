@@ -8,6 +8,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.core.graphics.drawable.toBitmap
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.astraedus.nudge.di.IoDispatcher
 import com.astraedus.nudge.data.db.entity.UsageEvent
 import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.data.repository.BlockRuleRepository
@@ -22,7 +23,7 @@ import com.astraedus.nudge.ui.screens.stats.InsightsCalculator
 import com.astraedus.nudge.ui.screens.stats.StatsViewModel.Companion.formatDayTotal
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -91,7 +92,8 @@ class HomeViewModel @Inject constructor(
     private val timeTracker: TimeTracker,
     private val homeChartsBuilder: HomeChartsBuilder,
     private val installedAppsRepository: InstalledAppsRepository,
-    private val insightsCalculator: InsightsCalculator
+    private val insightsCalculator: InsightsCalculator,
+    @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) : ViewModel() {
 
     private val strictModeGate = StrictModeGate(nudgePreferences)
@@ -186,7 +188,7 @@ class HomeViewModel @Inject constructor(
      * their counts do not, and [AppInterventionStat] is a data class, so equality is free and
      * exact. Only a ranking that actually moved pays for the label and icon resolution below.
      *
-     * `flowOn(Dispatchers.IO)` covers both steps. The resolvers are `suspend` PackageManager
+     * `flowOn(ioDispatcher)` covers both steps. The resolvers are `suspend` PackageManager
      * reads, memory-cached (negative misses included), so they are map lookups in the steady
      * state and a handful of binder calls exactly once — but that once must not land on the
      * main thread, which is where `stateIn(viewModelScope)` would otherwise run them.
@@ -202,7 +204,7 @@ class HomeViewModel @Inject constructor(
         }
         .distinctUntilChanged()
         .map { stats -> resolveRows(stats) }
-        .flowOn(Dispatchers.IO)
+        .flowOn(ioDispatcher)
 
     /**
      * `UsageStatsManager` has no Flow, so screen time is polled. On IO: it is a binder read plus
@@ -230,7 +232,7 @@ class HomeViewModel @Inject constructor(
                 delay(POLL_INTERVAL_MS)
             }
         }
-    }.flowOn(Dispatchers.IO)
+    }.flowOn(ioDispatcher)
 
     // Two `combine`s rather than one: `combine` is only typed up to five flows, and the split
     // falls on the right seam anyway — everything above ticks with the clock, the top-blocked

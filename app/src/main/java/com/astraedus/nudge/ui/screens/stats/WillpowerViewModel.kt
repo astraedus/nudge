@@ -4,13 +4,14 @@ import android.graphics.drawable.Drawable
 import androidx.compose.runtime.Immutable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.astraedus.nudge.di.IoDispatcher
 import com.astraedus.nudge.data.db.entity.UsageEvent
 import com.astraedus.nudge.data.repository.InstalledAppsRepository
 import com.astraedus.nudge.data.repository.ScreenTimeProvider
 import com.astraedus.nudge.data.repository.UsageRepository
 import com.astraedus.nudge.domain.engine.TimeTracker
 import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -53,7 +54,8 @@ class WillpowerViewModel @Inject constructor(
     private val installedAppsRepository: InstalledAppsRepository,
     private val screenTimeProvider: ScreenTimeProvider,
     private val timeTracker: TimeTracker,
-    val calculator: InsightsCalculator
+    val calculator: InsightsCalculator,
+    @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) : ViewModel() {
 
     private val _range = MutableStateFlow(InsightsRange.THIRTY_DAYS)
@@ -77,7 +79,7 @@ class WillpowerViewModel @Inject constructor(
         val insights = calculator.willpower(events, now, zone, range)
 
         val rangeStartMs = calculator.rangeStartMs(now, zone, range)
-        val avgSessionMsByPackage = withContext(Dispatchers.IO) {
+        val avgSessionMsByPackage = withContext(ioDispatcher) {
             screenTimeProvider.getPerAppSessionStats(rangeStartMs, now)
         }.mapNotNull { (pkg, stats) -> stats.averageMs?.let { pkg to it } }.toMap()
 

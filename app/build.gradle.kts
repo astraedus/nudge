@@ -149,18 +149,36 @@ dependencies {
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
 }
 
-// TEMPORARY (issue #53 probe): attribute the LeakProbeHandler's stderr to the test that was
-// running when the leak happened, and point its log file somewhere predictable.
+/**
+ * Unit-test JVM forks: make a process-global coroutine leak NAME ITSELF.
+ *
+ * Issue [#53](https://github.com/astraedus/nudge/issues/53) cost two investigations and shipped
+ * twice because the CI log named the victim and threw the offender away.
+ *
+ *  - `exceptionFormat = FULL`: `kotlinx.coroutines.test.UncaughtExceptionsBeforeTest` attaches the
+ *    exception that ACTUALLY leaked as a **suppressed** throwable. The default `SHORT` prints one
+ *    line and drops it, which is precisely the information needed — so the one flag that turns "some
+ *    unrelated test failed, re-run the job" into "here is the offender's file and line" is this one.
+ *  - `STANDARD_ERROR`: Gradle attributes a fork's stderr to the test that was RUNNING when it was
+ *    written, which is how `LeakProbeHandler` names the offender rather than the casualty. It costs
+ *    a handful of JVM/agent warning lines per run and nothing else.
+ *  - `FAILED` is listed explicitly because assigning `events` REPLACES Gradle's default set, and
+ *    losing the per-test FAILED line would be a bad trade for the two above.
+ *
+ * `-Dnudge.leakprobe=1` on the Gradle command line is forwarded into the fork to arm the probe; see
+ * `app/src/test/java/com/astraedus/nudge/LeakProbeHandler.kt`.
+ */
 tasks.withType<Test>().configureEach {
-    outputs.upToDateWhen { false }
-    systemProperty("nudge.leakprobe.out", "${rootProject.projectDir}/leak-probe-${name}.log")
-    listOf("nudge.leakhunter.only", "nudge.leakhunter.settleMs").forEach { key ->
-        providers.systemProperty(key).orNull?.let { systemProperty(key, it) }
-    }
     testLogging {
-        events = setOf(org.gradle.api.tasks.testing.logging.TestLogEvent.STANDARD_ERROR)
+        events = setOf(
+            org.gradle.api.tasks.testing.logging.TestLogEvent.FAILED,
+            org.gradle.api.tasks.testing.logging.TestLogEvent.STANDARD_ERROR
+        )
         exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
         showStackTraces = true
         showCauses = true
+    }
+    providers.systemProperty("nudge.leakprobe").orNull?.let {
+        systemProperty("nudge.leakprobe", it)
     }
 }
