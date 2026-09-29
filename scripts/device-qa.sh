@@ -48,6 +48,7 @@
 #   HOME_REOPEN_TRIALS=5           repeats inside the home-reopen case (#58)
 #   LIMIT_BURN_SECS=70             foreground time spent exhausting the 1-minute daily limit
 #   LIMIT_WAIT_SECS=45             how long to wait, after re-entry, for the limit to fire
+#   MIDSESSION_WAIT_SECS=240       ceiling on the mid-session sit (the case derives its own wait)
 #   QA_LOCK_OWNER=<name>           reuse a Pixel lock the caller already holds. ONLY works when
 #                                  this script runs in the caller's own process tree:
 #                                  `device-lock.sh` keys a holder on owner AND pid, and under
@@ -91,6 +92,9 @@ LIMIT_BURN_SECS="${LIMIT_BURN_SECS:-70}"
 # How long to wait, after re-entering, for the engine to notice. One window-state event is all
 # it takes, so this is generous slack rather than a duty cycle.
 LIMIT_WAIT_SECS="${LIMIT_WAIT_SECS:-45}"
+# Ceiling on the mid-session sit. The case computes its own wait from the budget it actually has
+# left plus one 30-second clock tick; this only stops a mis-derived limit from parking the run.
+MIDSESSION_WAIT_SECS="${MIDSESSION_WAIT_SECS:-240}"
 MAESTRO_BIN="${MAESTRO_BIN:-${HOME}/.maestro/bin/maestro}"
 GH_REPO="${GH_REPO:-astraedus/nudge}"
 
@@ -117,6 +121,7 @@ ALL_CASES=(
   home-reopen
   walkaway-count
   daily-limit-refresh
+  daily-limit-midsession
   notif-idle
   crash-check
   refusal-alert
@@ -1028,20 +1033,12 @@ case_walkaway_count() {
 # The fixture gives Calculator a 1-minute budget and mode NONE ("Not blocked"), so the app
 # opens freely and the limit is the only gate.
 #
-# THE BUDGET IS ENFORCED ON RE-ENTRY, NOT MID-SESSION, and that is a product fact rather than a
-# harness compromise. The 30-second foreground clock that could notice a budget running out
-# while you sit in the app is gated on
-# `autoKickAfterMinutes != null || (showTimeRemaining && dailyLimitMinutes != null)`
-# (`CounterCacheRefresher.needsForegroundTimeTick`) — so with a plain daily limit and no
-# time-remaining overlay, nothing re-evaluates until the next window-state event. Measured: 150s
-# sitting in Calculator produced exactly ONE evaluation, at t=0, `dailyUsageMs=93`.
-#
 # THE PRECONDITION IS EXPLICIT AND DELIBERATE: this case trips the limit by LEAVING AND
 # RE-ENTERING, never by waiting in the app. That keeps it a test of
 # [#50](https://github.com/astraedus/nudge/issues/50) — the stale "Daily limit reached" overlay
-# surviving a raised limit — and NOT a test of enforcement timing, which is an open product
-# decision (docs/BACKLOG.md, 2026-09-29). If mid-session enforcement is added later, this case
-# keeps passing unchanged, which is the point of drawing the line here.
+# surviving a raised limit — and NOT a test of enforcement timing. v1.18.4 added mid-session
+# enforcement (the budget now also runs out while you sit there) and this case passed unchanged,
+# which is the point of having drawn the line here; the timing itself is `daily-limit-midsession`.
 case_daily_limit_refresh() {
   local rc=0
   go_home
@@ -1153,7 +1150,15 @@ case_daily_limit_refresh() {
   return $rc
 }
 
-restore_daily_limit() {
+# Sets Calculator's daily limit to $1 MINUTES through the app's own UI.
+#
+# The Custom dialog is the only route to an arbitrary value (the presets start at 15m), and both
+# daily-limit cases need one: `daily-limit-refresh` puts the 1-minute fixture back, and
+# `daily-limit-midsession` DERIVES its limit from the minutes Android has already recorded for
+# Calculator today. Two copies of a seven-tap Compose flow is two things to re-find the next time
+# that screen moves.
+set_daily_limit_minutes() { # minutes
+  local minutes="$1" i
   nudge_route_home
   ui_wait_text "Manage Apps" 5 || scroll_to_text "Manage Apps" 6
   ui_tap_text "Manage Apps" 10 || return 1
@@ -1168,14 +1173,208 @@ restore_daily_limit() {
   ui_wait_text "Custom Daily Limit" 8 || return 1
   # The field is pre-filled with the current value, so clear it before typing.
   ui_tap_text "Value (minutes)" 5 || true
-  local i
   for ((i = 0; i < 6; i++)); do ash input keyevent KEYCODE_DEL >/dev/null 2>&1; done
-  ash input text "1" >/dev/null 2>&1
+  ash input text "$minutes" >/dev/null 2>&1
   sleep 1
   ui_tap_text "Set" 8 || return 1
   ui_tap_text "Save" 8 || return 1
   sleep 2
-  info "Calculator daily limit restored to 1m."
+  info "Calculator daily limit set to ${minutes}m."
+}
+
+restore_daily_limit() { set_daily_limit_minutes 1; }
+
+# Today's foreground total for Calculator in ms, read off the SERVICE'S OWN evaluation log
+# (`evaluate package=… dailyUsageMs=…`, BlockEngine, debug level — `setup` turns debug logging on).
+#
+# Not `dumpsys usagestats`: the number that matters is the one the block engine compares against
+# the limit, and that is a `queryEvents` pairing walk through `ScreenTimeProvider`. Reading a
+# different source would derive a limit the app does not agree with, which is the fixture-honesty
+# rule one layer out.
+calculator_daily_usage_ms() {
+  grep -o "evaluate package=${LIMIT_PKG} rules=[0-9]* dailyUsageMs=[0-9]*" "$LOGCAT_FILE" 2>/dev/null |
+    grep -o 'dailyUsageMs=[0-9]*' | tail -1 | cut -d= -f2
+}
+
+# ── daily-limit-midsession (v1.18.4): the budget blocks while you are still IN the app ──
+#
+# "Daily limits should definitely be enforced even mid session" (product call, 2026-09-29). Before
+# v1.18.4 they were not: the 30-second foreground clock was gated on
+# `autoKickAfterMinutes != null || (showTimeRemaining && dailyLimitMinutes != null)`, so a plain
+# budget was re-read by nothing and 150 seconds of continuous foreground time produced exactly ONE
+# evaluation, at t=0. You could sit past your limit forever as long as you never switched away.
+#
+# ## Why this case DERIVES its limit instead of using the fixture's 1 minute
+# The budget is OS-owned usage (`queryEvents`), so it is not reset by `pm clear` and it does not
+# reset between runs. This case needs the opposite precondition to `daily-limit-refresh`: it must
+# open the app with budget REMAINING and watch it run out. On any second run of the day the
+# fixture's 1 minute is long gone, and a fixed number cannot express "a bit more than whatever
+# Android has already recorded". So it reads the engine's own `dailyUsageMs` and sets the limit to
+# `usage + 2 minutes` — always 60-120 seconds of real budget, whatever the phone has been doing.
+#
+# ## Why the wait is one TICK longer than the budget, not "+20s"
+# Enforcement is as cheap as it is because it rides the clock that already exists, and that clock
+# ticks every `FOREGROUND_TICK_MS` (30s). So a block can legitimately land up to one tick after the
+# budget crosses zero — the same overshoot the time-based auto-kick documents. The wait is
+# `remaining + 45s`, and anything longer than that is a real failure rather than slack.
+#
+# ## The oracles, and why the UI tree is NOT read while sitting
+# A bare `uiautomator dump` is safe (measured: `Bound services` survives it), but this case's whole
+# subject is a 30-second clock inside the accessibility service, and polling a `UiAutomation`
+# session against it is the one thing this harness refuses to do on principle. So the sit is watched
+# entirely through non-invasive channels:
+#   · logcat: `block package=… reason=daily_limit_reached source=foreground_clock` — the service
+#     saying the budget ran out, on the clock path, which the engine's re-entry
+#     `reason=time_budget_exceeded` deliberately does not share a substring with.
+#   · `dumpsys activity activities`: sampled to prove we never left the app (a block that only
+#     happens because something bounced us out is the OLD behaviour passing a new test).
+# The tree is read ONCE, after the block, for the on-screen copy.
+#
+# ## The second half: enforcement keeps working, counting does not repeat
+# The limit screen is pushed back behind the app WITHOUT going home, which is the same sitting
+# (Nudge's own overlay is not a departure — `BlockLaunchGate.arrivalAfterSignal`). The user must meet
+# the block again and the Blocked count must NOT move, which is issue #36's invariant on a path that
+# is now driven by a timer. Total delta for the whole episode: exactly +1.
+case_daily_limit_midsession() {
+  local rc=0 i
+  go_home
+  start_logcat
+  ash am force-stop "$LIMIT_PKG" >/dev/null 2>&1
+  sleep 1
+
+  # 1. Measure. One launch is enough to make the engine log today's total for this package.
+  ash monkey -p "$LIMIT_PKG" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
+  local usage_ms=""
+  for ((i = 0; i < 20; i++)); do
+    usage_ms="$(calculator_daily_usage_ms)"
+    [[ -n "$usage_ms" ]] && break
+    sleep 1
+  done
+  if [[ -z "$usage_ms" ]]; then
+    fail "no 'evaluate package=${LIMIT_PKG} … dailyUsageMs=' line — is debug logging on? run 'setup'"
+    stop_logcat; return 1
+  fi
+  info "Android has recorded ${usage_ms}ms of Calculator today"
+
+  # The limit may already be spent, in which case we are looking at the limit screen. Leave it
+  # before driving Nudge's UI.
+  ui_snapshot
+  if ui_has "Daily limit reached"; then
+    info "today's budget is already spent — leaving the limit screen before raising it"
+    ui_tap_text "Go Back" 10 || true
+    sleep 2
+  fi
+
+  # 2. Derive and set: usage + 2 whole minutes, so entry has 60-120s of real budget left.
+  local limit_min=$(( usage_ms / 60000 + 2 ))
+  set_daily_limit_minutes "$limit_min" || { fail "could not set the derived ${limit_min}m limit"; stop_logcat; return 1; }
+
+  # 3. Baseline the Blocked count BEFORE entering — reading the dashboard later would mean leaving
+  #    the app, and this case may not leave it until the block has landed.
+  nudge_route_home
+  local before b_before w_before
+  before="$(read_blocked_counts)" || { fail "could not read the week summary on the dashboard"; stop_logcat; return 1; }
+  b_before="${before% *}"; w_before="${before#* }"
+  info "before: blocked=${b_before} walkedAway=${w_before}"
+
+  # 4. Open the app fresh, with budget left. A fresh logcat so the lines counted below cannot be
+  #    leftovers from the measurement launch above.
+  go_home
+  ash am force-stop "$LIMIT_PKG" >/dev/null 2>&1
+  # The counter cache is a 10-second snapshot refreshed off foreground events, and the clock reads
+  # the LIMIT out of it. Entering immediately after a save can therefore be evaluated against the
+  # previous limit. Home events plus the TTL settle it.
+  sleep 12
+  start_logcat
+  ash monkey -p "$LIMIT_PKG" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
+  wait_fg "$LIMIT_PKG" 15 || { fail "${LIMIT_PKG} did not come to the foreground"; stop_logcat; return 1; }
+  sleep 3
+  ui_snapshot
+  shot 50-calculator-fresh-budget
+  if ui_has "Daily limit reached"; then
+    fail "entered with the limit already tripped (usage=${usage_ms}ms, derived limit=${limit_min}m) — this case needs budget REMAINING at entry"
+    stop_logcat; return 1
+  fi
+
+  # How long the budget really has left, from the entry evaluation the engine just logged.
+  local entry_usage remaining_s wait_s
+  entry_usage="$(calculator_daily_usage_ms)"
+  entry_usage="${entry_usage:-$usage_ms}"
+  remaining_s=$(( (limit_min * 60000 - entry_usage) / 1000 ))
+  (( remaining_s < 0 )) && remaining_s=0
+  wait_s=$(( remaining_s + 45 ))
+  (( wait_s > MIDSESSION_WAIT_SECS )) && wait_s="$MIDSESSION_WAIT_SECS"
+  info "entered with ${remaining_s}s of budget left; waiting up to ${wait_s}s WITHOUT leaving the app"
+
+  # 5. Sit still. No taps, no swipes, no UI dumps — the only thing that may happen is the clock.
+  local limited=0 left_the_app="" fg
+  for ((i = 0; i < wait_s; i += 5)); do
+    if (( $(log_count "block package=${LIMIT_PKG} reason=daily_limit_reached") > 0 )); then
+      limited=1
+      info "the budget ran out after ~${i}s of sitting still"
+      break
+    fi
+    fg="$(foreground_package)"
+    # Nudge appearing is the block itself arriving; the LAUNCHER appearing would mean something
+    # bounced us out, and a block after that would be the old re-entry behaviour in disguise.
+    [[ "$fg" == "$LAUNCHER_PKG" ]] && left_the_app="$fg"
+    sleep 5
+  done
+
+  if [[ -n "$left_the_app" ]]; then
+    fail "the app was left during the sit (saw '${left_the_app}' in front) — this case only proves anything while we stay inside"
+    rc=1
+  fi
+  if (( limited == 0 )); then
+    fail "sat ${wait_s}s inside ${LIMIT_PKG} with a ${limit_min}m budget and the limit never fired mid-session"
+    grep -E "evaluate package=${LIMIT_PKG}|foreground clock|daily_limit_reached" "$LOGCAT_FILE" 2>/dev/null | tail -8 >&2
+    stop_logcat; return 1
+  fi
+
+  if ui_wait_text "Daily limit reached" 15; then
+    shot 51-daily-limit-midsession
+  else
+    fail "the mid-session limit fired but the 'Daily limit reached' screen never appeared"
+    rc=1
+  fi
+
+  # 6. Push the app back in front WITHOUT going home: same sitting, so the block must be shown
+  #    again and must NOT be counted again.
+  ash monkey -p "$LIMIT_PKG" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
+  sleep 6
+  ui_snapshot
+  shot 52-limit-screen-again
+  ui_has "Daily limit reached" ||
+    warn "the limit screen was not up after re-fronting the app — the count assertion below is the real gate"
+
+  # 7. Leave for good and read the count. +1 for the whole episode: one arrival, one row, however
+  #    many times the clock re-launched the screen.
+  go_home
+  nudge_route_home
+  local after b_after w_after
+  after="$(read_blocked_counts)" || { fail "could not re-read the week summary"; stop_logcat; return 1; }
+  b_after="${after% *}"; w_after="${after#* }"
+  info "after:  blocked=${b_after} walkedAway=${w_after}"
+  shot 53-dashboard-after-midsession
+  stop_logcat
+  cp -f "$LOGCAT_FILE" "${ALBUM}/logcat-daily-limit-midsession.txt" 2>/dev/null || true
+
+  local db=$(( b_after - b_before )) dw=$(( w_after - w_before ))
+  local relaunches
+  relaunches="$(log_count "block package=${LIMIT_PKG} reason=daily_limit_reached")"
+  (( db == 1 )) || {
+    fail "Blocked moved by ${db}, expected exactly +1 (the mid-session block is one confrontation, whatever the clock did: ${relaunches} daily_limit_reached lines)"
+    rc=1
+  }
+  (( dw == 0 )) || { fail "Walked away moved by ${dw}, expected 0 — nothing was declined in this case"; rc=1; }
+
+  if [[ "${RUNNING_ALL:-0}" == "1" ]]; then
+    info "part of 'all' — leaving the limit at ${limit_min}m; the next run's setup re-imports the fixture."
+  else
+    restore_daily_limit || warn "could not restore the 1-minute Calculator limit — run 'setup' before re-running the daily-limit cases"
+  fi
+  CASE_NOTE="usage=${usage_ms}ms, derived limit=${limit_min}m, fired mid-session after ~${remaining_s}s, ${relaunches} clock blocks, Blocked ${b_before}->${b_after}"
+  return $rc
 }
 
 # ── notif-idle (#63): the ongoing notification is posted on CHANGE, never on a timer ──

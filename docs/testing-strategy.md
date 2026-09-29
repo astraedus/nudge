@@ -162,7 +162,7 @@ correctness errors is a list of bugs nobody reads again.
 Settings still showed a green tick — "enabled" and "actually bound" only diverge under real memory
 pressure).
 
-**The recurring checks at this layer are SCRIPTED: `scripts/device-qa.sh all`** (8 cases, minutes,
+**The recurring checks at this layer are SCRIPTED: `scripts/device-qa.sh all`** (9 cases, minutes,
 PASS/FAIL table, nonzero exit). Run it before any hand-walk; `device-tester` is for the
 exploratory cases the script does not cover, judged from the screenshots it dumps. Crucially, this
 layer is **not** a Maestro suite and must not become one: a `UiAutomation` session suppresses every
