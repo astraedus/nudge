@@ -1,5 +1,6 @@
 package com.astraedus.nudge.ui.backup
 
+import com.astraedus.nudge.MainDispatcherRule
 import com.astraedus.nudge.data.export.ExportedSettings
 import com.astraedus.nudge.data.export.ImportResult
 import com.astraedus.nudge.data.preferences.NudgePreferences
@@ -11,20 +12,16 @@ import com.astraedus.nudge.domain.usecase.ImportRulesUseCase
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.test.UnconfinedTestDispatcher
-import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
-import kotlinx.coroutines.test.setMain
-import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
 import java.io.File
 
@@ -43,6 +40,9 @@ import java.io.File
 @OptIn(ExperimentalCoroutinesApi::class)
 class BackupImportGateTest {
 
+    @get:Rule
+    val mainDispatcherRule = MainDispatcherRule()
+
     private lateinit var exportRulesUseCase: ExportRulesUseCase
     private lateinit var importRulesUseCase: ImportRulesUseCase
     private lateinit var preferences: NudgePreferences
@@ -59,7 +59,6 @@ class BackupImportGateTest {
 
     @Before
     fun setUp() {
-        Dispatchers.setMain(UnconfinedTestDispatcher())
         exportRulesUseCase = mockk()
         importRulesUseCase = mockk()
         preferences = mockk()
@@ -78,15 +77,15 @@ class BackupImportGateTest {
         every { preferences.strictModeChallengeLength } returns flowOf(StrictModeChallenge.DEFAULT_LENGTH)
     }
 
-    @After
-    fun tearDown() {
-        Dispatchers.resetMain()
-    }
-
     private fun viewModel(strictOn: Boolean, weakens: Boolean): BackupViewModel {
         every { preferences.isStrictModeEnabled } returns flowOf(strictOn)
         coEvery { importRulesUseCase.weakensProtection(any()) } returns weakens
-        return BackupViewModel(exportRulesUseCase, importRulesUseCase, preferences)
+        return BackupViewModel(
+            exportRulesUseCase,
+            importRulesUseCase,
+            preferences,
+            ioDispatcher = mainDispatcherRule.dispatcher
+        )
     }
 
     /**

@@ -4,6 +4,13 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+### Changed
+- `HomeViewModel`, `BackupViewModel`, `StatsViewModel` and `WillpowerViewModel` now take their
+  off-main dispatcher as an injected `@IoDispatcher` (`di/DispatcherModule`) instead of naming
+  `Dispatchers.IO` directly. No behavior change — this closes a test-only flake
+  ([#53](https://github.com/astraedus/nudge/issues/53)) where a background worker outliving its
+  test could fail an unrelated test later in the same CI run.
+
 ### Fixed
 - **A daily time limit now stops you the moment it runs out, not the next time you open the app.**
   Set "30 minutes of Instagram a day" and stay past the 30 minutes without ever switching away, and

@@ -1299,3 +1299,104 @@ script's own shell options on an awake, unlocked phone: the `grep -q` form answe
 `case "$text" in *needle*)` form answers "usable". The rest of the file sidesteps this by ending in
 `>/dev/null` (which reads the stream to EOF) or by grepping a FILE. **In this script, never end a
 pipeline in `grep -q`.**
+
+## One drain was not enough: the rule named the handle it had just met, not the class of handle (2026-09-29, issue #53)
+
+Issue #53 was closed on 2026-09-27 after `CrashSafeScopeTest`'s deliberate leak was drained
+([[The flaky test was never the broken one: a process-global leak]]). On 2026-09-29 the identical
+symptom fired again, on the `main`-push run for `16af462` (v1.18.4):
+`HomeBlockedTileTest > the all-time tile counts every confrontation once, across days FAILED /
+kotlinx.coroutines.test.UncaughtExceptionsBeforeTest` at `HomeBlockedTileTest.kt:144`, on
+`:app:testReleaseUnitTest`, 1 of 2038 tests failing. The identical commit passed the identical step
+on the `v1.18.4` tag run five minutes later. Re-running the job "fixed" it. A second leaker existed,
+with a different victim, and the first fix's own generalisation had already named the handle it
+would turn out to need: `docs/testing-strategy.md` rule (f) listed `Dispatchers.setMain` in its
+prose as one shape of fork-global side effect in the same sentence as the coroutine-handler case it
+actually gated — and left it ungated, because the rule was written by generalising from the one
+instance in hand rather than from the property that made that instance dangerous.
+
+**Why it didn't reproduce locally.** A class-boundary hunter was built exactly as the 2026-09-27
+reopening comment prescribed: drive every test class through `JUnitCore` one at a time, drain
+kotlinx's process-global `ExceptionCollector` before and after each, and name the class that leaves
+something. Run over all 158 test classes it reported zero leakers, at a 400ms settle and again at a
+40-second settle. Eight runs of the two victim classes pinned to one CPU: clean. The full release
+and debug suites locally: the only hits were the already-drained `CrashSafeScopeTest.kt:146` leak.
+The defect does not occur on the dev machine at all — the local suite runs in 52s, the CI job in
+3m54s (~4.5x slower), and the race only loses on a slow runner.
+
+**What found it was instrumenting the place it happens, not investigating harder where it
+doesn't.** `LeakProbeHandler` (a `CoroutineExceptionHandler` registered via
+`META-INF/services/kotlinx.coroutines.CoroutineExceptionHandler`, off unless
+`-Dnudge.leakprobe=1`, `app/build.gradle.kts:181-182`) was pushed to a branch and `./gradlew test`
+run 12 times in parallel on `ubuntu-latest`. 1 of 12 failed — about a 4% chance per run, consistent
+with two occurrences in three weeks. Gradle attributes a fork's stderr to the test that was
+*running*, so the probe's output printed under the offender's name, `HomeBlockedTileTest`, not the
+victim's. And the one setting that made the report legible at all was a log format:
+`UncaughtExceptionsBeforeTest` attaches the exception that actually leaked as a **suppressed**
+throwable, and Gradle's default `exceptionFormat = SHORT` prints one line and drops it —
+`app/build.gradle.kts:174-177` now sets `FULL` plus `STANDARD_ERROR`, and `.github/workflows/
+release.yml` uploads `app/build/reports/tests/**` and `app/build/test-results/**` on failure, so the
+next occurrence of this shape needs no branch and no 12-way parallel run to read.
+
+**The mechanism.** `HomeViewModel` had `flowOn(Dispatchers.IO)` at two points in its `uiState`
+chain. `viewModelScope` is not a child of any `TestScope`, so `runTest` returned without waiting for
+the IO step; the test's `@After` called `Dispatchers.resetMain()`; and in a JVM unit-test fork that
+call does not restore a neutral dispatcher, it arms `MissingMainCoroutineDispatcher`, whose
+`isDispatchNeeded` **throws**. The pool thread finished a moment later, tried to resume its
+`Dispatchers.Main` continuation, took the throw as a `CompletionHandlerException` with no
+`CoroutineExceptionHandler` in its context, and kotlinx's `ExceptionCollector` queued it for
+whichever `runTest` started next in the fork.
+
+**The fix, in layers**, all landed alongside this entry: the off-main dispatcher is now injected
+(`di/DispatcherModule.kt`, `@IoDispatcher = Dispatchers.IO`; `HomeViewModel.kt:207,235` and three
+other ViewModels take it instead of naming `Dispatchers.IO`), which removes the background worker
+outright — a test hands in its own test dispatcher and there is no pool thread left to lose the
+race to. `MainDispatcherRule` (a `TestWatcher`) is the second layer: it resets Main and drains
+`LeakedCoroutineExceptions` from `finished()`, which runs *after* the class's own `@After` methods.
+`MainDispatcherResetLeakTest` is the deterministic counterfactual pinning the mechanism itself —
+a live `Dispatchers.Main` coroutine carried across `resetMain()` leaks; the identical coroutine
+joined first does not — and `ViewModelDispatcherContractTest` / an addition to
+`LeakedCoroutineExceptionsContractTest` gate the shape by absence (no `*ViewModel.kt` under `ui/`
+contains `Dispatchers.`; no test file contains `Dispatchers.setMain(` except the rule and the gate
+itself), never by re-running the suite. That second gate needed the receiver in its pattern: keyed on
+`setMain(` alone it reported three innocent files, because `resetMain(` contains `setMain(`.
+
+**Deliberately not done:** the reopening comment also asked for a shared `@After` rule that fails
+the *leaking* test itself. Nothing inside the offending class can do that — the throw happens on a
+pool thread after the test has already ended — so the invariant is enforced where it is decidable,
+in the source, and the counterfactual carries the behavioural proof instead.
+
+### What generalises
+
+- **A rule generalised from one instance tends to pin that instance's spelling, not the property
+  that made it dangerous.** Rule (f)'s prose already listed `Dispatchers.setMain` as an example of
+  the same shape of side effect the coroutine-handler case is — and stopped there, ungated, because
+  the rule had been written to close the case in hand. Tie this to rule (e)
+  (`docs/testing-strategy.md`): a source-grep gate is only as good as the set it is checked over,
+  and a rule's own prose can name the next member of that set before anyone gates it.
+- **A defect that will not reproduce locally should be instrumented where it happens, not hunted
+  harder where it doesn't.** Two local investigations (158 classes through `JUnitCore`, twice; eight
+  pinned-CPU runs; two full local suites) cost hours and found nothing, because the race needs a
+  slow runner. Twelve parallel CI runs cost minutes and found it once.
+- **A gate that measurement shows cannot see the defect should be dropped, not shipped anyway.**
+  The class-boundary `JUnitCore` gate was built exactly as prescribed and then measured at 0 of 158,
+  twice. Keeping it would have meant running the whole suite a second time inside a test with a
+  demonstrated blind spot for the one thing it exists to catch.
+- **When a failure carries the evidence and the tooling drops it, the fix is a setting, not an
+  investigation.** `UncaughtExceptionsBeforeTest` had the offender's own stack attached as a
+  suppressed throwable in both incidents; Gradle's default `exceptionFormat = SHORT` printed one
+  line and threw it away, so two rounds were spent re-deriving what the first failure already knew.
+  Before hunting a CI-only failure, ask what the failing tool is already being handed and whether
+  the log is showing it — and upload the report artefact, which keeps it whether or not the console
+  format does.
+- **Delete-the-guard-by-hand only proves a gate has teeth if you delete EVERY guard covering that
+  property.** Checking the 2026-09-27 claim that `GlobalCollectorNotLeakedTest` "fails with the drain
+  removed" showed it stays green: `CrashSafeScopeTest`'s own closing `assertTrue(…, drain())` both
+  proves and consumes the leak, so the `@After` drain is insurance, not the load-bearing call.
+  Removing both does fail the gate. A partial deletion that leaves the suite green reads as "the gate
+  is fake" when the truth is "you left a second guard in place".
+- **The exception carrying the real cause can be sitting one log-format flag away from
+  invisible.** `UncaughtExceptionsBeforeTest` attaches the actual leak as a suppressed throwable;
+  the default `SHORT` format prints "some unrelated test failed, re-run the job" and the full
+  format prints the offender's stack. Check what a framework's default log format is actually
+  showing before concluding an exception has no useful detail.

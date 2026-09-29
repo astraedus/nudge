@@ -9,6 +9,7 @@ import com.astraedus.nudge.data.db.entity.isShownConfrontation
 import com.astraedus.nudge.data.repository.InstalledAppsRepository
 import com.astraedus.nudge.data.repository.ScreenTimeProvider
 import com.astraedus.nudge.data.repository.UsageRepository
+import com.astraedus.nudge.di.IoDispatcher
 import com.astraedus.nudge.domain.engine.TimeTracker
 import com.astraedus.nudge.domain.usage.WeeklyUsage
 import com.astraedus.nudge.ui.screens.stats.StatsViewModel.Companion.formatDayTotal
@@ -18,6 +19,9 @@ import com.astraedus.nudge.ui.screens.stats.StatsViewModel.Companion.toLocalDate
 import com.astraedus.nudge.ui.screens.stats.charts.DayData
 import com.astraedus.nudge.ui.screens.stats.charts.TrendDay
 import dagger.hilt.android.lifecycle.HiltViewModel
+import java.time.LocalDate
+import javax.inject.Inject
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -27,8 +31,6 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
-import java.time.LocalDate
-import javax.inject.Inject
 
 @Immutable
 data class AppDetailUiState(
@@ -59,7 +61,8 @@ class AppDetailViewModel @Inject constructor(
     private val installedAppsRepository: InstalledAppsRepository,
     private val screenTimeProvider: ScreenTimeProvider,
     private val timeTracker: TimeTracker,
-    private val statsCalculator: StatsCalculator
+    private val statsCalculator: StatsCalculator,
+    @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) : ViewModel() {
 
     private val packageName: String = savedStateHandle.get<String>("packageName") ?: ""
@@ -106,7 +109,7 @@ class AppDetailViewModel @Inject constructor(
         .map { it.weekEnd }
         .distinctUntilChanged()
         .flatMapLatest { weekEnd ->
-            polled(isLive = weekEnd == LocalDate.now()) {
+            polled(isLive = weekEnd == LocalDate.now(), dispatcher = ioDispatcher) {
                 screenTimeProvider.getWeeklyUsage(weekEnd.toEpochMs())
             }
         }
@@ -116,7 +119,7 @@ class AppDetailViewModel @Inject constructor(
         .map { it.selected }
         .distinctUntilChanged()
         .flatMapLatest { date ->
-            polled(isLive = date == LocalDate.now()) {
+            polled(isLive = date == LocalDate.now(), dispatcher = ioDispatcher) {
                 val dayStartMs = date.toEpochMs()
                 val dayEndMs = if (date == LocalDate.now()) {
                     System.currentTimeMillis()

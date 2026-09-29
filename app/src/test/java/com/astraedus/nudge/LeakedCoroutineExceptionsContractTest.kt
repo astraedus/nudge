@@ -95,9 +95,14 @@ class LeakedCoroutineExceptionsContractTest {
     @Test
     fun `no test installs the Main dispatcher by hand`() {
         val offenders = testSources
+            // The rule IS the sanctioned caller, and this file names the call in its own failure
+            // message. Matching the receiver too is what keeps `resetMain(` -- which contains
+            // `setMain(` -- from reading as an offender; the first version of this test failed on
+            // three files for exactly that reason.
             .filterNot { it.name == "MainDispatcherRule.kt" }
+            .filterNot { it.name == "LeakedCoroutineExceptionsContractTest.kt" }
             .map { it to stripComments(it.readText()) }
-            .filter { (_, body) -> body.contains("setMain(") }
+            .filter { (_, body) -> body.contains("Dispatchers.setMain(") }
             .map { (file, _) -> file.name }
 
         assertEquals(

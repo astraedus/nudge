@@ -1,5 +1,6 @@
 package com.astraedus.nudge.ui.screens.stats
 
+import com.astraedus.nudge.MainDispatcherRule
 import com.astraedus.nudge.data.db.BlockHistoryFixture
 import com.astraedus.nudge.data.db.entity.UsageEvent
 import com.astraedus.nudge.data.repository.InstalledAppsRepository
@@ -8,17 +9,14 @@ import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.StandardTestDispatcher
-import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
-import kotlinx.coroutines.test.setMain
-import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
 
 /**
@@ -34,6 +32,9 @@ class InterventionsViewModelTest {
 
     private val dispatcher = StandardTestDispatcher()
 
+    @get:Rule
+    val mainDispatcherRule = MainDispatcherRule(dispatcher)
+
     private lateinit var usageRepository: UsageRepository
     private lateinit var installedAppsRepository: InstalledAppsRepository
 
@@ -42,7 +43,6 @@ class InterventionsViewModelTest {
 
     @Before
     fun setUp() {
-        Dispatchers.setMain(dispatcher)
         usageRepository = mockk(relaxed = true)
         installedAppsRepository = mockk(relaxed = true)
 
@@ -50,11 +50,6 @@ class InterventionsViewModelTest {
         every { usageRepository.getAllTimeShownCount() } returns allTimeShown
         coEvery { installedAppsRepository.resolveAppName(any()) } answers { firstArg() }
         coEvery { installedAppsRepository.resolveIcon(any()) } returns null
-    }
-
-    @After
-    fun tearDown() {
-        Dispatchers.resetMain()
     }
 
     @Test

@@ -3,8 +3,8 @@ package com.astraedus.nudge.ui.backup
 import androidx.compose.runtime.Immutable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.astraedus.nudge.di.IoDispatcher
 import com.astraedus.nudge.data.preferences.NudgePreferences
+import com.astraedus.nudge.di.IoDispatcher
 import com.astraedus.nudge.domain.lock.ChallengeState
 import com.astraedus.nudge.domain.usecase.ExportRulesUseCase
 import com.astraedus.nudge.domain.usecase.ImportOutcome
@@ -12,13 +12,13 @@ import com.astraedus.nudge.domain.usecase.ImportPreview
 import com.astraedus.nudge.domain.usecase.ImportRulesUseCase
 import com.astraedus.nudge.ui.lock.StrictModeGate
 import dagger.hilt.android.lifecycle.HiltViewModel
+import javax.inject.Inject
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import javax.inject.Inject
 
 @Immutable
 data class BackupUiState(

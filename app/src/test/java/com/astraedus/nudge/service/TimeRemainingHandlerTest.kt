@@ -1,25 +1,27 @@
 package com.astraedus.nudge.service
 
+import com.astraedus.nudge.MainDispatcherRule
 import com.astraedus.nudge.domain.logging.NudgeLog
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
-import kotlinx.coroutines.test.resetMain
-import kotlinx.coroutines.test.runTest
-import kotlinx.coroutines.test.setMain
-import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class TimeRemainingHandlerTest {
+
+    private val testDispatcher = StandardTestDispatcher()
+
+    @get:Rule
+    val mainDispatcherRule = MainDispatcherRule(testDispatcher)
 
     private lateinit var overlayManager: FakeOverlay
     private lateinit var usageProvider: FakeUsageProvider
@@ -30,11 +32,8 @@ class TimeRemainingHandlerTest {
     private lateinit var handler: TimeRemainingHandler
     private val timeLimitExceededCalls = mutableListOf<Pair<String, Int>>()
 
-    private val testDispatcher = StandardTestDispatcher()
-
     @Before
     fun setUp() {
-        Dispatchers.setMain(testDispatcher)
         overlayManager = FakeOverlay()
         usageProvider = FakeUsageProvider()
         globalEnabledProvider = FakeGlobalEnabledProvider()
@@ -53,11 +52,6 @@ class TimeRemainingHandlerTest {
             serviceScope = testScope,
             onTimeLimitExceeded = { pkg, limit -> timeLimitExceededCalls.add(pkg to limit) }
         )
-    }
-
-    @After
-    fun tearDown() {
-        Dispatchers.resetMain()
     }
 
     private fun enablePackage(

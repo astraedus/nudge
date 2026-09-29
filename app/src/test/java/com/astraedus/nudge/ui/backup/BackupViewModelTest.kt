@@ -1,5 +1,6 @@
 package com.astraedus.nudge.ui.backup
 
+import com.astraedus.nudge.MainDispatcherRule
 import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.domain.lock.StrictModeChallenge
 import com.astraedus.nudge.domain.usecase.ExportRulesUseCase
@@ -8,17 +9,14 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
-import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
-import kotlinx.coroutines.test.setMain
-import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
 
 /**
@@ -34,6 +32,11 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class BackupViewModelTest {
 
+    private val dispatcher = UnconfinedTestDispatcher()
+
+    @get:Rule
+    val mainDispatcherRule = MainDispatcherRule(dispatcher)
+
     private lateinit var exportRulesUseCase: ExportRulesUseCase
     private lateinit var importRulesUseCase: ImportRulesUseCase
     private lateinit var preferences: NudgePreferences
@@ -41,7 +44,6 @@ class BackupViewModelTest {
 
     @Before
     fun setUp() {
-        Dispatchers.setMain(UnconfinedTestDispatcher())
         exportRulesUseCase = mockk()
         importRulesUseCase = mockk()
         preferences = mockk()
@@ -49,12 +51,12 @@ class BackupViewModelTest {
         every { preferences.isStrictModeEnabled } returns flowOf(false)
         every { preferences.strictModeChallengeLength } returns
             flowOf(StrictModeChallenge.DEFAULT_LENGTH)
-        viewModel = BackupViewModel(exportRulesUseCase, importRulesUseCase, preferences)
-    }
-
-    @After
-    fun tearDown() {
-        Dispatchers.resetMain()
+        viewModel = BackupViewModel(
+            exportRulesUseCase,
+            importRulesUseCase,
+            preferences,
+            ioDispatcher = dispatcher
+        )
     }
 
     @Test

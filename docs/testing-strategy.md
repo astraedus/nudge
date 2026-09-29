@@ -28,7 +28,7 @@ today, both currently optional, and between them they cover 8 of the 18 defects.
 | the code is right and the shipped data or copy is wrong | **L4** data/asset gate |
 | works on the bench Pixel, crashes on an older phone | **L5** lint |
 | OEM launcher timing, PiP, the service dying overnight | **L6** bench device — `scripts/device-qa.sh all` for the recurring checks, `device-tester` for the rest. Confirm here, never discover here |
-| a test fails only on one variant, one runner, or one ordering | not a layer — **rule (f)**: shared process state, and the reported test is the victim |
+| a test fails only on one variant, one runner, or one ordering | not a layer — **rule (f)**: shared process state, and the reported test is the victim. If it won't reproduce locally, it may be a race that only loses on a slow runner (measured: a class-boundary `JUnitCore` gate found 0 of 158 classes leaking, twice) — instrument where it happens (CI, in parallel) rather than hunting harder where it doesn't |
 
 ---
 
@@ -284,6 +284,60 @@ could see this one: both pass alone. `GlobalCollectorNotLeakedTest` runs the off
 test, because "what one class leaves for the next" is the thing that was broken. When a green
 suite fails only on one variant, one runner or one ordering, **suspect shared process state before
 suspecting the test that failed**: the reported test is the victim, not the defect.
+
+**The listed example was the next occurrence, and listing it in prose was not the same as gating
+it.** #53 reopened on `v1.18.4`: `HomeBlockedTileTest` failed on the `main`-push CI run, on
+`:app:testReleaseUnitTest`, with the identical `UncaughtExceptionsBeforeTest` shape — and the
+`Dispatchers.setMain` delegate the paragraph above already named as one instance of this shape was
+the actual offender this time, still ungated. `resetMain()` is not a neutral cleanup in a JVM
+unit-test fork: with no Android main looper, it restores `MissingMainCoroutineDispatcher`, whose
+`isDispatchNeeded` **throws** rather than returning false. `HomeViewModel` named `Dispatchers.IO`
+in `flowOn` at two points in its `uiState` chain, a real thread-pool step outside any
+`TestScope`, so a test's `@After` could call `resetMain()` while that step was still running; when
+the pool thread finished and tried to resume its `Dispatchers.Main` continuation, the throw landed
+as an uncaught `CompletionHandlerException` in the same process-global `ExceptionCollector`, and
+the next `runTest` anywhere in the fork paid for it. This raced — ~4% of CI runs, measured over 12
+parallel `./gradlew test` runs — and never reproduced on the dev machine at all, because the local
+suite (52s) is roughly 4.5x faster than the CI job (3m54s) and the race only loses on a slow
+runner.
+
+The fix has three layers, in order of how load-bearing each one is: (1) the off-main dispatcher is
+now **injected** (`di/DispatcherModule`, `@IoDispatcher`) rather than named as `Dispatchers.IO`
+inside the ViewModel, which removes the background worker outright — a test hands in its own test
+dispatcher, so there is no pool thread left to lose the race to; (2) `MainDispatcherRule` (a
+`TestWatcher`) installs `Dispatchers.Main` in `starting()` and does `resetMain()` +
+`LeakedCoroutineExceptions.drain()` in `finished()`, which runs *after* the class's own `@After`
+methods, as the second-layer sweep of the same race window; (3) `MainDispatcherResetLeakTest` is
+the reversed-order counterfactual (rule (d)) that pins the mechanism itself — a live
+`Dispatchers.Main` coroutine carried across `resetMain()` leaks, the identical coroutine joined
+*before* `resetMain()` does not. `ViewModelDispatcherContractTest` and an addition to
+`LeakedCoroutineExceptionsContractTest` gate the shape as an absence (rule (e)): no `*ViewModel.kt`
+under `ui/` contains the token `Dispatchers.`, and no test file contains `Dispatchers.setMain(`
+except `MainDispatcherRule` and the gate itself. Match the receiver, not just `setMain(` — the
+first version of that gate reported three files, because `resetMain(` contains `setMain(`.
+
+**A correction to the paragraph above, measured while writing this.** It claims
+`GlobalCollectorNotLeakedTest` "fails with the drain removed, passes with it". Deleting
+`CrashSafeScopeTest`'s `@After` drain by hand today leaves it **green**: the counterfactual test's own
+closing `assertTrue(…, LeakedCoroutineExceptions.drain())` both proves and *consumes* the leak, so
+the `@After` call is insurance for a future case added to that class rather than the thing keeping
+the collector clean. The gate does have teeth — removing BOTH drains fails it, by name — but the
+narrower claim was never true. Delete-the-guard-by-hand is only a proof if you delete *every* guard
+that covers the same property.
+
+**Measured, and worth recording so it is not re-proposed:** a class-boundary gate driven by
+`JUnitCore` — drive every test class through it one at a time, drain the collector before and
+after each, name the class that leaves something — was built exactly as the 2026-09-27 reopening
+comment prescribed, and run over all 158 test classes at a 400ms settle and again at a 40-second
+settle. It found **zero** leakers, both times, because the defect is a timing race that a fast,
+serial, single-machine run cannot reproduce. **A class-boundary `JUnitCore` gate is not the answer
+for a timing race** — it answers "did this class leave something", which is a different question
+from "is this race slow enough to lose on the runner we actually ship on". What found the second
+leaker was `LeakProbeHandler`, a second process-global `CoroutineExceptionHandler` (off unless
+`-Dnudge.leakprobe=1`) run 12 times in parallel on `ubuntu-latest` — 1 of 12 failed — plus setting
+`exceptionFormat = FULL` and `STANDARD_ERROR` on the test tasks, because
+`UncaughtExceptionsBeforeTest` carries the actual offender as a **suppressed** throwable that
+Gradle's default `SHORT` format silently drops.
 
 ---
 

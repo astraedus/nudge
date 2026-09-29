@@ -1,6 +1,7 @@
 package com.astraedus.nudge.ui.screens.home
 
 import android.content.Context
+import com.astraedus.nudge.MainDispatcherRule
 import com.astraedus.nudge.data.db.BlockHistoryFixture
 import com.astraedus.nudge.data.db.entity.UsageEvent
 import com.astraedus.nudge.data.preferences.NudgePreferences
@@ -15,17 +16,14 @@ import com.astraedus.nudge.ui.screens.stats.StatsCalculator
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
-import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
-import kotlinx.coroutines.test.setMain
-import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
 
 /**
@@ -44,6 +42,10 @@ import org.junit.Test
 class HomeBlockedTileTest {
 
     private val dispatcher = UnconfinedTestDispatcher()
+
+    @get:Rule
+    val mainDispatcherRule = MainDispatcherRule(dispatcher)
+
     private val timeTracker = TimeTracker()
 
     private lateinit var usageRepository: UsageRepository
@@ -58,7 +60,6 @@ class HomeBlockedTileTest {
 
     @Before
     fun setUp() {
-        Dispatchers.setMain(dispatcher)
         usageRepository = mockk(relaxed = true)
         screenTimeProvider = mockk(relaxed = true)
         blockRuleRepository = mockk(relaxed = true)
@@ -74,11 +75,6 @@ class HomeBlockedTileTest {
         }
         coEvery { installedAppsRepository.resolveAppName(any()) } answers { firstArg() }
         coEvery { installedAppsRepository.resolveIcon(any()) } returns null
-    }
-
-    @After
-    fun tearDown() {
-        Dispatchers.resetMain()
     }
 
     /**
@@ -123,7 +119,8 @@ class HomeBlockedTileTest {
         timeTracker = timeTracker,
         homeChartsBuilder = HomeChartsBuilder(StatsCalculator(timeTracker)),
         installedAppsRepository = installedAppsRepository,
-        insightsCalculator = InsightsCalculator()
+        insightsCalculator = InsightsCalculator(),
+        ioDispatcher = dispatcher
     )
 
     @Test

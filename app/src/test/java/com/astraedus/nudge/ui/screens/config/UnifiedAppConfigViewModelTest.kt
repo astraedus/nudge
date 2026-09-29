@@ -1,6 +1,7 @@
 package com.astraedus.nudge.ui.screens.config
 
 import androidx.lifecycle.SavedStateHandle
+import com.astraedus.nudge.MainDispatcherRule
 import com.astraedus.nudge.data.db.entity.BlockRule
 import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.data.repository.BlockRuleRepository
@@ -12,20 +13,16 @@ import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.just
 import io.mockk.mockk
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.test.UnconfinedTestDispatcher
-import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
-import kotlinx.coroutines.test.setMain
-import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
 
 /**
@@ -36,6 +33,9 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class UnifiedAppConfigViewModelTest {
 
+    @get:Rule
+    val mainDispatcherRule = MainDispatcherRule()
+
     private val packageName = "com.instagram.android"
 
     private lateinit var blockRuleRepository: BlockRuleRepository
@@ -44,18 +44,12 @@ class UnifiedAppConfigViewModelTest {
 
     @Before
     fun setUp() {
-        Dispatchers.setMain(UnconfinedTestDispatcher())
         blockRuleRepository = mockk()
         installedAppsRepository = mockk()
         nudgePreferences = mockk()
 
         coEvery { installedAppsRepository.resolveAppName(any()) } returns "Instagram"
         every { nudgePreferences.isStrictModeEnabled } returns flowOf(false)
-    }
-
-    @After
-    fun tearDown() {
-        Dispatchers.resetMain()
     }
 
     private fun viewModel(rules: List<BlockRule> = emptyList()): UnifiedAppConfigViewModel {
