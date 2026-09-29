@@ -263,18 +263,12 @@ screen_is_usable() {
   return 0
 }
 
-# Wake and UNLOCK the phone, then PROVE it, and refuse to run at all if it did not work.
+# Wake the phone, dismiss the keyguard, and hold both. Returns 1 if it could not.
 #
-# THE UNLOCK USED TO BE A `|| warn`, and that is how a whole gate run is wasted: on 2026-09-29 the
-# phone was dozing on its lock screen, the helper failed, the run warned and carried on, and every
-# case failed against a BLACK SCREEN — a full table of FAILs whose screenshots show nothing, which
-# is indistinguishable from a real regression until someone opens the album. A gate that knows it
-# might be blind must not start; `die` here costs one line of output instead of twenty minutes and
-# a false bug report.
-#
-# The PIN is known (1337) and lives in `~/bin/astra-pixel-unlock.sh` — never a reason to wait for a
-# human. Two attempts, because the helper's own wake can race a device that is mid-doze.
-pin_screen() {
+# The PIN is known (1337) and lives in `~/bin/astra-pixel-unlock.sh` — the lock screen is never a
+# reason to stop and wait for a human. Two attempts, because the helper's own wake can race a
+# device that is mid-doze.
+wake_and_unlock() {
   local i
   for i in 1 2; do
     "${HOME}/bin/astra-pixel-unlock.sh" >/dev/null 2>&1 ||
@@ -282,13 +276,23 @@ pin_screen() {
     ash settings put system screen_off_timeout 1800000 >/dev/null 2>&1
     ash svc power stayon true >/dev/null 2>&1
     sleep 2
-    if screen_is_usable; then
-      info "Screen pinned (awake, unlocked, stayon, 30-minute timeout)."
-      return 0
-    fi
+    screen_is_usable && return 0
     warn "the screen is still asleep or behind the keyguard; retrying the unlock"
   done
-  die "the phone will not wake/unlock, so every case would run against a black screen and FAIL for the wrong reason. Run ~/bin/astra-pixel-unlock.sh by hand and look at the device."
+  return 1
+}
+
+# The startup gate: refuse to run at all against a phone nobody can see.
+#
+# THE UNLOCK USED TO BE A `|| warn`, and that is how a whole run is wasted: on 2026-09-29 the phone
+# was dozing on its lock screen, the run warned and carried on, and every case failed against a
+# BLACK SCREEN — a full table of FAILs whose screenshots show nothing, which is indistinguishable
+# from a real regression until someone opens the album. A gate that knows it might be blind must
+# not start; dying here costs one line instead of twenty minutes and a false bug report.
+pin_screen() {
+  wake_and_unlock ||
+    die "the phone will not wake/unlock, so every case would run against a black screen and FAIL for the wrong reason. Run ~/bin/astra-pixel-unlock.sh by hand and look at the device."
+  info "Screen pinned (awake, unlocked, stayon, 30-minute timeout)."
 }
 
 # ─── Grants ───────────────────────────────────────────────────────────────────
@@ -857,6 +861,15 @@ case_setup() {
   info "pm clear — every case starts from a first-run install."
   ash pm clear "$APP_ID" >/dev/null 2>&1
   sleep 2
+  # `pm clear` RAISES THE KEYGUARD, and it does it with the screen still on, so nothing downstream
+  # looks obviously broken — the Maestro flow below just asserts against a lock screen and reports
+  # "Mindful app usage through gentle friction is not visible", which reads as an onboarding
+  # regression. Measured on the bench, sampling every 5s across this line:
+  #   14:40:07  wake=Awake stayOn=7 keyguard=false fg=com.google.android.calculator
+  #   14:40:13  wake=Awake stayOn=7 keyguard=true  fg=
+  # Clearing the data of the app that owns the running accessibility service is enough to do it.
+  # So the unlock is re-asserted HERE rather than only once at startup.
+  wake_and_unlock || { fail "pm clear left the phone behind the keyguard and it would not unlock"; return 1; }
   ensure_grants || return 1
   ash am force-stop "$YOUTUBE_PKG" >/dev/null 2>&1
   ash am force-stop "$LIMIT_PKG" >/dev/null 2>&1
@@ -1701,6 +1714,16 @@ run_case() { # name
   if [[ "$name" != "setup" ]] && ! a11y_is_bound; then
     warn "accessibility service was not bound entering '${name}' — repairing"
     ensure_grants || { record "$name" FAIL 0 "precondition: accessibility service would not bind"; return 0; }
+  fi
+  # The SECOND per-case precondition, and it is exactly as load-bearing as the first: a case that
+  # runs against a dark or locked screen fails on the phone's power state, not on the build, and
+  # says nothing about which. `pm clear` raises the keyguard on its own (see `case_setup`), the
+  # `notif-idle` case deliberately lets the device doze, and the screen can simply time out during
+  # a long one — so this is checked per case, where a failure lands on the case that actually hit
+  # it instead of on whichever one came next.
+  if ! screen_is_usable; then
+    warn "the screen was dark or locked entering '${name}' — waking it"
+    wake_and_unlock || { record "$name" FAIL 0 "precondition: the phone would not wake/unlock"; return 0; }
   fi
   start=$(date +%s)
   "$fn"; rc=$?
