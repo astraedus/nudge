@@ -402,4 +402,44 @@ class ServiceLifecycleContractTest {
             source(watchdogWorker).contains("ExistingPeriodicWorkPolicy.KEEP")
         )
     }
+
+    /**
+     * A REBIND MUST RESTART THE FOREGROUND CLOCK, and it must do it after the cache is populated.
+     *
+     * The clock is only ever started from `evaluateForegroundPackage`, i.e. from a window EVENT —
+     * and a rebind destroys the service instance while somebody may be sitting perfectly still,
+     * generating none. Measured on the bench: a single `uiautomator dump` tore the service down at
+     * 15:17:45 (`app clock stopped … reason=service_destroyed`), Android rebound it 1.2s later, and
+     * the clock never came back for the remaining 100 seconds of that sitting. Nothing is logged and
+     * nothing looks broken — the time-based auto-kick just stops, the time-remaining overlay
+     * freezes, and since v1.18.4 a daily limit stops being enforced mid-session. This device is
+     * documented rebinding under memory pressure on its own, so it needs no harness to happen.
+     *
+     * ORDER IS THE ASSERTION. Restarting the clock BEFORE `forceRefresh` would read an empty cache,
+     * find no entry, and do nothing — the same silence, with code that looks like a fix.
+     */
+    @Test
+    fun `a rebind restarts the foreground clock, after the cache is populated`() {
+        val text = source("main/java/com/astraedus/nudge/service/NudgeAccessibilityService.kt")
+        val connected = text.substringAfter("override fun onServiceConnected()")
+            .substringBefore("override fun onAccessibilityEvent(")
+        val populate = connected.indexOf("counterCache.forceRefresh")
+        val restart = connected.indexOf("restartForegroundClockAfterRebind()")
+        assertTrue("onServiceConnected must populate the counter cache", populate >= 0)
+        assertTrue(
+            "onServiceConnected must restart the foreground clock for the app already in front - " +
+                "no window event is coming for a user who is sitting still",
+            restart >= 0
+        )
+        assertTrue(
+            "and it must come AFTER forceRefresh, or it reads an empty cache and silently does " +
+                "nothing (populate=$populate restart=$restart)",
+            populate < restart
+        )
+        assertTrue(
+            "the restart must read the LIVE window - a rebind builds a new service instance, so " +
+                "there is no remembered foreground package to use",
+            text.contains("rootInActiveWindow?.packageName")
+        )
+    }
 }

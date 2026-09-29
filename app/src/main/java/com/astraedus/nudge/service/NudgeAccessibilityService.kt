@@ -1007,7 +1007,54 @@ class NudgeAccessibilityService : AccessibilityService() {
         serviceScope.launch {
             counterCache.forceRefresh { loadCounterCacheEntries() }
             entryPoint.nudgeLogger().d("counter cache eagerly populated packages=${counterCache.snapshot().size}")
+            // AND RESTART THE CLOCK FOR WHATEVER THE USER IS ALREADY SITTING IN.
+            //
+            // A rebind destroys this service instance, which cancels `serviceScope` and with it the
+            // foreground clock. The clock is only ever started from `evaluateForegroundPackage`,
+            // i.e. from a window EVENT — and somebody sitting still generates none. So without this,
+            // every rebind silently ends the clock for the rest of that sitting: the time-based
+            // auto-kick stops, the time-remaining overlay freezes, and (since v1.18.4) a daily limit
+            // stops being enforced mid-session. Nothing is visibly broken and nothing is logged; the
+            // user simply stops being stopped.
+            //
+            // Measured on the bench, and NOT a contrived case -- one `uiautomator dump` from the QA
+            // harness was enough:
+            //   15:17:45.634  app clock stopped key=…calculator reason=service_destroyed
+            //   15:17:46.806  accessibility service connected
+            //   (no clock again, for the remaining 100 seconds of the sitting)
+            // `docs/architecture/service-lifecycle-and-watchdog.md` records this device rebinding
+            // under memory pressure on its own, so the field version needs no harness at all.
+            //
+            // The CLOCK only, deliberately -- not a full re-evaluation. A rebind is not evidence the
+            // user did anything (`PassthroughManager.onObservationResumed` makes the same call for
+            // the same reason), so this restores observation and lets the ordinary tick decide,
+            // gated and counted like any other block, rather than re-blocking on reconnect.
+            withContext(Dispatchers.Main) { restartForegroundClockAfterRebind() }
         }
+    }
+
+    /**
+     * Restart the foreground-time clock for the app that is in front RIGHT NOW, after a rebind.
+     *
+     * Reads the live window rather than any remembered state, because there is none: a rebind builds
+     * a NEW service instance, so `lastPackage` is null and the event that would have set it happened
+     * to a service that no longer exists.
+     *
+     * Silent and harmless when there is nothing to do -- no active window, our own UI in front, or a
+     * package nothing clock-driven is configured for. [updateForegroundTimeTicker] makes that last
+     * call itself.
+     */
+    private fun restartForegroundClockAfterRebind() {
+        val front = try {
+            rootInActiveWindow?.packageName?.toString()
+        } catch (e: Exception) {
+            entryPoint.nudgeLogger().w("could not read the active window after rebind", e)
+            null
+        }
+        if (front.isNullOrBlank() || front == packageName) return
+        if (counterCache.getEntry(front)?.needsForegroundTimeTick != true) return
+        entryPoint.nudgeLogger().i("foreground clock restarted after rebind package=$front")
+        updateForegroundTimeTicker(front)
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {

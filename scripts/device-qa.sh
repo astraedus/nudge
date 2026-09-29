@@ -1345,9 +1345,29 @@ case_daily_limit_midsession() {
   ash monkey -p "$LIMIT_PKG" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
   wait_fg "$LIMIT_PKG" 15 || { fail "${LIMIT_PKG} did not come to the foreground"; stop_logcat; return 1; }
   sleep 3
-  ui_snapshot
   shot 50-calculator-fresh-budget
-  if ui_has "Daily limit reached"; then
+  # NOT `ui_snapshot` — AND THIS IS THE CASE'S CENTRAL CONSTRAINT, not a style preference.
+  #
+  # A `uiautomator dump` DESTROYS this app's accessibility service for the duration of the dump.
+  # Measured here, from this case's own capture:
+  #   15:17:44.905  adbd … 'uiautomator dump …'
+  #   15:17:45.634  app clock stopped key=…calculator reason=service_destroyed
+  #   15:17:46.806  accessibility service connected
+  # The file header's "a bare dump is safe" holds for READING A SCREEN AFTER A BLOCK, which is all
+  # the other cases do with it. It does NOT hold for a case whose subject is a 30-second clock
+  # INSIDE that service: the teardown cancels the clock, and (before the v1.18.4 rebind fix) nothing
+  # restarted it for a user who was sitting still. This case killed the thing it was testing, twice,
+  # and read the result as "the limit never fired".
+  #
+  # So the entry state is asserted from the two oracles that touch no accessibility session at all:
+  # who is in front (`dumpsys activity activities`) and what the service itself said (logcat).
+  local fg_now
+  fg_now="$(foreground_package)"
+  if [[ "$fg_now" != "$LIMIT_PKG" ]]; then
+    fail "expected to be sitting in ${LIMIT_PKG} at entry, but '${fg_now}' is in front — a block overlay would be Nudge's own package"
+    stop_logcat; return 1
+  fi
+  if (( $(log_count "block package=${LIMIT_PKG} reason=daily_limit_reached") > 0 )); then
     fail "entered with the limit already tripped (usage=${usage_ms}ms, derived limit=${limit_min}m) — this case needs budget REMAINING at entry"
     stop_logcat; return 1
   fi
@@ -1383,25 +1403,41 @@ case_daily_limit_midsession() {
   fi
   if (( limited == 0 )); then
     fail "sat ${wait_s}s inside ${LIMIT_PKG} with a ${limit_min}m budget and the limit never fired mid-session"
-    grep -E "evaluate package=${LIMIT_PKG}|foreground clock|daily_limit_reached" "$LOGCAT_FILE" 2>/dev/null | tail -8 >&2
-    stop_logcat; return 1
+    grep -E "evaluate package=${LIMIT_PKG}|clock (started|stopped|exited)|daily_limit_reached" \
+      "$LOGCAT_FILE" 2>/dev/null | tail -12 >&2
+    stop_logcat
+    # THE CAPTURE IS THE WHOLE POINT OF FAILING HERE. Every later case calls `start_logcat`, which
+    # TRUNCATES this file, so a failure that does not save it leaves nothing to read afterwards --
+    # which is exactly what happened the first time this case failed, and it cost a device cycle.
+    # "The clock never ticked", "it ticked and the budget had not crossed" and "it blocked and the
+    # grep missed it" are three different bugs and only the capture tells them apart.
+    cp -f "$LOGCAT_FILE" "${ALBUM}/logcat-daily-limit-midsession-FAIL.txt" 2>/dev/null || true
+    return 1
   fi
 
-  if ui_wait_text "Daily limit reached" 15; then
-    shot 51-daily-limit-midsession
-  else
-    fail "the mid-session limit fired but the 'Daily limit reached' screen never appeared"
+  # The block landed. Prove it reached the SCREEN without opening an accessibility session: the
+  # overlay is its own activity, so the foreground moving from Calculator to Nudge is the arrival.
+  local fg_blocked
+  for ((i = 0; i < 10; i++)); do
+    fg_blocked="$(foreground_package)"
+    [[ "$fg_blocked" == "$APP_ID" ]] && break
+    sleep 1
+  done
+  shot 51-daily-limit-midsession
+  if [[ "$fg_blocked" != "$APP_ID" ]]; then
+    fail "the limit fired but Nudge's overlay never came to the front (got '${fg_blocked}')"
     rc=1
   fi
 
   # 6. Push the app back in front WITHOUT going home: same sitting, so the block must be shown
   #    again and must NOT be counted again.
   ash monkey -p "$LIMIT_PKG" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
-  sleep 6
-  ui_snapshot
+  sleep 8
   shot 52-limit-screen-again
-  ui_has "Daily limit reached" ||
-    warn "the limit screen was not up after re-fronting the app — the count assertion below is the real gate"
+  local fg_again
+  fg_again="$(foreground_package)"
+  [[ "$fg_again" == "$APP_ID" ]] ||
+    warn "re-fronting the app did not put the limit screen back (got '${fg_again}') — the count assertion below is the real gate"
 
   # 7. Leave for good and read the count. +1 for the whole episode: one arrival, one row, however
   #    many times the clock re-launched the screen.
