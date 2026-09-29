@@ -1599,9 +1599,29 @@ wait_notif_change() { # previous_update_ms timeout_secs
 }
 
 CRASH_BASELINE=""
+# How many dropbox entries record OUR APP CRASHING or hanging.
+#
+# COUNTED BY TAG, not by "the text mentions our package", and the difference is a red gate.
+# `dumpsys dropbox` also holds `system_server_wtf` entries — the SYSTEM's own soft assertions — and
+# several of them name whatever app they were about. Measured on 2026-09-29: this run's `pm clear`
+# raced a scheduled `androidx.work` job and the JobScheduler logged
+# `Hasn't been prepared: JobStatus{… dev.astraedus.nudge/…SystemJobService …}`, so the old count
+# rose by one and `crash-check` FAILED on a run where `Crashed services:{}` was empty and the app
+# never died once. A gate that reports the harness's own side effects as app crashes gets ignored,
+# which is the only way a crash gate can really fail.
+#
+# The tags below are the ones Android writes when an APP process crashes, crashes natively, or ANRs.
+# A `system_server_wtf` naming us is worth reading, and `case_crash_check` prints it — as a warning.
+CRASH_TAGS='data_app_crash|data_app_native_crash|data_app_anr|system_app_crash|system_app_native_crash|system_app_anr'
+
+count_app_crashes() {
+  local n
+  n="$(ash "dumpsys dropbox --print | grep -E '^[0-9-]+ [0-9:]+ ($CRASH_TAGS) ' -A6 | grep -c '^Process: ${APP_ID}'" 2>/dev/null | tr -d '\r')"
+  printf '%s' "${n:-0}"
+}
+
 crash_baseline() {
-  CRASH_BASELINE="$(ash "dumpsys dropbox --print | grep -c ${APP_ID}" 2>/dev/null | tr -d '\r')"
-  CRASH_BASELINE="${CRASH_BASELINE:-0}"
+  CRASH_BASELINE="$(count_app_crashes)"
 }
 
 case_crash_check() {
@@ -1612,15 +1632,19 @@ case_crash_check() {
     fail "accessibility reports crashed services: ${crashed}"
     rc=1
   fi
-  now="$(ash "dumpsys dropbox --print | grep -c ${APP_ID}" 2>/dev/null | tr -d '\r')"
-  now="${now:-0}"
-  info "dropbox entries mentioning ${APP_ID}: baseline=${CRASH_BASELINE} now=${now}"
+  now="$(count_app_crashes)"
+  info "dropbox crash/ANR entries for ${APP_ID}: baseline=${CRASH_BASELINE} now=${now}"
   if (( now > CRASH_BASELINE )); then
-    fail "dropbox gained $(( now - CRASH_BASELINE )) entries mentioning ${APP_ID} during this run"
-    ash "dumpsys dropbox --print | grep -A20 ${APP_ID}" 2>/dev/null | tail -60 >&2
+    fail "${APP_ID} crashed or ANRed $(( now - CRASH_BASELINE )) time(s) during this run"
+    ash "dumpsys dropbox --print | grep -E '^[0-9-]+ [0-9:]+ ($CRASH_TAGS) ' -A25" 2>/dev/null | tail -80 >&2
     rc=1
   fi
-  CASE_NOTE="Crashed services:{} · dropbox delta $(( now - CRASH_BASELINE ))"
+  # The system's own soft assertions are NOT app crashes, and must not fail this case -- but they
+  # are worth seeing, because a flood of them naming us usually means we are provoking the platform.
+  local wtf
+  wtf="$(ash "dumpsys dropbox --print | grep -c 'system_server_wtf'" 2>/dev/null | tr -d '\r')"
+  info "system_server_wtf entries on the device (not app crashes): ${wtf:-0}"
+  CASE_NOTE="Crashed services:{} · app crash/ANR delta $(( now - CRASH_BASELINE ))"
   return $rc
 }
 
