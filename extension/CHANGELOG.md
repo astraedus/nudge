@@ -6,7 +6,7 @@ independently-numbered products in one file invites the reader to match a `v1.17
 release against a `0.2.0` extension release and conclude something about both; the tag
 namespaces were already split for exactly that reason.
 
-## 0.3.0 — unreleased
+## 0.3.0 — 2026-09-30
 
 ### Added
 
@@ -59,7 +59,7 @@ namespaces were already split for exactly that reason.
   full-screen interstitial, because its stylesheet was keyed to an element name the code had
   stopped using. YouTube was unaffected.
 
-## 0.2.0 — unreleased
+## 0.2.0 — 2026-09-20
 
 Per-site everything. A rule is now the unit: how the whole site behaves, how long the pause
 is, the daily budget, the schedule, whether the site is grayscaled, and — for known

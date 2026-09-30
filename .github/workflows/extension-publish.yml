@@ -83,6 +83,8 @@ jobs:
           echo "Uploading $ZIP"
           npx --yes publish-browser-extension@6.1.1 --chrome-zip "$ZIP" $SKIP_REVIEW
 
+      # --latest=false: gh marks a new release "Latest" by default, which would move the README's
+      # /releases/latest link and release badge off the Android app onto the extension.
       - name: Attach the zip to the GitHub release
         if: startsWith(github.ref, 'refs/tags/ext-v')
         env:
@@ -90,6 +92,7 @@ jobs:
         run: |
           ZIP="$(ls .output/*-chrome.zip | head -1)"
           gh release create "$GITHUB_REF_NAME" "$ZIP" \
+            --latest=false \
             --title "Nudge for Chrome $GITHUB_REF_NAME" \
             --notes "Chrome extension release. Submitted to the Chrome Web Store for review by CI; the store listing updates once Google approves. Load unpacked: unzip and pick the folder in chrome://extensions (Developer mode)." \
             || gh release upload "$GITHUB_REF_NAME" "$ZIP" --clobber
