@@ -390,17 +390,28 @@ export function compileRules(
  * budget is ever exhausted — a limit-only rule that silently never blocks, which is exactly
  * the failure Allow mode must not have.
  */
-export async function applyRules(
-  settings: NudgeSettings,
-  now: Date = new Date(),
-): Promise<void> {
-  const usage = await todayUsageSnapshot(now);
-  const existing = await chrome.declarativeNetRequest.getDynamicRules();
-  await chrome.declarativeNetRequest.updateDynamicRules({
-    removeRuleIds: existing.map((rule) => rule.id),
-    addRules: compileRules(settings, usage, now),
+export function applyRules(settings: NudgeSettings, now: Date = new Date()): Promise<void> {
+  // SERIALIZED. Bootstrap runs on every worker wake, and on a browser start it runs twice
+  // (onStartup plus the top-level call) alongside the storage listener, the tracker and the
+  // block page's self-heal. Interleaved, two calls read the same `existing` list and the
+  // second one's adds can collide on ids the first just installed, failing the whole update
+  // and leaving whichever rule set happened to land. One at a time, each reads what the
+  // previous one wrote.
+  const run = applyQueue.then(async () => {
+    const usage = await todayUsageSnapshot(now);
+    const existing = await chrome.declarativeNetRequest.getDynamicRules();
+    await chrome.declarativeNetRequest.updateDynamicRules({
+      removeRuleIds: existing.map((rule) => rule.id),
+      addRules: compileRules(settings, usage, now),
+    });
   });
+  // The queue must survive a failed apply, or one rejected update would wedge every later one.
+  applyQueue = run.catch(() => undefined);
+  return run;
 }
+
+/** Tail of the `applyRules` chain. */
+let applyQueue: Promise<void> = Promise.resolve();
 
 /** Stable session-rule id for a domain, derived so re-grants replace rather than stack. */
 function allowRuleId(domain: string, allDomains: string[]): number {

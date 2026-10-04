@@ -69,12 +69,14 @@ export function extractDomain(url: string): string | null {
 
   const withoutProtocol = schemeSep > 0 ? trimmed.slice(schemeSep + 3) : trimmed;
 
-  // Strip userinfo ("user:pass@host") before splitting on path separators.
-  const afterUserinfo = withoutProtocol.includes('@')
-    ? withoutProtocol.slice(withoutProtocol.indexOf('@') + 1)
-    : withoutProtocol;
-
-  const hostPart = afterUserinfo.split('/')[0]!.split('?')[0]!.split('#')[0]!;
+  // The authority ends at the first '/', '?' or '#'. Userinfo ("user:pass@host") can only
+  // live INSIDE it, so the '@' is looked for there and nowhere else. Searching the whole
+  // string read `youtube.com/@handle` as userinfo "youtube.com/" on a host called "handle":
+  // no dot, so null, so the block page found no rule for a URL DNR had just redirected,
+  // answered ALLOW, bounced, and the loop guard gave up with "internal error" on every
+  // YouTube channel page (v0.3.0 field report). TikTok's `/@user/video/…` was the same.
+  const authority = withoutProtocol.split(/[/?#]/)[0]!;
+  const hostPart = authority.slice(authority.lastIndexOf('@') + 1);
   const host = hostPart.split(':')[0]!.toLowerCase();
 
   if (host === '' || !host.includes('.')) return null;

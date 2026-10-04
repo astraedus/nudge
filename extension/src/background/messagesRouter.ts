@@ -661,6 +661,16 @@ export async function handleRequest(
       if (context.decision.type === 'BLOCK' && context.domain !== '') {
         await logBlocked(context.domain, now);
       }
+      // ALLOW on the block page is evidence the INSTALLED rule set is stale: something
+      // redirected this URL that the engine, reading the same settings and usage right now,
+      // says nothing applies to. Dynamic rules persist across browser restarts and sleep, so
+      // yesterday's "budget spent" redirect is still installed when Chrome restores a tab
+      // the next morning, until a recompile catches up. The page is about to bounce back to
+      // the site, so recompile FIRST and the bounce goes through the fresh rules instead of
+      // the stale redirect (which, twice in a row, is what trips the loop guard's error).
+      if (context.decision.type === 'ALLOW' && context.domain !== '') {
+        await applyRules(await loadSettings(), now);
+      }
       return context;
     }
     case 'COMPLETE_PAUSE':

@@ -28,6 +28,18 @@ describe('extractDomain — happy paths', () => {
     expect(extractDomain('https://youtube.com:8080/watch?v=abc#t=10')).toBe('youtube.com');
   });
 
+  it('reads an @ in the PATH as path, not userinfo (YouTube handles, TikTok profiles)', () => {
+    // v0.3.0 field report: every youtube.com/@handle page resolved to null here, so the
+    // block page found no rule for a URL DNR had redirected and looped into "internal error".
+    expect(extractDomain('https://www.youtube.com/@antiraedus')).toBe('youtube.com');
+    expect(extractDomain('https://www.youtube.com/@antiraedus/videos')).toBe('youtube.com');
+    expect(extractDomain('https://www.tiktok.com/@user/video/123')).toBe('tiktok.com');
+    expect(extractDomain('https://example.com/search?q=a@b.com')).toBe('example.com');
+    expect(extractDomain('https://example.com/#x@y.com')).toBe('example.com');
+    expect(extractDomain('youtube.com/@antiraedus')).toBe('youtube.com');
+    expect(extractDomain('https://user@example.com/@handle')).toBe('example.com');
+  });
+
   it('strips userinfo (user:pass@host) before parsing the host', () => {
     expect(extractDomain('https://user:pass@example.com/path')).toBe('example.com');
   });

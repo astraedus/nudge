@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import { applyRules } from '../../src/background/dnr';
 import { handleRequest } from '../../src/background/messagesRouter';
 import { featureSummary } from '../../src/core/featureSummary';
 import { loadDay, loadSettings, saveDay, saveSettings } from '../../src/background/storage';
@@ -275,6 +276,64 @@ describe('GET_BLOCK_CONTEXT', () => {
     expect(context.gateId).toBeNull();
     expect(context.decision.type).toBe('BLOCK');
     if (context.decision.type === 'BLOCK') expect(context.decision.mode).toBe('HARD_BLOCK');
+  });
+
+  it('resolves a YouTube /@handle page to its rule, so a blocked channel page BLOCKS', async () => {
+    // The v0.3.0 bug itself: the '@' in the path was parsed as URL userinfo, the domain came
+    // back empty, the engine answered ALLOW for a URL DNR had just redirected, and the page
+    // looped into "Nudge hit an internal error blocking this page".
+    await seed(settings({ rules: [siteRule({ domain: 'youtube.com', mode: 'HARD_BLOCK' })] }));
+
+    const context = await ask<BlockContext>({
+      type: 'GET_BLOCK_CONTEXT',
+      target: 'https://www.youtube.com/@antiraedus',
+    });
+
+    expect(context.domain).toBe('youtube.com');
+    expect(context.decision.type).toBe('BLOCK');
+  });
+
+  it('recompiles a STALE rule set when the engine answers ALLOW, so the bounce gets through', async () => {
+    // Field report (v0.3.0): "Nudge hit an internal error blocking this page" on
+    // youtube.com/@channel. Dynamic rules persist across browser restarts and sleep, so a
+    // redirect compiled while yesterday's budget was spent is still installed when a tab is
+    // restored today. The engine (fresh usage) says ALLOW, the page bounces, the stale
+    // redirect catches it again, and the loop guard gives up. The worker must heal the rule
+    // set BEFORE answering, because the page navigates the moment it gets ALLOW.
+    const dnr = installDnr();
+    const config = settings({
+      rules: [siteRule({ domain: 'youtube.com', mode: 'ALLOW', dailyLimitMinutes: 30 })],
+    });
+    await seed(config);
+    const yesterday = new Date(NOW.getTime() - 24 * 60 * 60 * 1000);
+    await saveDay(localDayKey(yesterday), {
+      'youtube.com': { ...emptyDayUsage(), activeSec: 30 * 60 },
+    });
+    await applyRules(config, yesterday);
+    expect(dnr.dynamic.some((rule) => rule.action.type === 'redirect')).toBe(true);
+
+    const context = await ask<BlockContext>({
+      type: 'GET_BLOCK_CONTEXT',
+      target: 'https://www.youtube.com/@antiraedus',
+    });
+
+    expect(context.decision.type).toBe('ALLOW');
+    expect(dnr.dynamic.some((rule) => rule.action.type === 'redirect')).toBe(false);
+  });
+
+  it('leaves the rule set alone when the page really is blocked', async () => {
+    const dnr = installDnr();
+    await seed(settings({ rules: [siteRule({ domain: 'reddit.com', mode: 'HARD_BLOCK' })] }));
+    const sentinel = { id: 999, priority: 1, action: { type: 'block' as const }, condition: {} };
+    dnr.dynamic = [sentinel];
+
+    const context = await ask<BlockContext>({
+      type: 'GET_BLOCK_CONTEXT',
+      target: 'https://www.reddit.com/',
+    });
+
+    expect(context.decision.type).toBe('BLOCK');
+    expect(dnr.dynamic).toEqual([sentinel]);
   });
 
   it('offers the allowed channels as a way in when a whitelist is active', async () => {

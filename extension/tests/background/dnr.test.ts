@@ -571,6 +571,37 @@ describe('applyRules', () => {
     expect(state.dynamic).toHaveLength(2);
     expect(new Set(state.dynamic.map((rule) => rule.id)).size).toBe(2);
   });
+
+  it('serializes concurrent calls, so overlapping recompiles never stack duplicate ids', async () => {
+    // A browser start runs bootstrap twice (onStartup + the top-level call) while the block
+    // page may be asking for a self-heal. Unserialized, every call read the same empty
+    // `existing` list and each added its own copy of the rule set.
+    const state = installDnr();
+    const config = settings({
+      rules: [siteRule({ domain: 'a.com' }), siteRule({ id: 'r2', domain: 'b.com' })],
+    });
+    await Promise.all([
+      applyRules(config, MIDDAY),
+      applyRules(config, MIDDAY),
+      applyRules(config, MIDDAY),
+    ]);
+
+    expect(state.dynamic).toHaveLength(2);
+    expect(new Set(state.dynamic.map((rule) => rule.id)).size).toBe(2);
+  });
+
+  it('keeps working after one apply fails', async () => {
+    const state = installDnr();
+    const config = settings({ rules: [siteRule({ domain: 'a.com' })] });
+    const real = chrome.declarativeNetRequest.updateDynamicRules;
+    chrome.declarativeNetRequest.updateDynamicRules = (() =>
+      Promise.reject(new Error('boom'))) as typeof real;
+    await expect(applyRules(config, MIDDAY)).rejects.toThrow('boom');
+    chrome.declarativeNetRequest.updateDynamicRules = real;
+
+    await applyRules(config, MIDDAY);
+    expect(state.dynamic).toHaveLength(1);
+  });
 });
 
 describe('redirectOpenTabs', () => {
