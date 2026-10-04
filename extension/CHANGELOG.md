@@ -6,6 +6,23 @@ independently-numbered products in one file invites the reader to match a `v1.17
 release against a `0.2.0` extension release and conclude something about both; the tag
 namespaces were already split for exactly that reason.
 
+## 0.3.1 — 2026-10-04
+
+### Fixed
+
+- **"Nudge hit an internal error blocking this page" on YouTube channel pages.** Any URL
+  with an `@` in its path (`youtube.com/@handle`, TikTok's `/@user/video/...`) was parsed as
+  if the `@` began URL userinfo, so the host came out as the handle and no rule matched. The
+  network layer redirected the page correctly, the block page then found "no rule here",
+  bounced back to the site, got redirected again, and the loop guard stopped with the
+  internal-error message. The same mis-parse meant time on those pages was never counted
+  against the site's daily limit. The host is now read from the URL's authority only.
+- **Stale network rules heal themselves.** Redirect rules persist across browser restarts
+  and sleep, so a "limit reached" redirect from yesterday could still be installed when a
+  tab was restored the next morning. When the block page finds nothing applies, Nudge now
+  recompiles its rules before sending you on, so the bounce goes through instead of looping.
+  Rule recompiles are also serialized, so a browser start can no longer race two of them.
+
 ## 0.3.0 — 2026-09-30
 
 ### Added

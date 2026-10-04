@@ -358,9 +358,9 @@ Tag format is **`ext-v*`** (e.g. `ext-v0.1.0`) so it can never collide with the 
 the repo-root one: two independently-numbered products in one file invites the reader to
 match an Android `v1.17.0` against an extension `0.2.0` and conclude something about both.
 
-**No `ext-v*` tag exists yet and none should be created until the extension is ready to
-publish.** CI does not currently build releases from tags — wire that up together with the
-Chrome Web Store upload when the listing is ready (ext-04 §5).
+**Release = push an `ext-v<version>` tag** matching `package.json`:
+`.github/workflows/extension-publish.yml` gates, builds, uploads to the Chrome Web Store
+(API v2, service account) and submits for review.
 
 CI: `.github/workflows/extension-ci.yml` (lint → typecheck → unit → build → Playwright under
 xvfb), scoped with `paths: ['extension/**']`. The Android workflow carries the mirror-image
@@ -373,6 +373,11 @@ xvfb), scoped with `paths: ['extension/**']`. The Android workflow carries the m
 - **`regexSubstitution` needs `regexFilter`, and `\0` is the ENTIRE match** — so the pattern
   must be anchored `^...$` for `\0` to be the whole URL rather than just its prefix. This is
   how the original URL reaches the block page.
+- **An `@` in a URL is userinfo ONLY inside the authority** (before the first `/?#`).
+  `extractDomain` once cut at the first `@` anywhere, so `youtube.com/@handle` parsed to host
+  "handle", no rule, block page ALLOW, redirect loop, "internal error" (0.3.1). Any engine
+  ALLOW on the block page is a two-layers-disagree bug: find WHICH input differs before
+  touching the loop guard. Regression: `tests/core/domainMatcher.test.ts`.
 - **Never parse that target with `URLSearchParams`.** `regexSubstitution` cannot
   percent-encode, so the target arrives verbatim and routinely contains its own `?`/`&`/`#`.
   URLSearchParams truncated `watch?v=abc&t=30` to `watch?v=abc` and sent users to the wrong
