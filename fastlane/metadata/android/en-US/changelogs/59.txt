@@ -1,0 +1,4 @@
+• New: a redirect app on every block screen. Pick one better app, like a to-do list or Wikipedia, and one tap takes you there instead of the app you were about to open.
+• Long-press the bubble to change or remove it, or set it in Settings under Personalize.
+• Apps you block or have on your Nuke list are never offered, so it can't loop you into another block.
+• Block screens now scroll on small phones instead of cutting off their buttons.
