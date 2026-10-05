@@ -43,6 +43,7 @@ class NudgePreferences @Inject constructor(
         val STRICT_MODE_CHALLENGE_LENGTH = intPreferencesKey("strict_mode_challenge_length")
         val EMERGENCY_PASS_ENABLED = booleanPreferencesKey("emergency_pass_enabled")
         val EMERGENCY_PASS_USAGE = stringPreferencesKey("emergency_pass_usage")
+        val BOUNCE_CHECK_IN_ENABLED = booleanPreferencesKey("bounce_check_in_enabled")
         val PIP_ESCAPE_PROMPTED = stringPreferencesKey("pip_escape_prompted")
         val PROTECTION_DEGRADED = booleanPreferencesKey("protection_degraded")
         val PROTECTION_ALERT_SHOWN_AT = longPreferencesKey("protection_alert_shown_at")
@@ -209,6 +210,25 @@ class NudgePreferences @Inject constructor(
         context.dataStore.edit { prefs ->
             prefs[Keys.EMERGENCY_PASS_ENABLED] = enabled
         }
+    }
+
+    /**
+     * The "Bro. wtf." bounce check-in (docs/architecture/bounce-check-in.md). Default OFF: it is a
+     * notification nobody asked for until they switch it on.
+     *
+     * `distinctUntilChanged` for the same reason as [isGlobalEnabled]: the accessibility service
+     * collects this, and DataStore re-emits on every write to any key.
+     *
+     * Device-local and not carried by a backup, like the other per-phone conveniences: it is not a
+     * protection setting, and the export format's settings set is pinned by
+     * `ImportedSettingsWriteContractTest`.
+     */
+    val bounceCheckInEnabled: Flow<Boolean> = context.dataStore.data
+        .map { prefs -> prefs[Keys.BOUNCE_CHECK_IN_ENABLED] ?: false }
+        .distinctUntilChanged()
+
+    suspend fun setBounceCheckInEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[Keys.BOUNCE_CHECK_IN_ENABLED] = enabled }
     }
 
     /**
