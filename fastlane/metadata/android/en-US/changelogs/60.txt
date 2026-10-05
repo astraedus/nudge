@@ -1,0 +1,3 @@
+• New: "Bro. wtf." check-ins. Hit a wall, bounce through a few other apps, hit a wall again, and Nudge sends one friendly notification asking if you want a break.
+• Off by default. Turn it on in Settings under Check-ins.
+• At most one check-in every 30 minutes. It only listens to the app switches Nudge already sees, so there is no extra battery cost.
