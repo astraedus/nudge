@@ -83,7 +83,7 @@ launch, after the gate, and the event path never reads the preference).
 - **Threading:** signals arrive on main; overlay walls arrive from the IO coroutine that ran the rule
   lookup. `BounceCheckIn` serialises both with `synchronized`, held only for the update, never across
   the notification post.
-- **Process death** forgets a streak and a cooldown (both in memory only). That is the right
+- **Process death, or any accessibility-service rebind** (the service instance is recreated: memory pressure, a UI-tree dump during QA) forgets a streak and a cooldown, since both live in that instance's memory. Each reconnect also re-logs `bounce check-in enabled=...` from the new collector, which is why device logs show that line repeated next to `accessibility service connected`. That is the right
   direction for a nudge: the worst case is one check-in that would otherwise have been suppressed.
 
 ## The notification
@@ -126,4 +126,4 @@ export settings set is pinned by `ImportedSettingsWriteContractTest`).
   the adapter; the master-toggle reset; the auto-kick reports its key.
 - `BounceCheckInWiringContractTest` (source level, the residue no value test can see).
 - `BounceCheckInRowCopyTest`: the row is never ON-and-silent.
-- **L6 (device):** the v1.21.0 release QA walked the real sequence on the bench Pixel (see CHANGELOG).
+- **L6 (device), 2026-10-05, v1.21.0 vc60 release APK on the bench Pixel 3:** YouTube DELAY wall, Home, three apps, YouTube wall posted `apps=4 minutes=1` (notification id 3 on `nudge_bounce_checkins` with the exact copy); an immediate repeat inside the cooldown posted nothing; switched off, the same sequence posted nothing; switched back on, it fired again; the 1.20.0 redirect bubble and picker still worked; no crashes. Screenshots `~/Pictures/screenshots/nudge-browtf-*.png`.
