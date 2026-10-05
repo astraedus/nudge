@@ -24,15 +24,13 @@
  * PURE DOM — no `chrome.*` — so every export is unit-testable with jsdom and no browser.
  */
 
+import { breathVisual } from '../core/breathing';
 import type { Platform } from '../core/platforms';
 import { MODE_LABELS, type BlockMode } from '../core/types';
+import { startBreathingClock } from '../ui/breathingClock';
 
 /** Exact Android wording. Do not "improve" this string. */
 export const BAIL_LABEL = 'I changed my mind';
-
-/** Breathing cycle: 4s in, 4s out (Android + youtube.ts parity). */
-export const BREATH_IN_MS = 4000;
-export const BREATH_OUT_MS = 4000;
 
 /**
  * A distinct overlay element id PER PLATFORM (rather than one id shared by all six),
@@ -108,6 +106,7 @@ export function createGateOverlay(
   const title = copy.title ?? base.title;
   const subtitle = copy.subtitle ?? base.subtitle;
   const timers: number[] = [];
+  let stopBreathing: (() => void) | null = null;
 
   const overlay = doc.createElement('div');
   overlay.id = overlayId;
@@ -131,6 +130,8 @@ export function createGateOverlay(
 
   function clearAll(): void {
     for (const id of timers.splice(0)) doc.defaultView?.clearInterval(id);
+    stopBreathing?.();
+    stopBreathing = null;
   }
 
   if (mode === 'DELAY') {
@@ -151,17 +152,26 @@ export function createGateOverlay(
     }, 1000);
     if (tick !== undefined) timers.push(tick);
   } else if (mode === 'BREATHING') {
+    // One clock (ui/breathingClock.ts) drives the circle, the phase label, the phase's
+    // 4-3-2-1 countdown, the progress bar and completion. The circle and bar are written
+    // to `style.transform` / `style.opacity` every frame (no CSS transition to race), and
+    // text is only touched when its value changes.
+    const stage = doc.createElement('div');
+    stage.className = 'nudge-overlay__breath-stage';
+    stage.setAttribute('aria-hidden', 'true');
+    const guide = doc.createElement('div');
+    guide.className = 'nudge-overlay__breath-guide';
     const circle = doc.createElement('div');
     circle.className = 'nudge-overlay__breath';
+    const count = doc.createElement('div');
+    count.className = 'nudge-overlay__breath-count';
+    stage.append(guide, circle, count);
+
     const phase = doc.createElement('div');
     phase.className = 'nudge-overlay__phase';
-    phase.textContent = 'Breathe in';
+    phase.setAttribute('aria-live', 'polite');
     const remainingLabel = doc.createElement('div');
     remainingLabel.className = 'nudge-overlay__remaining';
-
-    const totalMs = Math.max(1, Math.round(delaySeconds)) * 1000;
-    const startedAt = Date.now();
-    remainingLabel.textContent = `${Math.ceil(totalMs / 1000)}s remaining`;
 
     const progress = doc.createElement('div');
     progress.className = 'nudge-overlay__progress';
@@ -169,23 +179,30 @@ export function createGateOverlay(
     bar.className = 'nudge-overlay__bar';
     progress.append(bar);
 
-    card.append(circle, phase, progress, remainingLabel);
+    card.append(stage, phase, progress, remainingLabel);
 
-    const cycle = BREATH_IN_MS + BREATH_OUT_MS;
-    const tick = doc.defaultView?.setInterval(() => {
-      const elapsed = Date.now() - startedAt;
-      const left = Math.max(0, totalMs - elapsed);
-      remainingLabel.textContent = `${Math.ceil(left / 1000)}s remaining`;
-      bar.style.width = `${Math.min(100, (elapsed / totalMs) * 100)}%`;
-      const inhaling = elapsed % cycle < BREATH_IN_MS;
-      phase.textContent = inhaling ? 'Breathe in' : 'Breathe out';
-      circle.classList.toggle('nudge-overlay__breath--in', inhaling);
-      if (left <= 0) {
-        clearAll();
-        handlers.onComplete();
-      }
-    }, 200);
-    if (tick !== undefined) timers.push(tick);
+    const totalMs = Math.max(1, Math.round(delaySeconds)) * 1000;
+    const view = doc.defaultView;
+    if (view) {
+      const setText = (el: HTMLElement, text: string): void => {
+        if (el.textContent !== text) el.textContent = text;
+      };
+      let completed = false;
+      stopBreathing = startBreathingClock(view, totalMs, (frame, reducedMotion) => {
+        const { scale, opacity } = breathVisual(frame.level, reducedMotion);
+        circle.style.transform = `scale(${scale})`;
+        circle.style.opacity = String(opacity);
+        bar.style.transform = `scaleX(${frame.progress})`;
+        setText(phase, frame.phase === 'in' ? 'Breathe in' : 'Breathe out');
+        setText(count, String(frame.phaseSecondsLeft));
+        setText(remainingLabel, `${frame.totalSecondsLeft}s remaining`);
+        if (frame.done && !completed) {
+          completed = true;
+          clearAll();
+          handlers.onComplete();
+        }
+      });
+    }
   }
 
   const bail = doc.createElement('button');

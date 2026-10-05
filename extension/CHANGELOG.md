@@ -6,6 +6,25 @@ independently-numbered products in one file invites the reader to match a `v1.17
 release against a `0.2.0` extension release and conclude something about both; the tag
 namespaces were already split for exactly that reason.
 
+## 0.3.2 — 2026-10-05
+
+### Fixed
+
+- **The Breathing pause is a smooth breath now, with a real countdown.** The circle used to
+  move in small jerks (the block page stepped it ten times a second through a short linear
+  transition, so it slammed straight into reverse at the top of every breath) and the in-page
+  overlay's circle started a beat behind its own "Breathe in" label. The circle now grows
+  continuously over the whole 4-second inhale and shrinks over the whole exhale, easing gently
+  at the turn, and each phase counts down 4, 3, 2, 1 in its centre, landing on 1 as the phase
+  ends. The circle, the numbers, the progress bar and the moment the pause completes all run
+  off one clock, so they cannot drift apart. Same on the block page and on the in-page gate
+  (YouTube Shorts, Instagram Reels and the rest). The pause still lasts exactly as long as
+  your rule says.
+- **Switching tabs mid-breath no longer jumps.** The pause holds while its tab is hidden and
+  picks up exactly where it left off when you come back.
+- **Reduced motion is respected.** With "reduce motion" on in your OS, the circle stays still
+  and gently brightens and fades instead of growing and shrinking; the countdown is unchanged.
+
 ## 0.3.1 — 2026-10-04
 
 ### Fixed

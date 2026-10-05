@@ -85,21 +85,45 @@
   background: rgba(27, 107, 90, 0.22);
 }
 
-/* Breathing: a 4s-in / 4s-out cycle. The class is toggled from JS so the phase label and
- * the circle can never drift apart the way two independent animations would. */
-.nudge-overlay__breath {
+/* Breathing: a 4s-in / 4s-out cycle. The circle's transform/opacity and every number are
+ * written from ONE JS clock each frame (ui/breathingClock.ts), so there is deliberately no
+ * CSS transition here: a transition would be a second clock racing the first. */
+.nudge-overlay__breath-stage {
+  position: relative;
   margin: 0 auto 16px;
   width: 132px;
   height: 132px;
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(139, 214, 193, 0.34), rgba(27, 107, 90, 0.2));
-  border: 2px solid rgba(139, 214, 193, 0.4);
-  transform: scale(0.68);
-  transition: transform 4s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.nudge-overlay__breath--in {
-  transform: scale(1);
+.nudge-overlay__breath-guide,
+.nudge-overlay__breath,
+.nudge-overlay__breath-count {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+}
+
+/* Where the circle is heading on every inhale. */
+.nudge-overlay__breath-guide {
+  border: 1.5px solid rgba(139, 214, 193, 0.22);
+}
+
+.nudge-overlay__breath {
+  background: radial-gradient(circle at 50% 38%, rgba(139, 214, 193, 0.42), rgba(27, 107, 90, 0.28));
+  border: 2px solid rgba(139, 214, 193, 0.55);
+  box-shadow: 0 0 0 6px rgba(139, 214, 193, 0.07), 0 0 32px rgba(139, 214, 193, 0.22);
+  transform: scale(0.6);
+  will-change: transform, opacity;
+}
+
+.nudge-overlay__breath-count {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 34px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: #e8f7f1;
 }
 
 .nudge-overlay__phase {
@@ -119,10 +143,11 @@
 
 .nudge-overlay__bar {
   height: 100%;
-  width: 0;
-  border-radius: 999px;
+  width: 100%;
   background: #8bd6c1;
-  transition: width 200ms linear;
+  transform: scaleX(0);
+  transform-origin: left center;
+  will-change: transform;
 }
 
 .nudge-overlay__remaining {
@@ -162,13 +187,6 @@
   margin: 16px 0 0;
   font-size: 12px;
   color: rgba(251, 253, 249, 0.45);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .nudge-overlay__breath,
-  .nudge-overlay__bar {
-    transition: none;
-  }
 }
 
 /*

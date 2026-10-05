@@ -17,7 +17,7 @@ import { baseSettings, expect, platformRule, test } from './fixtures';
  */
 
 /** Instagram allowed as a site, with only the Reels surface gated. */
-function reelsGated(mode: 'HARD_BLOCK' | 'DELAY' = 'HARD_BLOCK') {
+function reelsGated(mode: 'HARD_BLOCK' | 'DELAY' | 'BREATHING' = 'HARD_BLOCK') {
   return baseSettings({
     rules: [
       platformRule(
@@ -119,5 +119,39 @@ test.describe('Instagram Reels gate', () => {
     });
 
     await expect(page.getByText('Reels is blocked')).toHaveCount(0, { timeout: 15_000 });
+  });
+  test('a Breathing gate breathes in-page: the circle animates every frame and the count runs', async ({
+    context,
+    setSettings,
+  }) => {
+    // The in-page pacer used to toggle a class on a 200ms interval under a 4s CSS
+    // transition, so the circle started late and lagged its own label. It is now driven
+    // by the same per-frame clock as the block page; check it really runs in a page.
+    await setSettings(reelsGated('BREATHING'));
+
+    const page = await context.newPage();
+    await page.goto('https://www.instagram.com/');
+    await page.evaluate(() => {
+      history.pushState({}, '', '/reels/');
+    });
+    const count = page.locator('.nudge-overlay__breath-count');
+    await expect(count).toHaveText(/^[1-4]$/, { timeout: 15_000 });
+    await expect(page.locator('.nudge-overlay__phase')).toHaveText(/Breathe (in|out)/);
+
+    const distinct = await page.evaluate(
+      () =>
+        new Promise<number>((resolve) => {
+          const circle = document.querySelector<HTMLElement>('.nudge-overlay__breath');
+          const seen = new Set<string>();
+          const start = performance.now();
+          const read = () => {
+            seen.add(circle?.style.transform ?? '');
+            if (performance.now() - start < 1000) requestAnimationFrame(read);
+            else resolve(seen.size);
+          };
+          requestAnimationFrame(read);
+        }),
+    );
+    expect(distinct).toBeGreaterThan(15);
   });
 });

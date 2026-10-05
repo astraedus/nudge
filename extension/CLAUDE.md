@@ -527,6 +527,16 @@ xvfb), scoped with `paths: ['extension/**']`. The Android workflow carries the m
   imports, YouTube's included, and plants a bogus id to prove the check is not vacuous.
   Generalise: when a value crosses from TS into CSS (or any other language the compiler
   cannot follow), a test has to be the type system.
+- **An animation and its numbers need ONE clock, and it must not be a React tick.** The
+  0.3.1 Breathing pacer derived the circle's scale from a `setInterval` countdown state and
+  smoothed it with a 100ms LINEAR CSS transition (a staircase that reversed at full speed
+  at every phase boundary), and the overlay toggled a class every 200ms under a 4s
+  transition (a second clock that started 200ms behind its own label). Now
+  `core/breathing.ts` maps elapsed time to everything shown (eased sine level, phase,
+  4-3-2-1 count, progress, done) and `ui/breathingClock.ts` advances ACTIVE time per
+  animation frame (frozen while hidden, at most 250ms per frame) and writes
+  `style.transform`/`opacity` directly. In React, keep the driven properties OUT of the JSX
+  `style` prop or the once-a-second re-render resets them mid-breath.
 - The React Compiler advisory lint rules (`set-state-in-effect`,
   `preserve-manual-memoization`, `use-memo`) are deliberately **off**; `rules-of-hooks` is
   deliberately **on** and has already earned its keep.

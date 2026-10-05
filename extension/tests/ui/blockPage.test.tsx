@@ -372,30 +372,33 @@ describe('Delay', () => {
 });
 
 describe('Breathing', () => {
-  it('alternates Breathe in/out on the fixed 4s/4s cycle and completes into COMPLETE_PAUSE + navigation', async () => {
-    setTarget(TARGET);
-    const context = makeContext({
+  function breathingContext(delaySeconds: number) {
+    return makeContext({
       decision: {
         type: 'BLOCK',
         mode: 'BREATHING',
-        delaySeconds: 8,
+        delaySeconds,
         ruleName: 'Focus Time',
         dailyTimeRemainingMs: null,
         dailyLimitMinutes: null,
         limitReached: false,
       },
     });
-    sendMessageMock.mockResolvedValueOnce(context);
+  }
+
+  it('alternates Breathe in/out on the fixed 4s/4s cycle and completes into COMPLETE_PAUSE + navigation', async () => {
+    setTarget(TARGET);
+    sendMessageMock.mockResolvedValueOnce(breathingContext(8));
     render(<BlockPage />);
     await flush();
 
-    expect(screen.getByText('Breathe in...')).toBeTruthy();
+    expect(screen.getByText('Breathe in')).toBeTruthy();
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(4000);
     });
     await flush();
-    expect(screen.getByText('Breathe out...')).toBeTruthy();
+    expect(screen.getByText('Breathe out')).toBeTruthy();
 
     sendMessageMock.mockResolvedValueOnce({ ok: true, until: Date.now() + 600_000 });
     await act(async () => {
@@ -405,6 +408,41 @@ describe('Breathing', () => {
 
     expect(sendMessageMock).toHaveBeenCalledWith({ type: 'COMPLETE_PAUSE', target: TARGET });
     expect(replaceMock).toHaveBeenCalledWith(TARGET);
+  });
+
+  it('counts each phase down 4, 3, 2, 1 in step with the circle, and does not complete early', async () => {
+    setTarget(TARGET);
+    sendMessageMock.mockResolvedValueOnce(breathingContext(16));
+    render(<BlockPage />);
+    await flush();
+
+    const count = () => screen.getByTestId('breath-count').textContent;
+    const scaleOf = () => {
+      const match = /scale\(([\d.]+)\)/.exec(screen.getByTestId('breath-circle').style.transform);
+      return match ? Number(match[1]) : NaN;
+    };
+
+    // First paint: smallest circle, a full 4 to count.
+    expect(count()).toBe('4');
+    expect(scaleOf()).toBeCloseTo(0.6, 5);
+    expect(screen.getByText('16s remaining')).toBeTruthy();
+
+    const seen: string[] = [count() ?? ''];
+    const scales: number[] = [scaleOf()];
+    for (let i = 0; i < 39; i += 1) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(100);
+      });
+      const n = count() ?? '';
+      if (seen[seen.length - 1] !== n) seen.push(n);
+      scales.push(scaleOf());
+    }
+    expect(seen).toEqual(['4', '3', '2', '1']);
+    // The circle only ever grew during the inhale, smoothly, and is near full at 3.9s.
+    for (let i = 1; i < scales.length; i += 1) expect(scales[i]).toBeGreaterThanOrEqual(scales[i - 1] ?? 0);
+    expect(scales[scales.length - 1] ?? 0).toBeGreaterThan(0.99);
+
+    expect(sendMessageMock).not.toHaveBeenCalledWith({ type: 'COMPLETE_PAUSE', target: TARGET });
   });
 });
 
