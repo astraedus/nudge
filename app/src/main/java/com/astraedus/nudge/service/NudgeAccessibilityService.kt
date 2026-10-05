@@ -17,6 +17,7 @@ import com.astraedus.nudge.data.repository.BlockRuleRepository
 import com.astraedus.nudge.data.repository.UsageRepository
 import com.astraedus.nudge.domain.WebDomainMatcher
 import com.astraedus.nudge.domain.block.BlockLaunchGate
+import com.astraedus.nudge.domain.bounce.BounceDetector
 import com.astraedus.nudge.domain.block.CooldownGate
 import com.astraedus.nudge.domain.events.A11yEventType
 import com.astraedus.nudge.domain.events.AccessibilityEventRecord
@@ -541,6 +542,26 @@ class NudgeAccessibilityService : AccessibilityService() {
     @Volatile private var globalEnabledCached: Boolean = true
 
     /**
+     * The "Bro. wtf." bounce check-in (docs/architecture/bounce-check-in.md). Fed from exactly two
+     * places this service already runs: [applyForegroundSignal] (every app the user opens) and the
+     * two "Nudge stopped this app" points, [launchBlockOverlay] and the auto-kick. Its on/off switch
+     * is cached inside it, collected in [onServiceConnected]; while off, neither feed does any work.
+     * In memory only: a process death forgets a streak, which is the right direction for a nudge.
+     */
+    private val bounceCheckIn = BounceCheckIn(
+        detector = BounceDetector(
+            excludedPackages = BounceDetector.neverCountedPackages(BuildConfig.APPLICATION_ID)
+        ),
+        notify = { alert ->
+            entryPoint.nudgeLogger().i(
+                "bounce check-in posted apps=${alert.appCount} minutes=${alert.minutes}"
+            )
+            BounceCheckInNotifier.notify(applicationContext, alert)
+        },
+        clock = { android.os.SystemClock.elapsedRealtime() }
+    )
+
+    /**
      * Nuke Mode, cached for the synchronous hot path exactly like [strictModeEnabledCached]:
      * collected off-main in [onServiceConnected], so the event path answers "is this app nuked?"
      * with a set lookup and never blocks on DataStore or PackageManager.
@@ -910,6 +931,12 @@ class NudgeAccessibilityService : AccessibilityService() {
             counterOverlayManager = entryPoint.counterOverlayManager(),
             counterCache = counterCache,
             logger = entryPoint.nudgeLogger(),
+            // A kick is a wall too. A web kick is keyed by `web:<domain>`, not a package, so it is
+            // reported as the browser the user was actually in.
+            onKicked = { key ->
+                val app = if (WebSessionKey.isWebKey(key)) webSessionUsageProvider.browserPackage else key
+                app?.let(bounceCheckIn::onWall)
+            },
             // Prefer the accessibility global action, exactly as EmergencyPassManager does: a HOME
             // intent is not always honoured from inside another app's task, and a kick that leaves
             // the user sitting in the app they were meant to be removed from is a silent failure.
@@ -1020,6 +1047,14 @@ class NudgeAccessibilityService : AccessibilityService() {
                 // the phone has rebooted since install. It is also what tells the user when the OS
                 // has stopped THIS service, so it has to be running whenever Nudge is on.
                 NudgeMonitorService.sync(applicationContext, enabled)
+            }
+        }
+
+        // The bounce check-in's switch, cached so the event path never reads DataStore.
+        serviceScope.launch {
+            entryPoint.nudgePreferences().bounceCheckInEnabled.collect { enabled ->
+                bounceCheckIn.setEnabled(enabled)
+                entryPoint.nudgeLogger().i("bounce check-in enabled=$enabled")
             }
         }
 
@@ -1405,6 +1440,10 @@ class NudgeAccessibilityService : AccessibilityService() {
         entryPoint.blockLaunchGuard().onForegroundSignal(signal)
         entryPoint.passthroughManager().onForegroundSignal(signal, sittingClock())
         entryPoint.tabCoverOverlayManager().onForegroundSignal(signal)
+        // The fourth consumer: "which apps did the user open" for the bounce check-in. Here for the
+        // same reason as the other three, so no early return below can starve it. A no-op unless
+        // the feature is on AND a wall has armed a streak.
+        bounceCheckIn.onForegroundSignal(signal)
     }
 
     /**
@@ -2109,6 +2148,8 @@ class NudgeAccessibilityService : AccessibilityService() {
             // observed under a Nudge that is now off, and a stale claim could suppress the FIRST
             // block after the user switches back on. "No claim" never suppresses anything.
             entryPoint.blockLaunchGuard().reset()
+            // A bounce streak observed under a Nudge that is now off is not one to finish later.
+            bounceCheckIn.reset()
             hideAllOverlays()
             // A disabled Nudge behaves as if uninstalled, so the steer's memory of what it did
             // inside the host app goes too. This is the ONE reset that is not a departure verdict.
@@ -2646,6 +2687,10 @@ class NudgeAccessibilityService : AccessibilityService() {
         // authoritative even if the singleInstance activity is re-delivered via onNewIntent
         // (which never re-runs onCreate).
         markOverlayActive(attributedPackage)
+        // A wall, for the bounce check-in: the app the user was actually IN (the browser, for a
+        // website block). Every overlay in this service passes through here exactly once per launch
+        // the gate allows, which is what makes this the one place to report it.
+        bounceCheckIn.onWall(targetPackage)
         // ...and record that it is only STARTED, not yet on screen. Those are different facts and
         // conflating them is what produced two blocks for one app entry: see
         // [BlockLaunchGate.isGenuineBypass]. Keyed on the TARGET, because that is the package whose

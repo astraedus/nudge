@@ -13,6 +13,8 @@ import com.astraedus.nudge.domain.logging.NudgeLog
  *
  * Must be invoked on the main thread: hiding the counter overlay touches the WindowManager.
  *
+ * @param onKicked told the kicked key after every kick, for the bounce check-in (a kick is a
+ *   "wall"). Defaulted so the executor's own tests need not care.
  * @param goHome how to actually send the user home. Injected rather than built here so this class
  *   holds only the POLICY (which is pure and unit-testable) and the caller owns the Android
  *   mechanism — which lets the service prefer the accessibility global action over a HOME intent.
@@ -22,6 +24,7 @@ class AutoKickExecutor(
     private val counterOverlayManager: CounterOverlayManagerApi,
     private val counterCache: CounterCacheRefresher,
     private val logger: NudgeLog,
+    private val onKicked: (String) -> Unit = {},
     private val goHome: () -> Unit
 ) {
 
@@ -40,6 +43,7 @@ class AutoKickExecutor(
         }
 
         goHome()
+        onKicked(packageName)
 
         // Resets BOTH the interaction count and the foreground-time baseline, so the next session
         // starts fresh regardless of which trigger fired.

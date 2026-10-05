@@ -5,6 +5,11 @@
     <string name="notification_channel_name">Nudge Monitor</string>
     <string name="notification_channel_description">Shows when Nudge is actively monitoring apps</string>
 
+    <!-- The "Bro. wtf." bounce check-in (docs/architecture/bounce-check-in.md). The notification's
+         own title and body live in BounceAlert, where the numbers in them are unit-tested. -->
+    <string name="bounce_checkin_channel_name">Bounce check-ins</string>
+    <string name="bounce_checkin_channel_description">A nudge when you bounce between apps after hitting a wall</string>
+
     <!-- Protection watchdog. Copy rule: say what happened and what fixes it, without alarm and
          without blaming the user. This fires when their phone switched Nudge off, not when they
          did. -->

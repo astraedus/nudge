@@ -413,6 +413,20 @@ fun SettingsScreen(
             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
             Text(
+                "Check-ins",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                color = MaterialTheme.colorScheme.primary
+            )
+
+            // Not a protection setting: it neither blocks nor unblocks anything, so Strict Mode
+            // does not gate it in either direction.
+            BounceCheckInRow(preferences)
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+            Text(
                 "Personalize",
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.Medium,
