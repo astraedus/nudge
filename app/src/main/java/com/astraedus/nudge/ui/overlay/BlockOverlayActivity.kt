@@ -7,9 +7,13 @@ import android.os.Looper
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.key
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
 import com.astraedus.nudge.data.preferences.NudgePreferences
+import com.astraedus.nudge.data.repository.InstalledAppsRepository
+import com.astraedus.nudge.data.repository.RedirectAppRepository
 import com.astraedus.nudge.domain.block.OverlayLifecycle
 import com.astraedus.nudge.domain.emergency.EmergencyPass
 import com.astraedus.nudge.domain.logging.NudgeLog
@@ -19,6 +23,9 @@ import com.astraedus.nudge.service.BlockLaunchGuard
 import com.astraedus.nudge.service.EmergencyPassManager
 import com.astraedus.nudge.service.NudgeAccessibilityService
 import com.astraedus.nudge.service.PassthroughManager
+import com.astraedus.nudge.ui.redirect.RedirectAppBubble
+import com.astraedus.nudge.ui.redirect.RedirectAppController
+import com.astraedus.nudge.ui.redirect.RedirectAppPickerHost
 import com.astraedus.nudge.ui.theme.NudgeTheme
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.flow.first
@@ -34,6 +41,7 @@ class BlockOverlayActivity : ComponentActivity() {
     @Inject lateinit var recordWalkAway: RecordWalkAwayUseCase
     @Inject lateinit var nudgeLogger: NudgeLog
     @Inject lateinit var blockLaunchGuard: BlockLaunchGuard
+    @Inject lateinit var redirectAppRepository: RedirectAppRepository
 
     /** Posts the walk-away fail-safe finish. Cleared in [onDestroy]. */
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -124,6 +132,8 @@ class BlockOverlayActivity : ComponentActivity() {
                     )
 
                 OverlayLifecycle.Effect.GoHome -> goHome()
+
+                is OverlayLifecycle.Effect.LaunchRedirectApp -> launchRedirectApp(effect.packageName)
 
                 OverlayLifecycle.Effect.GrantPassthrough -> passthroughManager.grant(
                     packageName = passthroughPackage(intent),
@@ -258,6 +268,14 @@ class BlockOverlayActivity : ComponentActivity() {
         // the pass is governed by its own Settings toggle alone (v1.10.0); see
         // [resolveEmergencyPassState], which owns the whole decision.
         var passState = EmergencyPassUiState()
+        // The redirect app, resolved BEFORE the first frame for the same reason as the messages: a
+        // bubble that flashes "Pick a better app" and then turns into Wikipedia is a visible bug.
+        // Re-checked on every delivery (RedirectAppPolicy.resolve), so a choice uninstalled or
+        // blocked since it was made renders as the empty state instead of a door to another block.
+        // The block's own packages are excluded too: the blocked app, and the browser for a web block.
+        val blockPackages = setOf(packageName, passthroughPackage(intent))
+            .filterTo(mutableSetOf()) { it.isNotBlank() }
+        var redirectTarget: InstalledAppsRepository.AppInfo? = null
         runBlocking {
             titlePool = NudgeMessages.resolvePool(
                 nudgePreferences.customDelayTitles.first(), NudgeMessages.delayTitles
@@ -274,6 +292,28 @@ class BlockOverlayActivity : ComponentActivity() {
                 passEnabled = nudgePreferences.emergencyPassEnabled.first(),
                 usage = EmergencyPass.parse(nudgePreferences.emergencyPassUsage.first()),
                 now = System.currentTimeMillis()
+            )
+
+            // Never allowed to stop the block from rendering: a failure here is an empty bubble.
+            redirectTarget = try {
+                redirectAppRepository.current(blockPackages)
+            } catch (e: Exception) {
+                nudgeLogger.e("redirect app could not be resolved", e)
+                null
+            }
+        }
+        val redirect = RedirectAppController(
+            repository = redirectAppRepository,
+            scope = lifecycleScope,
+            blockPackages = blockPackages,
+            initialTarget = redirectTarget
+        )
+        // Tap = a walk-away to that app, through the ONE walk-away path; long-press = the picker.
+        val redirectBubble: @Composable () -> Unit = {
+            RedirectAppBubble(
+                target = redirect.target,
+                onLaunch = { navigateHome(redirectPackage = it) },
+                onEdit = redirect::openPicker
             )
         }
 
@@ -305,6 +345,9 @@ class BlockOverlayActivity : ComponentActivity() {
         setContent {
             NudgeTheme {
                 key(blockToken) {
+                // While the picker is open the block body is not what the user is looking at, so
+                // its timers hold still (see PauseWhile). The picker itself sits outside the pause.
+                PauseWhile(paused = redirect.pickerOpen) {
                 when (mode) {
                     // Unreachable: the early return above already finished us. Present so the
                     // `when` stays exhaustive and a future mode cannot silently fall through.
@@ -316,7 +359,8 @@ class BlockOverlayActivity : ComponentActivity() {
                         NukeBlockContent(
                             packageName = packageName,
                             appLabel = appLabel,
-                            onGoHome = { navigateHome() }
+                            onGoHome = { navigateHome() },
+                            redirect = redirectBubble
                         )
                     } else {
                         HardBlockContent(
@@ -330,7 +374,8 @@ class BlockOverlayActivity : ComponentActivity() {
                             canUseEmergencyPass = passState.canUse,
                             emergencyLocked = passState.locked,
                             nextPassMs = passState.nextPassMs,
-                            onUseEmergencyPass = onUsePass
+                            onUseEmergencyPass = onUsePass,
+                            redirect = redirectBubble
                         )
                     }
 
@@ -348,7 +393,8 @@ class BlockOverlayActivity : ComponentActivity() {
                             canUseEmergencyPass = passState.canUse,
                             emergencyLocked = passState.locked,
                             nextPassMs = passState.nextPassMs,
-                            onUseEmergencyPass = onUsePass
+                            onUseEmergencyPass = onUsePass,
+                            redirect = redirectBubble
                         )
                     }
 
@@ -365,7 +411,8 @@ class BlockOverlayActivity : ComponentActivity() {
                             canUseEmergencyPass = passState.canUse,
                             emergencyLocked = passState.locked,
                             nextPassMs = passState.nextPassMs,
-                            onUseEmergencyPass = onUsePass
+                            onUseEmergencyPass = onUsePass,
+                            redirect = redirectBubble
                         )
                     }
 
@@ -382,10 +429,13 @@ class BlockOverlayActivity : ComponentActivity() {
                             canUseEmergencyPass = passState.canUse,
                             emergencyLocked = passState.locked,
                             nextPassMs = passState.nextPassMs,
-                            onUseEmergencyPass = onUsePass
+                            onUseEmergencyPass = onUsePass,
+                            redirect = redirectBubble
                         )
                     }
                 }
+                }
+                RedirectAppPickerHost(redirect)
                 }
             }
         }
@@ -485,14 +535,17 @@ class BlockOverlayActivity : ComponentActivity() {
      *     then expose. Belt and braces, because the failure mode here is the user being shown the
      *     screen they just dismissed.
      */
-    private fun navigateHome() {
+    private fun navigateHome(redirectPackage: String? = null) {
         runEffects(
             overlayLifecycle.onWalkAwayRequested(
                 attributedPackage = intent.getStringExtra(EXTRA_PACKAGE_NAME) ?: "",
                 blockMode = intent.getStringExtra(EXTRA_BLOCK_MODE) ?: "",
                 // The package the user is sitting IN (the browser, for a web block): that is whose
                 // window is underneath us, and whose re-entry must not be read as a fresh arrival.
-                walkAwayPackage = passthroughPackage(intent)
+                walkAwayPackage = passthroughPackage(intent),
+                // The redirect bubble: the same walk-away, with the user's chosen app as the
+                // destination instead of the launcher. Null for the button and the back gesture.
+                redirectPackage = redirectPackage
             )
         )
     }
@@ -536,6 +589,32 @@ class BlockOverlayActivity : ComponentActivity() {
         } catch (e: Exception) {
             nudgeLogger.e("walk-away could not go home", e)
         }
+    }
+
+    /**
+     * Open the user's redirect app as the walk-away's destination. Falls back to [goHome] when it
+     * cannot be launched (uninstalled since this block rendered, disabled, or the start refused):
+     * the walk-away has already been recorded and the overlay marked inactive, so failing to leave
+     * would strand the user on a spent block. Never throws, for the same reason.
+     *
+     * Allowed by the background-activity-start rules because this activity is in the foreground
+     * and the user just touched it.
+     */
+    private fun launchRedirectApp(packageName: String) {
+        val launch = try {
+            redirectAppRepository.launchIntent(packageName)
+        } catch (_: Exception) {
+            null
+        }
+        if (launch != null) {
+            try {
+                startActivity(launch)
+                return
+            } catch (e: Exception) {
+                nudgeLogger.e("redirect app could not be launched, going home", e)
+            }
+        }
+        goHome()
     }
 
     override fun onDestroy() {

@@ -74,6 +74,14 @@ class OverlayLifecycle {
         data object GoHome : Effect
 
         /**
+         * Leave for the user's redirect app instead of the launcher: start [packageName]'s launch
+         * intent in its own task. The walk-away's destination, nothing else — the activity falls
+         * back to [GoHome] if the launch fails, because failing to leave would trap the user in the
+         * app they just turned down.
+         */
+        data class LaunchRedirectApp(val packageName: String) : Effect
+
+        /**
          * The user waited the timer out, so the app may be opened: `PassthroughManager.grant(...)`.
          * Emitted ONLY when the overlay is at least STARTED — a countdown that somehow completed
          * while backgrounded must never open the app (issue #8).
@@ -256,19 +264,30 @@ class OverlayLifecycle {
      * @param walkAwayPackage the package the user is sitting IN — the BROWSER for a web block —
      *   because that is whose window is about to resurface underneath the finishing overlay, and
      *   whose re-entry must not be read as a fresh arrival.
+     * @param redirectPackage the user tapped their redirect app rather than "I changed my mind": the
+     *   walk-away is IDENTICAL (one row, the same once-only gate, the window armed first, no grant,
+     *   the same fail-safe) and only the destination differs, [Effect.LaunchRedirectApp] in the slot
+     *   [Effect.GoHome] would take. Null or blank goes home. That app's window arriving is a
+     *   departure in its own right (`BlockLaunchGate.walkAwayAfter` closes on any other app's
+     *   window), and `onStopped` finishes us from the background exactly as it does for the
+     *   launcher.
      */
     fun onWalkAwayRequested(
         attributedPackage: String,
         blockMode: String,
-        walkAwayPackage: String
+        walkAwayPackage: String,
+        redirectPackage: String? = null
     ): List<Effect> {
         if (walkedAway) return emptyList()
         walkedAway = true
+        val destination = redirectPackage?.takeIf { it.isNotBlank() }
+            ?.let { Effect.LaunchRedirectApp(it) }
+            ?: Effect.GoHome
         return listOf(
             Effect.RecordWalkAway(attributedPackage, blockMode),
             Effect.MarkOverlayInactive,
             Effect.ArmWalkAwayWindow(walkAwayPackage),
-            Effect.GoHome,
+            destination,
             Effect.ScheduleFailSafeFinish(renderToken, WALK_AWAY_FINISH_FAILSAFE_MS)
         )
     }

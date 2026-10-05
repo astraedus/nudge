@@ -593,7 +593,7 @@ class BlockOverlayLaunchContractTest {
         // second decision of its own would put the once-only gate and the arming order back in two
         // places, which is how #26 arrived in the first place.
         val body = stripComments(
-            overlay.substringAfter("private fun navigateHome()").substringBefore("\n    }")
+            overlay.substringAfter("private fun navigateHome(").substringBefore("\n    }")
         )
         assertTrue(
             "the walk-away must be one delegation to the state machine",
