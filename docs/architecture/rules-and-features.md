@@ -11,6 +11,10 @@ Covers what a *rule* can express beyond a plain block: schedules, in-app feature
 - **Grayscale mode** — force screen to grayscale (requires ADB: `adb shell pm grant com.astraedus.nudge android.permission.WRITE_SECURE_SETTINGS`). Grayscale guide in Settings.
 - **Rotating motivational messages** — shown on overlay screens when blocks trigger. **User-editable (v1.6.0)**: defaults live in `ui/overlay/NudgeMessages.kt` (delayTitles/delaySubtitles/hardBlockMessages); users override via Settings → Personalize → "Edit block messages" (`ui/screens/settings/MessagesEditorScreen.kt`), stored as 3 multiline strings in `NudgePreferences` (`customDelayTitles`/`customDelaySubtitles`/`customHardBlockMessages`, one message per line, empty = defaults). `NudgeMessages.resolvePool(customRaw, default)` is the pure resolver; `BlockOverlayActivity` reads the prefs once via `runBlocking{ first() }` before `setContent` (avoids a default→custom flash) and passes resolved pools into the overlay composables (which still `remember { pool.random() }`).
 - **Instagram home feed detection** — `InAppDetector` now detects Instagram's home feed (when Home tab is selected, no other tabs active) and treats it as REELS-equivalent. Home feed scrolling counts toward interaction counter and auto-kick the same as the Reels tab.
+- **Redirect app (v1.20.0)** — ONE global "better app" (a to-do list, Wikipedia) offered as a bubble on every
+  block screen; a tap is a walk-away into that app. Set from the bubble (long-press to change/remove) or from
+  Settings → Personalize → "Redirect app". Never an app with an enabled rule or on the Nuke list. Design, the
+  picker's back-gesture safety and the stale-choice fallback: `block-overlay-lifecycle.md`, "The redirect app".
 - **Rule editor UX** — info tooltips on all sections, block mode descriptions, per-app rules summary with enable/disable
 - **Settings** — version links to GitHub repo, source code & feedback link
 - **Tab Vanish (v1.18.0)** — while a rule covering a host app's feature resolves to a HARD block, Nudge draws a

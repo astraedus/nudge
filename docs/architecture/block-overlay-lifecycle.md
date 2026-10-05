@@ -2,9 +2,10 @@
 
 Covers `BlockOverlayActivity`'s lifecycle invariant (the delay only runs while you are looking at it),
 the "I changed my mind" walk-away write path that feeds every stat, the daily 2-minute escape hatch
-rendered on every overlay, and `BlockMode.HOLD`, the block whose timer only runs under a thumb.
-**Read before touching `ui/overlay/`, `RecordWalkAwayUseCase`, `HoldProgress`/`HoldTarget`,
-`EmergencyPass*`, or before adding a block mode.**
+rendered on every overlay, the redirect-app bubble on every block screen, and `BlockMode.HOLD`, the
+block whose timer only runs under a thumb.
+**Read before touching `ui/overlay/`, `ui/redirect/`, `RecordWalkAwayUseCase`, `HoldProgress`/`HoldTarget`,
+`EmergencyPass*`, `RedirectAppPolicy`, or before adding a block mode.**
 
 ## Block overlay lifecycle — the delay only runs while you are looking at it (fixes #8)
 
@@ -94,6 +95,118 @@ The ordering that produces it is this table's own second row wearing a different
 `PendingOverlay` now carries a `decisionKey` (`BlockLaunchGate.decisionFingerprint`: the confrontation's identity, plus the block mode, plus whether it is the daily-limit variant), and a launch is a duplicate only while the fingerprint matches. Nothing that TICKS is in it — a countdown in a fingerprint would make every re-launch look new and hand this table's whole problem back. A re-delivery keeps the on-screen overlay's id and `windowShown` and adopts the NEW fingerprint, because that is the block it is about to render. Full reasoning, the two rejected alternatives (a rule-change flow, the record's age), and the test list: `foreground-detection.md`, *"Already pending" has to mean the SAME BLOCK*.
 
 Tests: `InterventionCountReplayTest` (every mechanism above replayed through the real classifier, guard and gate, each asserting ROWS — with the launch count on the same run as the counterfactual, since one row per allowed launch is literally what the old code did; plus the arrival matrix over every departure kind × every block kind, and the dated 100-iteration regression), `ArrivalAndStormGateTest` (the pure functions, branch by branch), `BlockOverlayLaunchContractTest` (the claim's position, the single row writer, the two reported departures, the storm log, the fail-safe re-arm).
+
+## The redirect app — one better app on every block screen (v1.20.0)
+
+> Read before changing the bubble, the picker, `RedirectAppPolicy`, or anything that renders a block body.
+
+The owner's request: *"redirect you to a more useful app, like Wikipedia or a to-do list app... a single
+app like that."* Every block screen `BlockOverlayActivity` renders (`HardBlockContent` incl. the daily-limit
+variant, `DelayContent` incl. the auto-kick cooldown, `HoldContent`, `BreathingContent`, `NukeBlockContent`)
+carries ONE bubble between its message and its primary button:
+
+- **Empty**: a dashed ring with a vector `+`, "Pick a better app". Tap or long-press opens the picker.
+- **Set**: the app's icon and name. **Tap leaves for that app.** Long-press (600ms, `REDIRECT_LONG_PRESS_MS`,
+  longer than the platform's ~400ms so a hesitant tap still opens the app; haptic tick) opens the picker,
+  which also offers **Remove**.
+- One GLOBAL choice, not per rule, stored as one DataStore string (`RedirectAppPref`, key
+  `redirect_app_package`). **Device-local**: not in the backup format, like the Nuke list, because a
+  package chosen on one phone may not exist on the next. Settings → Personalize → "Redirect app" opens the
+  same picker, so the feature can be found without first being blocked.
+
+### A tap on the bubble IS a walk-away, through the one walk-away path
+
+The bubble calls `navigateHome(redirectPackage = …)`, the same gated method the button and the back
+gesture call, and `OverlayLifecycle.onWalkAwayRequested` returns the button's effect list exactly, with
+`Effect.LaunchRedirectApp(pkg)` in the slot `Effect.GoHome` would take:
+
+`RecordWalkAway` → `MarkOverlayInactive` → `ArmWalkAwayWindow` → **`LaunchRedirectApp`** → `ScheduleFailSafeFinish`
+
+So everything the walk-away section above guarantees holds unchanged: one `RecordWalkAway` per delivery
+(the bubble, the button and back share ONE budget, in either order), which means the usual TWO
+`usage_events` rows per walk-away (`wasBlocked` + `userChangedMind`, see the row-shape note above) and never
+a third; the #26 window armed BEFORE anything leaves; no passthrough grant; no inline `finish()`. The
+redirect app's window arriving is a genuine departure (`BlockLaunchGate.walkAwayAfter` closes on any other
+app's window, and the arrival ends), and `onStop` finishes the overlay from the background exactly as it
+does when the launcher lands. `launchRedirectApp` falls back to `goHome()` if the launch intent is gone or
+the start throws: the walk-away is already recorded and the overlay marked inactive, so failing to leave
+would strand the user on a spent block. The start is allowed by the background-activity-start rules because
+the overlay is the foreground activity and the user just touched it.
+
+### Never an app Nudge would block: the loop the policy exists to prevent
+
+`domain/redirect/RedirectAppPolicy` is pure and owns every decision; `RedirectAppRepository` only gathers
+inputs (rules, group members, the Nuke list, PackageManager). Excluded, in the picker AND at render time:
+
+- **Nudge itself** (opening Nudge is not a departure: its windows are `OwnUi`).
+- **Every package an ENABLED rule targets**, directly or through a group, regardless of schedule or mode.
+  "Allowed right now" would be a bubble that works at 8pm and loops at 10am.
+- **The whole Nuke list**, whether or not Nuke is on, for the same reason.
+- **The block's own packages**: the blocked app, and for a web block the browser the user is sitting in. A
+  browser is a fine destination from an app block and a bypass from a web block inside that browser.
+
+The saved choice is re-resolved on every delivery (`RedirectAppPolicy.resolve`): uninstalled, no longer
+launchable, or blocked/nuked since it was chosen → the **empty state**, never a crash and never a door into
+another block. The write is refused too (`RedirectAppRepository.choose`) if the policy excludes the package.
+The resolve runs inside the existing `runBlocking` in `render()` (one DataStore read when nothing is saved,
+which is the common case), so the bubble is right on its first frame instead of flashing empty, and any
+exception there is logged and rendered as the empty state: it can never stop a block from showing.
+
+**Package visibility**: the manifest declares `QUERY_ALL_PACKAGES`, so `getLaunchIntentForPackage` sees every
+installed app on API 30+ and no `<queries>` entry is needed. Nothing here is above API 26.
+
+### The picker: a ModalBottomSheet, and why that choice is the safety argument
+
+The overlay is `singleInstance` with an always-enabled back callback that walks away (predictive back,
+targetSdk 36), and its `onStop` abandons the block. The picker must not trip either. Options considered:
+
+- **A separate picker Activity**: stops or pauses the overlay, and from a `singleInstance` task it lands in a
+  different task, so `onStop` would abandon the block mid-pick and the arrival machinery would see a Nudge
+  `OwnUi` window. Rejected.
+- **An in-window panel**: shares the overlay's window, so the back gesture reaches the overlay's walk-away
+  callback unless a `BackHandler` is layered on top and kept in sync with the panel. One forgotten condition
+  and back walks away mid-pick. Rejected.
+- **Material 3 `ModalBottomSheet`** (chosen): a separate DIALOG window owned by the overlay activity, with its
+  own back dispatcher. While it is up, back (predictive or not) dismisses the sheet and nothing else; the
+  overlay never sees it, never pauses, never stops, never finishes, and stays flagged active. A dialog window
+  is `OwnUi` to the service, which is not a departure. Drag-to-dismiss and the scrim come for free.
+
+**The timers hold still while the picker is open** (`PauseWhile`). Because the activity stays RESUMED under a
+dialog, the countdown, the breathing exercise and the hold would otherwise keep running behind the scrim, and
+a 15s delay could finish mid-pick and drop the user into the blocked app, the opposite of what they asked for.
+`PauseWhile` caps the `LocalLifecycleOwner` the block body sees at STARTED while the picker is open, so every
+`repeatOnLifecycle(RESUMED)` timer pauses through the mechanism issue #8 already built, with no change to any
+timer. It only holds BACK (never raises a state), and the activity's own lifecycle, which the passthrough
+grant gate reads, is untouched.
+
+### Block bodies scroll only when they overflow (`overlayContentScroll`)
+
+The bubble adds ~100dp to every body, and several were already within a few dp of a Pixel 3's usable height
+with a daily-limit line, the daily pass and a rule footer showing; on a short Android 8 screen they clipped
+top and bottom, "I changed my mind" included. Each body now sits in `wrapContentHeight(CenterVertically)` +
+`verticalScroll`: centred while it fits, scrollable when it does not. Scrolling is ENABLED only when
+`scroll.maxValue > 0`: an enabled scroll container claims a vertical drag past touch slop even when it cannot
+move, which would cancel a HOLD whose thumb drifts. On a screen where the body fits, HOLD sees exactly the
+input it saw before.
+
+### Tests
+
+- `RedirectAppPolicyTest` (L1): rule targets incl. groups and disabled rules, the excluded set, every
+  `resolve` fallback (nothing saved, unlaunchable, blocked/nuked since, the block's own browser), picker
+  filter/search/sort/dedupe, and an invariant over every combination of rules × Nuke list × block that no
+  picker row and no shown bubble is ever an excluded package.
+- `RedirectAppPrefTest` (L4): the stored format, blank-as-none, clear-on-null, the key's stability, and a
+  save/change/remove round trip through a real file-backed DataStore reopened as a fresh instance.
+- `OverlayLifecycleTest` (L3): the redirect walk-away's exact effect list, never GoHome + launch, never a
+  grant, one budget across bubble/button in either order, blank redirect = home.
+- `OverlayLifecycleGuardTest` (L3, real guard): the declined app resurfacing mid-transition is dropped, the
+  redirect app's window is a departure, and returning later is one new confrontation (with counterfactual).
+- `RedirectAppContractTest` (source): the body list is DERIVED from the activity's `when (mode)` and every
+  body takes and renders the slot; the tap goes through `navigateHome`; launch failure falls back home; the
+  bubble/picker/controller never `startActivity`, `finish()`, record, grant or go home; the picker is a
+  ModalBottomSheet; every body is inside `PauseWhile`; the cap never raises a state; scroll is enabled only on
+  overflow. `BlockOverlayWalkAwayContractTest`/`BlockOverlayLaunchContractTest` now anchor on
+  `navigateHome(` (a missing anchor made `substringAfter` return the whole file, which passed vacuously).
 
 ## Daily 2-minute pass (emergency escape hatch) — v1.9.0, made GLOBAL + 2min in v1.9.2
 

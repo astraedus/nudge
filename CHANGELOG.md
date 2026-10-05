@@ -4,6 +4,25 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+## [1.20.0] - 2026-10-05
+
+### Added
+- **Redirect app.** Every block screen (hard block, daily limit, delay, cooldown, hold, breathing and
+  Nuke) now carries one bubble for a single app you would rather be using, like a to-do list or
+  Wikipedia. Empty, it reads "Pick a better app" and opens a searchable picker; set, one tap takes you
+  to that app instead of the blocked one, and a long-press (with a haptic tick) changes or removes it.
+  Also in Settings under Personalize. A tap is an ordinary walk-away: the same single walk-away
+  record, the same issue #26 departure window, no pass granted. Apps with an enabled rule, apps on the
+  Nuke list, Nudge itself and the app you are blocked in are never offered, and a choice that is later
+  uninstalled or blocked shows the empty bubble instead of looping you into another block. While the
+  picker is open the countdown, breathing and hold timers pause. Design:
+  `docs/architecture/block-overlay-lifecycle.md`, "The redirect app".
+
+### Fixed
+- Block screens scroll when they are taller than the phone instead of cutting off their top and bottom
+  (including the "I changed my mind" button) on small screens. Scrolling only switches on when the
+  screen actually overflows, so a hold is never cancelled by a thumb drifting a few pixels.
+
 ## [1.19.0] - 2026-09-30
 
 ### Added
