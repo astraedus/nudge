@@ -1415,7 +1415,7 @@ class NudgeAccessibilityService : AccessibilityService() {
      * Feed the ONE classification to everything that consumes it, once per event, above every early
      * return.
      *
-     * There are exactly three consumers and they must never disagree:
+     * There are exactly four consumers and they must never disagree:
      *
      *  - [PassthroughManager] owns *is the user still in a sitting with app X* (issue #28).
      *    Everything it does is inside that class deliberately: the grant and the sitting that owns
@@ -1431,6 +1431,9 @@ class NudgeAccessibilityService : AccessibilityService() {
      *    launcher, and there is no branch you can add one hide to that covers all of them. It
      *    delegates the whole decision to `TabCoverPresence`, which is exhaustive over
      *    [ForegroundSignal] with no `else`, so a signal added later cannot be forgotten here.
+     *  - [BounceCheckIn] owns *which apps did the user open since they last hit a wall* (the
+     *    "Bro. wtf." check-in, docs/architecture/bounce-check-in.md). A pure observer: it changes
+     *    nothing about enforcement, and it is exhaustive over [ForegroundSignal] too.
      *
      * This method used to be called `applySitting`, which was accurate when the sitting was the only
      * consumer. A name that describes one of two consumers is how the next person adds the third

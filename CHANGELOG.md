@@ -4,6 +4,20 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+## [1.21.0] - 2026-10-05
+
+### Added
+- **"Bro. wtf." bounce check-in** (Settings → Check-ins, off by default). Hit a Nudge wall, hop
+  through a few other apps, hit a wall again, and Nudge sends one notification: *"Bro. wtf. You've
+  bounced through N apps in M minutes. Wanna take a break?"* A wall is any block screen (every mode,
+  Nuke, the cooldown screen, a daily limit, a website block) or an auto-kick. The first wall starts a
+  5-minute window that slides with every new wall; two walls plus four different apps inside it
+  fires, then it stays quiet for 30 minutes. A tap opens Nudge. It runs only on the window events
+  the accessibility service already receives (no timers, alarms, background work or wakelocks), and
+  does nothing at all while switched off. Its own "Bounce check-ins" notification channel; if
+  notifications are off the Settings row says so and takes you to the fix. Design:
+  `docs/architecture/bounce-check-in.md`.
+
 ## [1.20.0] - 2026-10-05
 
 ### Added
