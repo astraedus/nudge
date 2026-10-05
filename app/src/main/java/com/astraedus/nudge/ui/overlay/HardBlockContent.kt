@@ -1,5 +1,6 @@
 package com.astraedus.nudge.ui.overlay
 
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -34,10 +35,13 @@ fun HardBlockContent(
     canUseEmergencyPass: Boolean = false,
     emergencyLocked: Boolean = false,
     nextPassMs: Long = 0L,
-    onUseEmergencyPass: () -> Unit = {}
+    onUseEmergencyPass: () -> Unit = {},
+    redirect: @Composable () -> Unit = {}
 ) {
     val message = remember { messagePool.random() }
 
+    // Centred while it fits, scrollable only when it does not: see overlayContentScroll.
+    val scroll = rememberScrollState()
     Surface(
         modifier = Modifier.fillMaxSize(),
         color = MaterialTheme.colorScheme.background
@@ -49,6 +53,7 @@ fun HardBlockContent(
                 // under the status and navigation bars. The Surface above stays full-bleed (the
                 // block must cover every pixel of the app behind it); only the CONTENT is inset.
                 .safeDrawingPadding()
+                .overlayContentScroll(scroll)
                 .padding(32.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
@@ -95,7 +100,12 @@ fun HardBlockContent(
                 textAlign = TextAlign.Center
             )
 
-            Spacer(modifier = Modifier.height(48.dp))
+            Spacer(Modifier.height(24.dp))
+
+            // The redirect app: one tap leaves for somewhere better, through the same walk-away.
+            redirect()
+
+            Spacer(Modifier.height(24.dp))
 
             Button(onClick = onGoBack) {
                 Text("Go Back")

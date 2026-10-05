@@ -1,5 +1,6 @@
 package com.astraedus.nudge.ui.overlay
 
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -37,9 +38,12 @@ import androidx.compose.ui.unit.dp
 fun NukeBlockContent(
     packageName: String,
     appLabel: String?,
-    onGoHome: () -> Unit
+    onGoHome: () -> Unit,
+    redirect: @Composable () -> Unit = {}
 ) {
     val name = appLabel ?: "This app"
+    // Centred while it fits, scrollable only when it does not: see overlayContentScroll.
+    val scroll = rememberScrollState()
     Surface(
         modifier = Modifier.fillMaxSize(),
         color = MaterialTheme.colorScheme.background
@@ -49,6 +53,7 @@ fun NukeBlockContent(
                 .fillMaxSize()
                 // Full-bleed surface, inset content: same edge-to-edge rule as HardBlockContent.
                 .safeDrawingPadding()
+                .overlayContentScroll(scroll)
                 .padding(32.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
@@ -86,7 +91,12 @@ fun NukeBlockContent(
                 textAlign = TextAlign.Center
             )
 
-            Spacer(Modifier.height(48.dp))
+            Spacer(Modifier.height(24.dp))
+
+            // The redirect app: one tap leaves for somewhere better, through the same walk-away.
+            redirect()
+
+            Spacer(Modifier.height(24.dp))
 
             Button(onClick = onGoHome) {
                 Text("Go home")

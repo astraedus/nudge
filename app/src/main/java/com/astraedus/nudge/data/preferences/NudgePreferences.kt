@@ -363,6 +363,21 @@ class NudgePreferences @Inject constructor(
         context.dataStore.edit { prefs -> prefs[Keys.NUKE_INTRO_SEEN] = true }
     }
 
+    /**
+     * The redirect app: the one app offered on every block screen instead of the blocked one, or
+     * null when none is chosen. Storage rules live in [RedirectAppPref]; WHETHER a saved package may
+     * be shown is `RedirectAppPolicy.resolve`'s decision, never this raw value's. Device-local, not
+     * exported.
+     */
+    val redirectAppPackage: Flow<String?> = context.dataStore.data
+        .map { prefs -> RedirectAppPref.read(prefs) }
+        .distinctUntilChanged()
+
+    /** Choose [packageName] as the redirect app, or clear it with null. */
+    suspend fun setRedirectAppPackage(packageName: String?) {
+        context.dataStore.edit { prefs -> RedirectAppPref.write(prefs, packageName) }
+    }
+
     // --- Backup: the settings an export file carries (see [ExportedSettings]) ---------------
 
     /**

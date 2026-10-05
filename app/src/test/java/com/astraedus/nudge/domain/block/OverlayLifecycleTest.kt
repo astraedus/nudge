@@ -463,4 +463,81 @@ class OverlayLifecycleTest {
             failSafeMs < suppressionMs
         )
     }
+
+    // ── the redirect app: the same walk-away, a different destination ──
+
+    private val redirectPackage = "org.wikipedia"
+
+    /**
+     * Tapping the redirect bubble is a walk-away. The effect list is the button's list EXACTLY,
+     * with the launcher swapped for the user's app in the same slot: recorded once, overlay cleared,
+     * the departure window armed BEFORE anything leaves (issue #26), a fail-safe behind it. A
+     * second walk-away writer, or a launch ahead of the arm, would be the bugs this class exists for.
+     */
+    @Test
+    fun `tapping the redirect app walks away exactly like the button, leaving for that app instead of home`() {
+        val lifecycle = OverlayLifecycle()
+        lifecycle.onDelivered(pendingOverlayId = 1L)
+        val token = lifecycle.renderToken
+
+        val effects = lifecycle.onWalkAwayRequested(
+            attributedPackage, blockMode, walkAwayPackage, redirectPackage = redirectPackage
+        )
+
+        assertEquals(
+            listOf(
+                OverlayLifecycle.Effect.RecordWalkAway(attributedPackage, blockMode),
+                OverlayLifecycle.Effect.MarkOverlayInactive,
+                OverlayLifecycle.Effect.ArmWalkAwayWindow(walkAwayPackage),
+                OverlayLifecycle.Effect.LaunchRedirectApp(redirectPackage),
+                OverlayLifecycle.Effect.ScheduleFailSafeFinish(token, OverlayLifecycle.WALK_AWAY_FINISH_FAILSAFE_MS)
+            ),
+            effects
+        )
+    }
+
+    /** Never both destinations, never a grant, never an inline finish: one row, one exit. */
+    @Test
+    fun `a redirect walk-away does not also go home, grant passthrough or finish inline`() {
+        val lifecycle = OverlayLifecycle()
+        lifecycle.onDelivered(pendingOverlayId = 1L)
+
+        val effects = lifecycle.onWalkAwayRequested(
+            attributedPackage, blockMode, walkAwayPackage, redirectPackage = redirectPackage
+        )
+
+        assertFalse(effects.contains(OverlayLifecycle.Effect.GoHome))
+        assertFalse(effects.contains(OverlayLifecycle.Effect.GrantPassthrough))
+        assertFalse(effects.contains(OverlayLifecycle.Effect.Finish))
+        assertEquals(1, effects.count { it is OverlayLifecycle.Effect.RecordWalkAway })
+    }
+
+    /**
+     * The once-only gate covers every entry point together: bubble then back gesture, button then
+     * bubble. A walk-away already logs two `usage_events` rows (`wasBlocked` + `userChangedMind`);
+     * a second `RecordWalkAway` would be a third.
+     */
+    @Test
+    fun `the bubble and the button share one walk-away budget per delivery, in either order`() {
+        val bubbleFirst = OverlayLifecycle().apply { onDelivered(pendingOverlayId = 1L) }
+        bubbleFirst.onWalkAwayRequested(attributedPackage, blockMode, walkAwayPackage, redirectPackage)
+        assertTrue(bubbleFirst.onWalkAwayRequested(attributedPackage, blockMode, walkAwayPackage).isEmpty())
+
+        val buttonFirst = OverlayLifecycle().apply { onDelivered(pendingOverlayId = 1L) }
+        buttonFirst.onWalkAwayRequested(attributedPackage, blockMode, walkAwayPackage)
+        assertTrue(
+            buttonFirst.onWalkAwayRequested(attributedPackage, blockMode, walkAwayPackage, redirectPackage)
+                .isEmpty()
+        )
+    }
+
+    @Test
+    fun `a blank redirect package is the ordinary walk-away home`() {
+        listOf(null, "", "   ").forEach { blank ->
+            val lifecycle = OverlayLifecycle().apply { onDelivered(pendingOverlayId = 1L) }
+            val effects = lifecycle.onWalkAwayRequested(attributedPackage, blockMode, walkAwayPackage, blank)
+            assertTrue("[$blank] must go home", effects.contains(OverlayLifecycle.Effect.GoHome))
+            assertFalse(effects.any { it is OverlayLifecycle.Effect.LaunchRedirectApp })
+        }
+    }
 }

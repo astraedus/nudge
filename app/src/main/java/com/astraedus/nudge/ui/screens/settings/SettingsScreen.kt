@@ -84,6 +84,8 @@ import com.astraedus.nudge.ui.backup.rememberBackupActions
 import com.astraedus.nudge.ui.components.AccessibilityDisclosureDialog
 import com.astraedus.nudge.ui.components.ChallengeDialog
 import com.astraedus.nudge.ui.hasGrayscalePermission
+import com.astraedus.nudge.ui.redirect.RedirectAppSettingsRow
+import com.astraedus.nudge.ui.redirect.RedirectAppSettingsViewModel
 import com.astraedus.nudge.ui.widget.ProtectionWidgetReceiver
 import com.astraedus.nudge.ui.widget.TodayWidgetReceiver
 import com.astraedus.nudge.ui.widget.TopBlockedWidgetReceiver
@@ -99,7 +101,8 @@ fun SettingsScreen(
     onNavigateBack: () -> Unit,
     onNavigateToGrayscaleGuide: () -> Unit = {},
     onNavigateToMessagesEditor: () -> Unit = {},
-    backupViewModel: BackupViewModel = hiltViewModel()
+    backupViewModel: BackupViewModel = hiltViewModel(),
+    redirectAppViewModel: RedirectAppSettingsViewModel = hiltViewModel()
 ) {
     val context = LocalContext.current
     // See rememberPermissionStates: these three used to be `remember { mutableStateOf(x) }` —
@@ -425,6 +428,9 @@ fun SettingsScreen(
                 leadingContent = { Icon(Icons.Outlined.Edit, contentDescription = null) },
                 modifier = Modifier.clickable(onClick = onNavigateToMessagesEditor)
             )
+
+            // The same picker as the block screen's bubble, findable without being blocked first.
+            RedirectAppSettingsRow(redirectAppViewModel.controller)
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 

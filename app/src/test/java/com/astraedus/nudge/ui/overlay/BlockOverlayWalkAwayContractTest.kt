@@ -122,7 +122,7 @@ class BlockOverlayWalkAwayContractTest {
     @Test
     fun `a re-delivered block gets a fresh walk-away budget and fresh timers`() {
         val render = source.indexOf("private fun render(intent: Intent)")
-        val navigateHome = source.indexOf("private fun navigateHome()")
+        val navigateHome = source.indexOf("private fun navigateHome(")
         assertTrue("render must exist", render >= 0)
         assertTrue("navigateHome must follow render", navigateHome > render)
 
@@ -154,7 +154,12 @@ class BlockOverlayWalkAwayContractTest {
      */
     @Test
     fun `walking away never grants passthrough`() {
-        val navigateHome = source.substringAfter("private fun navigateHome()").substringBefore("\n    }")
+        // Anchored on the name, not the parameter list: `substringAfter` on a missing delimiter
+        // returns the WHOLE file, whose first block would then pass this vacuously. That is how the
+        // signature growing `redirectPackage` would otherwise have turned this test into a no-op.
+        assertTrue(source.contains("private fun navigateHome("))
+        val navigateHome = source.substringAfter("private fun navigateHome(").substringBefore("\n    }")
+        assertTrue("the body must be the walk-away delegation", navigateHome.contains("onWalkAwayRequested("))
         assertFalse(
             "walking away must not grant passthrough",
             navigateHome.contains("passthroughManager.grant")

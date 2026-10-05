@@ -4,6 +4,7 @@ import com.astraedus.nudge.domain.events.A11yEventType
 import com.astraedus.nudge.domain.events.ForegroundSignal
 import com.astraedus.nudge.service.BlockLaunchGuard
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -593,6 +594,65 @@ class OverlayLifecycleGuardTest {
         assertEquals(
             BlockLaunchGate.Decision.DROP_WALK_AWAY_IN_FLIGHT,
             guard.decide(chrome, delayKey(chrome))
+        )
+    }
+
+    /**
+     * THE REDIRECT APP, against the real guard. A tap on the bubble is a walk-away whose destination
+     * is another app, and the guard must read it exactly as it reads the launcher:
+     *
+     *  1. while the transition is in flight, the declined app resurfacing is NOT a fresh arrival
+     *     (the same #26 suppression the button gets, armed before the launch);
+     *  2. the redirect app's own window is a genuine DEPARTURE from the blocked app, so the next
+     *     time the user really comes back it is a new confrontation and counts once.
+     *
+     * Counterfactual for (2): without the redirect app's window, the user never left, and a second
+     * claim for the same block in the same arrival is refused, which is the ONE CONFRONTATION PER
+     * ARRIVAL rule (#36) doing its job. So the row on return is earned by the departure, not handed
+     * out by the walk-away.
+     */
+    @Test
+    fun `leaving for the redirect app is a walk-away and a real departure`() {
+        val wikipedia = "org.wikipedia"
+        val overlay = OverlayLifecycle()
+        guard.onForegroundSignal(ForegroundSignal.AppWindow(KEEP))
+        overlay.onDelivered(serviceLaunches(KEEP))
+        applyToGuard(overlay.onResumed())
+        assertTrue(guard.claimConfrontation(KEEP, delayKey(KEEP)))
+
+        clock += 4_000
+        val effects = overlay.onWalkAwayRequested(KEEP, DELAY, KEEP, redirectPackage = wikipedia)
+        assertTrue(
+            "the window is armed before the redirect app is launched",
+            indexOfArm(effects) <
+                effects.indexOfFirst { it is OverlayLifecycle.Effect.LaunchRedirectApp }
+        )
+        applyToGuard(effects)
+
+        clock += 100 // the overlay's own task pops Keep forward for a frame on a slow device
+        assertEquals(
+            BlockLaunchGate.Decision.DROP_WALK_AWAY_IN_FLIGHT,
+            guard.decide(KEEP, delayKey(KEEP))
+        )
+
+        clock += 200 // the redirect app arrives
+        guard.onForegroundSignal(ForegroundSignal.AppWindow(wikipedia))
+
+        clock += 60_000 // ...and a minute later the user goes back to Keep
+        guard.onForegroundSignal(ForegroundSignal.AppWindow(KEEP))
+        assertEquals(BlockLaunchGate.Decision.LAUNCH, guard.decide(KEEP, delayKey(KEEP)))
+        assertTrue(
+            "coming back after the redirect app is a new arrival, so it counts once",
+            guard.claimConfrontation(KEEP, delayKey(KEEP))
+        )
+
+        // COUNTERFACTUAL: the same block in the same arrival, with no departure in between.
+        val stayed = BlockLaunchGuard().also { it.nowMs = { clock } }
+        stayed.onForegroundSignal(ForegroundSignal.AppWindow(KEEP))
+        assertTrue(stayed.claimConfrontation(KEEP, delayKey(KEEP)))
+        assertFalse(
+            "without leaving, the second claim is refused; the row above was earned by the departure",
+            stayed.claimConfrontation(KEEP, delayKey(KEEP))
         )
     }
 }
