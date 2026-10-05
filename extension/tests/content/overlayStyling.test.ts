@@ -66,3 +66,41 @@ describe("every platform's interstitial gets a full-screen backdrop rule that ac
     expect(hasOverlayRootRule(YOUTUBE_CSS, 'nudge-gate-doesnotexist')).toBe(false);
   });
 });
+
+/**
+ * The pacer's rules live in BOTH static stylesheets (each platform script injects exactly
+ * one), so the same breath circle is written twice. A tweak to one copy and not the other
+ * would leave YouTube's Breathing gate looking different from the other six, with no
+ * error anywhere. Pin the two copies to each other.
+ */
+const PACER_SELECTOR = /^\.nudge-overlay__(breath|phase|progress|bar|remaining)\b/;
+
+function pacerRules(css: string): string[] {
+  const withoutComments = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  const rules: string[] = [];
+  for (const match of withoutComments.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    const selectors = (match[1] ?? '').split(',').map((s) => s.trim());
+    if (!selectors.every((s) => PACER_SELECTOR.test(s))) continue;
+    const body = (match[2] ?? '').replace(/\s+/g, ' ').trim();
+    rules.push(`${selectors.join(', ')} { ${body} }`);
+  }
+  return rules;
+}
+
+describe('the Breathing pacer is styled identically in both overlay stylesheets', () => {
+  it('found the pacer rules (guard is not vacuous)', () => {
+    const rules = pacerRules(PLATFORM_OVERLAY_CSS);
+    expect(rules.some((r) => r.startsWith('.nudge-overlay__breath-stage'))).toBe(true);
+    expect(rules.some((r) => r.startsWith('.nudge-overlay__bar'))).toBe(true);
+  });
+
+  it('platformOverlay.css and youtube.css carry the same pacer rules', () => {
+    expect(pacerRules(YOUTUBE_CSS)).toEqual(pacerRules(PLATFORM_OVERLAY_CSS));
+  });
+
+  it('a drifted copy is caught (planted defect)', () => {
+    const drifted = PLATFORM_OVERLAY_CSS.replace('font-size: 34px', 'font-size: 30px');
+    expect(drifted).not.toBe(PLATFORM_OVERLAY_CSS);
+    expect(pacerRules(drifted)).not.toEqual(pacerRules(PLATFORM_OVERLAY_CSS));
+  });
+});

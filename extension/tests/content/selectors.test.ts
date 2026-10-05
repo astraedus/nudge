@@ -678,7 +678,7 @@ describe('the /shorts/* interstitial overlay', () => {
     overlay.dispose();
   });
 
-  it('BREATHING runs a 4s-in/4s-out cycle and shows the remaining time', () => {
+  it('BREATHING runs a 4s-in/4s-out cycle with a 4-3-2-1 phase count and shows the remaining time', () => {
     vi.useFakeTimers();
     mount(SHORTS_PLAYER_HTML);
     const onComplete = vi.fn();
@@ -693,19 +693,53 @@ describe('the /shorts/* interstitial overlay', () => {
       { onComplete, onBail: () => {} },
     );
     const phase = overlay.element.querySelector('.nudge-overlay__phase');
+    const count = overlay.element.querySelector('.nudge-overlay__breath-count');
     const remaining = overlay.element.querySelector('.nudge-overlay__remaining');
+    const circle = overlay.element.querySelector<HTMLElement>('.nudge-overlay__breath');
 
+    // Correct from the very first paint: no 200ms wait for a tick to set the label/size.
     expect(phase?.textContent).toBe('Breathe in');
+    expect(count?.textContent).toBe('4');
     expect(remaining?.textContent).toBe('16s remaining');
+    expect(circle?.style.transform).toBe('scale(0.6)');
 
-    vi.advanceTimersByTime(4200);
+    vi.advanceTimersByTime(1100);
+    expect(count?.textContent).toBe('3');
+    vi.advanceTimersByTime(2000);
+    expect(count?.textContent).toBe('1');
+    expect(phase?.textContent).toBe('Breathe in');
+    vi.advanceTimersByTime(1000);
     expect(phase?.textContent).toBe('Breathe out');
+    expect(count?.textContent).toBe('4');
     vi.advanceTimersByTime(4000);
     expect(phase?.textContent).toBe('Breathe in');
 
+    expect(onComplete).not.toHaveBeenCalled();
     vi.advanceTimersByTime(16_000);
     expect(onComplete).toHaveBeenCalledTimes(1);
+    // Completion stops the clock: no runaway animation loop on a swipe-heavy page.
+    vi.advanceTimersByTime(10_000);
+    expect(onComplete).toHaveBeenCalledTimes(1);
     overlay.dispose();
+  });
+
+  it('BREATHING dispose() stops the clock, so a torn-down overlay never completes', () => {
+    vi.useFakeTimers();
+    mount(SHORTS_PLAYER_HTML);
+    const onComplete = vi.fn();
+    const verdict: ShortsGateVerdict = { mode: 'BREATHING', delaySeconds: 4, limitReached: false };
+    const overlay = createGateOverlay(
+      document,
+      NUDGE_OVERLAY_ID,
+      'BREATHING',
+      4,
+      shortsGateCopy(verdict),
+      { onComplete, onBail: () => {} },
+    );
+    vi.advanceTimersByTime(1000);
+    overlay.dispose();
+    vi.advanceTimersByTime(10_000);
+    expect(onComplete).not.toHaveBeenCalled();
   });
 
   it('the bail button fires onBail and never hides itself as a Shorts surface', () => {
