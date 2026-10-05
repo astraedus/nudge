@@ -1411,3 +1411,9 @@ in the source, and the counterfactual carries the behavioural proof instead.
   DEBUGGABLE flag) BEFORE touching the device, refuse by default, make the switch an explicit
   opt-in (`ALLOW_CERT_SWITCH=1`), and print the way back on exit. Pinned by
   `scripts/test-cert-guard.sh`.
+
+## A source-level contract test anchored on a method SIGNATURE goes vacuous when the signature grows (2026-10-05)
+
+Adding `redirectPackage` to `navigateHome()` broke two contract tests loudly, and would have silently neutered a third: `BlockOverlayWalkAwayContractTest` read the body with `source.substringAfter("private fun navigateHome()")`. Kotlin's `substringAfter` returns the WHOLE string when the delimiter is missing, so the following `substringBefore("\n    }")` handed the assertion the first block of the file, which of course does not grant passthrough. Green, asserting nothing.
+
+Rule: anchor a source slice on the NAME plus `(` (`"private fun navigateHome("`), assert the anchor exists, and assert the slice contains something the real body must contain before asserting what it must not. A negative assertion over a slice you never proved you found is a test of nothing.
