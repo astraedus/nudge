@@ -82,6 +82,22 @@ class OverlayLifecycle {
         data class LaunchRedirectApp(val packageName: String) : Effect
 
         /**
+         * A WEBSITE block's walk-away: navigate [browserPackage] off the blocked page, landing the
+         * user in that browser on a neutral page (issue #78; see [WebBlockEscape] for the how and
+         * the why). In the slot [GoHome] takes for an app block.
+         *
+         * [fallback] is what to do instead when the escape cannot be performed: no activity takes
+         * the intent, the start is refused, or [WebBlockEscape] says this browser's last escape did
+         * not take. It is the ordinary walk-away tail, decided here rather than improvised by the
+         * activity, so the order the #26 fix depends on (the window armed BEFORE the go-home) is
+         * asserted on the fallback too.
+         */
+        data class LeaveBlockedPage(
+            val browserPackage: String,
+            val fallback: List<Effect>
+        ) : Effect
+
+        /**
          * The user waited the timer out, so the app may be opened: `PassthroughManager.grant(...)`.
          * Emitted ONLY when the overlay is at least STARTED — a countdown that somehow completed
          * while backgrounded must never open the app (issue #8).
@@ -138,6 +154,13 @@ class OverlayLifecycle {
      */
     private var walkedAway = false
 
+    /**
+     * Set when THIS DELIVERY's walk-away left through [Effect.LeaveBlockedPage]. The fail-safe then
+     * means the browser never came forward, so it falls back to going home once instead of
+     * finishing onto the blocked page. Per delivery, like [walkedAway].
+     */
+    private var leavingPage = false
+
     companion object {
         /**
          * How long the walk-away path waits for the dispatched go-home to stop us, before finishing
@@ -173,6 +196,7 @@ class OverlayLifecycle {
      */
     fun onDelivered(pendingOverlayId: Long): List<Effect> {
         walkedAway = false
+        leavingPage = false
         overlayId = pendingOverlayId
         renderToken++
         return listOf(Effect.CancelPendingFailSafe)
@@ -270,27 +294,56 @@ class OverlayLifecycle {
      *   [Effect.GoHome] would take. Null or blank goes home. That app's window arriving is a
      *   departure in its own right (`BlockLaunchGate.walkAwayAfter` closes on any other app's
      *   window), and `onStopped` finishes us from the background exactly as it does for the
-     *   launcher.
+     *   launcher. The redirect wins over [escapeBrowser]: the user named where they want to be.
+     * @param escapeBrowser set for a WEBSITE block ([WebBlockEscape.browserToEscape]): the browser
+     *   whose tab is still on the blocked page. The walk-away then leaves through
+     *   [Effect.LeaveBlockedPage] instead of [Effect.GoHome], and **does not arm the walk-away
+     *   window**. That omission is the point, not an oversight: the window suppresses blocks for
+     *   the package being left, and here that package is the destination. If the browser comes
+     *   forward still showing the blocked URL it must be blocked at once (fail closed), never let
+     *   through for 1.5 seconds. Going home leaves the tab on the URL, which is issue #78: the
+     *   browser re-blocks on every launch, forever, under a HARD_BLOCK that never grants a pass.
      */
     fun onWalkAwayRequested(
         attributedPackage: String,
         blockMode: String,
         walkAwayPackage: String,
-        redirectPackage: String? = null
+        redirectPackage: String? = null,
+        escapeBrowser: String? = null
     ): List<Effect> {
         if (walkedAway) return emptyList()
         walkedAway = true
-        val destination = redirectPackage?.takeIf { it.isNotBlank() }
-            ?.let { Effect.LaunchRedirectApp(it) }
-            ?: Effect.GoHome
+        val record = Effect.RecordWalkAway(attributedPackage, blockMode)
+        val failSafe = Effect.ScheduleFailSafeFinish(renderToken, WALK_AWAY_FINISH_FAILSAFE_MS)
+        val redirect = redirectPackage?.takeIf { it.isNotBlank() }
+        val browser = escapeBrowser?.takeIf { it.isNotBlank() }
+
+        if (redirect == null && browser != null) {
+            leavingPage = true
+            return listOf(
+                record,
+                Effect.MarkOverlayInactive,
+                Effect.LeaveBlockedPage(browser, fallback = goHomeTail(walkAwayPackage)),
+                failSafe
+            )
+        }
+
+        val destination = redirect?.let { Effect.LaunchRedirectApp(it) } ?: Effect.GoHome
         return listOf(
-            Effect.RecordWalkAway(attributedPackage, blockMode),
+            record,
             Effect.MarkOverlayInactive,
             Effect.ArmWalkAwayWindow(walkAwayPackage),
             destination,
-            Effect.ScheduleFailSafeFinish(renderToken, WALK_AWAY_FINISH_FAILSAFE_MS)
+            failSafe
         )
     }
+
+    /**
+     * The ordinary walk-away departure, window first: what a web walk-away falls back to when its
+     * escape cannot be performed. The fail-safe is not repeated; the one already scheduled covers it.
+     */
+    private fun goHomeTail(walkAwayPackage: String): List<Effect> =
+        listOf(Effect.ArmWalkAwayWindow(walkAwayPackage), Effect.GoHome)
 
     /**
      * The scheduled fail-safe fired: the dispatched go-home never stopped us.
@@ -307,22 +360,33 @@ class OverlayLifecycle {
      * left of 1500ms minus the 1200ms spent waiting — 300ms for the pop, the app's resume and its
      * window event to all land, on precisely the slow devices that reported #26 in the first place.
      * Re-arming measures the window from the event it is actually about.
+     *
+     * **After a web escape it goes home first instead.** Finishing would pop the browser forward on
+     * the very page the escape was meant to leave. The browser never came forward (or the overlay
+     * would have been stopped), so the escape did not happen; fall back to the ordinary walk-away
+     * once, with a fresh fail-safe behind it, and the next firing is the plain finish below.
      */
     fun onFailSafeFired(
         token: Int,
         isFinishing: Boolean,
         isDestroyed: Boolean,
         walkAwayPackage: String
-    ): List<Effect> =
-        if (isFinishing || isDestroyed || token != renderToken) {
-            emptyList()
-        } else {
-            listOf(
-                Effect.LogFailSafeFired,
-                Effect.ArmWalkAwayWindow(walkAwayPackage),
-                Effect.Finish
-            )
+    ): List<Effect> = when {
+        isFinishing || isDestroyed || token != renderToken -> emptyList()
+
+        leavingPage -> {
+            leavingPage = false
+            listOf(Effect.LogFailSafeFired) +
+                goHomeTail(walkAwayPackage) +
+                Effect.ScheduleFailSafeFinish(renderToken, WALK_AWAY_FINISH_FAILSAFE_MS)
         }
+
+        else -> listOf(
+            Effect.LogFailSafeFired,
+            Effect.ArmWalkAwayWindow(walkAwayPackage),
+            Effect.Finish
+        )
+    }
 
     /**
      * This instance is gone.

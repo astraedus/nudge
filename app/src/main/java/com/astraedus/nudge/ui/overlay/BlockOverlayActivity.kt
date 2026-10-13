@@ -1,9 +1,12 @@
 package com.astraedus.nudge.ui.overlay
 
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
+import android.provider.Browser
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
@@ -15,6 +18,7 @@ import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.data.repository.InstalledAppsRepository
 import com.astraedus.nudge.data.repository.RedirectAppRepository
 import com.astraedus.nudge.domain.block.OverlayLifecycle
+import com.astraedus.nudge.domain.block.WebBlockEscape
 import com.astraedus.nudge.domain.emergency.EmergencyPass
 import com.astraedus.nudge.domain.logging.NudgeLog
 import com.astraedus.nudge.domain.model.BlockMode
@@ -42,6 +46,7 @@ class BlockOverlayActivity : ComponentActivity() {
     @Inject lateinit var nudgeLogger: NudgeLog
     @Inject lateinit var blockLaunchGuard: BlockLaunchGuard
     @Inject lateinit var redirectAppRepository: RedirectAppRepository
+    @Inject lateinit var webBlockEscape: WebBlockEscape
 
     /** Posts the walk-away fail-safe finish. Cleared in [onDestroy]. */
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -135,6 +140,8 @@ class BlockOverlayActivity : ComponentActivity() {
 
                 is OverlayLifecycle.Effect.LaunchRedirectApp -> launchRedirectApp(effect.packageName)
 
+                is OverlayLifecycle.Effect.LeaveBlockedPage -> leaveBlockedPage(effect)
+
                 OverlayLifecycle.Effect.GrantPassthrough -> passthroughManager.grant(
                     packageName = passthroughPackage(intent),
                     featureKey = intent.getStringExtra(EXTRA_FEATURE_KEY),
@@ -162,6 +169,14 @@ class BlockOverlayActivity : ComponentActivity() {
         intent.getStringExtra(EXTRA_PASSTHROUGH_PACKAGE)?.takeIf { it.isNotBlank() }
             ?: intent.getStringExtra(EXTRA_PACKAGE_NAME)
             ?: ""
+
+    /**
+     * The browser a walk-away from this block must navigate off the blocked page, or null for an
+     * app block. The RAW passthrough extra, never [passthroughPackage], which falls back to the
+     * displayed package and would make every app block look like a web one.
+     */
+    private fun browserToEscape(intent: Intent): String? =
+        WebBlockEscape.browserToEscape(intent.getStringExtra(EXTRA_PASSTHROUGH_PACKAGE))
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -230,6 +245,16 @@ class BlockOverlayActivity : ComponentActivity() {
         if (mode == BlockMode.NONE) {
             runEffects(overlayLifecycle.onUnrenderableBlock())
             return
+        }
+
+        // A web block arriving is how a failed escape shows itself: the browser came forward still
+        // on the page the last walk-away tried to leave. See [WebBlockEscape.onBlockDelivered].
+        browserToEscape(intent)?.let { browser ->
+            webBlockEscape.onBlockDelivered(
+                browserPackage = browser,
+                domain = intent.getStringExtra(EXTRA_WEB_DOMAIN),
+                nowMs = SystemClock.elapsedRealtime()
+            )
         }
 
         val delaySeconds = intent.getIntExtra(EXTRA_DELAY_SECONDS, 15)
@@ -545,10 +570,51 @@ class BlockOverlayActivity : ComponentActivity() {
                 walkAwayPackage = passthroughPackage(intent),
                 // The redirect bubble: the same walk-away, with the user's chosen app as the
                 // destination instead of the launcher. Null for the button and the back gesture.
-                redirectPackage = redirectPackage
+                redirectPackage = redirectPackage,
+                // A website block leaves the PAGE, not just the screen (#78): going home would
+                // leave the browser's tab on the blocked URL and re-block it on every launch.
+                escapeBrowser = browserToEscape(intent)
             )
         )
     }
+
+    /**
+     * Navigate the browser off the blocked page: `about:blank`, in that browser, as our app's tab
+     * (see [WebBlockEscape] for every choice here). Falls back to the effect's ordinary go-home
+     * tail when [WebBlockEscape] says the last escape from this browser did not take, or when the
+     * intent cannot be started (a browser that does not take `about:`, or a refused start). Never
+     * throws: failing to leave would strand the user on a spent block.
+     *
+     * Allowed by the background-activity-start rules for the same reason [launchRedirectApp] is:
+     * this activity is in front and the user has just touched it.
+     */
+    private fun leaveBlockedPage(effect: OverlayLifecycle.Effect.LeaveBlockedPage) {
+        val exit = webBlockEscape.decideExit(
+            browserPackage = effect.browserPackage,
+            domain = intent.getStringExtra(EXTRA_WEB_DOMAIN),
+            nowMs = SystemClock.elapsedRealtime()
+        )
+        if (exit == WebBlockEscape.Exit.LEAVE_THE_PAGE) {
+            try {
+                startActivity(webEscapeIntent(effect.browserPackage))
+                return
+            } catch (e: Exception) {
+                webBlockEscape.onEscapeUnavailable()
+                nudgeLogger.e("web walk-away could not leave the page, going home", e)
+            }
+        } else {
+            nudgeLogger.w("web walk-away: last escape did not take, going home this once")
+        }
+        runEffects(effect.fallback)
+    }
+
+    private fun webEscapeIntent(browserPackage: String): Intent =
+        Intent(Intent.ACTION_VIEW, Uri.parse(WebBlockEscape.NEUTRAL_URL)).apply {
+            setPackage(browserPackage)
+            // Chromium reuses the tab an app id opened before, so escapes never pile up tabs.
+            putExtra(Browser.EXTRA_APPLICATION_ID, packageName)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
 
     /**
      * Post the fail-safe finish for [token], to fire in [delayMs].
