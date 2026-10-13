@@ -23,7 +23,8 @@ class RuleWeakeningTest {
         webDomains: String? = null,
         webBlockMode: String? = null,
         tabVanish: Boolean = true,
-        followingSteer: Boolean = false
+        followingSteer: Boolean = false,
+        remindAfterMinutes: Int? = null
     ) = BlockRule(
         packageName = "com.example",
         mode = mode,
@@ -36,7 +37,8 @@ class RuleWeakeningTest {
         webDomains = webDomains,
         webBlockMode = webBlockMode,
         tabVanish = tabVanish,
-        followingSteer = followingSteer
+        followingSteer = followingSteer,
+        remindAfterMinutes = remindAfterMinutes
     )
 
     // ── delay ──
@@ -502,5 +504,52 @@ class RuleWeakeningTest {
         assertFalse(
             RuleWeakening.isWeakening(rule(followingSteer = true), rule(followingSteer = false))
         )
+    }
+
+    // ── usage reminder (#77): enforces nothing, so it is invisible to the check in BOTH directions ──
+
+    @Test
+    fun `adding a reminder is not weakening`() {
+        assertFalse(
+            RuleWeakening.isWeakening(rule(remindAfterMinutes = null), rule(remindAfterMinutes = 20))
+        )
+    }
+
+    @Test
+    fun `lowering a reminder is not weakening`() {
+        assertFalse(
+            RuleWeakening.isWeakening(rule(remindAfterMinutes = 30), rule(remindAfterMinutes = 10))
+        )
+    }
+
+    @Test
+    fun `raising a reminder is not weakening`() {
+        assertFalse(
+            RuleWeakening.isWeakening(rule(remindAfterMinutes = 10), rule(remindAfterMinutes = 30))
+        )
+    }
+
+    @Test
+    fun `removing a reminder is not weakening`() {
+        assertFalse(
+            RuleWeakening.isWeakening(rule(remindAfterMinutes = 20), rule(remindAfterMinutes = null))
+        )
+    }
+
+    @Test
+    fun `removing a reminder from an otherwise unchanged strict rule is not weakening`() {
+        val before = rule(mode = "HARD_BLOCK", dailyLimitMinutes = 30, autoKickAfterMinutes = 20, remindAfterMinutes = 10)
+        val after = rule(mode = "HARD_BLOCK", dailyLimitMinutes = 30, autoKickAfterMinutes = 20, remindAfterMinutes = null)
+
+        assertFalse(RuleWeakening.isWeakening(before, after))
+    }
+
+    @Test
+    fun `removing a reminder while raising the time kick is still weakening`() {
+        // The kick axis still bites; the reminder is simply invisible to the check.
+        val before = rule(autoKickAfterMinutes = 20, remindAfterMinutes = 10)
+        val after = rule(autoKickAfterMinutes = 40, remindAfterMinutes = null)
+
+        assertTrue(RuleWeakening.isWeakening(before, after))
     }
 }
