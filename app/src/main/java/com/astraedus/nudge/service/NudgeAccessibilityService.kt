@@ -2982,35 +2982,11 @@ class NudgeAccessibilityService : AccessibilityService() {
 
     private suspend fun loadCounterCacheEntries(): Map<String, CounterCacheEntry> {
         val rules = entryPoint.blockRuleRepository().getEnabledRules().first()
-        val appEntries = rules
-            // A time-based auto-kick needs no counter and no overlay, so it must be able to put
-            // a package in the cache on its own — otherwise the hot path would never see it. A
-            // DAILY LIMIT is the same case and was missing: it needs no counter and no overlay
-            // either, but without an entry `updateForegroundTimeTicker` has nothing to read and
-            // the budget is only enforced on the next window-state event, i.e. on re-entry. The
-            // predicate is deliberately the union of "wants a drawn overlay" and
-            // `CounterCacheEntry.needsForegroundTimeTick`, so nothing that needs the clock can be
-            // filtered out before the clock is ever asked about it.
-            .filter {
-                it.showCounter ||
-                    it.showTimeRemaining ||
-                    it.autoKickAfterMinutes != null ||
-                    it.dailyLimitMinutes != null ||
-                    it.remindAfterMinutes != null
-            }
-            .mapNotNull { rule ->
-                rule.packageName?.let { pkg ->
-                    pkg to CounterCacheEntry(
-                        showCounter = rule.showCounter,
-                        autoKickAfter = rule.autoKickAfter,
-                        showTimeRemaining = rule.showTimeRemaining,
-                        dailyLimitMinutes = rule.dailyLimitMinutes,
-                        autoKickCooldownSeconds = rule.autoKickCooldownSeconds,
-                        autoKickAfterMinutes = rule.autoKickAfterMinutes,
-                        remindAfterMinutes = rule.remindAfterMinutes
-                    )
-                }
-            }
+        // Which rules put a package in the cache, and with what, is `CounterCacheRefresher.appEntryFor`
+        // (pure, `CounterCacheRefresherMergeTest`): its predicate is DERIVED from
+        // `CounterCacheEntry.needsForegroundTimeTick`, so a new clock consumer (the usage reminder,
+        // #77, was the fourth) cannot be filtered out here before the clock is ever asked about it.
+        val appEntries = rules.mapNotNull(CounterCacheRefresher::appEntryFor)
 
         // A rule's websites are tracked under their own keys, so a kick or a cooldown lands on the
         // site rather than on the whole browser. Gated on the resolved WEB mode (#21), never the

@@ -1,5 +1,6 @@
 package com.astraedus.nudge.service
 
+import com.astraedus.nudge.data.db.entity.BlockRule
 import com.astraedus.nudge.domain.web.WebSessionKey
 
 /**
@@ -124,6 +125,35 @@ class CounterCacheRefresher(
     }
 
     companion object {
+        /**
+         * The cache entry an app-level [rule] contributes under its package, or null when it needs
+         * no foreground awareness at all (or targets a group rather than a package).
+         *
+         * A time-based auto-kick needs no counter and no overlay, so it must be able to put a
+         * package in the cache on its own, otherwise the hot path would never see it. A DAILY LIMIT
+         * is the same case and was once missing (v1.18.4): without an entry
+         * `updateForegroundTimeTicker` has nothing to read and the budget is only enforced on
+         * re-entry. The usage reminder (#77) is the same case again. So the predicate is "wants a
+         * drawn overlay" OR [CounterCacheEntry.needsForegroundTimeTick], read off the entry itself,
+         * never a hand-kept list of rule fields: the next clock consumer joins by being added to
+         * that one property. The interaction trigger ([BlockRule.autoKickAfter]) alone is not
+         * enough, because it is fed by the counter.
+         */
+        fun appEntryFor(rule: BlockRule): Pair<String, CounterCacheEntry>? {
+            val pkg = rule.packageName ?: return null
+            val entry = CounterCacheEntry(
+                showCounter = rule.showCounter,
+                autoKickAfter = rule.autoKickAfter,
+                showTimeRemaining = rule.showTimeRemaining,
+                dailyLimitMinutes = rule.dailyLimitMinutes,
+                autoKickCooldownSeconds = rule.autoKickCooldownSeconds,
+                autoKickAfterMinutes = rule.autoKickAfterMinutes,
+                remindAfterMinutes = rule.remindAfterMinutes
+            )
+            val wanted = entry.showCounter || entry.showTimeRemaining || entry.needsForegroundTimeTick
+            return if (wanted) pkg to entry else null
+        }
+
         /**
          * The cache entries a rule's WEBSITES contribute, one per configured domain, keyed by
          * [WebSessionKey]. Empty unless the rule actually enforces on the web AND wants something
