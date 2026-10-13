@@ -239,7 +239,17 @@ class ContentFilterMatcherTest {
         "https://www.allrecipes.com/recipe/boston-creampie",
         // "fetish" — demoted to the opt-in query list, so a URL/article must still pass
         "https://en.wikipedia.org/wiki/Commodity_fetishism",
-        "https://www.google.com/search?q=commodity+fetishism+marx"
+        "https://www.google.com/search?q=commodity+fetishism+marx",
+        // Issue #78, ambiguous-list tokens whose dominant everyday meaning is innocent
+        // "cnc"
+        "https://search.brave.com/search?q=cnc+machine",
+        "https://www.google.com/search?q=cnc+router+table+plans",
+        // "bbc"
+        "https://www.google.com/search?q=bbc+news",
+        "https://www.google.com/search?q=bbc+iplayer",
+        // "sph"
+        "https://www.google.com/search?q=harvard+sph+admissions",
+        "https://www.google.com/search?q=sph+cyl+axis+eyeglass+prescription"
     )
 
     @Test
@@ -263,7 +273,7 @@ class ContentFilterMatcherTest {
     fun `removed tokens are absent from both keyword lists`() {
         // The class-level invariant, not three individual cases: an ordinary English word
         // must never come back as a raw-substring token.
-        for (token in listOf("escort", "hardcore", "creampie")) {
+        for (token in listOf("escort", "hardcore", "creampie", "cnc", "bbc", "sph")) {
             assertFalse("$token must not be a default keyword", token in ContentFilterMatcher.DEFAULT_KEYWORDS)
             assertFalse(
                 "$token must not be a query keyword either",
@@ -375,38 +385,53 @@ class ContentFilterMatcherTest {
 
     @Test
     fun `matchesQueryKeyword single term`() {
-        assertTrue(ContentFilterMatcher.matchesQueryKeyword("https://www.google.com/search?q=bbc", ambiguous))
+        assertTrue(ContentFilterMatcher.matchesQueryKeyword("https://www.google.com/search?q=femdom", ambiguous))
     }
 
     @Test
     fun `matchesQueryKeyword multi word query with slang`() {
-        assertTrue(ContentFilterMatcher.matchesQueryKeyword("https://www.google.com/search?q=bbc+porn", ambiguous))
+        assertTrue(ContentFilterMatcher.matchesQueryKeyword("https://www.google.com/search?q=femdom+stories", ambiguous))
     }
 
     @Test
     fun `matchesQueryKeyword host only never inspected`() {
-        // bbc.com news has no query -> host is NEVER inspected -> false.
-        assertFalse(ContentFilterMatcher.matchesQueryKeyword("https://bbc.com/news", ambiguous))
-        assertFalse(ContentFilterMatcher.matchesQueryKeyword("https://www.bbc.co.uk", ambiguous))
+        // A host that merely contains a listed token has no query -> host is NEVER inspected -> false.
+        assertFalse(ContentFilterMatcher.matchesQueryKeyword("https://femdom.example.com/news", ambiguous))
+        assertFalse(ContentFilterMatcher.matchesQueryKeyword("https://www.fetish.example.co.uk", ambiguous))
     }
 
     @Test
     fun `matchesQueryKeyword whole word guard`() {
-        // "clubbc" / "abbcd" as query terms contain "bbc" as a substring but not a whole word.
-        assertFalse(ContentFilterMatcher.matchesQueryKeyword("https://www.google.com/search?q=clubbc", ambiguous))
-        assertFalse(ContentFilterMatcher.matchesQueryKeyword("https://www.google.com/search?q=abbcd", ambiguous))
+        // "fetishism" / "afetish" as query terms contain "fetish" as a substring but not a whole word.
+        assertFalse(ContentFilterMatcher.matchesQueryKeyword("https://www.google.com/search?q=fetishism", ambiguous))
+        assertFalse(ContentFilterMatcher.matchesQueryKeyword("https://www.google.com/search?q=afetish", ambiguous))
     }
 
     @Test
-    fun `matchesQueryKeyword legit news query with the word bbc still matches`() {
-        // Intended aggressive-opt-in tradeoff: a legit multi-word news query containing the
-        // WHOLE WORD "bbc" (e.g. "bbc news") WILL return true. This is the accepted cost of
-        // the opt-in strict-keyword mode — the host is never inspected, but the query is.
-        assertTrue(ContentFilterMatcher.matchesQueryKeyword("https://www.google.com/search?q=bbc+news", ambiguous))
+    fun `matchesQueryKeyword legit query with the word of a kept token still matches`() {
+        // Intended aggressive-opt-in tradeoff: a legit multi-word query containing the WHOLE
+        // WORD of a kept borderline token ("bbw candle sale" = Bath & Body Works) WILL return
+        // true. This is the accepted cost of the opt-in strict-keyword mode; the host is never
+        // inspected, but the query is. Tokens whose dominant meaning is innocent were removed
+        // instead (see the issue #78 corpus below).
+        assertTrue(ContentFilterMatcher.matchesQueryKeyword("https://www.google.com/search?q=bbw+candle+sale", ambiguous))
     }
 
     @Test
     fun `matchesQueryKeyword non-search URL returns false`() {
         assertFalse(ContentFilterMatcher.matchesQueryKeyword("https://news.site/article", ambiguous))
+    }
+
+    @Test
+    fun `issue 78 removals did not gut the ambiguous list`() {
+        // Each kept token must still block as a whole-word query under strict mode.
+        for (token in ambiguous) {
+            assertTrue(
+                "$token should still match as a whole-word query",
+                ContentFilterMatcher.matchesQueryKeyword("https://www.google.com/search?q=$token", ambiguous)
+            )
+        }
+        // An explicit search that merely contained a removed token still blocks via the default layer.
+        assertTrue(ContentFilterMatcher.matchesKeyword("https://www.google.com/search?q=bbc+porn", keywords))
     }
 }
