@@ -1,5 +1,6 @@
 package com.astraedus.nudge.service
 
+import com.astraedus.nudge.data.db.entity.BlockRule
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -271,5 +272,136 @@ class CounterCacheRefresherMergeTest {
         entries.forEach { (key, entry) ->
             assertTrue("$key must keep auto-kick authority", entry.configuresAutoKick)
         }
+    }
+
+    // ── the usage reminder (#77): a clock consumer, never a kick ──
+
+    @Test
+    fun `a reminder alone needs the foreground time tick`() {
+        // Without the clock, a passively-watched app produces no events and a reminder-only rule
+        // would never be looked at.
+        assertTrue(CounterCacheEntry(remindAfterMinutes = 20).needsForegroundTimeTick)
+    }
+
+    @Test
+    fun `a reminder alone configures no auto-kick, so it can never keep a cooldown alive`() {
+        assertFalse(CounterCacheEntry(remindAfterMinutes = 20).configuresAutoKick)
+    }
+
+    @Test
+    fun `mergeEntries takes the earliest reminder`() {
+        val merged = CounterCacheRefresher.mergeEntries(
+            listOf(
+                "com.example.alpha" to CounterCacheEntry(remindAfterMinutes = 30),
+                "com.example.alpha" to CounterCacheEntry(remindAfterMinutes = 15),
+                "com.example.alpha" to CounterCacheEntry(remindAfterMinutes = null),
+            )
+        )
+        assertEquals(15, merged["com.example.alpha"]!!.remindAfterMinutes)
+    }
+
+    @Test
+    fun `mergeEntries keeps a reminder and a kick from different rules side by side`() {
+        val merged = CounterCacheRefresher.mergeEntries(
+            listOf(
+                "com.example.alpha" to CounterCacheEntry(remindAfterMinutes = 20),
+                "com.example.alpha" to CounterCacheEntry(autoKickAfterMinutes = 15),
+            )
+        )
+        val entry = merged["com.example.alpha"]!!
+        assertEquals(20, entry.remindAfterMinutes)
+        assertEquals(15, entry.autoKickAfterMinutes)
+    }
+
+    // ── appEntryFor: which rules put a package in the cache ──
+
+    private fun rule(
+        packageName: String? = "com.example.alpha",
+        showCounter: Boolean = false,
+        showTimeRemaining: Boolean = false,
+        autoKickAfter: Int? = null,
+        autoKickAfterMinutes: Int? = null,
+        dailyLimitMinutes: Int? = null,
+        remindAfterMinutes: Int? = null
+    ) = BlockRule(
+        packageName = packageName,
+        mode = "DELAY",
+        showCounter = showCounter,
+        showTimeRemaining = showTimeRemaining,
+        autoKickAfter = autoKickAfter,
+        autoKickAfterMinutes = autoKickAfterMinutes,
+        dailyLimitMinutes = dailyLimitMinutes,
+        remindAfterMinutes = remindAfterMinutes
+    )
+
+    @Test
+    fun `a reminder-only rule enters the cache and starts the clock`() {
+        // The #77 wiring hole: without this the 30s tick never runs for a rule that has only a
+        // reminder, and the reminder silently never fires.
+        val (pkg, entry) = CounterCacheRefresher.appEntryFor(rule(remindAfterMinutes = 20))!!
+        assertEquals("com.example.alpha", pkg)
+        assertEquals(20, entry.remindAfterMinutes)
+        assertTrue(entry.needsForegroundTimeTick)
+    }
+
+    @Test
+    fun `every clock-driven field on its own admits the rule and needs the clock`() {
+        // The class, not the instance: each feature the 30s clock serves must be able to put a
+        // package in the cache by itself, because the admission predicate is DERIVED from
+        // needsForegroundTimeTick rather than listed by hand.
+        val clockRules = mapOf(
+            "autoKickAfterMinutes" to rule(autoKickAfterMinutes = 30),
+            "dailyLimitMinutes" to rule(dailyLimitMinutes = 30),
+            "remindAfterMinutes" to rule(remindAfterMinutes = 30),
+        )
+        clockRules.forEach { (field, rule) ->
+            val entry = CounterCacheRefresher.appEntryFor(rule)?.second
+            assertTrue("$field alone must enter the cache", entry != null)
+            assertTrue("$field alone must start the clock", entry!!.needsForegroundTimeTick)
+        }
+    }
+
+    @Test
+    fun `an overlay alone admits the rule without starting the clock`() {
+        val counter = CounterCacheRefresher.appEntryFor(rule(showCounter = true))!!.second
+        assertFalse(counter.needsForegroundTimeTick)
+        assertTrue(CounterCacheRefresher.appEntryFor(rule(showTimeRemaining = true)) != null)
+    }
+
+    @Test
+    fun `a rule that wants nothing, or only a counter-fed kick with no counter, stays out`() {
+        assertNull(CounterCacheRefresher.appEntryFor(rule()))
+        assertNull(CounterCacheRefresher.appEntryFor(rule(autoKickAfter = 30)))
+    }
+
+    @Test
+    fun `a group rule has no package and contributes no app entry`() {
+        assertNull(CounterCacheRefresher.appEntryFor(rule(packageName = null, remindAfterMinutes = 20)))
+    }
+
+    @Test
+    fun `appEntryFor carries every awareness field off the rule`() {
+        val entry = CounterCacheRefresher.appEntryFor(
+            rule(
+                showCounter = true,
+                showTimeRemaining = true,
+                autoKickAfter = 25,
+                autoKickAfterMinutes = 40,
+                dailyLimitMinutes = 90,
+                remindAfterMinutes = 20
+            ).copy(autoKickCooldownSeconds = 300)
+        )!!.second
+        assertEquals(
+            CounterCacheEntry(
+                showCounter = true,
+                autoKickAfter = 25,
+                showTimeRemaining = true,
+                dailyLimitMinutes = 90,
+                autoKickCooldownSeconds = 300,
+                autoKickAfterMinutes = 40,
+                remindAfterMinutes = 20
+            ),
+            entry
+        )
     }
 }
