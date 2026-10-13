@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.PowerSettingsNew
-import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -93,14 +92,12 @@ fun NukeBlockContent(
 
             Spacer(Modifier.height(24.dp))
 
-            // The redirect app: one tap leaves for somewhere better, through the same walk-away.
-            redirect()
+            LeaveButton(text = "Go home", onClick = onGoHome)
 
             Spacer(Modifier.height(24.dp))
 
-            Button(onClick = onGoHome) {
-                Text("Go home")
-            }
+            // The redirect app: one tap leaves for somewhere better, through the same walk-away.
+            redirect()
         }
     }
 }

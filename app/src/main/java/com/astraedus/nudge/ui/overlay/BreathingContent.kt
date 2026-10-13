@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -228,14 +227,13 @@ fun BreathingContent(
 
             Spacer(Modifier.height(24.dp))
 
-            // The redirect app: one tap leaves for somewhere better, through the same walk-away.
-            redirect()
+            // The way out sits right under the circle and its progress, big and centred.
+            LeaveButton(onClick = onCancel)
 
             Spacer(Modifier.height(24.dp))
 
-            OutlinedButton(onClick = onCancel) {
-                Text("I changed my mind")
-            }
+            // The redirect app: one tap leaves for somewhere better, through the same walk-away.
+            redirect()
 
             EmergencyPassAction(
                 canUse = canUseEmergencyPass,

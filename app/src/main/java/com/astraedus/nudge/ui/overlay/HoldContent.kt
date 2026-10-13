@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -91,15 +90,8 @@ fun HoldContent(
                 Spacer(modifier = Modifier.height(24.dp))
             }
 
-            HoldTarget(
-                holdDurationMs = holdSeconds.toLong() * 1000L,
-                // The SAME completion callback every other timed overlay hands to its timer. The
-                // hold gates the one existing grant; it never becomes a second way in.
-                onHoldComplete = onComplete
-            )
-
-            Spacer(modifier = Modifier.height(32.dp))
-
+            // The title sits ABOVE the target so the target and the leave button stay together in
+            // the vertical middle of the (centred) column.
             Text(
                 text = title,
                 style = MaterialTheme.typography.titleLarge,
@@ -107,16 +99,25 @@ fun HoldContent(
                 textAlign = TextAlign.Center
             )
 
+            Spacer(modifier = Modifier.height(32.dp))
+
+            HoldTarget(
+                holdDurationMs = holdSeconds.toLong() * 1000L,
+                // The SAME completion callback every other timed overlay hands to its timer. The
+                // hold gates the one existing grant; it never becomes a second way in.
+                onHoldComplete = onComplete
+            )
+
+            Spacer(Modifier.height(24.dp))
+
+            // The way out sits right under the target, big and centred. The target itself is never
+            // the exit: in HOLD mode it is the press-and-hold that lets the user IN.
+            LeaveButton(onClick = onCancel)
+
             Spacer(Modifier.height(24.dp))
 
             // The redirect app: one tap leaves for somewhere better, through the same walk-away.
             redirect()
-
-            Spacer(Modifier.height(24.dp))
-
-            OutlinedButton(onClick = onCancel) {
-                Text("I changed my mind")
-            }
 
             EmergencyPassAction(
                 canUse = canUseEmergencyPass,

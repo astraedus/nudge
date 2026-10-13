@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Block
-import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -102,14 +101,12 @@ fun HardBlockContent(
 
             Spacer(Modifier.height(24.dp))
 
-            // The redirect app: one tap leaves for somewhere better, through the same walk-away.
-            redirect()
+            LeaveButton(text = "Go Back", onClick = onGoBack)
 
             Spacer(Modifier.height(24.dp))
 
-            Button(onClick = onGoBack) {
-                Text("Go Back")
-            }
+            // The redirect app: one tap leaves for somewhere better, through the same walk-away.
+            redirect()
 
             EmergencyPassAction(
                 canUse = canUseEmergencyPass,
