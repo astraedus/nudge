@@ -8,6 +8,7 @@ import com.astraedus.nudge.data.repository.BlockRuleRepository
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.service.InAppDetector
 import com.astraedus.nudge.ui.components.DurationInput
+import com.astraedus.nudge.ui.components.UsageReminderInput
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -65,6 +66,10 @@ data class RuleEditorUiState(
     // off-grid value (e.g. a 150s cooldown from the old slider) to the nearest displayable minute.
     val originalAutoKickCooldownSeconds: Int = 60,
     val originalAutoKickAfterMinutes: Int? = null,
+    // Usage reminder (#77); see UsageReminderInput for the save contract.
+    val reminderEnabled: Boolean = false,
+    val remindAfterMinutesText: String = "",
+    val originalRemindAfterMinutes: Int? = null,
     // Show time remaining overlay
     val showTimeRemaining: Boolean = false,
     // Carried through untouched: this editor has no web-domain UI, but the rule it saves replaces
@@ -162,6 +167,9 @@ class RuleEditorViewModel @Inject constructor(
                     autoKickCooldownMinutesText = DurationInput.cooldownSecondsToText(existing.autoKickCooldownSeconds),
                     originalAutoKickCooldownSeconds = existing.autoKickCooldownSeconds,
                     originalAutoKickAfterMinutes = existing.autoKickAfterMinutes,
+                    reminderEnabled = existing.remindAfterMinutes != null,
+                    remindAfterMinutesText = DurationInput.minutesToText(existing.remindAfterMinutes),
+                    originalRemindAfterMinutes = existing.remindAfterMinutes,
                     showTimeRemaining = existing.showTimeRemaining,
                     webDomains = existing.webDomains,
                     webBlockMode = existing.webBlockMode,
@@ -195,6 +203,7 @@ class RuleEditorViewModel @Inject constructor(
                         if (rule.showCounter) add("Counter")
                         if (rule.autoKickAfter != null) add("Auto-kick@${rule.autoKickAfter}")
                         if (rule.autoKickAfterMinutes != null) add("Auto-kick@${rule.autoKickAfterMinutes}min")
+                        if (rule.remindAfterMinutes != null) add("Reminder@${rule.remindAfterMinutes}min")
                         if (rule.showTimeRemaining) add("Time remaining")
                     }
                     val extraStr = if (extras.isNotEmpty()) " + ${extras.joinToString(", ")}" else ""
@@ -329,6 +338,20 @@ class RuleEditorViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(autoKickCooldownMinutesText = text)
     }
 
+    // --- Usage reminder ---
+
+    fun setReminderEnabled(enabled: Boolean) {
+        val state = _uiState.value
+        _uiState.value = state.copy(
+            reminderEnabled = enabled,
+            remindAfterMinutesText = UsageReminderInput.textAfterToggle(enabled, state.remindAfterMinutesText)
+        )
+    }
+
+    fun setRemindAfterMinutesText(text: String) {
+        _uiState.value = _uiState.value.copy(remindAfterMinutesText = text)
+    }
+
     // --- Show time remaining ---
 
     fun setShowTimeRemaining(enabled: Boolean) {
@@ -375,6 +398,7 @@ class RuleEditorViewModel @Inject constructor(
          *    has no web-domain UI, and before they were threaded through here every save from this
          *    screen silently wiped an app's web blocking (or, for `webBlockMode`, downgraded a
          *    website-only block to one that enforces nothing).
+         *  - `remindAfterMinutes` (#77) is saved from its own switch, independent of auto-kick;
          *  - `tabVanish` and `followingSteer` are carried through for exactly the same reason,
          *    and were added to this list the day they were introduced rather than the day a user
          *    reported the tab cover turning itself back on.
@@ -436,7 +460,14 @@ class RuleEditorViewModel @Inject constructor(
                         state.autoKickAfterMinutesText,
                         state.originalAutoKickAfterMinutes
                     )
-                } else null
+                } else null,
+                // Independent of the auto-kick switch: a reminder is not a kick and needs neither
+                // the counter nor auto-kick on.
+                remindAfterMinutes = UsageReminderInput.resolve(
+                    state.reminderEnabled,
+                    state.remindAfterMinutesText,
+                    state.originalRemindAfterMinutes
+                )
             )
         }
     }

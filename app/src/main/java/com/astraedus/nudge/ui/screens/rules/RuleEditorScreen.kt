@@ -59,7 +59,9 @@ import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.ui.components.blockModeDescription
 import com.astraedus.nudge.ui.components.blockModeLabel
 import com.astraedus.nudge.ui.components.CustomTimeDialog
+import com.astraedus.nudge.ui.components.DurationInput
 import com.astraedus.nudge.ui.components.MinutesField
+import com.astraedus.nudge.ui.components.UsageReminderSection
 import com.astraedus.nudge.ui.components.formatMinutesDisplay
 import kotlinx.coroutines.launch
 
@@ -708,6 +710,22 @@ fun RuleEditorScreen(
                     }
                 }
             }
+
+            // --- Usage reminder (#77) ---
+            UsageReminderSection(
+                enabled = state.reminderEnabled,
+                minutesText = state.remindAfterMinutesText,
+                kickMinutes = if (state.autoKickEnabled) {
+                    DurationInput.resolveMinutes(
+                        state.autoKickAfterMinutesText,
+                        state.originalAutoKickAfterMinutes
+                    )
+                } else null,
+                websitesConfigured = !state.webDomains.isNullOrBlank(),
+                onEnabledChange = { viewModel.setReminderEnabled(it) },
+                onMinutesTextChange = { viewModel.setRemindAfterMinutesText(it) },
+                info = { InfoButton(it) }
+            )
 
             HorizontalDivider()
 

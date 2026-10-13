@@ -17,6 +17,7 @@ import com.astraedus.nudge.data.repository.BlockRuleRepository
 import com.astraedus.nudge.data.repository.UsageRepository
 import com.astraedus.nudge.domain.WebDomainMatcher
 import com.astraedus.nudge.domain.block.BlockLaunchGate
+import com.astraedus.nudge.domain.autokick.UseReminder
 import com.astraedus.nudge.domain.bounce.BounceDetector
 import com.astraedus.nudge.domain.block.CooldownGate
 import com.astraedus.nudge.domain.events.A11yEventType
@@ -2925,8 +2926,8 @@ class NudgeAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * One pass of the foreground-time clock: read usage once, feed the time-based auto-kick, then
-     * refresh the time-remaining overlay / daily-limit block.
+     * One pass of the foreground-time clock: read usage once, feed the time-based auto-kick and the
+     * usage reminder (#77), then refresh the time-remaining overlay / daily-limit block.
      *
      * Runs on the service's IO scope (the usage read is a binder call); anything touching the
      * WindowManager is hopped to Main.
@@ -2940,16 +2941,33 @@ class NudgeAccessibilityService : AccessibilityService() {
         // it already overrides rule evaluation and the auto-kick cooldown.
         if (entryPoint.emergencyPassManager().isPassActive(packageName)) return
 
-        if (autoKickTimeHandler.shouldKick(packageName)) {
-            withContext(Dispatchers.Main) {
-                autoKickExecutor.kick(packageName, reason = "session time")
+        when (val verdict = autoKickTimeHandler.tick(packageName)) {
+            AutoKickTimeHandler.Verdict.Kick -> {
+                withContext(Dispatchers.Main) {
+                    autoKickExecutor.kick(packageName, reason = "session time")
+                }
+                // The user is on their way home; the next foreground event restarts the clock.
+                stopForegroundTimeTicker("auto_kicked")
+                return
             }
-            // The user is on their way home; the next foreground event restarts the clock.
-            stopForegroundTimeTicker("auto_kicked")
-            return
+            // The usage reminder (#77): one notification, already recorded as this session's one,
+            // and nothing else changes -- the clock keeps running for the kick and the limit.
+            // NotificationManager is thread-safe, so this stays on the IO tick.
+            is AutoKickTimeHandler.Verdict.Remind -> UseReminderNotifier.notify(
+                applicationContext,
+                UseReminder(appLabelFor(packageName), verdict.minutes)
+            )
+            AutoKickTimeHandler.Verdict.None -> Unit
         }
 
         withContext(Dispatchers.Main) { timeRemainingHandler.maybeUpdate(packageName) }
+    }
+
+    /** The user-visible name of [packageName] for a notification, or the package itself. */
+    private fun appLabelFor(packageName: String): String = try {
+        packageManager.getApplicationLabel(packageManager.getApplicationInfo(packageName, 0)).toString()
+    } catch (_: Exception) {
+        packageName
     }
 
     private fun refreshCounterCacheIfNeeded() {
@@ -2977,7 +2995,8 @@ class NudgeAccessibilityService : AccessibilityService() {
                 it.showCounter ||
                     it.showTimeRemaining ||
                     it.autoKickAfterMinutes != null ||
-                    it.dailyLimitMinutes != null
+                    it.dailyLimitMinutes != null ||
+                    it.remindAfterMinutes != null
             }
             .mapNotNull { rule ->
                 rule.packageName?.let { pkg ->
@@ -2987,7 +3006,8 @@ class NudgeAccessibilityService : AccessibilityService() {
                         showTimeRemaining = rule.showTimeRemaining,
                         dailyLimitMinutes = rule.dailyLimitMinutes,
                         autoKickCooldownSeconds = rule.autoKickCooldownSeconds,
-                        autoKickAfterMinutes = rule.autoKickAfterMinutes
+                        autoKickAfterMinutes = rule.autoKickAfterMinutes,
+                        remindAfterMinutes = rule.remindAfterMinutes
                     )
                 }
             }

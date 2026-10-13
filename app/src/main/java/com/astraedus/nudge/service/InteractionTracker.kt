@@ -86,9 +86,17 @@ class InteractionTracker @Inject constructor() {
      */
     private val sessionUsageBaseline = mutableMapOf<String, Long>()
 
-    /** Called when the foreground app changes. Resets the session (interaction count AND the
-     *  foreground-time baseline) only if the user has been away longer than [SESSION_EXPIRY_MS]
-     *  (and not in cooldown). */
+    /**
+     * Packages whose CURRENT session has already had its usage reminder
+     * ([#77](https://github.com/astraedus/nudge/issues/77)): one per session. Cleared in exactly the
+     * branches that clear [sessionUsageBaseline], because the reminder measures against that
+     * baseline -- so "same sitting" means the same thing to the reminder as to both kicks.
+     */
+    private val sessionReminded = mutableSetOf<String>()
+
+    /** Called when the foreground app changes. Resets the session (interaction count, the
+     *  foreground-time baseline and the reminder flag) only if the user has been away longer than
+     *  [SESSION_EXPIRY_MS] (and not in cooldown). */
     fun onAppChanged(packageName: String) {
         if (packageName != currentPackage) {
             // Record when we left the current app
@@ -103,6 +111,7 @@ class InteractionTracker @Inject constructor() {
                     sessionModes.remove(packageName)
                     sessionLabels.remove(packageName)
                     sessionUsageBaseline.remove(packageName)
+                    sessionReminded.remove(packageName)
                 }
             }
             lastLeftAt.remove(packageName)
@@ -203,6 +212,7 @@ class InteractionTracker @Inject constructor() {
         sessionModes.remove(packageName)
         sessionLabels.remove(packageName)
         sessionUsageBaseline.remove(packageName)
+        sessionReminded.remove(packageName)
         lastLeftAt.remove(packageName)
         if (currentPackage == packageName) {
             currentPackage = null
@@ -230,6 +240,16 @@ class InteractionTracker @Inject constructor() {
      */
     fun setSessionUsageBaseline(packageName: String, usageMs: Long) {
         sessionUsageBaseline[packageName] = usageMs
+    }
+
+    // --- Usage reminder (one per session) ---
+
+    /** True when this package's current session has already been reminded. */
+    fun isSessionReminded(packageName: String): Boolean = packageName in sessionReminded
+
+    /** Records that this package's current session got its reminder; cleared with the session. */
+    fun markSessionReminded(packageName: String) {
+        sessionReminded.add(packageName)
     }
 
     // --- Cooldown ---

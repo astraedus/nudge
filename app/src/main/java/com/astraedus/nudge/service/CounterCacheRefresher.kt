@@ -20,7 +20,14 @@ data class CounterCacheEntry(
     val dailyLimitMinutes: Int? = null,
     val autoKickCooldownSeconds: Int = 60,
     /** Time-based auto-kick threshold in minutes of session foreground time. Null = disabled. */
-    val autoKickAfterMinutes: Int? = null
+    val autoKickAfterMinutes: Int? = null,
+    /**
+     * Usage-reminder threshold in minutes of session foreground time
+     * ([#77](https://github.com/astraedus/nudge/issues/77)). Null = off. Read on the same clock and
+     * against the same session baseline as [autoKickAfterMinutes]; app-level only (see
+     * [webEntriesFor]).
+     */
+    val remindAfterMinutes: Int? = null
 ) {
     /**
      * True when this package needs the periodic foreground-time tick — i.e. something here is driven
@@ -39,6 +46,9 @@ data class CounterCacheEntry(
      *
      * A package with neither still spins no timer — that is what keeps the clock off the battery
      * for rules that need nothing from it ([#63](https://github.com/astraedus/nudge/issues/63)).
+     * **The usage reminder (#77) is the fourth arm**, for the same reason as the daily limit: a
+     * reminder-only rule draws nothing and kicks nothing, and with no clock its threshold would only
+     * ever be looked at on an accessibility event that a passively-watched app never produces.
      * Note the daily-limit arm SUBSUMES the old time-remaining arm rather than sitting beside it:
      * the readout is only ever drawn for a rule that has a limit ([TimeRemainingHandler]), so
      * `showTimeRemaining && dailyLimitMinutes != null` cannot be true without the second arm
@@ -46,7 +56,7 @@ data class CounterCacheEntry(
      * anything.
      */
     val needsForegroundTimeTick: Boolean
-        get() = autoKickAfterMinutes != null || dailyLimitMinutes != null
+        get() = autoKickAfterMinutes != null || dailyLimitMinutes != null || remindAfterMinutes != null
 
     /**
      * True when some rule actually configures an auto-kick for this package — the only thing that
@@ -123,6 +133,11 @@ class CounterCacheRefresher(
          * `com.android.chrome` would lock the entire browser. Why not per app package: time on
          * instagram.com would then spend the Instagram app's session.
          *
+         * The usage reminder (#77) is not carried across either, for now: it would need the site,
+         * not the browser, named in its notification, and nothing here posts one for a `web:` key.
+         * The editor says so ("apps only") rather than offering a control that does nothing on the
+         * web; `CounterCacheWebEntriesTest` pins that these entries never carry one.
+         *
          * The counter and the time-remaining overlay are deliberately NOT carried across. The
          * counter is fed by tap/scroll events, which arrive carrying the browser's package rather
          * than a domain; the time-remaining overlay needs a DAILY web total, which needs persisted
@@ -181,6 +196,13 @@ class CounterCacheRefresher(
                             .maxOf { it.autoKickCooldownSeconds },
                         autoKickAfterMinutes = packageEntries
                             .mapNotNull { it.autoKickAfterMinutes }
+                            .minOrNull(),
+                        // Earliest reminder wins, like every threshold here. Whether the merged
+                        // kick then supersedes it is decided on the MERGED entry, at read time
+                        // (UseReminderEvaluator), so a kick on one rule correctly silences a later
+                        // reminder on another rule for the same app.
+                        remindAfterMinutes = packageEntries
+                            .mapNotNull { it.remindAfterMinutes }
                             .minOrNull()
                     )
                 }

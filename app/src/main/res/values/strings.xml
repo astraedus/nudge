@@ -9,6 +9,8 @@
          own title and body live in BounceAlert, where the numbers in them are unit-tested. -->
     <string name="bounce_checkin_channel_name">Bounce check-ins</string>
     <string name="bounce_checkin_channel_description">A nudge when you bounce between apps after hitting a wall</string>
+    <string name="use_reminder_channel_name">Usage reminders</string>
+    <string name="use_reminder_channel_description">A heads-up after a set time in an app, when a rule asks for one</string>
 
     <!-- Protection watchdog. Copy rule: say what happened and what fixes it, without alarm and
          without blaming the user. This fires when their phone switched Nudge off, not when they
