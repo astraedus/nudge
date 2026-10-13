@@ -175,4 +175,19 @@ class CounterCacheWebEntriesTest {
         assertEquals(20, entry?.autoKickAfterMinutes)
         assertEquals(900, entry?.autoKickCooldownSeconds)
     }
+
+    @Test
+    fun `a web entry never carries a usage reminder`() {
+        // The reminder is app-only for now (#77): nothing posts one for a `web:` key, and the web
+        // clock reaches AutoKickTimeHandler through shouldKick, which ignores reminders. The editor
+        // says "apps only" when websites are configured.
+        val entries = CounterCacheRefresher.webEntriesFor(
+            webDomains = "instagram.com",
+            webEnforces = true,
+            autoKickAfterMinutes = 30,
+            autoKickCooldownSeconds = 60
+        )
+        assertTrue(entries.isNotEmpty())
+        entries.forEach { (key, entry) -> assertNull("$key", entry.remindAfterMinutes) }
+    }
 }

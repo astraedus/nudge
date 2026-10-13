@@ -61,6 +61,10 @@ data class UnifiedAppConfigState(
     val defaultAutoKickCooldownMinutesText: String = "1",
     val originalAutoKickCooldownSeconds: Int = 60,
     val originalAutoKickAfterMinutes: Int? = null,
+    /** Usage reminder (#77): see `UsageReminderInput` for the save contract. */
+    val reminderEnabled: Boolean = false,
+    val remindAfterMinutesText: String = "",
+    val originalRemindAfterMinutes: Int? = null,
 
     // Feature overrides (only for supported apps)
     val availableFeatures: List<FeatureInfo> = emptyList(),

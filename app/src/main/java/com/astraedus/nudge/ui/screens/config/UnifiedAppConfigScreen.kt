@@ -57,8 +57,10 @@ import com.astraedus.nudge.ui.components.blockModeDescription
 import com.astraedus.nudge.ui.components.blockModeLabel
 import com.astraedus.nudge.domain.model.FeatureMode
 import com.astraedus.nudge.ui.components.CustomTimeDialog
+import com.astraedus.nudge.ui.components.DurationInput
 import com.astraedus.nudge.ui.components.MinutesField
 import com.astraedus.nudge.ui.components.StrictModeChallengeHost
+import com.astraedus.nudge.ui.components.UsageReminderSection
 import com.astraedus.nudge.ui.components.formatMinutesDisplay
 import com.astraedus.nudge.ui.hasGrayscalePermission
 import kotlinx.coroutines.launch
@@ -640,6 +642,23 @@ fun UnifiedAppConfigScreen(
                     }
                 }
             }
+
+            // Usage reminder (#77): next to auto-kick, on the same clock, and never instead of it.
+            UsageReminderSection(
+                enabled = state.reminderEnabled,
+                minutesText = state.remindAfterMinutesText,
+                // The kick this rule will SAVE with, so the hint matches what the engine will do.
+                kickMinutes = if (state.defaultAutoKickEnabled) {
+                    DurationInput.resolveMinutes(
+                        state.defaultAutoKickAfterMinutesText,
+                        state.originalAutoKickAfterMinutes
+                    )
+                } else null,
+                websitesConfigured = state.webDomainEnabled,
+                onEnabledChange = viewModel::setReminderEnabled,
+                onMinutesTextChange = viewModel::setRemindAfterMinutesText,
+                info = { InfoButton(it) }
+            )
 
             // ═══ FEATURE OVERRIDES ═══
             if (state.supportsFeatures) {

@@ -1,5 +1,6 @@
 package com.astraedus.nudge.ui.screens.config
 
+import com.astraedus.nudge.ui.components.UsageReminderInput
 import androidx.lifecycle.SavedStateHandle
 import com.astraedus.nudge.MainDispatcherRule
 import com.astraedus.nudge.data.db.entity.BlockRule
@@ -330,5 +331,77 @@ class UnifiedAppConfigViewModelTest {
 
         assertFalse(state.supportsTabVanish)
         assertFalse(state.supportsFollowingSteer)
+    }
+
+    // ── usage reminder (#77) ───────────────────────────────────────────────
+
+    @Test
+    fun `default rule carries remindAfterMinutes when the reminder is enabled`() = runTest {
+        val vm = viewModel()
+        vm.setReminderEnabled(true)
+        vm.setRemindAfterMinutesText("25")
+
+        assertEquals(25, vm.buildDefaultRule(vm.uiState.value).remindAfterMinutes)
+    }
+
+    @Test
+    fun `default rule has null remindAfterMinutes when the reminder is disabled`() = runTest {
+        val vm = viewModel()
+        vm.setReminderEnabled(true)
+        vm.setRemindAfterMinutesText("25")
+        vm.setReminderEnabled(false)
+
+        assertNull(vm.buildDefaultRule(vm.uiState.value).remindAfterMinutes)
+    }
+
+    @Test
+    fun `loading a default rule with a reminder seeds enabled text and original`() = runTest {
+        val rule = defaultRule(mode = "DELAY").copy(remindAfterMinutes = 25)
+        val vm = viewModel(listOf(rule))
+
+        val state = vm.uiState.value
+        assertTrue(state.reminderEnabled)
+        assertEquals("25", state.remindAfterMinutesText)
+        assertEquals(25, state.originalRemindAfterMinutes)
+    }
+
+    @Test
+    fun `loading a default rule without a reminder leaves it off and blank`() = runTest {
+        val vm = viewModel(listOf(defaultRule(mode = "DELAY")))
+
+        val state = vm.uiState.value
+        assertFalse(state.reminderEnabled)
+        assertEquals("", state.remindAfterMinutesText)
+        assertNull(state.originalRemindAfterMinutes)
+    }
+
+    @Test
+    fun `an untouched loaded reminder re-saves the original on the default rule`() = runTest {
+        val vm = viewModel(listOf(defaultRule(mode = "DELAY").copy(remindAfterMinutes = 2000)))
+
+        assertEquals(2000, vm.buildDefaultRule(vm.uiState.value).remindAfterMinutes)
+    }
+
+    @Test
+    fun `setReminderEnabled true on blank text sets the default minutes`() = runTest {
+        val vm = viewModel()
+        assertEquals("", vm.uiState.value.remindAfterMinutesText)
+
+        vm.setReminderEnabled(true)
+
+        assertTrue(vm.uiState.value.reminderEnabled)
+        assertEquals(UsageReminderInput.DEFAULT_MINUTES_TEXT, vm.uiState.value.remindAfterMinutesText)
+    }
+
+    @Test
+    fun `the reminder is saved independently of the time-based auto-kick`() = runTest {
+        val vm = viewModel()
+        vm.setReminderEnabled(true)
+        vm.setRemindAfterMinutesText("20")
+
+        val rule = vm.buildDefaultRule(vm.uiState.value)
+
+        assertEquals(20, rule.remindAfterMinutes)
+        assertNull(rule.autoKickAfterMinutes)
     }
 }

@@ -45,6 +45,20 @@ data class BlockRule(
     // one session (null = disabled). Independent of [autoKickAfter]; whichever fires first kicks.
     val autoKickAfterMinutes: Int? = null,
     /**
+     * Usage reminder ([#77](https://github.com/astraedus/nudge/issues/77)): after this many minutes
+     * of foreground time in one session, post ONE gentle notification ("You've been on Instagram
+     * for 20 min") and change nothing else. Null = off. Measured on the SAME session clock as
+     * [autoKickAfterMinutes] (one baseline, one reset), so the two can never disagree about which
+     * sitting this is; when both are set and this is not below the kick, the kick wins and the
+     * reminder never fires ([com.astraedus.nudge.domain.autokick.UseReminderEvaluator]).
+     *
+     * A separate field, never a "remind instead of kick" mode on [autoKickAfterMinutes]: that would
+     * turn a Strict-locked kick into a notification. A reminder only ever adds, and like
+     * [showCounter] it enforces nothing, so it is not a [com.astraedus.nudge.domain.lock.RuleWeakening]
+     * axis in either direction.
+     */
+    val remindAfterMinutes: Int? = null,
+    /**
      * While this rule DECIDES a HARD_BLOCK on Instagram REELS, draw a cover over the Reels nav
      * tab so it disappears instead of merely refusing to open ([BlockDecision.Block.tabVanish]
      * is read off the deciding rule, not `any {}` across every applicable rule). It can only ever

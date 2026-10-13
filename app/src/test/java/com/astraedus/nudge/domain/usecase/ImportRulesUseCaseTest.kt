@@ -183,6 +183,31 @@ class ImportRulesUseCaseTest {
     }
 
     @Test
+    fun `an imported rule keeps remindAfterMinutes alongside autoKickAfterMinutes`() = runTest {
+        import(
+            """
+            {
+                "version": 1,
+                "rules": [
+                    {"packageName": "com.both", "mode": "DELAY", "delaySeconds": 15,
+                     "autoKickAfterMinutes": 30, "remindAfterMinutes": 20},
+                    {"packageName": "com.remind", "mode": "DELAY", "delaySeconds": 15,
+                     "remindAfterMinutes": 10},
+                    {"packageName": "com.old", "mode": "DELAY", "delaySeconds": 15}
+                ]
+            }
+            """.trimIndent()
+        )
+
+        val byPackage = addedRules.associateBy { it.packageName }
+        assertEquals(30, byPackage.getValue("com.both").autoKickAfterMinutes)
+        assertEquals(20, byPackage.getValue("com.both").remindAfterMinutes)
+        assertNull(byPackage.getValue("com.remind").autoKickAfterMinutes)
+        assertEquals(10, byPackage.getValue("com.remind").remindAfterMinutes)
+        assertNull(byPackage.getValue("com.old").remindAfterMinutes)
+    }
+
+    @Test
     fun `a file with nothing readable writes nothing and surfaces the error`() = runTest {
         val outcome = import(
             """{"version": 1, "rules": [{"packageName": "com.app1", "mode": "TELEPORT"}]}"""

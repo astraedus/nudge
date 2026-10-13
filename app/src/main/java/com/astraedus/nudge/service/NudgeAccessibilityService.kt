@@ -17,6 +17,7 @@ import com.astraedus.nudge.data.repository.BlockRuleRepository
 import com.astraedus.nudge.data.repository.UsageRepository
 import com.astraedus.nudge.domain.WebDomainMatcher
 import com.astraedus.nudge.domain.block.BlockLaunchGate
+import com.astraedus.nudge.domain.autokick.UseReminder
 import com.astraedus.nudge.domain.bounce.BounceDetector
 import com.astraedus.nudge.domain.block.CooldownGate
 import com.astraedus.nudge.domain.events.A11yEventType
@@ -2925,8 +2926,8 @@ class NudgeAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * One pass of the foreground-time clock: read usage once, feed the time-based auto-kick, then
-     * refresh the time-remaining overlay / daily-limit block.
+     * One pass of the foreground-time clock: read usage once, feed the time-based auto-kick and the
+     * usage reminder (#77), then refresh the time-remaining overlay / daily-limit block.
      *
      * Runs on the service's IO scope (the usage read is a binder call); anything touching the
      * WindowManager is hopped to Main.
@@ -2940,16 +2941,33 @@ class NudgeAccessibilityService : AccessibilityService() {
         // it already overrides rule evaluation and the auto-kick cooldown.
         if (entryPoint.emergencyPassManager().isPassActive(packageName)) return
 
-        if (autoKickTimeHandler.shouldKick(packageName)) {
-            withContext(Dispatchers.Main) {
-                autoKickExecutor.kick(packageName, reason = "session time")
+        when (val verdict = autoKickTimeHandler.tick(packageName)) {
+            AutoKickTimeHandler.Verdict.Kick -> {
+                withContext(Dispatchers.Main) {
+                    autoKickExecutor.kick(packageName, reason = "session time")
+                }
+                // The user is on their way home; the next foreground event restarts the clock.
+                stopForegroundTimeTicker("auto_kicked")
+                return
             }
-            // The user is on their way home; the next foreground event restarts the clock.
-            stopForegroundTimeTicker("auto_kicked")
-            return
+            // The usage reminder (#77): one notification, already recorded as this session's one,
+            // and nothing else changes -- the clock keeps running for the kick and the limit.
+            // NotificationManager is thread-safe, so this stays on the IO tick.
+            is AutoKickTimeHandler.Verdict.Remind -> UseReminderNotifier.notify(
+                applicationContext,
+                UseReminder(appLabelFor(packageName), verdict.minutes)
+            )
+            AutoKickTimeHandler.Verdict.None -> Unit
         }
 
         withContext(Dispatchers.Main) { timeRemainingHandler.maybeUpdate(packageName) }
+    }
+
+    /** The user-visible name of [packageName] for a notification, or the package itself. */
+    private fun appLabelFor(packageName: String): String = try {
+        packageManager.getApplicationLabel(packageManager.getApplicationInfo(packageName, 0)).toString()
+    } catch (_: Exception) {
+        packageName
     }
 
     private fun refreshCounterCacheIfNeeded() {
@@ -2964,33 +2982,11 @@ class NudgeAccessibilityService : AccessibilityService() {
 
     private suspend fun loadCounterCacheEntries(): Map<String, CounterCacheEntry> {
         val rules = entryPoint.blockRuleRepository().getEnabledRules().first()
-        val appEntries = rules
-            // A time-based auto-kick needs no counter and no overlay, so it must be able to put
-            // a package in the cache on its own — otherwise the hot path would never see it. A
-            // DAILY LIMIT is the same case and was missing: it needs no counter and no overlay
-            // either, but without an entry `updateForegroundTimeTicker` has nothing to read and
-            // the budget is only enforced on the next window-state event, i.e. on re-entry. The
-            // predicate is deliberately the union of "wants a drawn overlay" and
-            // `CounterCacheEntry.needsForegroundTimeTick`, so nothing that needs the clock can be
-            // filtered out before the clock is ever asked about it.
-            .filter {
-                it.showCounter ||
-                    it.showTimeRemaining ||
-                    it.autoKickAfterMinutes != null ||
-                    it.dailyLimitMinutes != null
-            }
-            .mapNotNull { rule ->
-                rule.packageName?.let { pkg ->
-                    pkg to CounterCacheEntry(
-                        showCounter = rule.showCounter,
-                        autoKickAfter = rule.autoKickAfter,
-                        showTimeRemaining = rule.showTimeRemaining,
-                        dailyLimitMinutes = rule.dailyLimitMinutes,
-                        autoKickCooldownSeconds = rule.autoKickCooldownSeconds,
-                        autoKickAfterMinutes = rule.autoKickAfterMinutes
-                    )
-                }
-            }
+        // Which rules put a package in the cache, and with what, is `CounterCacheRefresher.appEntryFor`
+        // (pure, `CounterCacheRefresherMergeTest`): its predicate is DERIVED from
+        // `CounterCacheEntry.needsForegroundTimeTick`, so a new clock consumer (the usage reminder,
+        // #77, was the fourth) cannot be filtered out here before the clock is ever asked about it.
+        val appEntries = rules.mapNotNull(CounterCacheRefresher::appEntryFor)
 
         // A rule's websites are tracked under their own keys, so a kick or a cooldown lands on the
         // site rather than on the whole browser. Gated on the resolved WEB mode (#21), never the

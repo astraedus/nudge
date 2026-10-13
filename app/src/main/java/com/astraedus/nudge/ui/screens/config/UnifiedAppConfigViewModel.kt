@@ -12,6 +12,7 @@ import com.astraedus.nudge.domain.lock.RuleWeakening
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.domain.model.FeatureMode
 import com.astraedus.nudge.ui.components.DurationInput
+import com.astraedus.nudge.ui.components.UsageReminderInput
 import com.astraedus.nudge.ui.lock.StrictModeGate
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -158,6 +159,9 @@ class UnifiedAppConfigViewModel @Inject constructor(
                 defaultAutoKickCooldownMinutesText = DurationInput.cooldownSecondsToText(defaultAppRule?.autoKickCooldownSeconds ?: 60),
                 originalAutoKickCooldownSeconds = defaultAppRule?.autoKickCooldownSeconds ?: 60,
                 originalAutoKickAfterMinutes = defaultAppRule?.autoKickAfterMinutes,
+                reminderEnabled = defaultAppRule?.remindAfterMinutes != null,
+                remindAfterMinutesText = DurationInput.minutesToText(defaultAppRule?.remindAfterMinutes),
+                originalRemindAfterMinutes = defaultAppRule?.remindAfterMinutes,
                 // Feature overrides
                 availableFeatures = availableFeatures,
                 featureOverrides = featureOverrides,
@@ -228,6 +232,14 @@ class UnifiedAppConfigViewModel @Inject constructor(
             autoKickCooldownSeconds = DurationInput.resolveCooldownSeconds(
                 state.defaultAutoKickCooldownMinutesText,
                 state.originalAutoKickCooldownSeconds
+            ),
+            // The usage reminder lives on the app-level default rule only, like the time-based
+            // kick it is measured beside: the clock is per package, so a copy on a feature or
+            // scheduled rule could only ever duplicate this one.
+            remindAfterMinutes = UsageReminderInput.resolve(
+                state.reminderEnabled,
+                state.remindAfterMinutesText,
+                state.originalRemindAfterMinutes
             ),
             webDomains = webDomains,
             webBlockMode = webBlockMode,
@@ -500,6 +512,18 @@ class UnifiedAppConfigViewModel @Inject constructor(
 
     fun setDefaultAutoKickAfterMinutesText(text: String) {
         _uiState.value = _uiState.value.copy(defaultAutoKickAfterMinutesText = text)
+    }
+
+    fun setReminderEnabled(enabled: Boolean) {
+        val state = _uiState.value
+        _uiState.value = state.copy(
+            reminderEnabled = enabled,
+            remindAfterMinutesText = UsageReminderInput.textAfterToggle(enabled, state.remindAfterMinutesText)
+        )
+    }
+
+    fun setRemindAfterMinutesText(text: String) {
+        _uiState.value = _uiState.value.copy(remindAfterMinutesText = text)
     }
 
     fun setDefaultAutoKickCooldownMinutesText(text: String) {

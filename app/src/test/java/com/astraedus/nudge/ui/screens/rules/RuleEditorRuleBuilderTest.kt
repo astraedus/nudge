@@ -28,7 +28,10 @@ class RuleEditorRuleBuilderTest {
         webDomains: String? = null,
         webBlockMode: String? = null,
         tabVanish: Boolean = true,
-        followingSteer: Boolean = false
+        followingSteer: Boolean = false,
+        reminderEnabled: Boolean = false,
+        remindAfterMinutesText: String = "",
+        originalRemindAfterMinutes: Int? = null
     ) = RuleEditorUiState(
         packageName = "com.example.app",
         existingRuleId = 7L,
@@ -43,7 +46,10 @@ class RuleEditorRuleBuilderTest {
         webDomains = webDomains,
         webBlockMode = webBlockMode,
         tabVanish = tabVanish,
-        followingSteer = followingSteer
+        followingSteer = followingSteer,
+        reminderEnabled = reminderEnabled,
+        remindAfterMinutesText = remindAfterMinutesText,
+        originalRemindAfterMinutes = originalRemindAfterMinutes
     )
 
     // ── tab vanish / following steer (regression) ──
@@ -265,5 +271,76 @@ class RuleEditorRuleBuilderTest {
         )
 
         assertEquals(900, rule.autoKickCooldownSeconds)
+    }
+
+    // ── usage reminder (#77) ──
+
+    @Test
+    fun `an enabled reminder saves its minutes with auto-kick and the counter both off`() {
+        val rule = RuleEditorViewModel.buildRule(
+            state(
+                autoKickEnabled = false,
+                showCounter = false,
+                reminderEnabled = true,
+                remindAfterMinutesText = "20"
+            )
+        )
+
+        assertEquals(20, rule.remindAfterMinutes)
+        assertNull(rule.autoKickAfterMinutes)
+    }
+
+    @Test
+    fun `a disabled reminder saves null even with text in the field`() {
+        val rule = RuleEditorViewModel.buildRule(
+            state(reminderEnabled = false, remindAfterMinutesText = "20", originalRemindAfterMinutes = 20)
+        )
+
+        assertNull(rule.remindAfterMinutes)
+    }
+
+    @Test
+    fun `an untouched reminder re-saves the original exactly`() {
+        // 2000 is beyond the field maximum; an untouched field must not clamp it.
+        val rule = RuleEditorViewModel.buildRule(
+            state(
+                reminderEnabled = true,
+                remindAfterMinutesText = DurationInput.minutesToText(2000),
+                originalRemindAfterMinutes = 2000
+            )
+        )
+
+        assertEquals(2000, rule.remindAfterMinutes)
+    }
+
+    @Test
+    fun `the reminder and the time kick are saved independently`() {
+        val rule = RuleEditorViewModel.buildRule(
+            state(
+                autoKickEnabled = true,
+                autoKickAfterMinutesText = "30",
+                reminderEnabled = true,
+                remindAfterMinutesText = "20"
+            )
+        )
+
+        assertEquals(30, rule.autoKickAfterMinutes)
+        assertEquals(20, rule.remindAfterMinutes)
+    }
+
+    @Test
+    fun `turning auto-kick off does not take the reminder with it`() {
+        val rule = RuleEditorViewModel.buildRule(
+            state(
+                autoKickEnabled = false,
+                autoKickAfterMinutesText = "30",
+                originalAutoKickAfterMinutes = 30,
+                reminderEnabled = true,
+                remindAfterMinutesText = "20"
+            )
+        )
+
+        assertNull(rule.autoKickAfterMinutes)
+        assertEquals(20, rule.remindAfterMinutes)
     }
 }

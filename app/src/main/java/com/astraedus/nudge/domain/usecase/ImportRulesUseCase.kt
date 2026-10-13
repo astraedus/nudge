@@ -174,6 +174,7 @@ class ImportRulesUseCase @Inject constructor(
                 autoKickCooldownSeconds = exportedRule.autoKickCooldownSeconds,
                 webDomains = exportedRule.webDomains,
                 autoKickAfterMinutes = exportedRule.autoKickAfterMinutes,
+                remindAfterMinutes = exportedRule.remindAfterMinutes,
                 webBlockMode = exportedRule.webBlockMode
             )
 

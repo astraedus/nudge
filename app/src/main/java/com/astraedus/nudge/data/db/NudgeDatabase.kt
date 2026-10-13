@@ -28,7 +28,7 @@ import com.astraedus.nudge.data.db.entity.UsageEvent
  * keeps passing forever after a bump nobody remembered to make twice. One constant, two readers, and
  * the compiler holds them together.
  */
-internal const val NUDGE_DB_VERSION = 11
+internal const val NUDGE_DB_VERSION = 12
 
 @Database(
     entities = [
@@ -170,6 +170,21 @@ abstract class NudgeDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE block_rules ADD COLUMN tabVanish INTEGER NOT NULL DEFAULT 1")
                 db.execSQL("ALTER TABLE block_rules ADD COLUMN followingSteer INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        /**
+         * Adds the usage reminder (issue #77), the per-rule column backing
+         * [com.astraedus.nudge.data.db.entity.BlockRule.remindAfterMinutes]: minutes of foreground
+         * time in one session before Nudge posts a single gentle notification (NULL = off).
+         *
+         * NULL is the right reading for every pre-migration rule: none of them ever asked for a
+         * reminder, so upgrading must not start nudging anyone about an app they never configured.
+         * Nullable with no `NOT NULL`, same shape as `autoKickAfterMinutes` (7 -> 8).
+         */
+        val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE block_rules ADD COLUMN remindAfterMinutes INTEGER DEFAULT NULL")
             }
         }
     }
