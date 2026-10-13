@@ -540,4 +540,139 @@ class OverlayLifecycleTest {
             assertFalse(effects.any { it is OverlayLifecycle.Effect.LaunchRedirectApp })
         }
     }
+
+    // ── the web walk-away leaves the PAGE (issue #78) ──
+
+    /**
+     * A website block's walk-away navigates the browser off the blocked URL instead of only going
+     * home, and arms NO walk-away window: the browser coming forward is the destination, and if it
+     * is still on the blocked page it must be blocked at once, never suppressed. The ordinary tail
+     * (window first, then home) rides along as the fallback, in the #26 order.
+     */
+    @Test
+    fun `a web walk-away records, clears, leaves the page, and schedules a fail-safe, in that order`() {
+        val lifecycle = OverlayLifecycle().apply { onDelivered(pendingOverlayId = 1L) }
+        val token = lifecycle.renderToken
+
+        val effects = lifecycle.onWalkAwayRequested(
+            attributedPackage, blockMode, walkAwayPackage, escapeBrowser = walkAwayPackage
+        )
+
+        assertEquals(
+            listOf(
+                OverlayLifecycle.Effect.RecordWalkAway(attributedPackage, blockMode),
+                OverlayLifecycle.Effect.MarkOverlayInactive,
+                OverlayLifecycle.Effect.LeaveBlockedPage(
+                    browserPackage = walkAwayPackage,
+                    fallback = listOf(
+                        OverlayLifecycle.Effect.ArmWalkAwayWindow(walkAwayPackage),
+                        OverlayLifecycle.Effect.GoHome
+                    )
+                ),
+                OverlayLifecycle.Effect.ScheduleFailSafeFinish(token, OverlayLifecycle.WALK_AWAY_FINISH_FAILSAFE_MS)
+            ),
+            effects
+        )
+    }
+
+    @Test
+    fun `a web walk-away neither goes home directly nor arms the window outside its fallback`() {
+        val lifecycle = OverlayLifecycle().apply { onDelivered(pendingOverlayId = 1L) }
+
+        val effects = lifecycle.onWalkAwayRequested(
+            attributedPackage, blockMode, walkAwayPackage, escapeBrowser = walkAwayPackage
+        )
+
+        assertFalse(effects.contains(OverlayLifecycle.Effect.GoHome))
+        assertFalse(effects.any { it is OverlayLifecycle.Effect.ArmWalkAwayWindow })
+        assertFalse(effects.contains(OverlayLifecycle.Effect.Finish))
+        assertFalse(effects.contains(OverlayLifecycle.Effect.GrantPassthrough))
+    }
+
+    /** The user named where they want to be: the redirect app wins over the page escape. */
+    @Test
+    fun `the redirect bubble on a web block still launches the redirect app`() {
+        val lifecycle = OverlayLifecycle().apply { onDelivered(pendingOverlayId = 1L) }
+
+        val effects = lifecycle.onWalkAwayRequested(
+            attributedPackage, blockMode, walkAwayPackage,
+            redirectPackage = redirectPackage, escapeBrowser = walkAwayPackage
+        )
+
+        assertTrue(effects.contains(OverlayLifecycle.Effect.LaunchRedirectApp(redirectPackage)))
+        assertFalse(effects.any { it is OverlayLifecycle.Effect.LeaveBlockedPage })
+    }
+
+    @Test
+    fun `an app block (no escape browser) is the ordinary walk-away home`() {
+        listOf(null, "", "  ").forEach { none ->
+            val lifecycle = OverlayLifecycle().apply { onDelivered(pendingOverlayId = 1L) }
+            val effects = lifecycle.onWalkAwayRequested(
+                attributedPackage, blockMode, walkAwayPackage, escapeBrowser = none
+            )
+            assertTrue("[$none] must go home", effects.contains(OverlayLifecycle.Effect.GoHome))
+            assertFalse(effects.any { it is OverlayLifecycle.Effect.LeaveBlockedPage })
+        }
+    }
+
+    @Test
+    fun `a web walk-away shares the once-only budget`() {
+        val lifecycle = OverlayLifecycle().apply { onDelivered(pendingOverlayId = 1L) }
+        lifecycle.onWalkAwayRequested(attributedPackage, blockMode, walkAwayPackage, escapeBrowser = walkAwayPackage)
+
+        assertTrue(
+            lifecycle.onWalkAwayRequested(attributedPackage, blockMode, walkAwayPackage, escapeBrowser = walkAwayPackage)
+                .isEmpty()
+        )
+    }
+
+    /**
+     * The fail-safe after an escape means the browser never came forward. The plain fail-safe
+     * finishes, and finishing pops the browser forward ON THE BLOCKED PAGE with the window armed to
+     * suppress the block: the one outcome a hard block may never have. So it goes home first, once,
+     * with a fresh fail-safe, and only the firing after that is the ordinary finish.
+     */
+    @Test
+    fun `the fail-safe after a web escape falls back to going home before it ever finishes`() {
+        val lifecycle = OverlayLifecycle().apply { onDelivered(pendingOverlayId = 1L) }
+        val token = lifecycle.renderToken
+        lifecycle.onWalkAwayRequested(attributedPackage, blockMode, walkAwayPackage, escapeBrowser = walkAwayPackage)
+
+        val first = lifecycle.onFailSafeFired(token, isFinishing = false, isDestroyed = false, walkAwayPackage)
+        assertEquals(
+            listOf(
+                OverlayLifecycle.Effect.LogFailSafeFired,
+                OverlayLifecycle.Effect.ArmWalkAwayWindow(walkAwayPackage),
+                OverlayLifecycle.Effect.GoHome,
+                OverlayLifecycle.Effect.ScheduleFailSafeFinish(token, OverlayLifecycle.WALK_AWAY_FINISH_FAILSAFE_MS)
+            ),
+            first
+        )
+
+        val second = lifecycle.onFailSafeFired(token, isFinishing = false, isDestroyed = false, walkAwayPackage)
+        assertEquals(
+            listOf(
+                OverlayLifecycle.Effect.LogFailSafeFired,
+                OverlayLifecycle.Effect.ArmWalkAwayWindow(walkAwayPackage),
+                OverlayLifecycle.Effect.Finish
+            ),
+            second
+        )
+    }
+
+    /** The escape flag is per delivery: a new block on this instance has a plain fail-safe again. */
+    @Test
+    fun `a re-delivery after a web escape gets the ordinary fail-safe`() {
+        val lifecycle = OverlayLifecycle().apply { onDelivered(pendingOverlayId = 1L) }
+        lifecycle.onWalkAwayRequested(attributedPackage, blockMode, walkAwayPackage, escapeBrowser = walkAwayPackage)
+
+        lifecycle.onDelivered(pendingOverlayId = 2L)
+        lifecycle.onWalkAwayRequested(attributedPackage, blockMode, walkAwayPackage)
+        val effects = lifecycle.onFailSafeFired(
+            lifecycle.renderToken, isFinishing = false, isDestroyed = false, walkAwayPackage
+        )
+
+        assertTrue(effects.contains(OverlayLifecycle.Effect.Finish))
+        assertFalse(effects.contains(OverlayLifecycle.Effect.GoHome))
+    }
 }
