@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -124,6 +123,26 @@ fun DelayContent(
                 Spacer(modifier = Modifier.height(24.dp))
             }
 
+            // Title and subtitle ABOVE the visual keep the visual and the leave button together
+            // in the vertical middle of the (centred) column.
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.onBackground,
+                textAlign = TextAlign.Center
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center
+            )
+
+            Spacer(modifier = Modifier.height(32.dp))
+
             Box(
                 contentAlignment = Alignment.Center,
                 modifier = Modifier.size(180.dp)
@@ -143,34 +162,16 @@ fun DelayContent(
                 )
             }
 
-            Spacer(modifier = Modifier.height(32.dp))
+            Spacer(Modifier.height(24.dp))
 
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.onBackground,
-                textAlign = TextAlign.Center
-            )
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center
-            )
+            // The way out sits right under the countdown, big and centred. The ring itself is never
+            // clickable: leaving is this button, not a tap on the clock.
+            LeaveButton(onClick = onCancel)
 
             Spacer(Modifier.height(24.dp))
 
             // The redirect app: one tap leaves for somewhere better, through the same walk-away.
             redirect()
-
-            Spacer(Modifier.height(24.dp))
-
-            OutlinedButton(onClick = onCancel) {
-                Text("I changed my mind")
-            }
 
             EmergencyPassAction(
                 canUse = canUseEmergencyPass,

@@ -4,6 +4,15 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+### Changed
+- The way out of a block screen is now the biggest, easiest thing on it. "I changed my mind" (delay,
+  hold, breathing), "Go Back" (hard block) and "Go home" (Nuke) are one large filled button sitting
+  directly under the centre of the screen, above the redirect-app bubble and the daily pass. On the
+  delay and hold screens the headline moved above the countdown / hold target so the target and the
+  button stay together in the middle of the screen. The countdown ring is not tappable; on a hold the
+  centre is still the press-and-hold that lets you in. Layout only, nothing about when or how a block
+  ends has changed.
+
 ## [1.21.0] - 2026-10-05
 
 ### Added

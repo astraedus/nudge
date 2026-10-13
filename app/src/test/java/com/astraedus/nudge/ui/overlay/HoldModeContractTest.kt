@@ -232,8 +232,13 @@ class HoldModeContractTest {
     @Test
     fun `walking away is still available during a hold`() {
         assertTrue(
-            "HoldContent must render the walk-away button",
-            content.contains("""Text("I changed my mind")""")
+            "HoldContent must render the walk-away button, wired to its onCancel",
+            content.contains("LeaveButton(onClick = onCancel)")
+        )
+        assertTrue(
+            "and the shared button's default label is still the one this overlay always had",
+            read("java/com/astraedus/nudge/ui/overlay/LeaveButton.kt")
+                .contains("""text: String = "I changed my mind"""")
         )
         assertTrue(
             "and route it to the activity's walk-away path, which never grants passthrough",

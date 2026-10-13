@@ -189,6 +189,17 @@ top and bottom, "I changed my mind" included. Each body now sits in `wrapContent
 move, which would cancel a HOLD whose thumb drifts. On a screen where the body fits, HOLD sees exactly the
 input it saw before.
 
+### The leave button (`LeaveButton`)
+
+Every block body's way out is ONE shared composable, `LeaveButton`: a filled primary `Button`, at least 56dp
+tall, `widthIn(max = 320.dp).fillMaxWidth()` (cap first, or the cap never bites), `titleMedium` label.
+"I changed my mind" on Delay/Hold/Breathing, "Go Back" on the hard block, "Go home" on Nuke. It sits
+directly under the centre visual, ABOVE the redirect bubble, the daily pass and the rule footer, so leaving
+is the biggest and easiest target on the screen. On Delay and Hold the title (and Delay's subtitle) moved
+above the visual so the visual and the button stay together in the vertical middle. The countdown ring and
+the `HoldTarget` are never the exit: on HOLD the centre is the press-and-hold that lets the user IN.
+Layout only; every callback is the body's existing one. Pinned by `LeaveButtonContractTest`.
+
 ### Tests
 
 - `RedirectAppPolicyTest` (L1): rule targets incl. groups and disabled rules, the excluded set, every
