@@ -566,4 +566,120 @@ class RuleExporterTest {
         assertEquals(60, rule.autoKickCooldownSeconds)
         assertNull(rule.webDomains)
     }
+
+    @Test
+    fun `roundtrip preserves remindAfterMinutes field`() {
+        val rules = listOf(
+            BlockRule(
+                id = 1,
+                packageName = "com.instagram.android",
+                mode = "DELAY",
+                delaySeconds = 15,
+                enabled = true,
+                remindAfterMinutes = 20
+            )
+        )
+
+        val json = exporter.exportRules(rules, emptyList(), emptyMap())
+        val result = exporter.importRules(json)
+
+        assertNull(result.error)
+        assertEquals(1, result.rules.size)
+        assertEquals(20, result.rules[0].remindAfterMinutes)
+    }
+
+    @Test
+    fun `roundtrip preserves null remindAfterMinutes field`() {
+        val rules = listOf(
+            BlockRule(
+                id = 1,
+                packageName = "com.example.app",
+                mode = "HARD_BLOCK",
+                enabled = true,
+                remindAfterMinutes = null
+            )
+        )
+
+        val json = exporter.exportRules(rules, emptyList(), emptyMap())
+        val rule = JSONObject(json).getJSONArray("rules").getJSONObject(0)
+        assertTrue(rule.has("remindAfterMinutes"))
+        assertTrue(rule.isNull("remindAfterMinutes"))
+
+        val result = exporter.importRules(json)
+        assertNull(result.error)
+        assertEquals(1, result.rules.size)
+        assertNull(result.rules[0].remindAfterMinutes)
+    }
+
+    @Test
+    fun `import of a file without remindAfterMinutes reads null`() {
+        // An export written before the usage reminder existed carries no such key at all.
+        val json = """
+        {
+          "version": 1,
+          "exportedAt": 1700000000000,
+          "rules": [{
+            "packageName": "com.example.app",
+            "groupName": null,
+            "mode": "DELAY",
+            "delaySeconds": 15,
+            "dailyLimitMinutes": null,
+            "enabled": true,
+            "scheduleDays": null,
+            "scheduleStartMinute": null,
+            "scheduleEndMinute": null,
+            "inAppFeatures": null,
+            "grayscale": false,
+            "showCounter": false,
+            "autoKickAfter": null,
+            "showTimeRemaining": false,
+            "autoKickCooldownSeconds": 60,
+            "webDomains": null,
+            "autoKickAfterMinutes": 30
+          }],
+          "groups": []
+        }
+        """.trimIndent()
+
+        val result = exporter.importRules(json)
+
+        assertNull(result.error)
+        assertEquals(1, result.rules.size)
+        assertNull(result.rules[0].remindAfterMinutes)
+        assertEquals(30, result.rules[0].autoKickAfterMinutes)
+    }
+
+    @Test
+    fun `roundtrip keeps autoKickAfterMinutes and remindAfterMinutes independent`() {
+        val rules = listOf(
+            BlockRule(
+                id = 1,
+                packageName = "com.instagram.android",
+                mode = "DELAY",
+                delaySeconds = 15,
+                enabled = true,
+                autoKickAfterMinutes = 30,
+                remindAfterMinutes = 20
+            ),
+            BlockRule(
+                id = 2,
+                packageName = "com.twitter.android",
+                mode = "DELAY",
+                delaySeconds = 15,
+                enabled = true,
+                autoKickAfterMinutes = null,
+                remindAfterMinutes = 15
+            )
+        )
+
+        val json = exporter.exportRules(rules, emptyList(), emptyMap())
+        val result = exporter.importRules(json)
+
+        assertNull(result.error)
+        assertEquals(2, result.rules.size)
+        assertEquals(30, result.rules[0].autoKickAfterMinutes)
+        assertEquals(20, result.rules[0].remindAfterMinutes)
+        assertNull(result.rules[1].autoKickAfterMinutes)
+        assertEquals(15, result.rules[1].remindAfterMinutes)
+    }
 }

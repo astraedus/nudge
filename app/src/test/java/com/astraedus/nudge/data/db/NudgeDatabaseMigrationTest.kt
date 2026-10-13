@@ -186,6 +186,22 @@ class NudgeDatabaseMigrationTest {
     }
 
     @Test
+    fun `MIGRATION_11_12 adds remindAfterMinutes column`() {
+        val db = RecordingDatabase()
+
+        NudgeDatabase.MIGRATION_11_12.migrate(db.proxy)
+
+        assertEquals(
+            listOf("ALTER TABLE block_rules ADD COLUMN remindAfterMinutes INTEGER DEFAULT NULL"),
+            db.sql
+        )
+        // Existing rules must read as "no reminder", never as a default that starts nudging.
+        assert(!db.sql.single().contains("NOT NULL")) {
+            "remindAfterMinutes must stay nullable, got: ${db.sql.single()}"
+        }
+    }
+
+    @Test
     fun `all migrations registered from version 1 to current`() {
         val allMigrations = listOf(
             NudgeDatabase.MIGRATION_1_2,
@@ -197,7 +213,8 @@ class NudgeDatabaseMigrationTest {
             NudgeDatabase.MIGRATION_7_8,
             NudgeDatabase.MIGRATION_8_9,
             NudgeDatabase.MIGRATION_9_10,
-            NudgeDatabase.MIGRATION_10_11
+            NudgeDatabase.MIGRATION_10_11,
+            NudgeDatabase.MIGRATION_11_12
         )
 
         // Read from production, not hand-typed: a hand-kept constant here is exactly the

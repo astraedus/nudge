@@ -121,6 +121,7 @@ class RuleExporter @Inject constructor() {
                 autoKickCooldownSeconds = rule.autoKickCooldownSeconds,
                 webDomains = rule.webDomains,
                 autoKickAfterMinutes = rule.autoKickAfterMinutes,
+                remindAfterMinutes = rule.remindAfterMinutes,
                 webBlockMode = rule.webBlockMode,
                 tabVanish = rule.tabVanish,
                 followingSteer = rule.followingSteer
@@ -289,6 +290,7 @@ class RuleExporter @Inject constructor() {
             obj.put("autoKickCooldownSeconds", rule.autoKickCooldownSeconds)
             obj.put("webDomains", rule.webDomains ?: JSONObject.NULL)
             obj.put("autoKickAfterMinutes", rule.autoKickAfterMinutes ?: JSONObject.NULL)
+            obj.put("remindAfterMinutes", rule.remindAfterMinutes ?: JSONObject.NULL)
             obj.put("webBlockMode", rule.webBlockMode ?: JSONObject.NULL)
             obj.put("tabVanish", rule.tabVanish)
             obj.put("followingSteer", rule.followingSteer)
@@ -527,6 +529,7 @@ class RuleExporter @Inject constructor() {
             autoKickCooldownSeconds = obj.optInt("autoKickCooldownSeconds", 60),
             webDomains = obj.optStringOrNull("webDomains"),
             autoKickAfterMinutes = obj.optIntOrNull("autoKickAfterMinutes"),
+            remindAfterMinutes = obj.optIntOrNull("remindAfterMinutes"),
             // Null (absent, or written by an older Nudge) = inherit the app-level mode, which is
             // exactly what those exports meant. An unrecognized value is tolerated rather than
             // failing the import: WebBlockMode falls back to the app-level mode for it.

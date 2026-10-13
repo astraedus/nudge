@@ -108,6 +108,11 @@ data class ExportedRule(
     val autoKickCooldownSeconds: Int,
     val webDomains: String? = null,
     val autoKickAfterMinutes: Int? = null,
+    /**
+     * See `BlockRule.remindAfterMinutes` (issue #77). Null = no usage reminder, which is also what
+     * a backup written before this field existed means: such a file carries no key at all.
+     */
+    val remindAfterMinutes: Int? = null,
     /** Independent block mode for [webDomains]; null = inherit [mode]. See `BlockRule.webBlockMode`. */
     val webBlockMode: String? = null,
     /**
