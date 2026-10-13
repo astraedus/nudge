@@ -344,3 +344,9 @@ resets, so "budget remaining at entry" cannot be a constant on a second run of t
 Calculator without leaving for `remaining + 45s` — one tick of slack, not 20s — watching logcat rather
 than the UI tree, and asserts the Blocked tile moves by exactly +1 for the whole episode including a
 re-front of the app that must show the limit again without counting again.
+
+## [ ] Usage reminder (#77), gaps left on purpose at the first cut
+
+- **Websites get no reminder.** `CounterCacheRefresher.webEntriesFor` never carries `remindAfterMinutes`, and the web clock reaches `AutoKickTimeHandler` through `shouldKick`, which ignores reminders. Wiring it is small (pass the field into `webEntriesFor`, call `tick` from the web clock, post with the DOMAIN as the label rather than the browser), but it changes the web path another lane was editing. The editors say "Apps only" when a rule also blocks websites, so no control silently does nothing.
+- **One notification id for every app.** A second app's reminder replaces the first app's in the shade. Deliberate (no pile-up), revisit only if a user asks to see both.
+- **The reminder is suppressed while the daily 2-minute pass is active** (`tickForegroundTime` returns early for the pass, before the clock is read), and the session keeps accruing: the reminder can then land on the first tick after the pass ends. Consistent with the kick, which behaves identically.

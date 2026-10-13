@@ -22,6 +22,7 @@ Covers the floating interaction counter, the time-remaining overlay, both auto-k
 - **Auto-kick** — optional per-rule feature: sends user to home screen after N scrolls/taps in one session. Configurable threshold 5-100 (step 5, default 30). Session counter resets after kick. Stored as `autoKickAfter` on BlockRule. Requires the interaction counter (it is what feeds the count).
 - **Auto-kick by time (v1.10.0)** — the second trigger, per-rule `autoKickAfterMinutes` (null = off). Kicks after N minutes of foreground time in one session. Independent of the interaction trigger — both can be set, whichever fires first kicks — and independent of the interaction counter, because its whole point is PASSIVE use (autoplaying video produces zero tap/scroll events). See "Time-based auto-kick architecture".
 - **Auto-kick cooldown** — configurable per-rule, stored as `autoKickCooldownSeconds` on BlockRule. After auto-kick, returning to the app forces a DELAY overlay for the remaining cooldown. Session counter preserved during cooldown. **v1.10.0**: the 0-300s slider became a free-form MINUTES input (0-1440), so issue #6's "30 minutes on, 15 minutes off" is expressible. See "Duration inputs".
+- **Usage reminder (#77)**, per-rule `remindAfterMinutes` (null = off): ONE notification after N minutes of session foreground time, on the time kick's clock and session, never instead of it. The kick wins when it is at or below the reminder. See "Usage reminder" at the end.
 - **Every kick is also a "wall" for the bounce check-in (v1.21.0).** `AutoKickExecutor.kick` reports the kicked key through `onKicked` (a `web:<domain>` key is mapped back to the browser). The executor itself does nothing different. See `docs/architecture/bounce-check-in.md`.
 
 > **The overlays' windows are part of the event pipeline, not just pixels.** Both are
@@ -306,3 +307,86 @@ launches, claims and logs NOTHING itself; `enforceExhaustedBudget` re-evaluates 
 to a HARD_BLOCK; one `wasBlocked` writer in the service, still). L6:
 `scripts/device-qa.sh daily-limit-midsession`, which sits in Calculator with a derived budget and
 asserts the limit screen arrives without leaving the app, for exactly +1 on the Blocked tile.
+
+## Usage reminder, "remind me instead of kicking me" (issue #77)
+
+[#77](https://github.com/astraedus/nudge/issues/77): "add a reminder after using the active app for N
+minutes, just a reminder instead of auto-kick". Per-rule `BlockRule.remindAfterMinutes: Int?` (null =
+off, DB 11->12). After N minutes of foreground time in one session, ONE notification ("You've been on
+Instagram for 20 min / Just a heads-up. Still what you came here for?") and nothing else changes: no
+kick, no cooldown, no session reset, the clock keeps running for the kick and the daily limit.
+
+**A separate field, never a mode of the time kick.** "Remind instead of kick" as a switch on
+`autoKickAfterMinutes` would turn a Strict-locked kick into a notification, and `RuleWeakening` would
+have to police the switch. A sibling field only ever adds. A rule can have a reminder, a kick, or both.
+
+**It is the time kick's twin, on the same clock.**
+- `domain/autokick/UseReminderEvaluator` (pure) mirrors `TimeKickEvaluator`'s decisions (`START_SESSION`,
+  `REBASELINE`, `WAIT`) plus `OFF`, `SUPERSEDED_BY_KICK`, `ALREADY_REMINDED`, `REMIND`. A stored 0 is off,
+  never "remind immediately", the same rule as the kick's.
+- `AutoKickTimeHandler.tick(pkg)` does ONE usage read per tick for both consumers and returns
+  `Verdict.None | Kick | Remind(minutes)`. Baseline bookkeeping happens once, whichever consumer is
+  configured, so a reminder-only package gets a session baseline on its own. `shouldKick(pkg)` is the
+  kick-only view of the same pass, kept for the web clock, and it never consumes a reminder (a reminder
+  marked done by a call that cannot post it would be a dropped message).
+- **One per session**: `InteractionTracker.sessionReminded`, cleared in exactly the branches that clear
+  `sessionUsageBaseline` (the 5-minute `SESSION_EXPIRY_MS` on `onAppChanged`, and `resetSession`, which
+  the kick calls). So a quick tab-out-and-back neither re-arms the reminder nor restarts its countdown,
+  a real break starts a new session with its own reminder, and after a kick the next session has one
+  too. The flag is set by `tick` BEFORE the verdict is returned, so a post that fails is not retried
+  every 30s: one gentle notification, never a nag.
+
+**The kick wins.** `UseReminderEvaluator.effectiveMinutes(remind, kick)` is the one predicate: when the
+package also has a positive time kick at or below the reminder, the reminder is superseded and never
+fires (a notification at the minute you are thrown out says nothing the kick does not). A kick of 0 is
+"no kick" and never suppresses a reminder. Precedence is decided on the MERGED cache entry at read time,
+so a kick on one rule silences a later reminder on another rule for the same app. If both are due on the
+same tick (a slow tick), only the kick comes back. The editors show the same predicate as a hint under
+the field ("Auto-kick at 20 min comes first, so this reminder won't show"), pinned by an exhaustive
+grid test against the engine's predicate.
+
+**The cache admission fix that came with it.** A reminder-only rule draws nothing and kicks nothing, so
+without a cache entry the 30s clock never starts for it and the reminder silently never fires, the same
+hole a plain daily limit had before v1.18.4. `needsForegroundTimeTick` gained the reminder as its fourth
+arm, and the service's hand-kept `appEntries` filter was replaced by `CounterCacheRefresher.appEntryFor`,
+whose predicate is DERIVED from `needsForegroundTimeTick` (plus "wants a drawn overlay"). The next clock
+consumer joins the cache by being added to that one property; a class test asserts every clock field
+alone admits the rule and starts the clock. `configuresAutoKick` is unchanged: a reminder can never keep
+an auto-kick cooldown alive.
+
+**Delivery.** `service/UseReminderNotifier`: its own channel `nudge_usage_reminders` ("Usage
+reminders", `IMPORTANCE_DEFAULT`, mutable on its own), notification id 4, `PendingIntent` request code 4
+(uniqueness pinned by `SharedNamespaceUniquenessTest`). One id for every app, so a newer reminder
+replaces an older one instead of stacking. Tap opens Nudge's home screen. A refused post
+(`SecurityException`) is swallowed, as everywhere on the accessibility thread. The label is the app's
+`getApplicationLabel`, falling back to the package name.
+
+**Editors.** Both editors (`UnifiedAppConfigScreen`, the one users reach from the app list and the
+active rules list, and the legacy `RuleEditorScreen`) render one shared `ui/components/UsageReminderSection`
+right under auto-kick: title + help + switch, a minutes field ("Remind me after", blank = off; switching
+on with an empty field fills 20 so the switch is never a no-op), the kick-precedence hint, and, while
+on, an error-coloured "Notifications are off" line that opens Nudge's notification settings. Turning it
+on on Android 13+ without `POST_NOTIFICATIONS` asks right there (`ui/components/NotificationAccess`,
+now shared with the "Bro. wtf." row). It lives on the app-level default rule only; feature-override and
+scheduled rules do not carry it (the clock is per package).
+
+**Not a weakening axis.** Like `showCounter`, `showTimeRemaining` and `grayscale`, a reminder enforces
+nothing, so adding, lowering, raising or removing one never asks for the Strict Mode challenge
+(`RuleWeakeningTest` pins all four, and that removing it alongside a raised kick still bites on the kick).
+
+**Scope: apps only.** `webEntriesFor` never carries a reminder (pinned by `CounterCacheWebEntriesTest`),
+and the help text says "Apps only" when the rule also blocks websites. A web reminder would need the
+site, not the browser, named in the notification; `docs/BACKLOG.md` has it.
+
+**Export/import** carries `remindAfterMinutes` (absent in an older file = null). Format version not
+bumped, same as `tabVanish`/`followingSteer`: an older importer ignores unknown per-rule keys.
+
+**Tests.** L1: `UseReminderEvaluatorTest`, `UseReminderTest` (copy, never scolds), `UseReminderTickTest`
+(20: fires once at N and not before, not again in the session, quick return keeps the session, a real
+break re-arms, `resetSession` after a kick re-arms, kick precedence in every shape, merged-rule
+precedence, zero values, failing and backwards reads, `shouldKick` never consumes it, per-package
+isolation), `CounterCacheRefresherMergeTest` (the fourth arm, `appEntryFor` and its class test),
+`UsageReminderInputTest`, `RuleEditorRuleBuilderTest`, `UnifiedAppConfigViewModelTest`,
+`RuleWeakeningTest`, `RuleExporterTest`, `ImportRulesUseCaseTest`, `NudgeDatabaseMigrationTest`. L6: the
+device script in the PR body (a 1-minute reminder, then `dumpsys notification` for id 4 on
+`nudge_usage_reminders`).

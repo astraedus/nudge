@@ -58,6 +58,11 @@ object RuleWeakening {
      *    never changes how much protection a rule enforces (do not add it later "by symmetry" with
      *    tabVanish; it belongs to a different axis entirely).
      *
+     *  - `remindAfterMinutes` (#77) is deliberately NOT a dimension either: a usage reminder is a
+     *    notification and enforces nothing, exactly like `showCounter`, `showTimeRemaining` and
+     *    `grayscale`, none of which are dimensions. It is a SEPARATE field from the time kick
+     *    precisely so that "remind instead of kick" can never soften a kick (RuleWeakeningTest).
+     *
      * Strengthening or unchanged on all dimensions -> false.
      */
     fun isWeakening(old: BlockRule, new: BlockRule): Boolean {
