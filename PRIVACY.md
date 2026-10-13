@@ -22,7 +22,7 @@ Nudge stores the following data **locally on your device only**, using Room (SQL
 Nudge uses Android's Accessibility Service for two things:
 
 1. **Foreground app detection** -- knowing which app you opened (e.g. `com.instagram.android`) to evaluate block rules.
-2. **In-app feature detection** -- identifying specific screens within an app (YouTube Shorts, Instagram Reels/Explore) so Nudge can block addictive feeds without blocking the entire app.
+2. **In-app feature detection** -- identifying specific screens within an app (YouTube Shorts, Instagram Reels) so Nudge can block addictive feeds without blocking the entire app.
 
 ### What it reads
 
