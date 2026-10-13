@@ -135,20 +135,30 @@ object ContentFilterMatcher {
     )
 
     /**
-     * Ambiguous slang tokens that are dangerous as raw substring matches (e.g. "bbc"
-     * would block bbc.com news) but genuinely wanted. These are matched ONLY as WHOLE
-     * WORDS inside a URL's SEARCH QUERY (never the host), via [matchesQueryKeyword],
-     * and the whole feature is gated behind an opt-in pref so the general userbase is
-     * unaffected.
+     * Ambiguous slang tokens that are dangerous as raw substring matches (e.g. "fetish"
+     * would block wikipedia.org/wiki/Commodity_fetishism) but genuinely wanted. These are
+     * matched ONLY as WHOLE WORDS inside a URL's SEARCH QUERY (never the host), via
+     * [matchesQueryKeyword], and the whole feature is gated behind an opt-in pref so the
+     * general userbase is unaffected.
      *
      * Curation: only genuinely-wanted-but-ambiguous tokens whose whole-word match in a
      * search query is a strong signal. We deliberately skip tokens too collision-prone
      * even as a whole word (e.g. bare "dp", which appears innocently in countless queries,
      * and "escort"/"hardcore"/"creampie", whose benign whole-word searches — "ford escort
      * review", "hardcore punk bands", "creampie recipe" — are exactly what we protect).
+     *
+     * The same membership test applies here as to [DEFAULT_KEYWORDS]. Three tokens were
+     * removed (issue #78) because their dominant everyday meaning is innocent, so a normal
+     * search blocked under strict mode:
+     *  - "bbc" is the broadcaster ("bbc news", "bbc iplayer").
+     *  - "cnc" is computer numerical control ("cnc machine", "cnc router").
+     *  - "sph" is school of public health, the sphere column of a lens prescription, or
+     *    smoothed-particle hydrodynamics.
+     * Kept despite a real innocent use, because the adult sense is still the dominant
+     * single-word search: "bbw" (Bath & Body Works shorthand), "bwc" (body-worn camera),
+     * "jav" (javelin shorthand).
      */
     val AMBIGUOUS_QUERY_KEYWORDS: List<String> = listOf(
-        "bbc",
         "fetish",
         "bwc",
         "bbw",
@@ -156,8 +166,6 @@ object ContentFilterMatcher {
         "gilf",
         "dilf",
         "jav",
-        "sph",
-        "cnc",
         "femdom",
         "cuckold",
         "hotwife"
@@ -288,11 +296,11 @@ object ContentFilterMatcher {
     /**
      * True if any keyword appears as a WHOLE WORD inside the URL's search query (extracted
      * via [extractSearchQuery]). Returns false when the URL is not a search URL — the host
-     * is NEVER inspected, so "https://bbc.com/news" does not match. Whole-word matching means
-     * "bbc" matches the query "bbc" / "bbc porn" but NOT "clubbc" / "abbcd".
+     * is NEVER inspected, so "https://example.com/news" does not match. Whole-word matching means
+     * "fetish" matches the query "fetish" / "fetish gear" but NOT "fetishism" / "afetish".
      *
      * Aggressive-opt-in tradeoff: because this matches whole words in the raw query, a legit
-     * multi-word news query that happens to contain the word (e.g. "bbc news") WILL match.
+     * multi-word query that happens to contain the word (e.g. "bbw candle sale") WILL match.
      * That is the intended cost of the opt-in strict-keyword mode — see the pref gate.
      */
     fun matchesQueryKeyword(urlBarText: String, keywords: List<String>): Boolean {
