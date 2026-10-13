@@ -62,6 +62,12 @@ data class ExportedSettings(
     val contentFilterMode: String? = null,
     /** "Strict keyword matching" sub-toggle of the content filter. */
     val contentFilterStrictKeywords: Boolean? = null,
+    /**
+     * "Allowed words & sites": the user's exceptions to strict keyword matching, canonical and
+     * sorted. An EMPTY list is a real value ("no exceptions") and replaces the device's list; null
+     * means the file does not carry it. Adding entries on import is weakening (Strict Mode gated).
+     */
+    val contentFilterAllowlist: List<String>? = null,
     /** Strict Mode ("commitment lock") master switch. */
     val strictModeEnabled: Boolean? = null,
     /** Strict Mode difficulty: characters the unlock challenge asks the user to type. */
@@ -82,6 +88,7 @@ data class ExportedSettings(
         get() = contentFilterEnabled == null &&
             contentFilterMode == null &&
             contentFilterStrictKeywords == null &&
+            contentFilterAllowlist == null &&
             strictModeEnabled == null &&
             strictModeChallengeLength == null &&
             emergencyPassEnabled == null &&

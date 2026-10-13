@@ -26,6 +26,8 @@ Fix: Added "All Time" stats alongside "Today" on the home screen. When adding ne
 
 The web content filter blocks adult sites but MUST stay generically framed everywhere user-visible: setting title "Block restricted websites", overlay rule name "Restricted content". Blocklist (`assets/content_filter_domains.txt`) + `DEFAULT_KEYWORDS` live only in code/assets. When grepping for accidental leaks, note `hasExisting`/`hasExceeded` are false-positive substring hits for "sex"/"xxx", exactly the ambiguous-token class the keyword list avoids.
 
+**Refined 2026-10-13 (issue #78):** a user asked what the switch actually targets, and "nothing tells you" was a fair complaint. The rule is now: name the CATEGORY in general terms ("Blocks adult and explicit sites and searches."), never a site, a keyword, or anything that reveals whether one specific site is on the list. The title and the overlay rule name are unchanged.
+
 ## A transient GitHub API 5xx must not fail the Release run (2026-07-20)
 
 Release run 29710052363 failed on a docs-only commit: the "Publish rolling dev build (main)" step of `.github/workflows/release.yml` hit `error checking for existing release: HTTP 503` from `gh release create`. The build, tests, AAB/APK, and artifact upload had ALL succeeded -- only the convenience `main-latest` publish flaked, and it had no retry, so one momentary GitHub API blip sank the whole run.

@@ -11,6 +11,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.astraedus.nudge.data.export.ExportedSettings
+import com.astraedus.nudge.domain.ContentFilterAllowlist
 import com.astraedus.nudge.domain.nuke.NukeKeyKind
 import com.astraedus.nudge.domain.nuke.NukeState
 import com.astraedus.nudge.service.GlobalEnabledProvider
@@ -36,6 +37,7 @@ class NudgePreferences @Inject constructor(
         val CONTENT_FILTER_ENABLED = booleanPreferencesKey("content_filter_enabled")
         val CONTENT_FILTER_MODE = stringPreferencesKey("content_filter_mode")
         val CONTENT_FILTER_STRICT_KEYWORDS = booleanPreferencesKey("content_filter_strict_keywords")
+        val CONTENT_FILTER_ALLOWLIST = stringSetPreferencesKey("content_filter_allowlist")
         val CUSTOM_DELAY_TITLES = stringPreferencesKey("custom_delay_titles")
         val CUSTOM_DELAY_SUBTITLES = stringPreferencesKey("custom_delay_subtitles")
         val CUSTOM_HARD_BLOCK_MESSAGES = stringPreferencesKey("custom_hard_block_messages")
@@ -134,6 +136,36 @@ class NudgePreferences @Inject constructor(
     suspend fun setContentFilterStrictKeywords(enabled: Boolean) {
         context.dataStore.edit { prefs ->
             prefs[Keys.CONTENT_FILTER_STRICT_KEYWORDS] = enabled
+        }
+    }
+
+    /**
+     * "Allowed words & sites": the user's exceptions to strict keyword matching (issue #78), stored
+     * in canonical form ([ContentFilterAllowlist.normalize]). They only ever excuse a strict-layer
+     * hit; see [ContentFilterAllowlist] for what they can never override.
+     *
+     * Adding an entry WEAKENS the filter, so the screen routes additions through the Strict Mode
+     * gate ([com.astraedus.nudge.domain.lock.ContentFilterAllowlistWeakening]); these writers do not
+     * gate, exactly like every other setter here.
+     */
+    val contentFilterAllowlist: Flow<Set<String>> = context.dataStore.data
+        .map { prefs -> prefs[Keys.CONTENT_FILTER_ALLOWLIST] ?: emptySet() }
+        .distinctUntilChanged()
+
+    /** Add one entry, normalised; invalid input is dropped and the [ContentFilterAllowlist.MAX_ENTRIES] cap holds. */
+    suspend fun addContentFilterAllowlistEntry(raw: String) {
+        context.dataStore.edit { prefs ->
+            val current = prefs[Keys.CONTENT_FILTER_ALLOWLIST] ?: emptySet()
+            prefs[Keys.CONTENT_FILTER_ALLOWLIST] =
+                ContentFilterAllowlist.canonicalize(current + raw).toSet()
+        }
+    }
+
+    /** Remove one entry. Always allowed: removing an exception can only block more. */
+    suspend fun removeContentFilterAllowlistEntry(entry: String) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.CONTENT_FILTER_ALLOWLIST] =
+                (prefs[Keys.CONTENT_FILTER_ALLOWLIST] ?: emptySet()) - entry
         }
     }
 
@@ -413,6 +445,7 @@ class NudgePreferences @Inject constructor(
         contentFilterEnabled = contentFilterEnabled.first(),
         contentFilterMode = contentFilterMode.first(),
         contentFilterStrictKeywords = contentFilterStrictKeywords.first(),
+        contentFilterAllowlist = contentFilterAllowlist.first().sorted(),
         strictModeEnabled = isStrictModeEnabled.first(),
         strictModeChallengeLength = strictModeChallengeLength.first(),
         emergencyPassEnabled = emergencyPassEnabled.first(),
@@ -440,6 +473,11 @@ class NudgePreferences @Inject constructor(
             settings.contentFilterMode?.let { prefs[Keys.CONTENT_FILTER_MODE] = it }
             settings.contentFilterStrictKeywords?.let {
                 prefs[Keys.CONTENT_FILTER_STRICT_KEYWORDS] = it
+            }
+            // REPLACES this device's list, like every other setting a backup carries. An import
+            // that adds entries is weakening and was gated before this ran (ImportedSettingsWeakening).
+            settings.contentFilterAllowlist?.let {
+                prefs[Keys.CONTENT_FILTER_ALLOWLIST] = ContentFilterAllowlist.canonicalize(it).toSet()
             }
             settings.strictModeEnabled?.let { prefs[Keys.STRICT_MODE_ENABLED] = it }
             settings.strictModeChallengeLength?.let {

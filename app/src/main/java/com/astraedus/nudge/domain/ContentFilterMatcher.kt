@@ -302,14 +302,43 @@ object ContentFilterMatcher {
      * Aggressive-opt-in tradeoff: because this matches whole words in the raw query, a legit
      * multi-word query that happens to contain the word (e.g. "bbw candle sale") WILL match.
      * That is the intended cost of the opt-in strict-keyword mode — see the pref gate.
+     *
+     * [allowlist] is the user's way out of that cost (issue #78): a search on an allowed site, or a
+     * keyword hit lying entirely inside an allowed word or phrase, does not match. The default is
+     * [ContentFilterAllowlist.EMPTY], i.e. no exceptions, which is the fail-closed direction.
      */
-    fun matchesQueryKeyword(urlBarText: String, keywords: List<String>): Boolean {
+    fun matchesQueryKeyword(
+        urlBarText: String,
+        keywords: List<String>,
+        allowlist: ContentFilterAllowlist = ContentFilterAllowlist.EMPTY
+    ): Boolean {
+        if (allowlist.coversHost(urlBarText)) return false
         val query = extractSearchQuery(urlBarText) ?: return false
         if (query.isBlank()) return false
         return keywords.any { kw ->
-            kw.isNotBlank() && Regex("""\b${Regex.escape(kw.lowercase())}\b""").containsMatchIn(query)
+            kw.isNotBlank() &&
+                Regex("""\b${Regex.escape(kw.lowercase())}\b""").findAll(query)
+                    .any { hit -> !allowlist.excuses(query, hit.range) }
         }
     }
+
+    /**
+     * The whole content-filter verdict for one URL-bar string: the curated domain list, OR a
+     * high-signal keyword substring, OR (only when [strictKeywords]) an ambiguous keyword as a whole
+     * word in the search query that [allowlist] does not excuse.
+     *
+     * The allowlist is threaded into the strict layer ONLY. The first two layers are deliberately
+     * out of its reach; see [ContentFilterAllowlist] for why.
+     */
+    fun isBlocked(
+        urlBarText: String,
+        blocklist: Set<String>,
+        strictKeywords: Boolean,
+        allowlist: ContentFilterAllowlist
+    ): Boolean =
+        matchesDomain(urlBarText, blocklist) ||
+            matchesKeyword(urlBarText, DEFAULT_KEYWORDS) ||
+            (strictKeywords && matchesQueryKeyword(urlBarText, AMBIGUOUS_QUERY_KEYWORDS, allowlist))
 
     private val WEB_SCHEME_PREFIXES = listOf("http://", "https://")
 

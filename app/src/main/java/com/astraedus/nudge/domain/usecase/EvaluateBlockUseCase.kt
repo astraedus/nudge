@@ -4,6 +4,7 @@ import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.data.repository.BlockRuleRepository
 import com.astraedus.nudge.data.repository.ContentFilter
 import com.astraedus.nudge.data.repository.UsageRepository
+import com.astraedus.nudge.domain.ContentFilterAllowlist
 import com.astraedus.nudge.domain.WebDomainMatcher
 import com.astraedus.nudge.domain.engine.BlockEngine
 import com.astraedus.nudge.domain.engine.RuleEvaluator
@@ -207,7 +208,14 @@ class EvaluateBlockUseCase @Inject constructor(
             return WebDomainBlockResult(BlockDecision.Allow, null)
         }
         val strict = preferences.contentFilterStrictKeywords.first()
-        if (!contentFilter.isBlocked(urlBarText, strict)) {
+        // The user's exceptions only ever excuse a strict-layer hit, so they are not even read
+        // when strict matching is off.
+        val allowlist = if (strict) {
+            ContentFilterAllowlist(preferences.contentFilterAllowlist.first())
+        } else {
+            ContentFilterAllowlist.EMPTY
+        }
+        if (!contentFilter.isBlocked(urlBarText, strict, allowlist)) {
             return WebDomainBlockResult(BlockDecision.Allow, null)
         }
 

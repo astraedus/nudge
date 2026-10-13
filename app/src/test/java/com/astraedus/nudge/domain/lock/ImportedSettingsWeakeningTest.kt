@@ -21,6 +21,7 @@ class ImportedSettingsWeakeningTest {
         contentFilterEnabled: Boolean? = false,
         contentFilterMode: String? = "HARD_BLOCK",
         contentFilterStrictKeywords: Boolean? = false,
+        contentFilterAllowlist: List<String>? = emptyList(),
         strictModeEnabled: Boolean? = false,
         strictModeChallengeLength: Int? = 24,
         emergencyPassEnabled: Boolean? = true,
@@ -31,6 +32,7 @@ class ImportedSettingsWeakeningTest {
         contentFilterEnabled = contentFilterEnabled,
         contentFilterMode = contentFilterMode,
         contentFilterStrictKeywords = contentFilterStrictKeywords,
+        contentFilterAllowlist = contentFilterAllowlist,
         strictModeEnabled = strictModeEnabled,
         strictModeChallengeLength = strictModeChallengeLength,
         emergencyPassEnabled = emergencyPassEnabled,
@@ -307,5 +309,63 @@ class ImportedSettingsWeakeningTest {
     @Test
     fun `an incoming payload identical to the device is not weakening`() {
         assertFalse(ImportedSettingsWeakening.isWeakening(device(), device()))
+    }
+
+    // ── contentFilterAllowlist ("Allowed words & sites", issue #78) ──
+
+    @Test
+    fun `an import that adds an allowlist entry weakens protection`() {
+        assertTrue(
+            ImportedSettingsWeakening.isWeakening(
+                device(contentFilterAllowlist = listOf("cnc")),
+                device(contentFilterAllowlist = listOf("cnc", "bbc news"))
+            )
+        )
+    }
+
+    @Test
+    fun `an import that only removes allowlist entries does not weaken protection`() {
+        assertFalse(
+            ImportedSettingsWeakening.isWeakening(
+                device(contentFilterAllowlist = listOf("cnc", "bbc news")),
+                device(contentFilterAllowlist = listOf("cnc"))
+            )
+        )
+        assertFalse(
+            ImportedSettingsWeakening.isWeakening(
+                device(contentFilterAllowlist = listOf("cnc")),
+                device(contentFilterAllowlist = emptyList())
+            )
+        )
+    }
+
+    @Test
+    fun `an import whose allowlist differs only in case or spacing does not weaken protection`() {
+        assertFalse(
+            ImportedSettingsWeakening.isWeakening(
+                device(contentFilterAllowlist = listOf("bbc news")),
+                device(contentFilterAllowlist = listOf("  BBC   News "))
+            )
+        )
+    }
+
+    @Test
+    fun `a file that does not carry the allowlist never weakens on that axis`() {
+        assertFalse(
+            ImportedSettingsWeakening.isWeakening(
+                device(contentFilterAllowlist = emptyList()),
+                device(contentFilterAllowlist = null)
+            )
+        )
+    }
+
+    @Test
+    fun `an allowlist entry added onto a device that never had the setting still weakens`() {
+        assertTrue(
+            ImportedSettingsWeakening.isWeakening(
+                device(contentFilterAllowlist = null),
+                device(contentFilterAllowlist = listOf("cnc"))
+            )
+        )
     }
 }

@@ -47,6 +47,7 @@ class EvaluateBlockWebDomainTest {
 
         every { usageRepository.getDailyForegroundTimeMs(any()) } returns 0L
         every { preferences.contentFilterStrictKeywords } returns flowOf(false)
+        every { preferences.contentFilterAllowlist } returns flowOf(emptySet())
         every { preferences.contentFilterEnabled } returns flowOf(false)
         every { preferences.contentFilterMode } returns flowOf("HARD_BLOCK")
 
@@ -147,7 +148,7 @@ class EvaluateBlockWebDomainTest {
             listOf(rule(mode = "NONE", webDomains = "instagram.com", webBlockMode = null))
         )
         every { preferences.contentFilterEnabled } returns flowOf(true)
-        coEvery { contentFilter.isBlocked(any(), any()) } returns true
+        coEvery { contentFilter.isBlocked(any(), any(), any()) } returns true
 
         val result = useCase.evaluateWebDomain("https://www.instagram.com/reels")
 
@@ -173,7 +174,7 @@ class EvaluateBlockWebDomainTest {
             listOf(rule(mode = "HARD_BLOCK", webDomains = "instagram.com"))
         )
         every { preferences.contentFilterEnabled } returns flowOf(true)
-        coEvery { contentFilter.isBlocked(any(), any()) } returns true
+        coEvery { contentFilter.isBlocked(any(), any(), any()) } returns true
 
         val result = useCase.evaluateWebDomain("https://example.com")
 

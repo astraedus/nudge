@@ -64,6 +64,16 @@ object ImportedSettingsWeakening {
         ) {
             return true
         }
+        // Its allowlist weakens by gaining entries: each one is an exception. A file that carries a
+        // shorter list (or none of the device's entries) only strengthens, and is free.
+        if (incoming.contentFilterAllowlist != null &&
+            ContentFilterAllowlistWeakening.isWeakening(
+                current.contentFilterAllowlist.orEmpty(),
+                incoming.contentFilterAllowlist
+            )
+        ) {
+            return true
+        }
 
         return false
     }
