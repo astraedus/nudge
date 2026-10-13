@@ -28,6 +28,8 @@ The web content filter blocks adult sites but MUST stay generically framed every
 
 **Refined 2026-10-13 (issue #78):** a user asked what the switch actually targets, and "nothing tells you" was a fair complaint. The rule is now: name the CATEGORY in general terms ("Blocks adult and explicit sites and searches."), never a site, a keyword, or anything that reveals whether one specific site is on the list. The title and the overlay rule name are unchanged.
 
+**Owner decision 2026-10-13: in-app copy may name the category; the Play/F-Droid store listing must NOT mention it.**
+
 ## A transient GitHub API 5xx must not fail the Release run (2026-07-20)
 
 Release run 29710052363 failed on a docs-only commit: the "Publish rolling dev build (main)" step of `.github/workflows/release.yml` hit `error checking for existing release: HTTP 503` from `gh release create`. The build, tests, AAB/APK, and artifact upload had ALL succeeded -- only the convenience `main-latest` publish flaked, and it had no retry, so one momentary GitHub API blip sank the whole run.
