@@ -1,7 +1,6 @@
 package com.astraedus.nudge.ui.overlay
 
 import android.content.Intent
-import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -12,6 +11,7 @@ import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.key
+import androidx.core.net.toUri
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import com.astraedus.nudge.data.preferences.NudgePreferences
@@ -609,7 +609,7 @@ class BlockOverlayActivity : ComponentActivity() {
     }
 
     private fun webEscapeIntent(browserPackage: String): Intent =
-        Intent(Intent.ACTION_VIEW, Uri.parse(WebBlockEscape.NEUTRAL_URL)).apply {
+        Intent(Intent.ACTION_VIEW, WebBlockEscape.NEUTRAL_URL.toUri()).apply {
             setPackage(browserPackage)
             // Chromium reuses the tab an app id opened before, so escapes never pile up tabs.
             putExtra(Browser.EXTRA_APPLICATION_ID, packageName)

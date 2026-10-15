@@ -81,7 +81,7 @@ class WebBlockEscapeContractTest {
         assertTrue(intent.contains("Intent.ACTION_VIEW"))
         assertTrue(
             "never a hand-typed URL: the neutral page is the constant WebBlockEscapeTest proves unblockable",
-            intent.contains("Uri.parse(WebBlockEscape.NEUTRAL_URL)")
+            intent.contains("WebBlockEscape.NEUTRAL_URL.toUri()")
         )
         assertTrue("an untargeted VIEW could open a different browser", intent.contains("setPackage(browserPackage)"))
         assertTrue(
