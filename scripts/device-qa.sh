@@ -4,10 +4,12 @@
 # Replaces the 60–100 minute LLM tap-walk that gated every release with a deterministic run
 # that finishes in minutes, prints a PASS/FAIL table, and exits nonzero on any failure.
 #
-#   scripts/device-qa.sh            # every case (same as `all`)
+#   scripts/device-qa.sh            # every case (same as `all`), ~18 minutes
 #   scripts/device-qa.sh all
 #   scripts/device-qa.sh delay-block
 #   scripts/device-qa.sh list
+#   scripts/device-qa.sh group1 && APK=installed scripts/device-qa.sh group2 \
+#     && APK=installed scripts/device-qa.sh group3    # `all` in three bounded chunks (below)
 #
 # ── WHY MOST OF THIS IS NOT MAESTRO (the central design fact) ─────────────────
 # Maestro — and every other UiAutomator-based driver — connects a `UiAutomation` session, and
@@ -52,6 +54,32 @@
 #                                  was wiped. Deliberate switch, and the way back:
 #                                    APK=debug ALLOW_CERT_SWITCH=1 scripts/device-qa.sh refusal-alert
 #                                    APK=main  ALLOW_CERT_SWITCH=1 scripts/device-qa.sh setup
+#
+# ── Running the gate in bounded chunks: group1 · group2 · group3 ──────────────
+# `all` takes ~18 minutes (setup 107s · delay-block 14s · home-reopen 140s · walkaway-count 55s ·
+# daily-limit-refresh 177s · daily-limit-midsession 258s · notif-idle 338s, plus ~45s of lock /
+# connect / install / grants per invocation), which no 10-minute foreground call can finish — and a
+# run cut off mid-way restores the bench but proves nothing. A group is a slice of `all` sized to
+# fit one such call (the longest, group2, is ~8 minutes). Membership: GROUP*_CASES below, and
+# `--help` prints it.
+#
+#   scripts/device-qa.sh group1
+#   APK=installed scripts/device-qa.sh group2
+#   APK=installed scripts/device-qa.sh group3
+#
+# Run them IN THAT ORDER: group1 carries `setup`, which every later case assumes. Give group2 and
+# group3 APK=installed so the series tests the ONE build group1 put on the bench (APK=main would
+# re-download whatever main-latest has become and reinstall it between chunks). The series passes
+# only if all three exit 0. No case asserts anything different from `all`:
+#   · `crash-check` still means "no app crash since the SERIES started". group1 records the
+#     dropbox count in ~/.cache/nudge-qa/crash-baseline and group2/group3 reuse it (when it is under
+#     3h old; otherwise they warn and take a fresh one) instead of re-baselining — a per-chunk
+#     baseline would let a crash during group1 pass a crash-check that only watches group3.
+#   · like `all`, a group skips the ~40s restore of the 1-minute Calculator limit after the
+#     daily-limit cases (the next `setup` re-imports it), so a lone group2 leaves the limit wherever
+#     the last case ended.
+#   · the three groups are asserted at startup to concatenate to ALL_CASES, so a case added to
+#     `all` cannot silently drop out of the chunked gate.
 #
 # ── Other knobs ───────────────────────────────────────────────────────────────
 #   ADB_SERIAL=192.168.1.68:5555   bench Pixel 3 (auto-reconnects)
@@ -118,8 +146,9 @@ ALBUM="${HOME}/Pictures/screenshots/nudge/qa-${RUN_TS}"
 # lanes fill with screenshot and build scratch, and Maestro died mid-run with
 # `java.io.IOException: No space left on device` at 265M free. ~/.cache is on the 229G
 # root filesystem, and Maestro's own JVM temp dir is pointed here too.
-mkdir -p "${HOME}/.cache/nudge-qa"
-WORK="$(mktemp -d "${HOME}/.cache/nudge-qa/run-${RUN_TS}-XXXX")"
+QA_CACHE_DIR="${HOME}/.cache/nudge-qa"
+mkdir -p "$QA_CACHE_DIR"
+WORK="$(mktemp -d "${QA_CACHE_DIR}/run-${RUN_TS}-XXXX")"
 LOGCAT_FILE="${WORK}/logcat.txt"
 SAMPLER_FILE="${WORK}/load.txt"
 FIXTURE_DEVICE_PATH="/sdcard/Download/nudge-qa-rules.json"
@@ -140,6 +169,14 @@ ALL_CASES=(
   crash-check
   refusal-alert
 )
+
+# The chunked gate (header: "Running the gate in bounded chunks"): `all`, cut so each slice fits one
+# 10-minute call. Explicit lists, not index slices of ALL_CASES, so that adding a case forces a
+# decision about which chunk has the time for it; check_groups() fails the run when the three stop
+# concatenating to ALL_CASES.
+GROUP1_CASES=(setup delay-block home-reopen walkaway-count)
+GROUP2_CASES=(daily-limit-refresh daily-limit-midsession)
+GROUP3_CASES=(notif-idle crash-check refusal-alert)
 
 # ─── Output helpers ───────────────────────────────────────────────────────────
 info() { printf '[qa] %s\n' "$*"; }
@@ -917,11 +954,19 @@ has_watchdog_receiver() {
 }
 
 nudge_notif_records() { # prints "<count> <mUpdateTimeMs of id=1>"
+  # The count spans EVERY Nudge notification (one appearing or vanishing while idle is a finding in
+  # itself). The timestamp must be the ONGOING one's: id 1, NudgeMonitorService's status
+  # notification. Nudge posts others (id 2 protection alert, 3 bounce check-in, 4 usage reminder),
+  # and `dumpsys` promises no order between them: on 2026-10-15 a lingering id=4 reminder was listed
+  # BEFORE id=1, "first Nudge record" read the reminder's never-moving mUpdateTimeMs, and notif-idle
+  # failed "did NOT update after the grant was revoked" on a build whose id=1 had updated.
+  # The record's own header names its id (`pkg=… user=… id=1 `). Every header re-decides `want`, so
+  # an id=1 record with no timestamp line cannot lend its neighbour's.
   local d count upd
   d="$(ash dumpsys notification --noredact 2>/dev/null | tr -d '\r')"
   count="$(grep -c "NotificationRecord.*pkg=${APP_ID} " <<<"$d")"
   upd="$(awk -v pkg="$APP_ID" '
-      $0 ~ ("NotificationRecord.*pkg=" pkg " ") { want=1 }
+      /NotificationRecord\(/ { want = ($0 ~ ("pkg=" pkg " user=[^ ]* id=1 ")) }
       want && /mUpdateTimeMs=/ { sub(/.*mUpdateTimeMs=/, ""); print $1; exit }
     ' <<<"$d")"
   echo "${count:-0} ${upd:-0}"
@@ -1308,6 +1353,13 @@ set_daily_limit_minutes() { # minutes
   sleep 1
   ui_tap_text "Calculator" 10 || return 1
   ui_wait_text "Daily Time Limit" 10 || return 1
+  # Make the fifth chip read "Custom" first, whatever the limit is right now. It says "Custom" ONLY
+  # while the limit is one of the four presets; with a custom value set it shows that value instead
+  # ("1m", "1h 30m" — UnifiedAppConfigScreen.kt, `isCustomDaily`), so a bare tap on "Custom" finds
+  # nothing (or the delay-duration section's own "Custom" chip). That is `daily-limit-midsession`
+  # run alone after `setup` (the fixture limit is 1m) or after an aborted run, and it failed ~100s
+  # in. "2h" is always there; a preset is a draft until "Save", and the dialog below overwrites it.
+  ui_tap_text "2h" 8 || return 1
   ui_tap_text "Custom" 8 || return 1
   ui_wait_text "Custom Daily Limit" 8 || return 1
   # The field is pre-filled with the current value, so clear it before typing.
@@ -1703,8 +1755,37 @@ count_app_crashes() {
   printf '%s' "${n:-0}"
 }
 
+# crash_baseline [start|continue]
+#   (none)    a per-invocation window — what `all` and every single case have always had.
+#   start     the first chunk of a series (it carries `setup`): ALSO records the count in
+#             CRASH_BASELINE_FILE.
+#   continue  a later chunk: reuses the recorded count, so `crash-check` keeps meaning "no crash
+#             since the series started". Re-baselining per chunk would let a crash during group1
+#             pass a crash-check that only watches group3 — the chunked gate quietly weaker than
+#             `all`. A missing or stale file (> 3h: a series is ~25 minutes, so older is some
+#             other day's) falls back to a fresh baseline and says so, rather than inventing a window.
+CRASH_BASELINE_FILE="${CRASH_BASELINE_FILE:-${QA_CACHE_DIR}/crash-baseline}"
+CRASH_BASELINE_MAX_AGE_SECS=10800
+
 crash_baseline() {
+  local mode="${1:-}" stored="" stamp="" age
   CRASH_BASELINE="$(count_app_crashes)"
+  case "$mode" in
+    start)
+      printf '%s %s\n' "$CRASH_BASELINE" "$(date +%s)" >"$CRASH_BASELINE_FILE" ;;
+    continue)
+      # `2>` BEFORE `<`: redirections apply left to right, so the other order prints "No such file"
+      # for the very case (no earlier group1) this branch exists to handle quietly.
+      read -r stored stamp 2>/dev/null <"$CRASH_BASELINE_FILE" || true
+      age=-1
+      [[ "$stamp" =~ ^[0-9]+$ ]] && age=$(( $(date +%s) - stamp ))
+      if [[ "$stored" =~ ^[0-9]+$ ]] && (( age >= 0 && age <= CRASH_BASELINE_MAX_AGE_SECS )); then
+        CRASH_BASELINE="$stored"
+        info "crash baseline carried over from the start of the series: ${stored} (${age}s ago)"
+      else
+        warn "no fresh crash baseline from a group1 run: crash-check will only cover THIS chunk (start the series with group1)"
+      fi ;;
+  esac
 }
 
 case_crash_check() {
@@ -1906,7 +1987,28 @@ usage() {
   # Prints the header block, however long it grows — a hardcoded end line silently truncated
   # the usage text the moment the header gained a paragraph.
   awk 'NR>1 { if ($0 !~ /^#/) exit; sub(/^# ?/, ""); print }' "${BASH_SOURCE[0]}"
-  printf 'cases: %s\n' "${ALL_CASES[*]}"
+  printf 'cases:  %s\n' "${ALL_CASES[*]}"
+  printf 'group1: %s\ngroup2: %s\ngroup3: %s\n' "${GROUP1_CASES[*]}" "${GROUP2_CASES[*]}" "${GROUP3_CASES[*]}"
+}
+
+# Fails (exit 2) unless group1+group2+group3 are exactly ALL_CASES, in order — before the lock is
+# taken or the phone touched, so a case added to `all` and forgotten here costs one line, not a
+# chunked gate that quietly stops running it.
+check_groups() {
+  local joined="${GROUP1_CASES[*]} ${GROUP2_CASES[*]} ${GROUP3_CASES[*]}"
+  [[ "$joined" == "${ALL_CASES[*]}" ]] ||
+    die "group1+group2+group3 [${joined}] must concatenate to ALL_CASES [${ALL_CASES[*]}]: a case was added or moved without placing it in a group"
+}
+
+# The cases a multi-case target runs, one per line; nonzero for anything else (a single case).
+target_cases() { # all | group1 | group2 | group3
+  case "$1" in
+    all)    printf '%s\n' "${ALL_CASES[@]}" ;;
+    group1) printf '%s\n' "${GROUP1_CASES[@]}" ;;
+    group2) printf '%s\n' "${GROUP2_CASES[@]}" ;;
+    group3) printf '%s\n' "${GROUP3_CASES[@]}" ;;
+    *)      return 1 ;;
+  esac
 }
 
 main() {
@@ -1916,14 +2018,22 @@ main() {
     -h|--help|help) usage; exit 0 ;;
     list) printf '%s\n' "${ALL_CASES[@]}"; exit 0 ;;
   esac
+  check_groups
 
-  local cases=()
-  if [[ "$target" == "all" ]]; then
-    cases=("${ALL_CASES[@]}")
+  local cases=() series=""
+  mapfile -t cases < <(target_cases "$target")
+  if (( ${#cases[@]} )); then
+    # `all` and every group skip the ~40s Calculator-limit restore between the daily-limit cases:
+    # the next `setup` re-imports the fixture, and the next chunk does not care.
     RUNNING_ALL=1
+    # A group that carries `setup` opens a series; any other group continues one (crash_baseline).
+    case "$target" in
+      group*) if [[ " ${cases[*]} " == *" setup "* ]]; then series="start"; else series="continue"; fi ;;
+    esac
   else
     # shellcheck disable=SC2076
-    [[ " ${ALL_CASES[*]} " == *" ${target} "* ]] || die "unknown case '${target}'. Try: ${ALL_CASES[*]}"
+    [[ " ${ALL_CASES[*]} " == *" ${target} "* ]] ||
+      die "unknown case '${target}'. Try: ${ALL_CASES[*]} — or all, group1, group2, group3"
     cases=("$target")
     # Every case but `setup` assumes the fixtures `setup` creates, so a single case
     # runs against whatever is on the phone. That is deliberate (it is how you iterate
@@ -1936,7 +2046,7 @@ main() {
   pin_screen
   install_apk
   ensure_grants || warn "grants incomplete — cases may fail for the wrong reason"
-  crash_baseline
+  crash_baseline "$series"
   mkdir -p "$ALBUM"
   write_locator
   start_sampler
