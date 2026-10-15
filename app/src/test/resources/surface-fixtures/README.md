@@ -51,7 +51,7 @@ scripts/scrub-surface-fixture.py <raw>/*.xml --out app/src/test/resources/surfac
 
 | File | What it is | What it pins |
 |---|---|---|
-| `home.xml` | Instagram Home feed, at the top | `HOME_FEED` via `title_logo`; `clips_tab` bounds `[216,1896][432,2028]`; every tab reports `selected=false` |
+| `home.xml` | Instagram Home feed, at the top | `HOME_FEED` via `title_logo`; `clips_tab` bounds `[216,1896][432,2028]`; the tab FrameLayouts report `selected=false` but the child `tab_icon` is `selected=true` (tab detection reads children) |
 | `home-scrolled.xml` | The same feed, scrolled down | Still `HOME_FEED` — and **`title_logo` is gone**: the action bar scrolls away, which is why `InstagramSurfaces.classify` needs the `sticky_header_list` rung |
 | `following-feed.xml` | The Following screen | `FOLLOWING_FEED` via `action_bar_title` == "Following", and **no `clips_tab` node at all** — the cover must hide here because there is no nav bar to cover |
 | `relaunch.xml` | Warm relaunch of Instagram | Resumes ON Following, so `FOLLOWING_FEED` again |

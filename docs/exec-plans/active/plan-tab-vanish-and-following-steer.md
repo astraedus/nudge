@@ -23,7 +23,7 @@ implementation (Instagram). YouTube is a documented roadmap line, not code.
 
 - `tab_bar` [0,1896][1080,2028], stable across scrolling; **absent** on the Following screen, in the
   reel player, and in stories/DMs. `clips_tab` [216,1896][432,2028], content-desc "Reels".
-- **Every tab reports `selected=false`** in the uiautomator dump. The cover therefore keys on
+- **Every tab node reports `selected=false`** in the uiautomator dump (its child icon can still be selected; `InAppDetector` checks children). The cover therefore keys on
   `clips_tab` BOUNDS only and never on tab selection.
 - Nav bar RGB measured (255,255,255) in light mode. Dark assumed (0,0,0). No runtime sampling
   available → `navBarColor(nightMode)`.

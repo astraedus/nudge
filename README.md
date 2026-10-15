@@ -73,7 +73,7 @@ Nudge is open source, requests zero internet permissions, and keeps all your dat
 
 Block addictive feeds without blocking the whole app:
 - **YouTube Shorts** -- block the Shorts feed, keep everything else
-- **Instagram Reels** -- block the Reels player wherever it opens (Reels tab, a reel from a DM or the feed, a profile, Explore), keep DMs and posts. Blocking the Home feed or Explore grid themselves is not supported yet: detecting them is unreliable on current Instagram ([#18](https://github.com/astraedus/nudge/issues/18))
+- **Instagram Reels** -- block the Reels player wherever it opens (Reels tab, a reel from a DM or the feed, a profile, Explore), keep DMs and posts. Where Nudge can read Instagram's active tab, Explore rules work and a Reels rule also covers the Home feed (treated as Reels-equivalent). On some newer devices and builds it can't, and only the full-screen Reels viewer is detected ([#18](https://github.com/astraedus/nudge/issues/18))
 - **TikTok For You** -- block the algorithm, keep the app
 
 Uses Accessibility Service to detect in-app navigation to these screens.
@@ -170,7 +170,7 @@ No internet permission. No camera. No contacts. No location. No storage.
 - [x] App blocking (hard block, delay, breathing)
 - [x] Per-app daily time budgets & app groups
 - [x] In-app blocking (Reels, Shorts, TikTok For You)
-- [ ] Reliable Instagram Home feed / Explore detection (tab-selection signal is dead on current Instagram, [#18](https://github.com/astraedus/nudge/issues/18))
+- [ ] Reliable Instagram Home feed / Explore detection on every device (tab state is unreadable on some newer devices and builds, [#18](https://github.com/astraedus/nudge/issues/18))
 - [x] Schedule-based rules (day-of-week + time-of-day)
 - [x] Interaction counter & auto-kick
 - [x] Usage stats dashboard with charts
