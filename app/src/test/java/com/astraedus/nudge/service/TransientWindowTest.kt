@@ -39,9 +39,10 @@ class TransientWindowTest {
     private val classifier = EventClassifier(
         ownPackageName = ownPackage,
         systemPackages = NudgeAccessibilityService.SYSTEM_PACKAGES,
-        imePackages = NudgeAccessibilityService.IME_PACKAGES,
+        imePackages = { NudgeAccessibilityService.IME_PACKAGES },
         frameworkPackage = NudgeAccessibilityService.FRAMEWORK_PACKAGE,
-        awarenessOverlayClassNames = AwarenessOverlayWindow.CLASS_NAMES
+        awarenessOverlayClassNames = AwarenessOverlayWindow.CLASS_NAMES,
+        windows = { null }
     )
 
     private fun signalFor(
@@ -55,56 +56,68 @@ class TransientWindowTest {
         pipOnlyPackages = emptySet()
     )
 
-    // --- isTransientNonAppPackage: the core recognition the fix hinges on ---
+    // --- the recognition the fix hinges on, asked of the PRODUCTION classifier ---
+    //
+    // These four used to call `NudgeAccessibilityService.isTransientNonAppPackage`, a companion COPY
+    // of the classifier's rule that production never called. A test of a copy stays green while
+    // the real rule drifts, so the copy was deleted (issue #76) and the tests now classify.
+
+    private fun isTransient(packageName: String, currentImePackage: String?): Boolean =
+        signalFor(packageName, A11yEventType.WINDOW_STATE_CHANGED, currentImePackage) is
+            ForegroundSignal.Transient
 
     @Test
     fun `the reporter's third-party keyboard (FUTO) is recognised as transient when it is the active IME`() {
         // This is the exact issue #5 scenario: FUTO is not on any hardcoded list, but matching the
         // active default IME dynamically catches it, so its window events no longer clear passthrough.
-        assertTrue(
-            NudgeAccessibilityService.isTransientNonAppPackage(
-                packageName = futo,
-                currentImePackage = futo
-            )
-        )
+        assertTrue(isTransient(futo, currentImePackage = futo))
     }
 
     @Test
     fun `a hardcoded keyboard is transient even without a dynamic match`() {
-        assertTrue(
-            NudgeAccessibilityService.isTransientNonAppPackage(
-                packageName = gboard,
-                currentImePackage = null
-            )
+        assertTrue(isTransient(gboard, currentImePackage = null))
+    }
+
+    @Test
+    fun `the Samsung keyboard on One UI (honeyboard) is in the static floor`() {
+        // Issue #76 was a Samsung S24 Ultra; the old floor only had the pre-One-UI package.
+        assertTrue(isTransient("com.samsung.android.honeyboard", currentImePackage = null))
+    }
+
+    @Test
+    fun `every ENABLED keyboard is transient, not only the default`() {
+        // Issue #76: the classifier reads the live enabled set from the service. A keyboard that is
+        // enabled but not the default (picked from the IME switcher, or an OEM keyboard brought up
+        // for one field) must not read as the user leaving the app.
+        val swiftKey = "com.touchtype.swiftkey"
+        val live = EventClassifier(
+            ownPackageName = ownPackage,
+            systemPackages = NudgeAccessibilityService.SYSTEM_PACKAGES,
+            imePackages = { NudgeAccessibilityService.IME_PACKAGES + swiftKey },
+            frameworkPackage = NudgeAccessibilityService.FRAMEWORK_PACKAGE,
+            awarenessOverlayClassNames = AwarenessOverlayWindow.CLASS_NAMES,
+            windows = { null }
         )
+        val signal = live.classify(
+            AccessibilityEventRecord(type = A11yEventType.WINDOW_STATE_CHANGED, packageName = swiftKey),
+            currentImePackage = gboard,
+            launcherPackages = emptySet(),
+            pipOnlyPackages = emptySet()
+        )
+        assertTrue(signal is ForegroundSignal.Transient)
     }
 
     @Test
     fun `the android framework package (paste and long-press popups) is transient`() {
         // Long-press link menus and the text-selection / paste floating toolbar are hosted by the
         // `android` package — the second symptom the reporter found.
-        assertTrue(
-            NudgeAccessibilityService.isTransientNonAppPackage(
-                packageName = NudgeAccessibilityService.FRAMEWORK_PACKAGE,
-                currentImePackage = futo
-            )
-        )
+        assertTrue(isTransient(NudgeAccessibilityService.FRAMEWORK_PACKAGE, currentImePackage = futo))
     }
 
     @Test
     fun `a real app is never transient`() {
-        assertFalse(
-            NudgeAccessibilityService.isTransientNonAppPackage(
-                packageName = instagram,
-                currentImePackage = futo
-            )
-        )
-        assertFalse(
-            NudgeAccessibilityService.isTransientNonAppPackage(
-                packageName = instagram,
-                currentImePackage = null
-            )
-        )
+        assertFalse(isTransient(instagram, currentImePackage = futo))
+        assertFalse(isTransient(instagram, currentImePackage = null))
     }
 
     // --- isOverlayBypassedByForeground: a transient window must not clear an active block overlay ---

@@ -55,9 +55,10 @@ class BlockLaunchGuardReplayTest {
     private val classifier = EventClassifier(
         ownPackageName = nudge,
         systemPackages = NudgeAccessibilityService.SYSTEM_PACKAGES,
-        imePackages = NudgeAccessibilityService.IME_PACKAGES,
+        imePackages = { NudgeAccessibilityService.IME_PACKAGES },
         frameworkPackage = NudgeAccessibilityService.FRAMEWORK_PACKAGE,
-        awarenessOverlayClassNames = AwarenessOverlayWindow.CLASS_NAMES
+        awarenessOverlayClassNames = AwarenessOverlayWindow.CLASS_NAMES,
+        windows = { null }
     )
 
     private var clock = 10_000L
@@ -125,9 +126,10 @@ class BlockLaunchGuardReplayTest {
     private val preFixClassifier = EventClassifier(
         ownPackageName = nudge,
         systemPackages = NudgeAccessibilityService.SYSTEM_PACKAGES,
-        imePackages = NudgeAccessibilityService.IME_PACKAGES,
+        imePackages = { NudgeAccessibilityService.IME_PACKAGES },
         frameworkPackage = NudgeAccessibilityService.FRAMEWORK_PACKAGE,
-        awarenessOverlayClassNames = emptySet()
+        awarenessOverlayClassNames = emptySet(),
+        windows = { null }
     )
 
     /** What the pre-fix code did at a launch site: nothing. Kept honest by the tests below. */
@@ -448,7 +450,7 @@ class BlockLaunchGuardReplayTest {
         assertEquals(
             "the app is still starting up under an overlay that has not arrived; not a bypass",
             false,
-            guard.isGenuineBypass(keepStillStarting.type, signal)
+            guard.isGenuineBypass(keepStillStarting.type, signal, floating = false)
         )
         assertEquals(
             "and a second launch for the same app while the first is still pending is refused, so " +
@@ -471,7 +473,7 @@ class BlockLaunchGuardReplayTest {
         assertEquals(
             "tabbing back into the blocked app past a live overlay must still re-block",
             true,
-            guard.isGenuineBypass(A11yEventType.WINDOW_STATE_CHANGED, backIn)
+            guard.isGenuineBypass(A11yEventType.WINDOW_STATE_CHANGED, backIn, floating = false)
         )
     }
 
@@ -490,7 +492,7 @@ class BlockLaunchGuardReplayTest {
             AccessibilityEventRecord(A11yEventType.WINDOW_STATE_CHANGED, other, eventTimeMs = clock)
         )
         guard.onForegroundSignal(signal)
-        assertEquals(true, guard.isGenuineBypass(A11yEventType.WINDOW_STATE_CHANGED, signal))
+        assertEquals(true, guard.isGenuineBypass(A11yEventType.WINDOW_STATE_CHANGED, signal, floating = false))
     }
 
     /**
@@ -507,14 +509,14 @@ class BlockLaunchGuardReplayTest {
             AccessibilityEventRecord(A11yEventType.WINDOW_STATE_CHANGED, blocked, eventTimeMs = clock)
         )
         guard.onForegroundSignal(signal)
-        assertEquals(false, guard.isGenuineBypass(A11yEventType.WINDOW_STATE_CHANGED, signal))
+        assertEquals(false, guard.isGenuineBypass(A11yEventType.WINDOW_STATE_CHANGED, signal, floating = false))
 
         tick(2)
         signal = classify(
             AccessibilityEventRecord(A11yEventType.WINDOW_STATE_CHANGED, blocked, eventTimeMs = clock)
         )
         guard.onForegroundSignal(signal)
-        assertEquals(true, guard.isGenuineBypass(A11yEventType.WINDOW_STATE_CHANGED, signal))
+        assertEquals(true, guard.isGenuineBypass(A11yEventType.WINDOW_STATE_CHANGED, signal, floating = false))
     }
 
     // --- issue #41: the daily-limit tick refused while our own counter is up --------------------

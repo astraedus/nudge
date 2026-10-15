@@ -145,6 +145,74 @@ they now read the real values. The restored clear cannot double-fire on the over
 they classify as `AwarenessOverlay` and return above the `OwnUi` branch, so a pill can no longer
 order itself hidden.
 
+## The window, not only the package ([#76](https://github.com/astraedus/nudge/issues/76), [#71](https://github.com/astraedus/nudge/issues/71))
+
+> Read before touching `EventClassifier`, `WindowSnapshot`, `WindowSnapshotReader`,
+> `FloatingWindowCover*`, or the overlay-bypass branch of `onAccessibilityEvent`.
+
+Until 1.21 every answer the classifier gave was about the event's PACKAGE: "an event carrying P means
+the user is in P". Picture-in-picture (#19) was the first counter-example and got a one-off window
+probe. Two more arrived together:
+
+| Issue | Device | What the package said | What the window list said |
+|---|---|---|---|
+| #76 | S24 Ultra, Android 16, SwiftKey | a foreign app came forward, start the away clock | a panel drawn in or beside the KEYBOARD (inline autofill, clipboard, writing tools), with Instagram still focused |
+| #71 | Huawei, Android 10 | the blocked app is back in front, the overlay was bypassed | a NON-fullscreen (freeform) window stacked ABOVE our fullscreen overlay |
+
+In #76 two minutes of typing (IME events, transient, so nothing cancelled the clock) followed by
+closing the keyboard read as a return from a two-minute absence: grant revoked, block, and repeated
+blocks walked into the auto-kick cooldown. In #71 every touch relaunched the overlay underneath the
+floating window, forever, and the floating app stayed usable.
+
+**One read.** `WindowSnapshotReader` turns `getWindows()` into a pure `domain/windows/WindowSnapshot`
+(kind, owner for application windows only, active, focused, PiP, bounds, display size), caching each
+window's owner by id so the steady state is one binder call per read. It is read on every
+`TYPE_WINDOW_STATE_CHANGED` (the platform recomputes the list right before dispatching one; verified in
+the android10-release `AccessibilityManagerService`) and, throttled with one trailing read, on
+`TYPE_WINDOWS_CHANGED`, including the null-package ones the dispatch drops. PiP derives from the same
+read, so there is no second reader to disagree with.
+
+**The classifier demotes a would-be `AppWindow(P)` to `Transient` on positive evidence only:** the
+event's window is a known non-application window; or P owns application windows, none active or
+focused, while another app's window is; or the keyboard is up, P owns no window at all and another
+app holds focus (an embedded inline-suggestion view is not a window of its own). No list, an unknown
+window id, or no application window holding focus all answer `AppWindow` exactly as before, because a
+wrong `Transient` is a block not evaluated. The one case that can misfile a brand-new app (keyboard
+still listed, its window not yet) costs one event: its next content change is evaluated through the
+issue #7 path. Every ENABLED keyboard is transient too, not only the default.
+
+**A floating window is never a bypass, and is blocked by a cover.** `BlockLaunchGate.isGenuineBypass`
+takes `floating` (no default at the guard). A floating window's event falls through to evaluation
+without dropping the overlay, and `launchBlockOverlay` (the one launch site, so rules, cooldowns,
+daily limits and web blocks all get it) covers a floating target with a touch-consuming
+`TYPE_ACCESSIBILITY_OVERLAY` over its bounds (`FloatingWindowCoverManager`, the tab cover's
+approach), presses BACK once per window while that window holds focus (before the overlay launches
+and takes focus, or BACK would read as a walk-away), and does not relaunch an overlay that is already
+up. The cover has a "Close window" button that presses BACK, because the OEM close handle is usually
+inside the window, under the cover. It follows the window, and comes off when the window closes or
+turns fullscreen, a grant or emergency pass exists, the decision becomes ALLOW, Nudge is disabled, or
+the screen goes off. Split-screen halves are non-fullscreen too and get the same treatment. PiP is
+excluded and keeps #19's handling.
+
+**What "bounds" is, and why the keyboard does not make an app look floating.** The region an
+`AccessibilityWindowInfo` reports is the window's OWN touchable region, not what is left visible after
+the windows above it: `AccessibilityController` uses the occlusion (`unaccountedSpace`) only to decide
+whether a window is listed at all, and `AccessibilityWindowManager` copies `regionInScreen` across
+unclipped (checked in the android10-release and android14-release sources). So an app with the keyboard
+over its lower half still reports its full frame and stays fullscreen. Two honest limits of the 85%
+rule: a letterboxed portrait-only app on a landscape tablet, and a dialog-themed activity that is the
+app's only window, both read as floating. Both still end up blocked (cover plus BACK instead of the
+overlay), which is the safe direction.
+
+**Known gap: the "Close window" button.** BACK goes to the focused window. When the overlay was just
+launched it holds focus, so the first tap can read as a walk-away on the overlay instead of closing
+the floating window. Unverified on a device which window gets focus after that; Recents always
+removes a floating window. Device QA case 4 in the PR is what settles it.
+
+Pinned by `WindowSnapshotTest`, `FloatingWindowCoverTest`, `WindowSnapshotReaderTest` and
+`WindowEvidenceTest` (which replays #76 through the real `SittingTracker`, with the counterfactual that
+the same stream without window evidence revokes the grant).
+
 ## What a "sitting" is, and what it is not
 
 `domain/sitting/SittingTracker` owns one question: *is the user still in a sitting with app X?* A

@@ -46,9 +46,10 @@ class EventClassifierTest {
     private val classifier = EventClassifier(
         ownPackageName = ownPackage,
         systemPackages = systemPackages,
-        imePackages = imePackages,
+        imePackages = { imePackages },
         frameworkPackage = framework,
-        awarenessOverlayClassNames = AwarenessOverlayWindow.CLASS_NAMES
+        awarenessOverlayClassNames = AwarenessOverlayWindow.CLASS_NAMES,
+        windows = { null }
     )
 
     private val instagram = "com.instagram.android"

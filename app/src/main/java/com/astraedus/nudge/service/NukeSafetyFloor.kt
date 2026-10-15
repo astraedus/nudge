@@ -3,14 +3,13 @@ package com.astraedus.nudge.service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.provider.Settings
 import android.telecom.TelecomManager
-import android.view.inputmethod.InputMethodManager
 import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.domain.logging.NudgeLog
 import com.astraedus.nudge.domain.lock.StrictModeEscapeGuard
 import com.astraedus.nudge.domain.nuke.NukeEnforcement
 import com.astraedus.nudge.domain.nuke.NukePolicy
+import com.astraedus.nudge.util.InputMethods
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.first
 import javax.inject.Inject
@@ -75,16 +74,8 @@ class NukeSafetyFloor @Inject constructor(
         (context.getSystemService(Context.TELECOM_SERVICE) as? TelecomManager)
             ?.defaultDialerPackage
 
-    private fun keyboardPackages(): Set<String> {
-        val set = mutableSetOf<String>()
-        Settings.Secure.getString(context.contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD)
-            ?.substringBefore('/')
-            ?.let { set += it }
-        (context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager)
-            ?.enabledInputMethodList
-            ?.mapTo(set) { it.packageName }
-        return set
-    }
+    /** Shared with the event classifier's transient set, so the two cannot disagree. */
+    private fun keyboardPackages(): Set<String> = InputMethods.enabledPackages(context)
 
     private inline fun safely(label: String, block: () -> Set<String>): Set<String> = try {
         block()

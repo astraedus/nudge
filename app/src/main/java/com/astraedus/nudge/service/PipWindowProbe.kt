@@ -5,9 +5,9 @@ package com.astraedus.nudge.service
  *
  * [isApplicationWindow] is load-bearing, not decoration — see [PipWindowProbe.pipPackages].
  *
- * [packageName] is null for a window whose owner we did not resolve. The service's reader
- * deliberately only resolves the owner of windows that are ALREADY flagged as PiP, because
- * resolving it means reading that window's root node — a binder call per window.
+ * [packageName] is null for a window whose owner was not resolved. Since #76/#71 the service derives
+ * these from its one [com.astraedus.nudge.domain.windows.WindowSnapshot], which resolves the owner
+ * of every APPLICATION window once per window id (see [WindowSnapshotReader]).
  */
 data class PipWindow(
     val packageName: String?,
@@ -16,8 +16,7 @@ data class PipWindow(
 )
 
 /**
- * Answers "which packages are currently playing in a picture-in-picture window?" for issue #19,
- * with a short result cache so the underlying window read cannot be hammered.
+ * Answers "which packages are currently playing in a picture-in-picture window?" for issue #19.
  *
  * **Why this exists.** When Nudge's block overlay backgrounds an app, the app can enter PiP and keep
  * playing in a floating always-on-top window. Our overlay is fullscreen and is the top resumed
@@ -25,44 +24,16 @@ data class PipWindow(
  * Nudge can do in code (the remedy is the per-app PiP permission in Settings), and the accessibility
  * window list is the only place the state is visible.
  *
- * **Cost discipline.** Reading the window list is a binder call. The service refreshes only on
- * window-change events (a PiP window can only appear or vanish via one) and caches the derived
- * answer for every other event; this class adds the second line of defence, a [throttleMs] window
- * during which repeated questions reuse the previous answer.
+ * **Cost discipline.** This used to own a throttled `getWindows()` read of its own. Since issues
+ * #76 and #71 the service reads the window list ONCE per window change into a
+ * [com.astraedus.nudge.domain.windows.WindowSnapshot] (the throttle and its sentinel moved to
+ * [WindowSnapshotReader.shouldRead]) and PiP is derived from it, so two readers can no longer
+ * disagree about what is on screen. What is left here is the pure part, which is the part that
+ * carried the v1.12.0 field failure.
  */
-internal class PipWindowProbe(
-    private val throttleMs: Long = DEFAULT_THROTTLE_MS,
-    private val clock: () -> Long = System::currentTimeMillis,
-    private val readWindows: () -> List<PipWindow>
-) {
-
-    private var lastReadAt: Long = Long.MIN_VALUE
-    private var cached: Set<String> = emptySet()
-
-    /**
-     * Packages owning a picture-in-picture window right now; empty when nothing is in PiP (or the
-     * window list could not be read). Re-reads at most once per [throttleMs].
-     */
-    fun packagesInPictureInPicture(): Set<String> {
-        val now = clock()
-        // Long.MIN_VALUE sentinel: the subtraction would overflow, so compare the timestamps
-        // instead. Without this the very first question at clock 0 reports a cache hit and the
-        // probe answers "nothing in PiP" forever.
-        if (lastReadAt != Long.MIN_VALUE && now - lastReadAt < throttleMs) return cached
-        lastReadAt = now
-        cached = pipPackages(readWindows())
-        return cached
-    }
+internal class PipWindowProbe private constructor() {
 
     companion object {
-        /**
-         * Matches the cadence of the other bounded reads on this path (the issue #7 active-window
-         * check uses the same 500ms): short enough that a PiP escape is caught on the first event
-         * burst that follows it, long enough that a stream of window events cannot turn into a
-         * stream of binder calls.
-         */
-        const val DEFAULT_THROTTLE_MS: Long = 500L
-
         /**
          * Owners of every APPLICATION window currently in picture-in-picture.
          *

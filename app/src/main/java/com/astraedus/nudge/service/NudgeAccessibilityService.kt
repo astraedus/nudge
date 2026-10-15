@@ -50,7 +50,13 @@ import com.astraedus.nudge.domain.nuke.NukePolicy
 import com.astraedus.nudge.ui.lock.StrictModeGuardActivity
 import com.astraedus.nudge.ui.overlay.BlockOverlayActivity
 import com.astraedus.nudge.ui.overlay.PipEscapeActivity
+import com.astraedus.nudge.domain.windows.FloatingCoverEffect
+import com.astraedus.nudge.domain.windows.FloatingWindowCover
+import com.astraedus.nudge.domain.windows.WindowBounds
+import com.astraedus.nudge.domain.windows.WindowKind
+import com.astraedus.nudge.domain.windows.WindowSnapshot
 import com.astraedus.nudge.util.CrashSafeScope
+import com.astraedus.nudge.util.InputMethods
 import com.astraedus.nudge.util.NudgeLogger
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
@@ -162,9 +168,10 @@ class NudgeAccessibilityService : AccessibilityService() {
         EventClassifier(
             ownPackageName = applicationContext.packageName,
             systemPackages = SYSTEM_PACKAGES,
-            imePackages = IME_PACKAGES,
+            imePackages = { inputMethodPackagesCached },
             frameworkPackage = FRAMEWORK_PACKAGE,
-            awarenessOverlayClassNames = AwarenessOverlayWindow.CLASS_NAMES
+            awarenessOverlayClassNames = AwarenessOverlayWindow.CLASS_NAMES,
+            windows = { windowSnapshot }
         )
     }
 
@@ -280,37 +287,22 @@ class NudgeAccessibilityService : AccessibilityService() {
         const val FRAMEWORK_PACKAGE = "android"
 
         /**
-         * Static soft-keyboard packages. A fallback only — the *active* keyboard is matched
-         * dynamically (see [isTransientNonAppPackage] + [currentImePackage]), which is what covers
-         * third-party keyboards (FUTO, SwiftKey, …) that are not on any hardcoded list.
+         * Static soft-keyboard packages. A floor only: the classifier also treats the default
+         * keyboard ([currentImePackage]) and every ENABLED input method ([inputMethodPackagesCached])
+         * as transient, which is what covers third-party keyboards (FUTO, SwiftKey, …) that are on
+         * no list. The rule itself lives in ONE place, `EventClassifier.isTransient`; the companion
+         * copy of it that `TransientWindowTest` used to pin was deleted (issue #76), because a test
+         * of a copy stays green while production drifts.
+         *
+         * `com.samsung.android.honeyboard` is the Samsung Keyboard on One UI (the old
+         * `com.sec.android.inputmethod` predates it), added for the S24 Ultra report in #76.
          */
         val IME_PACKAGES = setOf(
             "com.android.inputmethod.latin",
             "com.google.android.inputmethod.latin",
             "com.sec.android.inputmethod",
+            "com.samsung.android.honeyboard",
         )
-
-        /**
-         * True when a window event comes from a transient, non-application window that must NOT be
-         * treated as a foreground app switch: any soft keyboard / IME (matched dynamically against
-         * [currentImePackage] so EVERY keyboard is covered, plus the static [IME_PACKAGES]
-         * fallback), or the [FRAMEWORK_PACKAGE] that hosts toasts / transient dialogs / the paste
-         * + long-press popup toolbars.
-         *
-         * Root cause of issue #5: after a delay completes, passthrough is granted for app X. When
-         * the user then opened the keyboard or a paste/long-press popup, that surfaced a *different*
-         * package on a window event; routing it into evaluation cleared X's passthrough, so tapping
-         * back into X re-triggered the block. Recognising these as transient — and ignoring their
-         * window events — keeps the passthrough intact.
-         */
-        internal fun isTransientNonAppPackage(
-            packageName: String,
-            currentImePackage: String?
-        ): Boolean {
-            return packageName == FRAMEWORK_PACKAGE ||
-                packageName in IME_PACKAGES ||
-                (currentImePackage != null && packageName == currentImePackage)
-        }
 
         /**
          * How long a resolved launcher set is trusted before it is re-read from PackageManager.
@@ -613,10 +605,45 @@ class NudgeAccessibilityService : AccessibilityService() {
     @Volatile private var pipEscapePromptedCached: Set<String> = emptySet()
 
     /**
-     * Reads the accessibility window list to answer "which packages are in picture-in-picture right
-     * now?". Consulted only from [refreshPipOnlyPackages], on window-change events.
+     * Every keyboard to treat as transient right now: [IME_PACKAGES] plus the default and every
+     * ENABLED input method (issue #76). Read off the main thread (it is a binder call) on connect
+     * and whenever the keyboard settings change, and read on the hot path as a set lookup.
      */
-    private val pipWindowProbe = PipWindowProbe(readWindows = ::readPipWindows)
+    @Volatile private var inputMethodPackagesCached: Set<String> = IME_PACKAGES
+
+    /**
+     * The accessibility window list, as of the last window-change event (issues #76, #71, and #19's
+     * picture-in-picture before them). Null until first read, and whenever the read fails: every
+     * consumer treats null as "no window evidence", i.e. the behaviour this service had before.
+     * Main thread writes; the classifier and the launch site read.
+     */
+    @Volatile private var windowSnapshot: WindowSnapshot? = null
+
+    /** Builds [windowSnapshot]; owns the per-window owner cache. Main thread only. */
+    private val windowSnapshotReader by lazy {
+        WindowSnapshotReader(readRawWindows = ::readRawWindows, readDisplaySize = ::readDisplaySize)
+    }
+
+    /** Main-thread only: when [windowSnapshot] was last read, for the `WINDOWS_CHANGED` throttle. */
+    private var lastWindowReadAt: Long = WindowSnapshotReader.NEVER
+    private var trailingWindowReadPosted = false
+    private var lastWindowDescription: String? = null
+    private val windowReadHandler by lazy { Handler(Looper.getMainLooper()) }
+
+    /**
+     * The cover over a blocked app's floating window (issue #71). A plain instance rather than an
+     * injected singleton: it has one owner, this service, and needs this service's context and its
+     * global BACK action.
+     */
+    private val floatingCover by lazy {
+        FloatingWindowCoverManager(
+            logger = entryPoint.nudgeLogger(),
+            onCloseRequested = {
+                entryPoint.nudgeLogger().i("floating cover close requested, pressing BACK")
+                performGlobalAction(GLOBAL_ACTION_BACK)
+            }
+        )
+    }
 
     /**
      * Packages whose ONLY presence on screen is a floating picture-in-picture window (issue #19).
@@ -690,38 +717,135 @@ class NudgeAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * Snapshot the accessibility window list for [pipWindowProbe] (issue #19).
+     * The Android half of [WindowSnapshotReader]: the raw window list. Throws on failure; the reader
+     * turns that into "no snapshot".
      *
-     * The owner of a window is only resolved for windows ALREADY flagged as picture-in-picture:
-     * [android.view.accessibility.AccessibilityWindowInfo.getRoot] is a binder read per window, and
-     * a device has many windows but at most one app in PiP. Non-PiP windows therefore come back with
-     * a null package, which [PipWindowProbe.pipPackages] ignores.
-     *
-     * [AccessibilityWindowInfo.TYPE_APPLICATION] is carried through because SystemUI's
-     * "Picture-in-Picture menu" window is ALSO flagged PiP and sorts ahead of the app's own window —
-     * see [PipWindowProbe.pipPackages] for the field failure that caused.
-     *
-     * Fails soft to an empty list: an unreadable window list must never crash the service, and
-     * "nothing in PiP" leaves every existing code path behaving exactly as it did before this fix.
+     * Owners are resolved lazily through [RawWindow.resolvePackage] and only for application
+     * windows the reader has not seen before (`getRoot` is a binder read per window).
+     * `isInPictureInPictureMode` is API 26, the minSdk.
      */
-    private fun readPipWindows(): List<PipWindow> = try {
-        windows.orEmpty().map { window ->
-            val inPip = window.isInPictureInPictureMode
-            PipWindow(
-                packageName = if (inPip) window.root?.packageName?.toString() else null,
-                isPictureInPicture = inPip,
-                isApplicationWindow = window.type == AccessibilityWindowInfo.TYPE_APPLICATION
-            )
-        }
-    } catch (_: Exception) {
-        emptyList()
+    private fun readRawWindows(): List<RawWindow> = windows.orEmpty().map { window ->
+        val rect = android.graphics.Rect()
+        window.getBoundsInScreen(rect)
+        RawWindow(
+            windowId = window.id,
+            kind = when (window.type) {
+                AccessibilityWindowInfo.TYPE_APPLICATION -> WindowKind.APPLICATION
+                AccessibilityWindowInfo.TYPE_INPUT_METHOD -> WindowKind.INPUT_METHOD
+                AccessibilityWindowInfo.TYPE_SYSTEM -> WindowKind.SYSTEM
+                AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY -> WindowKind.ACCESSIBILITY_OVERLAY
+                else -> WindowKind.OTHER
+            },
+            isActive = window.isActive,
+            isFocused = window.isFocused,
+            isPictureInPicture = window.isInPictureInPictureMode,
+            bounds = WindowBounds(rect.left, rect.top, rect.right, rect.bottom),
+            resolvePackage = { window.root?.packageName?.toString() }
+        )
+    }
+
+    /** The physical display size in the CURRENT orientation, or null if it cannot be read. */
+    @Suppress("DEPRECATION")
+    private fun readDisplaySize(): Pair<Int, Int>? {
+        val wm = getSystemService(WINDOW_SERVICE) as? android.view.WindowManager ?: return null
+        return if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            val b = wm.maximumWindowMetrics.bounds
+            b.width() to b.height()
+        } else {
+            val p = android.graphics.Point()
+            wm.defaultDisplay.getRealSize(p)
+            p.x to p.y
+        }.takeIf { it.first > 0 && it.second > 0 }
     }
 
     /**
-     * Recompute [pipOnlyPackagesCached] (issue #19). Called on window-change events only.
+     * Re-read the window list and run everything that hangs off it: picture-in-picture (#19) and
+     * the floating-window cover (#71). The classifier reads the result on this same event.
+     *
+     * @param force re-read even inside the throttle. True for `TYPE_WINDOW_STATE_CHANGED`: the
+     *   platform recomputes the window list right before dispatching that event, so a fresh read is
+     *   the only one guaranteed to show the window it is about (the classifier's evidence depends on
+     *   it). `TYPE_WINDOWS_CHANGED` arrives in bursts, so it is throttled, with ONE trailing read so
+     *   the last change of a burst (a floating window closing) is never missed.
+     */
+    private fun refreshWindowState(force: Boolean) {
+        val now = android.os.SystemClock.uptimeMillis()
+        if (!WindowSnapshotReader.shouldRead(force, lastWindowReadAt, now)) {
+            if (!trailingWindowReadPosted) {
+                trailingWindowReadPosted = true
+                windowReadHandler.postDelayed({
+                    trailingWindowReadPosted = false
+                    refreshWindowState(force = true)
+                }, WindowSnapshotReader.THROTTLE_MS)
+            }
+            return
+        }
+        lastWindowReadAt = now
+        val snapshot = windowSnapshotReader.read()
+        windowSnapshot = snapshot
+        val description = WindowSnapshotReader.describe(snapshot)
+        if (description != lastWindowDescription) {
+            lastWindowDescription = description
+            entryPoint.nudgeLogger().d("windows changed $description")
+        }
+        refreshPipOnlyPackages(snapshot)
+        maintainFloatingCover(snapshot)
+    }
+
+    /**
+     * Keep the floating-window cover honest after the window list changed (issue #71): move it with
+     * the window, and take it off when the window is gone or fullscreen, or the user has earned
+     * their way in. Decided by [FloatingWindowCover.maintain]; nothing here re-states the rule.
+     */
+    private fun maintainFloatingCover(snapshot: WindowSnapshot?) {
+        val covered = floatingCover.coveredPackage() ?: return
+        val effect = FloatingWindowCover.maintain(
+            snapshot = snapshot,
+            covered = covered,
+            shownBounds = floatingCover.shownBounds(),
+            grantAlive = grantAliveFor(covered)
+        )
+        floatingCover.apply(effect)
+    }
+
+    /**
+     * Has the user earned their way into [packageName] (a completed delay, or the daily emergency
+     * pass)? Read-only: unlike [grantLetsThrough] this launches nothing. Nuke skips every grant, so a
+     * nuked package never has one here either.
+     */
+    private fun grantAliveFor(packageName: String): Boolean {
+        if (isNukedNow(packageName)) return false
+        return entryPoint.passthroughManager().shouldSkipForegroundEvaluation(packageName) ||
+            entryPoint.emergencyPassManager().isPassActive(packageName)
+    }
+
+    /**
+     * A block is about to be shown for [targetPackage]. If it is FLOATING (issue #71), the overlay
+     * alone cannot block it: cover the window, and press BACK on it once while it holds focus.
+     *
+     * @return true when the target is floating, so the caller can skip relaunching an overlay that
+     *   is already up underneath it.
+     */
+    private fun coverIfFloating(targetPackage: String): Boolean {
+        val snapshot = windowSnapshot
+        val bounds = FloatingWindowCover.coverFor(snapshot, targetPackage) ?: return false
+        // BACK FIRST, before the cover and before any overlay launch: it goes to the window with
+        // input focus, and the overlay activity will take focus the moment it starts. Pressed on
+        // the overlay instead, BACK would read as a walk-away.
+        FloatingWindowCover.backTarget(snapshot, targetPackage, floatingCover.backPressedWindows())?.let { id ->
+            floatingCover.noteBackPressed(id)
+            entryPoint.nudgeLogger().i("floating window blocked, pressing BACK once package=$targetPackage window=$id")
+            performGlobalAction(GLOBAL_ACTION_BACK)
+        }
+        floatingCover.apply(FloatingCoverEffect.Show(targetPackage, bounds))
+        return true
+    }
+
+    /**
+     * Recompute [pipOnlyPackagesCached] (issue #19) from [snapshot]. Called on every window read.
      *
      * The active-window read happens only when something is actually in PiP, so the steady-state
-     * cost of this is one throttled `getWindows()` per window-change burst.
+     * cost of this is nothing beyond the window read itself.
      *
      * When the set CHANGES we log it and run the explainer decision. Doing both here rather than
      * per-event is what keeps the logging bounded — and the log line is unconditional, which the
@@ -729,8 +853,19 @@ class NudgeAccessibilityService : AccessibilityService() {
      * explainer, so the field failure produced total silence with no way to tell whether detection
      * had fired and been suppressed, or never fired at all.
      */
-    private fun refreshPipOnlyPackages() {
-        val inPip = pipWindowProbe.packagesInPictureInPicture()
+    private fun refreshPipOnlyPackages(snapshot: WindowSnapshot?) {
+        // The same filter #19's field failure produced (application windows only, a set), now fed
+        // from the one window read instead of a second `getWindows()` of its own. An unreadable list
+        // is "nothing in PiP", exactly as before.
+        val inPip = PipWindowProbe.pipPackages(
+            snapshot?.windows.orEmpty().map {
+                PipWindow(
+                    packageName = it.packageName,
+                    isPictureInPicture = it.isPictureInPicture,
+                    isApplicationWindow = it.kind == WindowKind.APPLICATION
+                )
+            }
+        )
         val next = if (inPip.isEmpty()) {
             emptySet()
         } else {
@@ -856,6 +991,16 @@ class NudgeAccessibilityService : AccessibilityService() {
         } catch (_: Exception) {
             null
         }
+        // Every ENABLED keyboard too (issue #76). `getEnabledInputMethodList` is a binder call, so
+        // it is read off the main thread; until it lands the static floor plus the default
+        // keyboard above still apply, and a failed read keeps whatever was last known.
+        serviceScope.launch {
+            try {
+                inputMethodPackagesCached = IME_PACKAGES + InputMethods.enabledPackages(applicationContext)
+            } catch (e: Exception) {
+                entryPoint.nudgeLogger().w("failed to read enabled input methods", e)
+            }
+        }
     }
 
     override fun onServiceConnected() {
@@ -887,6 +1032,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         entryPoint.counterOverlayManager().setServiceContext(this)
         entryPoint.timeRemainingOverlayManager().setServiceContext(this)
         entryPoint.tabCoverOverlayManager().setServiceContext(this)
+        floatingCover.setServiceContext(this)
 
         val passthrough = entryPoint.passthroughManager()
         passthroughManagerInstance = passthrough
@@ -1007,6 +1153,13 @@ class NudgeAccessibilityService : AccessibilityService() {
         try {
             contentResolver.registerContentObserver(
                 Settings.Secure.getUriFor(Settings.Secure.DEFAULT_INPUT_METHOD),
+                false,
+                imeSettingObserver
+            )
+            // The ENABLED list too (issue #76): every enabled keyboard is transient, not only the
+            // default. One observer for both; `unregisterContentObserver` drops both registrations.
+            contentResolver.registerContentObserver(
+                Settings.Secure.getUriFor(Settings.Secure.ENABLED_INPUT_METHODS),
                 false,
                 imeSettingObserver
             )
@@ -1166,6 +1319,13 @@ class NudgeAccessibilityService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
+        // `TYPE_WINDOWS_CHANGED` is raised by the platform itself and usually carries NO package,
+        // so the line below drops it, and with it the only notice that a floating window closed or
+        // moved (issue #71). The window list is the one thing it is evidence about, so read it
+        // first. Not a return, and nothing is classified from it: there is no package to classify.
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED && event.packageName == null) {
+            refreshWindowState(force = false)
+        }
         val packageName = event.packageName?.toString() ?: return
 
         // ONE conversion, at the top, into pure data. Everything below reads the record rather than
@@ -1201,7 +1361,13 @@ class NudgeAccessibilityService : AccessibilityService() {
         // So the gate is general and sits ahead of everything: a package present only as a PiP
         // window is not the foreground app, and its events drive nothing — no evaluation, no block,
         // no UsageEvent, no overlay bypass, no interaction counting.
-        if (record.type.isWindowChange) refreshPipOnlyPackages()
+        //
+        // The same read now feeds the classifier's window evidence (issues #76, #71), which is why
+        // a `TYPE_WINDOW_STATE_CHANGED` always re-reads: the platform recomputes the list right
+        // before dispatching one, so only a fresh read shows the window this event is about.
+        if (record.type.isWindowChange) {
+            refreshWindowState(force = record.type == A11yEventType.WINDOW_STATE_CHANGED)
+        }
 
         // CLASSIFY ONCE, AND APPLY THE SITTING ONCE, AHEAD OF EVERY EARLY RETURN BELOW.
         //
@@ -1259,10 +1425,22 @@ class NudgeAccessibilityService : AccessibilityService() {
             // app and launched a SECOND overlay, writing a second `wasBlocked` row for one entry.
             // Device QA measured `wasBlocked` +25 across 10 launches. See
             // [BlockLaunchGate.isGenuineBypass] for the captured timings.
-            if (entryPoint.blockLaunchGuard().isGenuineBypass(record.type, signal)) {
+            //
+            // ...and never for a FLOATING window (issue #71). A freeform window is stacked above
+            // the overlay, so a touch on it is not the user getting past anything; reading it as a
+            // bypass relaunched the overlay underneath the window on every touch, forever. It falls
+            // through to evaluation instead WITHOUT dropping the overlay, so a blocked floating app
+            // reaches `launchBlockOverlay`, which covers its window rather than relaunching.
+            val floating = signal is ForegroundSignal.AppWindow &&
+                windowSnapshot?.isFloating(signal.packageName) == true
+            if (entryPoint.blockLaunchGuard().isGenuineBypass(record.type, signal, floating)) {
                 markOverlayInactive()
                 entryPoint.nudgeLogger().i(
                     "block overlay bypassed by foreground switch, re-evaluating package=$packageName"
+                )
+            } else if (floating && record.type == A11yEventType.WINDOW_STATE_CHANGED) {
+                entryPoint.nudgeLogger().i(
+                    "floating window over a live block overlay, not a bypass package=$packageName"
                 )
             } else {
                 clearOverlays(applicationContext.packageName, "block_overlay_active")
@@ -2081,6 +2259,9 @@ class NudgeAccessibilityService : AccessibilityService() {
             // The cover is enforcement, so it goes with the rest of it: a globally-disabled Nudge
             // must behave as if uninstalled, and a screen nobody is looking at owes no cover either.
             entryPoint.tabCoverOverlayManager().hide()
+            // Same reasoning for the floating-window cover (issue #71). After a screen-off the
+            // window may still be there; the next touch on it re-evaluates and re-covers it.
+            floatingCover.hide()
         } catch (e: Exception) {
             entryPoint.nudgeLogger().w("overlay hide-all failed", e)
         }
@@ -2652,6 +2833,20 @@ class NudgeAccessibilityService : AccessibilityService() {
         decisionKey: String,
         extras: Intent.() -> Unit
     ): Boolean {
+        // A FLOATING target is stacked above any overlay we could launch (issue #71), so the
+        // block for it is a cover over its window. Asked here, at the one launch site, so every
+        // kind of block (rule, cooldown, daily limit, web) gets it. Ahead of the gate on purpose:
+        // the cover must go up even when the gate refuses a duplicate launch.
+        if (coverIfFloating(targetPackage) && isOverlayActive) {
+            // The overlay is already on screen underneath. Relaunching it would only re-deliver it
+            // (the visible "refresh" in the report) and claim a confrontation nobody walked into.
+            entryPoint.nudgeLogger().i(
+                "block overlay launch skipped target=$targetPackage attributed=$attributedPackage " +
+                    "reason=floating_window_covered_overlay_already_up"
+            )
+            return false
+        }
+
         val guard = entryPoint.blockLaunchGuard()
         val decision = guard.decide(targetPackage, decisionKey)
 
@@ -2819,6 +3014,9 @@ class NudgeAccessibilityService : AccessibilityService() {
             }
 
             is BlockDecision.Allow -> {
+                // The rules no longer block it (a rule turned off, a schedule ended): a cover left
+                // over its floating window would be a block nothing asked for (issue #71).
+                floatingCover.hideIfCovering(web?.browserPackage ?: packageName)
                 entryPoint.usageRepository().logEvent(
                     UsageEvent(packageName = packageName)
                 )
@@ -3045,6 +3243,12 @@ class NudgeAccessibilityService : AccessibilityService() {
             entryPoint.timeRemainingOverlayManager().clearServiceContext()
         }
         teardown.step("clear_tab_cover_overlay") { entryPoint.tabCoverOverlayManager().clearServiceContext() }
+        teardown.step("clear_floating_cover") { floatingCover.clearServiceContext() }
+        // A trailing WINDOWS_CHANGED read may still be queued; it must not run against a dead service.
+        teardown.step("cancel_window_reads") {
+            windowReadHandler.removeCallbacksAndMessages(null)
+            trailingWindowReadPosted = false
+        }
         teardown.step("clear_passthrough_instance") { passthroughManagerInstance = null }
         teardown.step("disable_grayscale") {
             if (grayscaleActiveForPackage != null) {

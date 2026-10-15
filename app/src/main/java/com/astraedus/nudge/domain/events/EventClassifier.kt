@@ -1,5 +1,8 @@
 package com.astraedus.nudge.domain.events
 
+import com.astraedus.nudge.domain.windows.WindowKind
+import com.astraedus.nudge.domain.windows.WindowSnapshot
+
 /**
  * Turns one [AccessibilityEventRecord] into exactly one [ForegroundSignal].
  *
@@ -28,13 +31,22 @@ package com.astraedus.nudge.domain.events
  *   site must decide, because a forgotten argument here would not fail — it would silently classify
  *   the counter and the time-remaining pill as [ForegroundSignal.OwnUi] again and hand issue #41
  *   straight back, with every test still green.
+ * @param imePackages every keyboard to treat as transient RIGHT NOW: the static floor plus every
+ *   ENABLED input method, read from the system by the service (issue
+ *   [#76](https://github.com/astraedus/nudge/issues/76)). A provider rather than a set because the
+ *   enabled list changes while the service runs. The per-event `currentImePackage` is kept as well:
+ *   it is the one keyboard that is guaranteed to be current even if the enabled-list read failed.
+ * @param windows the live window list ([WindowSnapshot]), or null when it is unavailable. Also
+ *   deliberately has NO default: a forgotten argument would silently turn off the window evidence
+ *   that #76 and #71 are fixed by. Null is a legitimate VALUE (no evidence), never an omission.
  */
 class EventClassifier(
     private val ownPackageName: String,
     private val systemPackages: Set<String>,
-    private val imePackages: Set<String>,
+    private val imePackages: () -> Set<String>,
     private val frameworkPackage: String,
-    private val awarenessOverlayClassNames: Set<String>
+    private val awarenessOverlayClassNames: Set<String>,
+    private val windows: () -> WindowSnapshot?
 ) {
 
     /**
@@ -71,7 +83,7 @@ class EventClassifier(
 
         if (pkg in systemPackages) return ForegroundSignal.SystemSurface(pkg)
 
-        return ForegroundSignal.AppWindow(pkg)
+        return appWindowUnlessWindowsDisagree(record)
     }
 
     /**
@@ -127,7 +139,68 @@ class EventClassifier(
         notOnScreen(pkg, record.className, currentImePackage, pipOnlyPackages)?.let { return it }
         if (pkg in launcherPackages) return ForegroundSignal.Home(pkg)
         if (pkg in systemPackages) return ForegroundSignal.SystemSurface(pkg)
-        return ForegroundSignal.AppWindow(pkg)
+        return appWindowUnlessWindowsDisagree(record)
+    }
+
+    /**
+     * [ForegroundSignal.AppWindow], unless the WINDOW LIST positively shows that this event did not
+     * come from the app the user is in, in which case [ForegroundSignal.Transient].
+     *
+     * ## Why the package was never enough ([#76](https://github.com/astraedus/nudge/issues/76))
+     *
+     * Every answer above is about the event's PACKAGE. On a Samsung S24 Ultra with SwiftKey,
+     * opening the keyboard in an Instagram DM and closing it again re-blocked Instagram, and doing
+     * it repeatedly ran into the auto-kick cooldown. The keyboard itself was already transient.
+     * What was not: a window from ANOTHER package appearing with the keyboard (inline autofill
+     * suggestions are rendered inside the IME's own window; the Samsung clipboard and Galaxy AI
+     * writing tools are overlays). It classified as an app window, started the sitting's away clock
+     * ([com.astraedus.nudge.domain.sitting.SittingTracker]), typing (IME events, transient) never
+     * cancelled it, and closing the keyboard two minutes later read as a return from a two-minute
+     * absence: the grant went and the block came back.
+     *
+     * ## The evidence, all of it positive
+     *
+     * 1. The event's own window is a window we can see and it is NOT an application window (the
+     *    keyboard, a system or app overlay, an accessibility overlay). Whatever package drew into
+     *    it, nobody is "in" it.
+     * 2. The package owns application windows, NONE active or focused, while another package's
+     *    application window is. A panel beside the app the user is in.
+     * 3. The keyboard is up, the package owns no window at all in the list, and another package's
+     *    application window holds focus: something drawn inside or beside the keyboard (an
+     *    embedded inline-suggestion view is not a window of its own).
+     *
+     * The list is current for the event that matters most: on `TYPE_WINDOW_STATE_CHANGED`,
+     * `AccessibilityManagerService.sendAccessibilityEvent` calls
+     * `WindowManagerInternal.computeWindowsForAccessibility()` BEFORE dispatching (verified in the
+     * android10-release source, the oldest platform in these reports), and the service re-reads
+     * the list on every such event.
+     *
+     * Anything short of that, including no window list at all, an event window id the list does
+     * not contain, or no application window holding focus, answers [ForegroundSignal.AppWindow]
+     * exactly as before. A wrong Transient here is a block not evaluated, so it needs proof; a wrong
+     * AppWindow is today's behaviour. Case 3 is the only one that can mistake a brand-new app for a
+     * panel (its window not listed yet, keyboard still listed), and only for that one event: the
+     * app's next content change goes through the issue #7 verified path and is evaluated then.
+     */
+    private fun appWindowUnlessWindowsDisagree(record: AccessibilityEventRecord): ForegroundSignal {
+        val pkg = record.packageName
+        val snapshot = windows() ?: return ForegroundSignal.AppWindow(pkg)
+        val notTheApp =
+            (record.windowId != AccessibilityEventRecord.UNDEFINED &&
+                snapshot.isNonApplicationWindow(record.windowId)) ||
+                snapshot.focusIsElsewhere(pkg) ||
+                drawnWithTheKeyboard(snapshot, pkg)
+        return if (notTheApp) ForegroundSignal.Transient(pkg) else ForegroundSignal.AppWindow(pkg)
+    }
+
+    /** Evidence 3 of [appWindowUnlessWindowsDisagree]. */
+    private fun drawnWithTheKeyboard(snapshot: WindowSnapshot, pkg: String): Boolean {
+        if (snapshot.windows.none { it.kind == WindowKind.INPUT_METHOD }) return false
+        if (snapshot.windows.any { it.packageName == pkg }) return false
+        return snapshot.windows.any {
+            it.kind == WindowKind.APPLICATION && it.holdsFocus &&
+                it.packageName != null && it.packageName != pkg
+        }
     }
 
     /**
@@ -174,6 +247,6 @@ class EventClassifier(
 
     private fun isTransient(packageName: String, currentImePackage: String?): Boolean =
         packageName == frameworkPackage ||
-            packageName in imePackages ||
+            packageName in imePackages() ||
             (currentImePackage != null && packageName == currentImePackage)
 }

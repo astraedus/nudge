@@ -35,9 +35,10 @@ class HomeScreenPassthroughTest {
     private val classifier = EventClassifier(
         ownPackageName = ownPackage,
         systemPackages = NudgeAccessibilityService.SYSTEM_PACKAGES,
-        imePackages = NudgeAccessibilityService.IME_PACKAGES,
+        imePackages = { NudgeAccessibilityService.IME_PACKAGES },
         frameworkPackage = NudgeAccessibilityService.FRAMEWORK_PACKAGE,
-        awarenessOverlayClassNames = AwarenessOverlayWindow.CLASS_NAMES
+        awarenessOverlayClassNames = AwarenessOverlayWindow.CLASS_NAMES,
+        windows = { null }
     )
 
     /**
