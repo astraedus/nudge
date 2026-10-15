@@ -573,27 +573,77 @@ class OverlayLifecycleGuardTest {
      * A web block is attributed to the rule's app and armed for the browser, and the two must not be
      * collapsed: the window that has to be suppressed belongs to the app the user is SITTING in, and
      * that is whose window resurfaces underneath the finishing overlay.
+     *
+     * Since #78 a web walk-away arms that window only when it falls back to going home (its escape
+     * could not be performed); that fallback is what is applied here.
      */
     @Test
-    fun `a web block arms the browser's window, not the blocked app's`() {
+    fun `a web block's go-home fallback arms the browser's window, not the blocked app's`() {
         val overlay = OverlayLifecycle()
         val chrome = "com.android.chrome"
         guard.onForegroundSignal(ForegroundSignal.AppWindow(chrome))
         overlay.onDelivered(serviceLaunches(chrome))
         applyToGuard(overlay.onResumed())
 
-        applyToGuard(
-            overlay.onWalkAwayRequested(
-                attributedPackage = INSTAGRAM, // the overlay says "Instagram", the row lands there
-                blockMode = DELAY,
-                walkAwayPackage = chrome // ...but the browser is what resurfaces
-            )
-        )
+        val leave = overlay.onWalkAwayRequested(
+            attributedPackage = INSTAGRAM, // the overlay says "Instagram", the row lands there
+            blockMode = DELAY,
+            walkAwayPackage = chrome, // ...but the browser is what resurfaces
+            escapeBrowser = chrome
+        ).filterIsInstance<OverlayLifecycle.Effect.LeaveBlockedPage>().single()
+        applyToGuard(leave.fallback)
 
         clock += 100
         assertEquals(
             BlockLaunchGate.Decision.DROP_WALK_AWAY_IN_FLIGHT,
             guard.decide(chrome, delayKey(chrome))
+        )
+    }
+
+    /**
+     * ISSUE #78, against the real guard: the web walk-away's escape must leave the browser
+     * BLOCKABLE. The escape lands the user in the browser on a blank page; if it did not take and
+     * the browser comes forward still on the blocked URL, the service has to block it on that very
+     * event, because a hard block may never show the page.
+     *
+     * Counterfactual: the pre-#78 walk-away (window armed for the browser, then home) run over the
+     * same instant suppresses that block for the whole transition, which is the page on screen for
+     * up to 1.5 seconds and, on a page that then goes quiet, until the next event.
+     */
+    @Test
+    fun `a web escape leaves the browser blockable the moment it comes forward`() {
+        val overlay = OverlayLifecycle()
+        val chrome = "com.android.chrome"
+        guard.onForegroundSignal(ForegroundSignal.AppWindow(chrome))
+        overlay.onDelivered(serviceLaunches(chrome))
+        applyToGuard(overlay.onResumed())
+
+        clock += 4_000
+        applyToGuard(
+            overlay.onWalkAwayRequested(INSTAGRAM, DELAY, chrome, escapeBrowser = chrome)
+        )
+
+        clock += 300 // the browser comes forward, still on the page
+        guard.onForegroundSignal(ForegroundSignal.AppWindow(chrome))
+        assertEquals(
+            "a web escape must never suppress a block for the browser it is landing in",
+            BlockLaunchGate.Decision.LAUNCH,
+            guard.decide(chrome, delayKey(chrome))
+        )
+
+        // COUNTERFACTUAL: the pre-#78 walk-away over the same instant.
+        val preFix = BlockLaunchGuard().also { it.nowMs = { clock - 300 } }
+        preFix.onForegroundSignal(ForegroundSignal.AppWindow(chrome))
+        val old = OverlayLifecycle().apply { onDelivered(pendingOverlayId = 1L) }
+        old.onWalkAwayRequested(INSTAGRAM, DELAY, chrome).forEach {
+            if (it is OverlayLifecycle.Effect.ArmWalkAwayWindow) preFix.onWalkAwayStarted(it.packageName)
+        }
+        preFix.nowMs = { clock }
+        preFix.onForegroundSignal(ForegroundSignal.AppWindow(chrome))
+        assertEquals(
+            "the old walk-away suppresses the block on the browser it leaves on the page",
+            BlockLaunchGate.Decision.DROP_WALK_AWAY_IN_FLIGHT,
+            preFix.decide(chrome, delayKey(chrome))
         )
     }
 
