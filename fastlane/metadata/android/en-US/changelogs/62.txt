@@ -1,0 +1,2 @@
+• Strict Mode now also locks the website-blocking switches: turning them off takes the unlock challenge, turning them on is free.
+• Clearer notes on which Instagram screens Nudge can detect on your phone.
