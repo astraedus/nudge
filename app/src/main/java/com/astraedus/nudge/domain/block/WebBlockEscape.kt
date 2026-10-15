@@ -100,13 +100,20 @@ class WebBlockEscape @Inject constructor() {
             passthroughPackage?.takeIf { it.isNotBlank() }
     }
 
-    /** A web block for [domain] in [browserPackage] has just been delivered to the overlay. */
+    /**
+     * A web block for [domain] in [browserPackage] has just been delivered to the overlay.
+     *
+     * @return true when this delivery disproves the escape in flight (the caller logs it: it is the
+     *   one line device QA reads to tell a working escape from a browser that ignored it).
+     */
     @Synchronized
-    fun onBlockDelivered(browserPackage: String, domain: String?, nowMs: Long) {
-        val attempt = inFlight ?: return
+    fun onBlockDelivered(browserPackage: String, domain: String?, nowMs: Long): Boolean {
+        val attempt = inFlight ?: return false
         inFlight = null
         val sameBlock = attempt.browserPackage == browserPackage && attempt.domain == domain
-        if (sameBlock && nowMs - attempt.atMs < ESCAPE_VERIFY_MS) failedBrowser = browserPackage
+        if (!sameBlock || nowMs - attempt.atMs >= ESCAPE_VERIFY_MS) return false
+        failedBrowser = browserPackage
+        return true
     }
 
     /**

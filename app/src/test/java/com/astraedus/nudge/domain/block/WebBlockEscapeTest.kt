@@ -9,6 +9,7 @@ import com.astraedus.nudge.service.WebDomainDetector
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 
@@ -70,6 +71,20 @@ class WebBlockEscapeTest {
     }
 
     /**
+     * The issue's exact report: Chrome was force-stopped and reopened, restored the blocked tab, and
+     * the block fires as the very first thing Nudge sees from it (nothing in flight, possibly a
+     * Nudge process that has never escaped anything). That first walk-away must leave the page; it
+     * is the only exit the user has.
+     */
+    @Test
+    fun `a restored tab blocked on launch is not a failed escape and leaves the page`() {
+        val freshProcess = WebBlockEscape()
+
+        assertFalse(freshProcess.onBlockDelivered(CHROME, DOMAIN, clock))
+        assertEquals(Exit.LEAVE_THE_PAGE, freshProcess.decideExit(CHROME, DOMAIN, clock))
+    }
+
+    /**
      * A browser that accepts the intent and ignores it comes back still on the blocked page, and
      * the service blocks it at once (the walk-away window is deliberately not armed). Without this
      * memory the next walk-away escapes again, into the same block: the user bounces between the
@@ -79,7 +94,7 @@ class WebBlockEscapeTest {
     fun `the same block delivered again right after an escape sends the next walk-away home`() {
         assertEquals(Exit.LEAVE_THE_PAGE, walkAway())
         clock += 900L // the browser came forward still on the page and re-blocked
-        deliver()
+        assertTrue("the overlay logs this delivery as the escape failing", deliver())
 
         assertEquals(Exit.GO_HOME, walkAway())
     }
@@ -102,7 +117,7 @@ class WebBlockEscapeTest {
     fun `the same block after the verify window is a new visit, not a failed escape`() {
         walkAway()
         clock += WebBlockEscape.ESCAPE_VERIFY_MS
-        deliver()
+        assertFalse(deliver())
 
         assertEquals(Exit.LEAVE_THE_PAGE, walkAway())
     }
@@ -111,7 +126,7 @@ class WebBlockEscapeTest {
     fun `a different site blocked right after an escape is not a failed escape`() {
         walkAway(domain = DOMAIN)
         clock += 500L
-        deliver(domain = "example-blocked.com")
+        assertFalse(deliver(domain = "example-blocked.com"))
 
         assertEquals(Exit.LEAVE_THE_PAGE, walkAway(domain = "example-blocked.com"))
     }
@@ -120,7 +135,7 @@ class WebBlockEscapeTest {
     fun `a block in a different browser right after an escape is not a failed escape`() {
         walkAway(browser = CHROME)
         clock += 500L
-        deliver(browser = BRAVE)
+        assertFalse(deliver(browser = BRAVE))
 
         assertEquals(Exit.LEAVE_THE_PAGE, walkAway(browser = CHROME))
         assertEquals(Exit.LEAVE_THE_PAGE, walkAway(browser = BRAVE))

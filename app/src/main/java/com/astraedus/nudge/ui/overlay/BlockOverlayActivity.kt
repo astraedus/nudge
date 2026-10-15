@@ -250,11 +250,12 @@ class BlockOverlayActivity : ComponentActivity() {
         // A web block arriving is how a failed escape shows itself: the browser came forward still
         // on the page the last walk-away tried to leave. See [WebBlockEscape.onBlockDelivered].
         browserToEscape(intent)?.let { browser ->
-            webBlockEscape.onBlockDelivered(
+            val escapeFailed = webBlockEscape.onBlockDelivered(
                 browserPackage = browser,
                 domain = intent.getStringExtra(EXTRA_WEB_DOMAIN),
                 nowMs = SystemClock.elapsedRealtime()
             )
+            if (escapeFailed) nudgeLogger.w("web walk-away: escape did not take in $browser")
         }
 
         val delaySeconds = intent.getIntExtra(EXTRA_DELAY_SECONDS, 15)
@@ -597,6 +598,7 @@ class BlockOverlayActivity : ComponentActivity() {
         if (exit == WebBlockEscape.Exit.LEAVE_THE_PAGE) {
             try {
                 startActivity(webEscapeIntent(effect.browserPackage))
+                nudgeLogger.i("web walk-away: leaving the page in ${effect.browserPackage}")
                 return
             } catch (e: Exception) {
                 webBlockEscape.onEscapeUnavailable()
