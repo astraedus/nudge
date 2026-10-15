@@ -1430,3 +1430,29 @@ Two reports a week apart, a Samsung S24 Ultra (keyboard open, keyboard closed, r
 - **Window evidence must be POSITIVE before it can stop an evaluation.** A wrong "not the app" is a block that never happens. Unknown window id, package absent from the list, no app window holding focus, no list at all: all answer exactly as before. Check the platform before trusting the list's freshness: `AccessibilityManagerService` recomputes windows right before dispatching `TYPE_WINDOW_STATE_CHANGED` (android10-release source), so re-read on every such event, never through a throttle.
 - **A test of a copy pins the copy.** `isTransientNonAppPackage` was a companion duplicate of the classifier's rule that production never called, and `TransientWindowTest` asserted it. Deleted; the tests classify through the real classifier.
 - **A fullscreen overlay cannot block a window stacked above it.** For a floating window the block is a touch-consuming `TYPE_ACCESSIBILITY_OVERLAY` over its bounds, plus BACK once while it holds focus, pressed BEFORE launching the overlay (which takes focus, and turns BACK into a walk-away).
+
+## 2026-10-15, the release gate's own helpers made the v1.22.0 run unclean while the product passed
+
+- **A harness that reads "the first record" of an OS listing is reading an order nothing promises.**
+  `nudge_notif_records` took the first Nudge `NotificationRecord` in `dumpsys notification`. On a bench
+  where the usage reminder (id 4) was listed before the ongoing notification (id 1) it watched a
+  timestamp that never moves, and `notif-idle` failed on a healthy build. Select by the identity the
+  code under test owns (`NudgeMonitorService` posts id 1), and pin it with canned dumps in both orders.
+- **A UI helper that assumes the screen is in the state the fixture creates breaks the first time
+  anything leaves it different.** `set_daily_limit_minutes` tapped the "Custom" chip, which reads
+  "Custom" only while the limit is a preset; with a custom value set the chip shows the value ("1m")
+  instead, so `daily-limit-midsession` run alone after `setup` died ~100s in. Normalise first with an
+  always-present, idempotent control (tap "2h", then "Custom") rather than branching on what is on
+  screen, and test the helper from EVERY start state (custom, preset, the fixture's own 1m).
+- **A gate longer than the caller's timeout needs first-class chunks, and chunking must not change
+  what a case means.** `all` is ~18 minutes; a bounded call can never finish it, and a cut-off run
+  proves nothing. `group1`/`group2`/`group3` are asserted to concatenate to `ALL_CASES`, and
+  `crash-check` still means "no crash since the series began" because `group1` records the dropbox
+  baseline and the later chunks reuse it (a per-chunk baseline would let a group1 crash pass).
+- **Never splice captured output into a `bash -c "..."` string in a test.** The first draft of
+  `scripts/test-device-qa.sh` did that with the `--help` text, which is full of example commands, so
+  the test EXECUTED `device-qa.sh all`, `delay-block` and `group1`. Only the Pixel lock held by the
+  caller's own session refused them. Write captured output to a file and `grep` the file.
+- **The gate was untested.** Nothing exercised `device-qa.sh`'s own logic until
+  `scripts/test-device-qa.sh` (device-free: shimmed `adb`, a stateful fake of the config screen). It is
+  not in CI yet (`release.yml` is privileged and was out of scope): add it next to `test-cert-guard.sh`.

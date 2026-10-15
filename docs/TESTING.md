@@ -94,7 +94,9 @@ Pixel from a prose brief: **60–100 minutes a run, four runs in September alone
 different walk every time. The recurring checks are now a script.
 
 ```bash
-scripts/device-qa.sh all          # the gate; nonzero exit on any FAIL
+scripts/device-qa.sh all          # the gate (~18 min); nonzero exit on any FAIL
+scripts/device-qa.sh group1 && APK=installed scripts/device-qa.sh group2 \
+  && APK=installed scripts/device-qa.sh group3   # the same gate in three chunks, each under 10 min
 scripts/device-qa.sh delay-block  # one case, while iterating
 scripts/device-qa.sh list
 APK=installed scripts/device-qa.sh all   # validate the build already on the bench
