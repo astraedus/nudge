@@ -130,7 +130,7 @@ internal fun ContentFilterAllowlistEditor(
                     error = null
                 },
                 label = { Text("Word or site") },
-                placeholder = { Text("e.g. cnc") },
+                placeholder = { Text("A word, phrase or site") },
                 singleLine = true,
                 isError = error != null,
                 supportingText = error?.let { message -> { Text(message) } },
