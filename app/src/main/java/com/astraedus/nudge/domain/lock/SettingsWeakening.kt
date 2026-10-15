@@ -10,7 +10,13 @@ enum class LockedToggle {
     STRICT_MODE,
 
     /** The "daily 2-minute pass" escape-hatch master switch. */
-    EMERGENCY_PASS
+    EMERGENCY_PASS,
+
+    /** The "Block restricted websites" content-filter master switch. */
+    CONTENT_FILTER,
+
+    /** The content filter's "Strict keyword matching" sub-toggle. */
+    CONTENT_FILTER_STRICT_KEYWORDS
 }
 
 /**
@@ -21,6 +27,8 @@ enum class LockedToggle {
  * - [LockedToggle.STRICT_MODE]: turning the lock OFF weakens; turning it on is free.
  * - [LockedToggle.EMERGENCY_PASS]: turning the pass ON weakens (it re-opens a one-tap bypass on
  *   every block overlay); turning it off is free.
+ * - [LockedToggle.CONTENT_FILTER] and [LockedToggle.CONTENT_FILTER_STRICT_KEYWORDS]: turning the
+ *   filter (or its strict keyword matching) OFF weakens; turning it on is free.
  *
  * The pass toggle is deliberately **not frozen** while Strict Mode is on (v1.10.0). Freezing it was
  * the old design and it also hid the pass from the overlays outright; now a user who opted into the
@@ -34,7 +42,9 @@ object SettingsWeakening {
         strictModeEnabled && isWeakening(toggle, enable)
 
     private fun isWeakening(toggle: LockedToggle, enable: Boolean): Boolean = when (toggle) {
-        LockedToggle.STRICT_MODE -> !enable
+        LockedToggle.STRICT_MODE,
+        LockedToggle.CONTENT_FILTER,
+        LockedToggle.CONTENT_FILTER_STRICT_KEYWORDS -> !enable
         LockedToggle.EMERGENCY_PASS -> enable
     }
 }

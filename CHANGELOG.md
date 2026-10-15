@@ -6,6 +6,8 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
 
 ### Changed
 - Docs: the README now describes when Instagram Explore and Home-feed detection apply (where Instagram's active tab is readable) and when only the full-screen Reels viewer is detected. (#18)
+- Under Strict Mode, switching off "Block restricted websites" or "Strict keyword matching" now takes
+  the unlock challenge, like the other protection-weakening switches. Switching them on is still free.
 
 ## [1.22.0] - 2026-10-15
 
