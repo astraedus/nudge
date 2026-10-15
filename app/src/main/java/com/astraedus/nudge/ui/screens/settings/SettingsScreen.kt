@@ -116,6 +116,7 @@ fun SettingsScreen(
     val debugLoggingEnabled by preferences.isDebugLoggingEnabled.collectAsStateWithLifecycle(initialValue = false)
     val contentFilterEnabled by preferences.contentFilterEnabled.collectAsStateWithLifecycle(initialValue = false)
     val contentFilterStrictKeywords by preferences.contentFilterStrictKeywords.collectAsStateWithLifecycle(initialValue = false)
+    val contentFilterAllowlist by preferences.contentFilterAllowlist.collectAsStateWithLifecycle(initialValue = emptySet())
     val strictModeEnabled by preferences.isStrictModeEnabled.collectAsStateWithLifecycle(initialValue = false)
     val strictModeLength by preferences.strictModeChallengeLength.collectAsStateWithLifecycle(
         initialValue = StrictModeChallenge.DEFAULT_LENGTH
@@ -148,15 +149,20 @@ fun SettingsScreen(
         )
     }
 
+    // Surface a fresh challenge; [apply] runs only once the user types it.
+    fun requestUnlock(prompt: String, apply: () -> Unit) {
+        pendingUnlock = PendingSettingsUnlock(
+            target = StrictModeChallenge.generate(strictModeLength),
+            prompt = prompt,
+            onUnlock = apply
+        )
+    }
+
     // Route a toggle flip through the Strict Mode policy: weakening flips surface a fresh challenge,
     // strengthening flips (and everything while Strict Mode is off) apply immediately.
     fun applyLockedToggle(toggle: LockedToggle, enable: Boolean, apply: () -> Unit) {
         if (SettingsWeakening.requiresUnlock(toggle, enable, strictModeEnabled)) {
-            pendingUnlock = PendingSettingsUnlock(
-                target = StrictModeChallenge.generate(strictModeLength),
-                prompt = unlockPrompt(toggle),
-                onUnlock = apply
-            )
+            requestUnlock(unlockPrompt(toggle), apply)
         } else {
             apply()
         }
@@ -277,7 +283,7 @@ fun SettingsScreen(
             ListItem(
                 headlineContent = { Text("Block restricted websites") },
                 supportingContent = {
-                    Text("Filters websites against a built-in content list. Works in supported browsers.")
+                    Text("Blocks adult and explicit sites and searches. Works in supported browsers.")
                 },
                 leadingContent = { Icon(Icons.Outlined.Shield, contentDescription = null) },
                 trailingContent = {
@@ -300,7 +306,7 @@ fun SettingsScreen(
             ListItem(
                 headlineContent = { Text("Strict keyword matching") },
                 supportingContent = {
-                    Text("Also blocks matching terms found in search queries.")
+                    Text("Also blocks searches with ambiguous words. May catch innocent searches; you can add exceptions.")
                 },
                 leadingContent = { Icon(Icons.AutoMirrored.Outlined.ManageSearch, contentDescription = null) },
                 trailingContent = {
@@ -319,6 +325,25 @@ fun SettingsScreen(
                     }
                 }
             )
+
+            // The exceptions only ever relax strict keyword matching, so the editor is only shown
+            // while that is in force. Entries persist while it is hidden.
+            if (contentFilterEnabled && contentFilterStrictKeywords) {
+                ContentFilterAllowlistEditor(
+                    entries = contentFilterAllowlist,
+                    strictModeEnabled = strictModeEnabled,
+                    onAdd = { entry, needsUnlock ->
+                        val add: () -> Unit = {
+                            coroutineScope.launch { preferences.addContentFilterAllowlistEntry(entry) }
+                        }
+                        if (needsUnlock) requestUnlock(ALLOWLIST_UNLOCK_PROMPT, add) else add()
+                    },
+                    // Removing an exception only ever blocks more, so it is never gated.
+                    onRemove = { entry ->
+                        coroutineScope.launch { preferences.removeContentFilterAllowlistEntry(entry) }
+                    }
+                )
+            }
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 

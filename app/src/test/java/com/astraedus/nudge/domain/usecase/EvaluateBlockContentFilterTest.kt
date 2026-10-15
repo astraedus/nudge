@@ -5,6 +5,7 @@ import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.data.repository.BlockRuleRepository
 import com.astraedus.nudge.data.repository.ContentFilter
 import com.astraedus.nudge.data.repository.UsageRepository
+import com.astraedus.nudge.domain.ContentFilterAllowlist
 import com.astraedus.nudge.domain.engine.BlockEngine
 import com.astraedus.nudge.domain.engine.RuleEvaluator
 import com.astraedus.nudge.domain.engine.ScheduleEvaluator
@@ -14,6 +15,8 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.slot
+import io.mockk.verify
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -48,6 +51,7 @@ class EvaluateBlockContentFilterTest {
         every { usageRepository.getDailyForegroundTimeMs(any()) } returns 0L
         // Default strict-keywords pref to false (opt-in). Individual tests override.
         every { preferences.contentFilterStrictKeywords } returns flowOf(false)
+        every { preferences.contentFilterAllowlist } returns flowOf(emptySet())
 
         useCase = EvaluateBlockUseCase(
             blockRuleRepository = blockRuleRepository,
@@ -65,7 +69,7 @@ class EvaluateBlockContentFilterTest {
     fun `enabled and blocked returns Block with configured HARD_BLOCK mode`() = runTest {
         every { preferences.contentFilterEnabled } returns flowOf(true)
         every { preferences.contentFilterMode } returns flowOf("HARD_BLOCK")
-        coEvery { contentFilter.isBlocked(any(), any()) } returns true
+        coEvery { contentFilter.isBlocked(any(), any(), any()) } returns true
 
         val result = useCase.evaluateWebDomain("https://blockedsite.com")
 
@@ -80,7 +84,7 @@ class EvaluateBlockContentFilterTest {
     fun `enabled and blocked honors DELAY mode`() = runTest {
         every { preferences.contentFilterEnabled } returns flowOf(true)
         every { preferences.contentFilterMode } returns flowOf("DELAY")
-        coEvery { contentFilter.isBlocked(any(), any()) } returns true
+        coEvery { contentFilter.isBlocked(any(), any(), any()) } returns true
 
         val result = useCase.evaluateWebDomain("https://blockedsite.com")
 
@@ -92,7 +96,7 @@ class EvaluateBlockContentFilterTest {
     fun `disabled returns Allow even when filter would block`() = runTest {
         every { preferences.contentFilterEnabled } returns flowOf(false)
         every { preferences.contentFilterMode } returns flowOf("HARD_BLOCK")
-        coEvery { contentFilter.isBlocked(any(), any()) } returns true
+        coEvery { contentFilter.isBlocked(any(), any(), any()) } returns true
 
         val result = useCase.evaluateWebDomain("https://blockedsite.com")
 
@@ -104,7 +108,7 @@ class EvaluateBlockContentFilterTest {
     fun `enabled but not blocked returns Allow`() = runTest {
         every { preferences.contentFilterEnabled } returns flowOf(true)
         every { preferences.contentFilterMode } returns flowOf("HARD_BLOCK")
-        coEvery { contentFilter.isBlocked(any(), any()) } returns false
+        coEvery { contentFilter.isBlocked(any(), any(), any()) } returns false
 
         val result = useCase.evaluateWebDomain("https://wikipedia.org")
 
@@ -116,7 +120,7 @@ class EvaluateBlockContentFilterTest {
     fun `invalid mode string falls back to HARD_BLOCK`() = runTest {
         every { preferences.contentFilterEnabled } returns flowOf(true)
         every { preferences.contentFilterMode } returns flowOf("NONSENSE")
-        coEvery { contentFilter.isBlocked(any(), any()) } returns true
+        coEvery { contentFilter.isBlocked(any(), any(), any()) } returns true
 
         val result = useCase.evaluateWebDomain("https://blockedsite.com")
 
@@ -129,11 +133,11 @@ class EvaluateBlockContentFilterTest {
         every { preferences.contentFilterEnabled } returns flowOf(true)
         every { preferences.contentFilterMode } returns flowOf("HARD_BLOCK")
         every { preferences.contentFilterStrictKeywords } returns flowOf(true)
-        coEvery { contentFilter.isBlocked(any(), any()) } returns true
+        coEvery { contentFilter.isBlocked(any(), any(), any()) } returns true
 
         useCase.evaluateWebDomain("https://www.google.com/search?q=bbc")
 
-        coVerify { contentFilter.isBlocked("https://www.google.com/search?q=bbc", true) }
+        coVerify { contentFilter.isBlocked("https://www.google.com/search?q=bbc", true, any()) }
     }
 
     @Test
@@ -141,10 +145,40 @@ class EvaluateBlockContentFilterTest {
         every { preferences.contentFilterEnabled } returns flowOf(true)
         every { preferences.contentFilterMode } returns flowOf("HARD_BLOCK")
         // contentFilterStrictKeywords defaults to false via setUp.
-        coEvery { contentFilter.isBlocked(any(), any()) } returns false
+        coEvery { contentFilter.isBlocked(any(), any(), any()) } returns false
 
         useCase.evaluateWebDomain("https://www.google.com/search?q=bbc")
 
-        coVerify { contentFilter.isBlocked("https://www.google.com/search?q=bbc", false) }
+        coVerify { contentFilter.isBlocked("https://www.google.com/search?q=bbc", false, any()) }
+    }
+
+    // ── "Allowed words & sites" (issue #78) ──
+
+    @Test
+    fun `strict on threads the stored allowlist into isBlocked`() = runTest {
+        every { preferences.contentFilterEnabled } returns flowOf(true)
+        every { preferences.contentFilterMode } returns flowOf("HARD_BLOCK")
+        every { preferences.contentFilterStrictKeywords } returns flowOf(true)
+        every { preferences.contentFilterAllowlist } returns flowOf(setOf("cnc", "cnc-shop.com"))
+        val passed = slot<ContentFilterAllowlist>()
+        coEvery { contentFilter.isBlocked(any(), any(), capture(passed)) } returns false
+
+        val result = useCase.evaluateWebDomain("https://www.google.com/search?q=cnc+machine")
+
+        assertEquals(BlockDecision.Allow, result.decision)
+        assertEquals(setOf("cnc", "cnc-shop.com"), passed.captured.entries)
+    }
+
+    @Test
+    fun `strict off never reads the allowlist and passes no exceptions`() = runTest {
+        every { preferences.contentFilterEnabled } returns flowOf(true)
+        every { preferences.contentFilterMode } returns flowOf("HARD_BLOCK")
+        val passed = slot<ContentFilterAllowlist>()
+        coEvery { contentFilter.isBlocked(any(), any(), capture(passed)) } returns false
+
+        useCase.evaluateWebDomain("https://www.google.com/search?q=cnc")
+
+        assertTrue("no exceptions without strict matching", passed.captured.isEmpty)
+        verify(exactly = 0) { preferences.contentFilterAllowlist }
     }
 }

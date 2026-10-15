@@ -51,7 +51,7 @@ class ImportedSettingsWriteContractTest {
     }
 
     /**
-     * The nine settings a backup carries. Each must be written through a null-guard, so a file that
+     * The ten settings a backup carries. Each must be written through a null-guard, so a file that
      * does not carry it leaves this device's value alone.
      */
     @Test
@@ -60,6 +60,7 @@ class ImportedSettingsWriteContractTest {
             "contentFilterEnabled" to "CONTENT_FILTER_ENABLED",
             "contentFilterMode" to "CONTENT_FILTER_MODE",
             "contentFilterStrictKeywords" to "CONTENT_FILTER_STRICT_KEYWORDS",
+            "contentFilterAllowlist" to "CONTENT_FILTER_ALLOWLIST",
             "strictModeEnabled" to "STRICT_MODE_ENABLED",
             "strictModeChallengeLength" to "STRICT_MODE_CHALLENGE_LENGTH",
             "emergencyPassEnabled" to "EMERGENCY_PASS_ENABLED",
@@ -124,6 +125,7 @@ class ImportedSettingsWriteContractTest {
             "contentFilterEnabled",
             "contentFilterMode",
             "contentFilterStrictKeywords",
+            "contentFilterAllowlist",
             "strictModeEnabled",
             "strictModeChallengeLength",
             "emergencyPassEnabled",

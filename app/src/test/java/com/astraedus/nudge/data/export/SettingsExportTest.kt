@@ -45,6 +45,7 @@ class SettingsExportTest {
         contentFilterEnabled = true,
         contentFilterMode = "DELAY",
         contentFilterStrictKeywords = true,
+        contentFilterAllowlist = listOf("bbc news", "cnc", "cnc-shop.com"),
         strictModeEnabled = true,
         strictModeChallengeLength = StrictModeChallenge.LENGTH_HARD,
         emergencyPassEnabled = false,

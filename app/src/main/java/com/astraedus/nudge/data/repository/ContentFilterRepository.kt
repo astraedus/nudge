@@ -1,6 +1,7 @@
 package com.astraedus.nudge.data.repository
 
 import android.content.Context
+import com.astraedus.nudge.domain.ContentFilterAllowlist
 import com.astraedus.nudge.domain.ContentFilterMatcher
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
@@ -20,8 +21,14 @@ interface ContentFilter {
      *
      * @param strictKeywords when true, ALSO matches ambiguous slang keywords found as
      *   whole words in the URL's search query (opt-in; a no-op otherwise).
+     * @param allowlist the user's exceptions. They only ever excuse a STRICT keyword hit, never the
+     *   bundled domain list or a high-signal keyword (see [ContentFilterAllowlist]).
      */
-    suspend fun isBlocked(urlBarText: String, strictKeywords: Boolean): Boolean
+    suspend fun isBlocked(
+        urlBarText: String,
+        strictKeywords: Boolean,
+        allowlist: ContentFilterAllowlist
+    ): Boolean
 }
 
 /**
@@ -47,14 +54,14 @@ class ContentFilterRepository @Inject constructor(
     private var blocklist: Set<String>? = null
     private val loadMutex = Mutex()
 
-    override suspend fun isBlocked(urlBarText: String, strictKeywords: Boolean): Boolean {
+    override suspend fun isBlocked(
+        urlBarText: String,
+        strictKeywords: Boolean,
+        allowlist: ContentFilterAllowlist
+    ): Boolean {
         if (urlBarText.isBlank()) return false
         val list = ensureLoaded()
-        return ContentFilterMatcher.matchesDomain(urlBarText, list) ||
-            ContentFilterMatcher.matchesKeyword(urlBarText, ContentFilterMatcher.DEFAULT_KEYWORDS) ||
-            (strictKeywords && ContentFilterMatcher.matchesQueryKeyword(
-                urlBarText, ContentFilterMatcher.AMBIGUOUS_QUERY_KEYWORDS
-            ))
+        return ContentFilterMatcher.isBlocked(urlBarText, list, strictKeywords, allowlist)
     }
 
     private suspend fun ensureLoaded(): Set<String> {
