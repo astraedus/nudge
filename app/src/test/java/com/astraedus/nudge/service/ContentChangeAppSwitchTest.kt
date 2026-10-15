@@ -42,9 +42,10 @@ class ContentChangeAppSwitchTest {
     private val classifier = EventClassifier(
         ownPackageName = own,
         systemPackages = NudgeAccessibilityService.SYSTEM_PACKAGES,
-        imePackages = NudgeAccessibilityService.IME_PACKAGES,
+        imePackages = { NudgeAccessibilityService.IME_PACKAGES },
         frameworkPackage = NudgeAccessibilityService.FRAMEWORK_PACKAGE,
-        awarenessOverlayClassNames = AwarenessOverlayWindow.CLASS_NAMES
+        awarenessOverlayClassNames = AwarenessOverlayWindow.CLASS_NAMES,
+        windows = { null }
     )
 
     /** How many times the active window was read. The node read is the expensive part. */

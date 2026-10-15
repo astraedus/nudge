@@ -77,9 +77,10 @@ class InterventionCountReplayTest {
     private val classifier = EventClassifier(
         ownPackageName = nudge,
         systemPackages = NudgeAccessibilityService.SYSTEM_PACKAGES,
-        imePackages = NudgeAccessibilityService.IME_PACKAGES,
+        imePackages = { NudgeAccessibilityService.IME_PACKAGES },
         frameworkPackage = NudgeAccessibilityService.FRAMEWORK_PACKAGE,
-        awarenessOverlayClassNames = AwarenessOverlayWindow.CLASS_NAMES
+        awarenessOverlayClassNames = AwarenessOverlayWindow.CLASS_NAMES,
+        windows = { null }
     )
 
     /** What a block is: who it blocks re-entry to, and what the user actually ran into. */
@@ -182,7 +183,7 @@ class InterventionCountReplayTest {
             if (signal is ForegroundSignal.PipOnly) return
 
             if (overlayActive) {
-                if (guard.isGenuineBypass(record.type, signal)) {
+                if (guard.isGenuineBypass(record.type, signal, floating = false)) {
                     overlayActive = false
                 } else {
                     lastPackage = nudge

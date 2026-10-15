@@ -268,20 +268,34 @@ object BlockLaunchGate {
      * app being covered, and nothing else. A different app coming forward in that gap is still a real
      * foreground change and still counts.
      *
+     * ## A floating window is never a bypass ([#71](https://github.com/astraedus/nudge/issues/71))
+     *
+     * An OEM freeform window (or a split-screen half) is stacked ABOVE every fullscreen activity,
+     * the overlay included, and fires `WINDOW_STATE_CHANGED` on every touch. Read as a bypass, each
+     * touch marked the overlay inactive and relaunched it underneath the window again: a loop the
+     * reporter saw as the overlay "refreshing" while the floating app stayed fully usable. The
+     * overlay was never got past, it was never in front of that window to begin with, so the answer
+     * is no, and the window is blocked by a cover instead (`FloatingWindowCover`).
+     *
      * @param pending the overlay we have launched and not yet seen, or null when none is in flight.
+     * @param floating the signal's package is on screen only as a NON-fullscreen application window
+     *   (`WindowSnapshot.isFloating`). Defaulted for the replay tests that predate it; the one
+     *   production caller, `BlockLaunchGuard.isGenuineBypass`, takes it with no default.
      */
     fun isGenuineBypass(
         eventType: A11yEventType,
         signal: ForegroundSignal,
         pending: PendingOverlay?,
         nowMs: Long,
-        settleMs: Long = OVERLAY_SETTLE_MS
+        settleMs: Long = OVERLAY_SETTLE_MS,
+        floating: Boolean = false
     ): Boolean {
         // Unchanged from the rule this replaces: only a new activity in front can be a bypass, and
         // only a real application window. Our own overlay, the launcher, a keyboard and a
         // picture-in-picture bubble are excluded by construction rather than by package set.
         if (eventType != A11yEventType.WINDOW_STATE_CHANGED) return false
         if (signal !is ForegroundSignal.AppWindow) return false
+        if (floating) return false
 
         if (pending == null) return true
         if (pending.windowShown) return true

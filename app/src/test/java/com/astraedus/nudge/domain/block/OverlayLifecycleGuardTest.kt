@@ -365,7 +365,8 @@ class OverlayLifecycleGuardTest {
             "the replacement's protection must survive the finish of the overlay it replaced",
             !guard.isGenuineBypass(
                 A11yEventType.WINDOW_STATE_CHANGED,
-                ForegroundSignal.AppWindow(INSTAGRAM)
+                ForegroundSignal.AppWindow(INSTAGRAM),
+                floating = false
             )
         )
 
@@ -377,7 +378,8 @@ class OverlayLifecycleGuardTest {
                 "own start-up window reads as the user getting past a block that is still in flight",
             guard.isGenuineBypass(
                 A11yEventType.WINDOW_STATE_CHANGED,
-                ForegroundSignal.AppWindow(INSTAGRAM)
+                ForegroundSignal.AppWindow(INSTAGRAM),
+                floating = false
             )
         )
     }
@@ -399,7 +401,8 @@ class OverlayLifecycleGuardTest {
             "with nothing pending, a window event for the blocked app is the user in that app",
             guard.isGenuineBypass(
                 A11yEventType.WINDOW_STATE_CHANGED,
-                ForegroundSignal.AppWindow(KEEP)
+                ForegroundSignal.AppWindow(KEEP),
+                floating = false
             )
         )
     }

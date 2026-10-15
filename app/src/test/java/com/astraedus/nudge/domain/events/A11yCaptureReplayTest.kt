@@ -36,9 +36,10 @@ class A11yCaptureReplayTest {
             "com.android.packageinstaller",
             "com.android.permissioncontroller"
         ),
-        imePackages = setOf("com.google.android.inputmethod.latin"),
+        imePackages = { setOf("com.google.android.inputmethod.latin") },
         frameworkPackage = "android",
-        awarenessOverlayClassNames = AwarenessOverlayWindow.CLASS_NAMES
+        awarenessOverlayClassNames = AwarenessOverlayWindow.CLASS_NAMES,
+        windows = { null }
     )
 
     private fun classify(record: AccessibilityEventRecord) = classifier.classify(

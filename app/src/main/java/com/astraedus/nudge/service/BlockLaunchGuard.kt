@@ -279,13 +279,17 @@ class BlockLaunchGuard @Inject constructor() {
     /**
      * Is this event the user getting back past a live overlay, or the blocked app still settling
      * under one that has not appeared? See [BlockLaunchGate.isGenuineBypass].
+     *
+     * @param floating the signal's package is a non-fullscreen window (issue #71). No default:
+     *   forgetting it would quietly bring back the relaunch loop.
      */
-    fun isGenuineBypass(eventType: A11yEventType, signal: ForegroundSignal): Boolean =
+    fun isGenuineBypass(eventType: A11yEventType, signal: ForegroundSignal, floating: Boolean): Boolean =
         BlockLaunchGate.isGenuineBypass(
             eventType = eventType,
             signal = signal,
             pending = pendingOverlay,
-            nowMs = nowMs()
+            nowMs = nowMs(),
+            floating = floating
         )
 
     /**

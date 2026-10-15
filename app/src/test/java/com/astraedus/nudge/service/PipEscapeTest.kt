@@ -135,72 +135,10 @@ class PipEscapeTest {
         assertFalse("the real foreground app must never be gated", launcher in pipOnly)
     }
 
-    // --- the throttle that keeps the binder read off the hot path ---
-
-    @Test
-    fun `repeat questions inside the throttle window reuse one window read`() {
-        var reads = 0
-        var now = 1_000L
-        val probe = PipWindowProbe(
-            throttleMs = 500L,
-            clock = { now },
-            readWindows = {
-                reads++
-                livePixelPipWindows()
-            }
-        )
-
-        assertEquals(setOf(youtube), probe.packagesInPictureInPicture())
-        now = 1_100L
-        assertEquals(setOf(youtube), probe.packagesInPictureInPicture())
-        now = 1_499L
-        assertEquals(setOf(youtube), probe.packagesInPictureInPicture())
-
-        assertEquals("a burst of window events must cost one binder read, not three", 1, reads)
-    }
-
-    @Test
-    fun `the window list is re-read once the throttle window has elapsed`() {
-        var reads = 0
-        var now = 1_000L
-        var inPip = true
-        val probe = PipWindowProbe(
-            throttleMs = 500L,
-            clock = { now },
-            readWindows = {
-                reads++
-                if (inPip) livePixelPipWindows() else emptyList()
-            }
-        )
-
-        assertEquals(setOf(youtube), probe.packagesInPictureInPicture())
-        inPip = false
-        now = 1_500L
-        assertEquals(
-            "PiP closing must be observed so normal blocking resumes",
-            emptySet<String>(),
-            probe.packagesInPictureInPicture()
-        )
-        assertEquals(2, reads)
-    }
-
-    @Test
-    fun `the very first question always reads (no false cache hit at time zero)`() {
-        // Regression guard for the sentinel: a naive `now - lastReadAt < throttle` with a zero-
-        // initialised timestamp reports a cache hit at clock 0 and the probe answers "nothing in
-        // PiP" forever — which would silently disable the whole feature.
-        var reads = 0
-        val probe = PipWindowProbe(
-            throttleMs = 500L,
-            clock = { 0L },
-            readWindows = {
-                reads++
-                livePixelPipWindows()
-            }
-        )
-        assertEquals(setOf(youtube), probe.packagesInPictureInPicture())
-        assertEquals(1, reads)
-    }
+    // The throttle that used to live here moved with the window read itself, which is now ONE
+    // read shared by PiP, the classifier and the floating-window cover (issues #76, #71). Its three
+    // guards (one read per burst, a re-read once the window elapses, no false cache hit at clock 0)
+    // are in `WindowSnapshotReaderTest`, against `WindowSnapshotReader.shouldRead`.
 
     // --- the explainer's "was this app actually blocked" gate ---
 
