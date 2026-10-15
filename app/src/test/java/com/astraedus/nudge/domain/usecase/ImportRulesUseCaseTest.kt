@@ -208,6 +208,94 @@ class ImportRulesUseCaseTest {
     }
 
     @Test
+    fun `tabVanish false survives an import instead of resetting to true`() = runTest {
+        import(
+            """
+            {"version": 1, "rules": [
+                {"packageName": "com.off", "mode": "HARD_BLOCK", "tabVanish": false},
+                {"packageName": "com.on", "mode": "HARD_BLOCK", "tabVanish": true}
+            ]}
+            """.trimIndent()
+        )
+
+        val byPackage = addedRules.associateBy { it.packageName }
+        assertFalse(byPackage.getValue("com.off").tabVanish)
+        assertTrue(byPackage.getValue("com.on").tabVanish)
+    }
+
+    @Test
+    fun `followingSteer true survives an import instead of resetting to false`() = runTest {
+        import(
+            """
+            {"version": 1, "rules": [
+                {"packageName": "com.steer", "mode": "DELAY", "followingSteer": true},
+                {"packageName": "com.plain", "mode": "DELAY", "followingSteer": false}
+            ]}
+            """.trimIndent()
+        )
+
+        val byPackage = addedRules.associateBy { it.packageName }
+        assertTrue(byPackage.getValue("com.steer").followingSteer)
+        assertFalse(byPackage.getValue("com.plain").followingSteer)
+    }
+
+    @Test
+    fun `a legacy file without tabVanish or followingSteer keeps the entity defaults`() = runTest {
+        import(
+            """
+            {"version": 1, "rules": [
+                {"packageName": "com.legacy", "mode": "HARD_BLOCK", "delaySeconds": 15}
+            ]}
+            """.trimIndent()
+        )
+
+        val rule = addedRules.single()
+        assertTrue("absent tabVanish must read as the default (true)", rule.tabVanish)
+        assertFalse("absent followingSteer must read as the default (false)", rule.followingSteer)
+    }
+
+    /**
+     * Structural guard: a rule with EVERY exported field moved off its default must come back
+     * identical after export -> parse -> import. A field added to BlockRule but forgotten in the
+     * use case's mapping (the tabVanish / followingSteer bug) fails here without a per-field test.
+     * Only the DB-assigned fields are excluded: id, createdAt, and groupId (resolved by group name).
+     */
+    @Test
+    fun `a rule with every field off its default round-trips through export and import`() = runTest {
+        val original = BlockRule(
+            packageName = "com.full",
+            mode = "HARD_BLOCK",
+            delaySeconds = 42,
+            dailyLimitMinutes = 33,
+            enabled = false,
+            scheduleDays = "1,3,5",
+            scheduleStartMinute = 540,
+            scheduleEndMinute = 1020,
+            inAppFeatures = "REELS,SHORTS",
+            grayscale = true,
+            showCounter = true,
+            autoKickAfter = 7,
+            showTimeRemaining = true,
+            autoKickCooldownSeconds = 99,
+            webDomains = "example.com,www.example.com",
+            webBlockMode = "DELAY",
+            autoKickAfterMinutes = 25,
+            remindAfterMinutes = 15,
+            tabVanish = false,
+            followingSteer = true
+        )
+        val json = RuleExporter().exportRules(listOf(original), emptyList(), emptyMap())
+
+        import(json)
+
+        val imported = addedRules.single()
+        assertEquals(
+            original.copy(id = imported.id, createdAt = imported.createdAt, groupId = imported.groupId),
+            imported
+        )
+    }
+
+    @Test
     fun `a file with nothing readable writes nothing and surfaces the error`() = runTest {
         val outcome = import(
             """{"version": 1, "rules": [{"packageName": "com.app1", "mode": "TELEPORT"}]}"""
