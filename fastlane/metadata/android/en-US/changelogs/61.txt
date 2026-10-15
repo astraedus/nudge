@@ -1,0 +1,6 @@
+• Easier way out: "I changed my mind" / "Go Back" is now a big button in the middle of the block screen.
+• New: usage reminder. A gentle heads-up after N minutes in an app, no kick.
+• Fixed: leaving a blocked website no longer re-blocks the browser on every launch.
+• Fixed: opening and closing the keyboard no longer re-blocks the app you're in.
+• Fixed: blocked apps in pop-up windows get covered instead of flickering.
+• Fixed: backups now restore every rule setting.
