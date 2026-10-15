@@ -4,6 +4,18 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+## [1.22.0] - 2026-10-15
+
+### Added
+- **Usage reminder** (per app, under Auto-kick). After N minutes in an app in one sitting, Nudge
+  posts one gentle notification ("You've been on Instagram for 20 min") and does nothing else: no
+  kick, no cooldown. A rule can have a reminder, an auto-kick, or both; if both are due, the kick
+  wins. Its own "Usage reminders" notification channel. Apps only for now. (#77)
+- **Allowed words & sites** (Settings → Content Filter, while strict keyword matching is on). Add a
+  word, phrase or site that strict matching keeps catching by mistake. It only excuses strict
+  keyword hits, never the curated site list or high-signal keywords. Adding an entry takes the
+  Strict Mode challenge; removing one is always free. Backed up with your settings.
+
 ### Changed
 - The way out of a block screen is now the biggest, easiest thing on it. "I changed my mind" (delay,
   hold, breathing), "Go Back" (hard block) and "Go home" (Nuke) are one large filled button sitting
@@ -12,6 +24,26 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
   button stay together in the middle of the screen. The countdown ring is not tappable; on a hold the
   centre is still the press-and-hold that lets you in. Layout only, nothing about when or how a block
   ends has changed.
+
+### Fixed
+- **Leaving a website block no longer traps the browser.** "Go Back", "I changed my mind" and the
+  back gesture on a website or content-filter block now open a blank page in the same browser
+  instead of just going home. Before, Chrome and Brave restored the blocked tab on the next launch
+  and the block came straight back, every time. If the browser comes back still on the blocked
+  page it is blocked again at once, and a browser that ignores the blank page falls back to going
+  home. (#78)
+- **Opening the keyboard no longer re-blocks the app you are in.** A panel that appears with the
+  keyboard (autofill suggestions, a clipboard, writing tools) was read as you leaving the app, so
+  closing the keyboard a couple of minutes later counted as coming back from a break. Nudge now
+  checks the actual window list, every enabled keyboard is ignored (Samsung Keyboard included), and
+  anything it cannot prove stays a normal app switch. (#76)
+- **Floating (freeform) windows are blocked instead of looping.** A blocked app opened in a pop-up
+  window sat above the block screen, which relaunched underneath it on every touch. It now gets a
+  cover with a "Close window" button, and the loop is gone. (#71)
+- Strict keyword matching no longer flags "cnc", "bbc" or "sph" on their own. (#78)
+- Restoring a backup now keeps each rule's Tab Vanish and Following-steer settings instead of
+  resetting them to the defaults.
+- The README no longer claims Instagram Home feed / Explore detection, which the app does not do.
 
 ## [1.21.0] - 2026-10-05
 
