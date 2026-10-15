@@ -59,6 +59,20 @@ class SettingsWeakeningTest {
         )
     }
 
+    @Test
+    fun `turning a content filter toggle OFF under strict mode requires the unlock, ON is free`() {
+        for (toggle in listOf(LockedToggle.CONTENT_FILTER, LockedToggle.CONTENT_FILTER_STRICT_KEYWORDS)) {
+            assertTrue(
+                "$toggle OFF weakens protection",
+                SettingsWeakening.requiresUnlock(toggle, enable = false, strictModeEnabled = true)
+            )
+            assertFalse(
+                "$toggle ON strengthens protection",
+                SettingsWeakening.requiresUnlock(toggle, enable = true, strictModeEnabled = true)
+            )
+        }
+    }
+
     // --- Strict Mode OFF: nothing is ever gated ---
 
     @Test

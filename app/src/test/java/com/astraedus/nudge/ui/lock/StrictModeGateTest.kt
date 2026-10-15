@@ -165,4 +165,21 @@ class StrictModeGateTest {
         assertFalse("the lock must not release without the unlock", applied)
         assertNotNull(challenge)
     }
+
+    @Test
+    fun `switching a content filter toggle off under strict mode is challenged, on and non-strict are free`() = runTest {
+        for (toggle in listOf(LockedToggle.CONTENT_FILTER, LockedToggle.CONTENT_FILTER_STRICT_KEYWORDS)) {
+            val (offApplied, offChallenge) = flipToggle(toggle, enable = false, strictOn = true)
+            assertFalse("$toggle off must not apply until unlocked", offApplied)
+            assertNotNull("$toggle off should raise a challenge", offChallenge)
+
+            val (onApplied, onChallenge) = flipToggle(toggle, enable = true, strictOn = true)
+            assertTrue("$toggle on is free", onApplied)
+            assertNull(onChallenge)
+
+            val (freeApplied, freeChallenge) = flipToggle(toggle, enable = false, strictOn = false)
+            assertTrue("$toggle off without strict mode is free", freeApplied)
+            assertNull(freeChallenge)
+        }
+    }
 }

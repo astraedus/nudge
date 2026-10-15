@@ -280,6 +280,19 @@ fun SettingsScreen(
                 color = MaterialTheme.colorScheme.primary
             )
 
+            // Switching the filter (or its strict matching) OFF weakens protection, so under Strict
+            // Mode it takes the unlock challenge; switching ON is free. Switch and row tap share this.
+            val onContentFilterChange: (Boolean) -> Unit = { enable ->
+                applyLockedToggle(LockedToggle.CONTENT_FILTER, enable) {
+                    coroutineScope.launch { preferences.setContentFilterEnabled(enable) }
+                }
+            }
+            val onStrictKeywordsChange: (Boolean) -> Unit = { enable ->
+                applyLockedToggle(LockedToggle.CONTENT_FILTER_STRICT_KEYWORDS, enable) {
+                    coroutineScope.launch { preferences.setContentFilterStrictKeywords(enable) }
+                }
+            }
+
             ListItem(
                 headlineContent = { Text("Block restricted websites") },
                 supportingContent = {
@@ -289,18 +302,10 @@ fun SettingsScreen(
                 trailingContent = {
                     Switch(
                         checked = contentFilterEnabled,
-                        onCheckedChange = { enabled ->
-                            coroutineScope.launch {
-                                preferences.setContentFilterEnabled(enabled)
-                            }
-                        }
+                        onCheckedChange = onContentFilterChange
                     )
                 },
-                modifier = Modifier.clickable {
-                    coroutineScope.launch {
-                        preferences.setContentFilterEnabled(!contentFilterEnabled)
-                    }
-                }
+                modifier = Modifier.clickable { onContentFilterChange(!contentFilterEnabled) }
             )
 
             ListItem(
@@ -312,18 +317,10 @@ fun SettingsScreen(
                 trailingContent = {
                     Switch(
                         checked = contentFilterStrictKeywords,
-                        onCheckedChange = { enabled ->
-                            coroutineScope.launch {
-                                preferences.setContentFilterStrictKeywords(enabled)
-                            }
-                        }
+                        onCheckedChange = onStrictKeywordsChange
                     )
                 },
-                modifier = Modifier.clickable {
-                    coroutineScope.launch {
-                        preferences.setContentFilterStrictKeywords(!contentFilterStrictKeywords)
-                    }
-                }
+                modifier = Modifier.clickable { onStrictKeywordsChange(!contentFilterStrictKeywords) }
             )
 
             // The exceptions only ever relax strict keyword matching, so the editor is only shown
@@ -672,6 +669,8 @@ private data class PendingSettingsUnlock(
 private fun unlockPrompt(toggle: LockedToggle): String = when (toggle) {
     LockedToggle.STRICT_MODE -> "Turn off Strict Mode"
     LockedToggle.EMERGENCY_PASS -> "Turn on the daily 2-minute pass"
+    LockedToggle.CONTENT_FILTER -> "Turn off website blocking"
+    LockedToggle.CONTENT_FILTER_STRICT_KEYWORDS -> "Turn off strict keyword matching"
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
