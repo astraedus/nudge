@@ -16,10 +16,10 @@ import org.junit.Test
  */
 class OverlayLifecycleFullscreenRelaunchTest {
 
-    private val overlayId = 42L
+    private val adoptedId = 42L
 
     private fun delivered(): OverlayLifecycle =
-        OverlayLifecycle().apply { onDelivered(overlayId) }
+        OverlayLifecycle().apply { onDelivered(adoptedId) }
 
     @Test
     fun `relaunching emits exactly one RelaunchFullscreen, however many signals report it`() {
@@ -57,7 +57,7 @@ class OverlayLifecycleFullscreenRelaunchTest {
     fun `without the hand-off the destroy still dismisses the overlay it adopted`() {
         val effects = delivered().onDestroyed()
         assertTrue(effects.contains(Effect.MarkOverlayInactive))
-        assertTrue(effects.contains(Effect.ReportOverlayDismissed(overlayId)))
+        assertTrue(effects.contains(Effect.ReportOverlayDismissed(adoptedId)))
     }
 
     @Test
@@ -68,6 +68,6 @@ class OverlayLifecycleFullscreenRelaunchTest {
         assertFalse(lifecycle.handedOff)
         val effects = lifecycle.onDestroyed()
         assertTrue(effects.contains(Effect.MarkOverlayInactive))
-        assertTrue(effects.contains(Effect.ReportOverlayDismissed(overlayId)))
+        assertTrue(effects.contains(Effect.ReportOverlayDismissed(adoptedId)))
     }
 }
