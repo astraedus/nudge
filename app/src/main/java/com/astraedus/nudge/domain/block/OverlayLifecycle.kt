@@ -112,6 +112,12 @@ class OverlayLifecycle {
 
         /** One `w` line: the dispatched go-home never stopped us. */
         data object LogFailSafeFired : Effect
+
+        /**
+         * The block screen is in a split-screen half, a floating window or PiP (issue #71): remove
+         * this task and start the same block in a fresh, fullscreen one. See [OverlayWindowMode].
+         */
+        data object RelaunchFullscreen : Effect
     }
 
     /**
@@ -160,6 +166,17 @@ class OverlayLifecycle {
      * finishing onto the blocked page. Per delivery, like [walkedAway].
      */
     private var leavingPage = false
+
+    /**
+     * Set once this instance has handed its block to a fullscreen replacement ([onRelaunchingFullscreen]).
+     *
+     * The replacement adopts the SAME pending overlay (nothing new was launched through the
+     * service), so this instance's stop and destroy must not report it dismissed or mark the overlay
+     * inactive: that would strip the live, fullscreen replacement of its protection, the #36 shape.
+     * Per instance, not per delivery: once handed off, nothing this instance does is the block any more.
+     */
+    var handedOff = false
+        private set
 
     companion object {
         /**
@@ -234,7 +251,7 @@ class OverlayLifecycle {
      * @param isChangingConfigurations a ROTATION must not dismiss a live block.
      */
     fun onStopped(isFinishing: Boolean, isChangingConfigurations: Boolean): List<Effect> =
-        if (isFinishing || isChangingConfigurations) {
+        if (isFinishing || isChangingConfigurations || handedOff) {
             emptyList()
         } else {
             listOf(Effect.MarkOverlayInactive, Effect.Finish)
@@ -395,9 +412,34 @@ class OverlayLifecycle {
      * already on screen by the time a finished one is destroyed, and clearing its pending overlay
      * from here is the third mechanism of issue #36.
      */
-    fun onDestroyed(): List<Effect> = listOf(
-        Effect.CancelPendingFailSafe,
-        Effect.MarkOverlayInactive,
-        Effect.ReportOverlayDismissed(overlayId)
-    )
+    fun onDestroyed(): List<Effect> =
+        if (handedOff) {
+            // The fullscreen replacement owns the overlay id and the active flag now.
+            listOf(Effect.CancelPendingFailSafe)
+        } else {
+            listOf(
+                Effect.CancelPendingFailSafe,
+                Effect.MarkOverlayInactive,
+                Effect.ReportOverlayDismissed(overlayId)
+            )
+        }
+
+    /**
+     * The block screen was found in a split-screen half, a floating window or PiP, and
+     * [OverlayWindowMode.decide] said relaunch (issue #71). Hands the block to a fullscreen
+     * replacement; see [handedOff] for why this instance then goes quietly.
+     */
+    fun onRelaunchingFullscreen(): List<Effect> {
+        if (handedOff) return emptyList()
+        handedOff = true
+        return listOf(Effect.RelaunchFullscreen)
+    }
+
+    /**
+     * The replacement could not be started. This instance is the block again, so its stop and
+     * destroy report as they always did, and the service re-blocks from the next window event.
+     */
+    fun onRelaunchFailed() {
+        handedOff = false
+    }
 }

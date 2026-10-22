@@ -80,13 +80,22 @@
             </intent-filter>
         </activity>
 
+        <!-- Issue #71: every Theme.Nudge.Overlay screen refuses multi-window and PiP. Shrunk into a
+             floating window or a split-screen half, a block screen leaves the blocked app usable
+             beside or behind it. OEM floating windows and Android 12+ large screens can ignore
+             resizeableActivity, so BlockOverlayActivity also relaunches itself fullscreen
+             (OverlayWindowMode), hence the two lint suppressions on all three. Pinned by
+             OverlayManifestContractTest. -->
         <activity
             android:name=".ui.overlay.BlockOverlayActivity"
             android:excludeFromRecents="true"
             android:exported="false"
             android:launchMode="singleInstance"
+            android:resizeableActivity="false"
+            android:supportsPictureInPicture="false"
             android:taskAffinity=""
-            android:theme="@style/Theme.Nudge.Overlay" />
+            android:theme="@style/Theme.Nudge.Overlay"
+            tools:ignore="DiscouragedApi,NonResizeableActivity" />
 
         <!-- Strict Mode Phase 2: full-screen unlock challenge shown over protected Settings
              escape routes (accessibility toggle, App Info / Force stop / Uninstall). -->
@@ -95,8 +104,11 @@
             android:excludeFromRecents="true"
             android:exported="false"
             android:launchMode="singleInstance"
+            android:resizeableActivity="false"
+            android:supportsPictureInPicture="false"
             android:taskAffinity=""
-            android:theme="@style/Theme.Nudge.Overlay" />
+            android:theme="@style/Theme.Nudge.Overlay"
+            tools:ignore="DiscouragedApi,NonResizeableActivity" />
 
         <!-- Issue #19: PiP defeats the block overlay (e.g. YouTube Shorts). Explains the
              limitation and deep-links to the per-app picture-in-picture settings toggle. -->
@@ -105,8 +117,11 @@
             android:excludeFromRecents="true"
             android:exported="false"
             android:launchMode="singleInstance"
+            android:resizeableActivity="false"
+            android:supportsPictureInPicture="false"
             android:taskAffinity=""
-            android:theme="@style/Theme.Nudge.Overlay" />
+            android:theme="@style/Theme.Nudge.Overlay"
+            tools:ignore="DiscouragedApi,NonResizeableActivity" />
 
         <!-- Camera scanner behind ScanQrContract. Not exported: only Nudge opens it. Dark
              framework theme so the window does not flash white before the preview starts.

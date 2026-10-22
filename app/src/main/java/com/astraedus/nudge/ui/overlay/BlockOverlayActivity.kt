@@ -1,6 +1,7 @@
 package com.astraedus.nudge.ui.overlay
 
 import android.content.Intent
+import android.content.res.Configuration
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -18,6 +19,7 @@ import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.data.repository.InstalledAppsRepository
 import com.astraedus.nudge.data.repository.RedirectAppRepository
 import com.astraedus.nudge.domain.block.OverlayLifecycle
+import com.astraedus.nudge.domain.block.OverlayWindowMode
 import com.astraedus.nudge.domain.block.WebBlockEscape
 import com.astraedus.nudge.domain.emergency.EmergencyPass
 import com.astraedus.nudge.domain.logging.NudgeLog
@@ -104,6 +106,13 @@ class BlockOverlayActivity : ComponentActivity() {
          * `docs/architecture/nuke-mode.md`.
          */
         const val EXTRA_NUKE = "nuke"
+
+        /**
+         * `SystemClock.elapsedRealtime()` when THIS delivery was started by [relaunchFullscreen]
+         * rather than by the service. Absent on every ordinary delivery. Read by
+         * [OverlayWindowMode.decide] so a platform that keeps re-opening us windowed cannot loop.
+         */
+        const val EXTRA_FULLSCREEN_RELAUNCH_AT = "fullscreen_relaunch_at"
     }
 
     /**
@@ -157,6 +166,8 @@ class BlockOverlayActivity : ComponentActivity() {
                 OverlayLifecycle.Effect.LogFailSafeFired -> nudgeLogger.w(
                     "walk-away go-home did not land, finishing overlay on the fail-safe"
                 )
+
+                OverlayLifecycle.Effect.RelaunchFullscreen -> relaunchFullscreen()
             }
         }
     }
@@ -180,6 +191,12 @@ class BlockOverlayActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // A recreation (a configuration change: rotation, or a window resize when the platform put
+        // us in multi-window anyway) re-renders the whole block. Logged so a "the block screen
+        // refreshes" report (#71) carries its own mechanism.
+        if (savedInstanceState != null) {
+            nudgeLogger.i("block overlay recreated multiWindow=$isInMultiWindowMode")
+        }
         registerBackHandler()
         render(intent)
     }
@@ -492,6 +509,70 @@ class BlockOverlayActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         runEffects(overlayLifecycle.onResumed())
+        refuseMultiWindow(isInMultiWindowMode)
+    }
+
+    /**
+     * Issue #71: the manifest's `resizeableActivity="false"` is ignored by OEM floating windows and
+     * by large screens on Android 12+, so the block screen checks for itself on every resume and on
+     * every windowing-mode change. A recreated instance (the usual result of entering multi-window,
+     * since this activity does not handle configuration changes) is caught by [onResume].
+     */
+    override fun onMultiWindowModeChanged(isInMultiWindowMode: Boolean, newConfig: Configuration) {
+        super.onMultiWindowModeChanged(isInMultiWindowMode, newConfig)
+        refuseMultiWindow(isInMultiWindowMode)
+    }
+
+    /**
+     * Never let the block screen sit in a split-screen half, a floating window or PiP with the
+     * blocked app usable beside or behind it: relaunch it fullscreen. The rule, including why it
+     * cannot loop, is [OverlayWindowMode.decide].
+     */
+    private fun refuseMultiWindow(inMultiWindow: Boolean) {
+        val relaunchedAt = intent.getLongExtra(EXTRA_FULLSCREEN_RELAUNCH_AT, -1L)
+        val decision = OverlayWindowMode.decide(
+            inMultiWindow = inMultiWindow,
+            isFinishing = isFinishing,
+            relaunchInFlight = overlayLifecycle.handedOff,
+            msSinceOwnRelaunch = relaunchedAt.takeIf { it >= 0 }
+                ?.let { SystemClock.elapsedRealtime() - it }
+        )
+        when (decision) {
+            OverlayWindowMode.Decision.STAY -> Unit
+            OverlayWindowMode.Decision.GIVE_UP -> nudgeLogger.w(
+                "block overlay still in multi-window after a fullscreen relaunch, not retrying"
+            )
+            OverlayWindowMode.Decision.RELAUNCH_FULLSCREEN -> {
+                nudgeLogger.i("block overlay in multi-window mode, relaunching fullscreen")
+                runEffects(overlayLifecycle.onRelaunchingFullscreen())
+            }
+        }
+    }
+
+    /**
+     * Remove this (windowed) task FIRST, then start the same block in a new one.
+     *
+     * The order is the mechanism. This activity is singleInstance: started while the old instance
+     * is alive, the platform would re-deliver the intent to it, in its window, via [onNewIntent],
+     * which is a visible "refresh" and nothing more. A finishing instance is never reused, so the
+     * start below creates a new task, and a new task launched from no source activity takes the
+     * display's default windowing mode: fullscreen. The replacement adopts the same pending overlay
+     * (see [OverlayLifecycle.handedOff]); its countdown starts from full.
+     */
+    private fun relaunchFullscreen() {
+        val replacement = Intent(intent).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            putExtra(EXTRA_FULLSCREEN_RELAUNCH_AT, SystemClock.elapsedRealtime())
+        }
+        finishAndRemoveTask()
+        try {
+            applicationContext.startActivity(replacement)
+        } catch (e: RuntimeException) {
+            // This instance is the block again: its stop/destroy report as usual, and the service
+            // re-blocks from the blocked app's next window event.
+            overlayLifecycle.onRelaunchFailed()
+            nudgeLogger.e("block overlay fullscreen relaunch failed", e)
+        }
     }
 
     override fun onStop() {
