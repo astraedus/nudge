@@ -1456,3 +1456,15 @@ Two reports a week apart, a Samsung S24 Ultra (keyboard open, keyboard closed, r
 - **The gate was untested.** Nothing exercised `device-qa.sh`'s own logic until
   `scripts/test-device-qa.sh` (device-free: shimmed `adb`, a stateful fake of the config screen). It is
   not in CI yet (`release.yml` is privileged and was out of scope): add it next to `test-cert-guard.sh`.
+
+## #71 again: the block screen's own floating window counted as "another app" (2026-10-22)
+
+- **A safety property nobody declared is a side effect, and the next fix will remove it.** Before
+  1.22.0 nothing refused multi-window for the block screen. It snapped back only because the blocked
+  app's events read as a bypass and re-blocked. #86 taught the classifier that an app window losing
+  focus to another package is a side panel, and our own floating block window was that other package,
+  so the re-block went silent. Now it is declared in the manifest flags, enforced at runtime by
+  `OverlayWindowMode` and pinned by `OverlayManifestContractTest`, not left to the re-block.
+- **When window evidence says "focus is elsewhere", ask whose window holds focus.** Nudge's overlay
+  is a window too. Any new rule over `WindowSnapshot` owes a test for the case where the focused
+  window is ours.
