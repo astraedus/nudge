@@ -80,11 +80,18 @@
             </intent-filter>
         </activity>
 
+        <!-- Issue #71: every Theme.Nudge.Overlay screen refuses multi-window and PiP. Shrunk into a
+             floating window or a split-screen half, a block screen leaves the blocked app usable
+             beside or behind it. OEM floating windows and Android 12+ large screens can ignore
+             resizeableActivity, so BlockOverlayActivity also relaunches itself fullscreen
+             (OverlayWindowMode). Pinned by OverlayManifestContractTest. -->
         <activity
             android:name=".ui.overlay.BlockOverlayActivity"
             android:excludeFromRecents="true"
             android:exported="false"
             android:launchMode="singleInstance"
+            android:resizeableActivity="false"
+            android:supportsPictureInPicture="false"
             android:taskAffinity=""
             android:theme="@style/Theme.Nudge.Overlay" />
 
@@ -95,6 +102,8 @@
             android:excludeFromRecents="true"
             android:exported="false"
             android:launchMode="singleInstance"
+            android:resizeableActivity="false"
+            android:supportsPictureInPicture="false"
             android:taskAffinity=""
             android:theme="@style/Theme.Nudge.Overlay" />
 
@@ -105,6 +114,8 @@
             android:excludeFromRecents="true"
             android:exported="false"
             android:launchMode="singleInstance"
+            android:resizeableActivity="false"
+            android:supportsPictureInPicture="false"
             android:taskAffinity=""
             android:theme="@style/Theme.Nudge.Overlay" />
 

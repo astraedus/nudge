@@ -4,6 +4,12 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+### Fixed
+- The block screen can no longer be dragged into a floating window or split screen to use the
+  blocked app behind it. Nudge's block, Strict Mode and picture-in-picture screens now refuse
+  multi-window, and on phones that allow it anyway the block screen snaps back to full screen
+  (its countdown starts again). Blocked apps in floating windows are still covered as in 1.22.0. (#71)
+
 ## [1.22.1] - 2026-10-16
 
 ### Changed
