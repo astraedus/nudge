@@ -4,6 +4,8 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+## [1.22.2] - 2026-10-23
+
 ### Fixed
 - The block screen can no longer be dragged into a floating window or split screen to use the
   blocked app behind it. Nudge's block, Strict Mode and picture-in-picture screens now refuse
