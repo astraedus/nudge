@@ -214,6 +214,17 @@ describe('releasing the hold', () => {
     expect(play).toHaveBeenCalledTimes(1);
   });
 
+  it('resumes a video a later repause caught running, even with no play event', () => {
+    // YouTube swaps players during a hop; one can arrive already playing and fire nothing.
+    const hold = holdMediaPaused(document);
+    const { play } = addPlayingVideo(false);
+
+    hold.repause();
+    hold.release({ resume: true });
+
+    expect(play).toHaveBeenCalledTimes(1);
+  });
+
   it('does not start a video the user had paused themselves', () => {
     const { play } = addPlayingVideo(true);
     const hold = holdMediaPaused(document);

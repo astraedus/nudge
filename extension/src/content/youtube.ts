@@ -515,7 +515,10 @@ export function initYoutubeContentScript(
   }
 
   function holdMedia(url: string): void {
+    // Every pass that keeps the hold also re-asserts it: YouTube swaps players during a hop,
+    // and a hold that only listened for `play` would miss one that arrives already running.
     if (mediaHold === null) mediaHold = holdMediaPaused(doc);
+    else mediaHold.repause();
     holdUrl = url;
   }
 

@@ -295,14 +295,21 @@ export function holdMediaPaused(doc: Document): MediaHold {
   /** Media the hold kept from playing, so a release that clears the page can resume it. */
   const stopped = new Set<HTMLMediaElement>();
 
-  for (const element of Array.from(doc.querySelectorAll('video, audio'))) {
-    const media = element as HTMLMediaElement;
-    try {
-      if (media.paused === false) stopped.add(media);
-    } catch {
-      // A player that cannot report its state is simply not resumed.
+  /**
+   * Anything caught PLAYING is media the hold stopped, whether or not its `play` event
+   * reached us (an element moved into the page already running fires none), so a later
+   * pass that catches it records it for the resume as well as the first one.
+   */
+  const recordPlaying = (): void => {
+    for (const element of Array.from(doc.querySelectorAll('video, audio'))) {
+      const media = element as HTMLMediaElement;
+      try {
+        if (media.paused === false) stopped.add(media);
+      } catch {
+        // A player that cannot report its state is simply not resumed.
+      }
     }
-  }
+  };
 
   const muteAll = (): void => {
     for (const element of Array.from(doc.querySelectorAll('video, audio'))) {
@@ -317,6 +324,7 @@ export function holdMediaPaused(doc: Document): MediaHold {
   };
 
   const repause = (): void => {
+    recordPlaying();
     muteAll();
     pauseMedia(doc);
   };
