@@ -22,12 +22,13 @@ import { ruleForHost, rulesForDomain, usageKeyForHost } from '../core/ruleResolv
 import { evaluate } from '../core/blockEngine';
 import { enrichEntries, type ChannelObservation } from '../core/channels';
 import { remainingMs, tightestLimit } from '../core/budgets';
-import { extractDomain, normalizeUserInput } from '../core/domainMatcher';
+import { extractDomain, normalizeToBaseDomain, normalizeUserInput } from '../core/domainMatcher';
 import * as pass from '../core/emergencyPass';
 // Shared with the dashboard's rule card and the rule editor. One implementation on purpose:
 // the worker resolves the popup's copy while the dashboard renders its own from settings,
 // so a second string builder here would eventually describe the same rule two ways.
 import { featureSummary } from '../core/featureSummary';
+import { STUDIO_HOST_PREFIX } from '../core/youtubeAccess';
 import {
   DEFAULT_DELAY_SUBTITLES,
   DEFAULT_DELAY_TITLES,
@@ -45,6 +46,7 @@ import {
 } from '../core/platforms';
 import type {
   BlockContext,
+  CreatorLinks,
   ChannelObservedResult,
   DashboardState,
   GrantResult,
@@ -268,6 +270,7 @@ async function buildBlockContext(target: string, now: Date): Promise<BlockContex
     gateCountLimit,
     gateItemNoun,
     allowedChannels: allowedChannelsFor(rule),
+    creator: creatorLinksFor(rule),
   };
 }
 
@@ -283,6 +286,21 @@ function allowedChannelsFor(rule: SiteRule | null): ChannelEntry[] {
   const youtube = rule?.features?.youtube;
   if (youtube === undefined || youtube.channelMode !== 'WHITELIST') return [];
   return youtube.channels;
+}
+
+/**
+ * Studio and the user's own channel, when the rule has creator mode on.
+ *
+ * Both are open at the network layer in exactly that case (`core/youtubeAccess.ts`), so a
+ * link to either is never a link back to this page.
+ */
+function creatorLinksFor(rule: SiteRule | null): CreatorLinks | null {
+  const youtube = rule?.features?.youtube;
+  if (rule === null || youtube === undefined || !youtube.creatorMode) return null;
+  return {
+    studioUrl: `https://${STUDIO_HOST_PREFIX}${normalizeToBaseDomain(rule.domain)}/`,
+    channel: youtube.myChannel,
+  };
 }
 
 /**

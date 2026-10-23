@@ -6,6 +6,15 @@ independently-numbered products in one file invites the reader to match a `v1.17
 release against a `0.2.0` extension release and conclude something about both; the tag
 namespaces were already split for exactly that reason.
 
+## Unreleased
+
+### Added
+
+- **Creator mode links on the block page.** With "Allow my channel and YouTube Studio" on,
+  the block page now has "Open YouTube Studio" and, if you set "Your channel", "Go to your
+  channel (@handle)", next to your allowed channels. Before, it showed the allowed channels
+  and nothing about Studio, so you had to type the address yourself.
+
 ## 0.4.0 — 2026-10-23
 
 ### Added

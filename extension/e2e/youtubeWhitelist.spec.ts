@@ -287,6 +287,72 @@ test.describe('creator mode', () => {
     await expect(upload).toHaveURL(/blocked\.html\?target=/, { timeout: 10_000 });
   });
 
+  test('the block page links Studio and the own channel, and the Studio link opens', async ({
+    context,
+    setSettings,
+  }) => {
+    // A creator blocked on the home feed has to be able to reach where they ARE allowed.
+    await setSettings(
+      baseSettings({
+        rules: [
+          platformRule(
+            'youtube.com',
+            {
+              youtube: {
+                channelMode: 'WHITELIST',
+                channels: [channel(ALLOWED, 'Allowed Channel')],
+                creatorMode: true,
+                myChannel: { channelId: null, handle: 'mychannel', displayName: 'My Channel', addedAt: 0 },
+              },
+            },
+            { mode: 'HARD_BLOCK' },
+          ),
+        ],
+      }),
+    );
+
+    const page = await context.newPage();
+    await page.goto('https://www.youtube.com/');
+    await expect(page).toHaveURL(/blocked\.html\?target=/);
+
+    await expect(page.getByRole('link', { name: 'Go to your channel (@mychannel)' })).toHaveAttribute(
+      'href',
+      'https://www.youtube.com/@mychannel',
+    );
+    await expect(page.getByRole('link', { name: 'Allowed Channel' })).toBeVisible();
+    await page.screenshot({
+      path: `${process.env.HOME}/Pictures/screenshots/nudge-ext-blockpage-studio-on.png`,
+    });
+
+    // The link must not bounce back to the block page.
+    await page.getByRole('link', { name: 'Open YouTube Studio' }).click();
+    await expectStaysOpen(page, /^https:\/\/studio\.youtube\.com\/$/);
+  });
+
+  test('the block page has no Studio link when creator mode is off', async ({
+    context,
+    setSettings,
+  }) => {
+    await setSettings(
+      baseSettings({
+        rules: [
+          platformRule(
+            'youtube.com',
+            { youtube: { channelMode: 'WHITELIST', channels: [channel(ALLOWED, 'Allowed Channel')] } },
+            { mode: 'HARD_BLOCK' },
+          ),
+        ],
+      }),
+    );
+    const page = await context.newPage();
+    await page.goto('https://www.youtube.com/');
+    await expect(page.getByRole('link', { name: 'Allowed Channel' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Open YouTube Studio' })).toHaveCount(0);
+    await page.screenshot({
+      path: `${process.env.HOME}/Pictures/screenshots/nudge-ext-blockpage-studio-off.png`,
+    });
+  });
+
   test('leaves them blocked when the box is not ticked', async ({ context, setSettings }) => {
     await setSettings(creatorSettings(false));
 
