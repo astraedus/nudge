@@ -1,0 +1,1 @@
+• The block screen can no longer be dragged into a floating window or split screen to use the blocked app behind it. If your phone puts it in one anyway, it snaps back to full screen.
