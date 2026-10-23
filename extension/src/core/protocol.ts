@@ -12,7 +12,6 @@ import type { EnrichmentReason } from './channels';
 import type { GateId, HideId, Platform } from './platforms';
 import type {
   ChannelEntry,
-  ChannelListMode,
   NudgeSettings,
   SiteRule,
   YoutubeFeatureSettings,
