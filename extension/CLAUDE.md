@@ -577,6 +577,14 @@ xvfb), scoped with `paths: ['extension/**']`. The Android workflow carries the m
   green unit suite whose hand-authored fixture had no page manager, no hidden browse page
   and no `video-id`. `tests/content/fixtures/youtubeLiveWatch.ts` is built from the
   2026-10-23 capture; new YouTube DOM tests should use it.
+- **Inline data proves a watch page only through its root `currentVideoEndpoint`.** Every
+  page's `ytInitialData` is full of `watchEndpoint`s, one per video card. A search for "the
+  first one" on a channel page finds the first grid video, the one a user clicks first.
+  After that SPA hop, the stale channel-page data then "proved" an empty detection fresh: a
+  1s false "couldn't identify" flash, and a stuck pause on Back. That survived the unit
+  suite and was caught only by the live after-matrix. **And an interstitial is keyed to the
+  URL it was raised for** (`overlayFor`). One left up across a hop kept the hold pinned to
+  the old URL, and completing it would have released the new video.
 - The React Compiler advisory lint rules (`set-state-in-effect`,
   `preserve-manual-memoization`, `use-memo`) are deliberately **off**; `rules-of-hooks` is
   deliberately **on** and has already earned its keep.
