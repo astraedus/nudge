@@ -15,6 +15,15 @@ namespaces were already split for exactly that reason.
   channel (@handle)", next to your allowed channels. Before, it showed the allowed channels
   and nothing about Studio, so you had to type the address yourself.
 
+### Fixed
+
+- **A channel you added by @handle keeps the channel ID Nudge learned for it.** Visiting the
+  channel teaches Nudge its ID, so its `/channel/UC…` address is allowed or blocked like the
+  @handle. Saving any change from a dashboard tab that was already open before that visit
+  wrote the old handle-only entry back and threw the ID away. Saves now keep every ID Nudge
+  has learned, and the dashboard shows the saved entry afterwards. The Commitment Lock still
+  judges exactly the change you made.
+
 ## 0.4.0 — 2026-10-23
 
 ### Added

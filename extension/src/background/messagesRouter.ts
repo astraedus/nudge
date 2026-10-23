@@ -20,7 +20,11 @@
 import { appliedBlockMode, gateAppliesNow, siteRuleAppliesNow } from '../core/applies';
 import { ruleForHost, rulesForDomain, usageKeyForHost } from '../core/ruleResolver';
 import { evaluate } from '../core/blockEngine';
-import { enrichEntries, type ChannelObservation } from '../core/channels';
+import {
+  enrichEntries,
+  keepLearnedChannelIdentifiers,
+  type ChannelObservation,
+} from '../core/channels';
 import { remainingMs, tightestLimit } from '../core/budgets';
 import { extractDomain, normalizeToBaseDomain, normalizeUserInput } from '../core/domainMatcher';
 import * as pass from '../core/emergencyPass';
@@ -500,7 +504,10 @@ async function handleSave(
   now: Date,
 ): Promise<SaveResult> {
   const current = await loadSettings();
-  const normalized = migrateSettings(next);
+  // A screen saves the whole object it loaded, which can predate an identifier the worker
+  // learned since (`CHANNEL_OBSERVED`). Fold those back in BEFORE the lock judges the save,
+  // so neither the data nor the verdict depends on how long a dashboard tab has been open.
+  const normalized = keepLearnedChannelIdentifiers(current, migrateSettings(next));
 
   if (current.strictMode.enabled && strict.isWeakening(current, normalized)) {
     const pending = (await loadPendingChallenge()) ?? strict.generate(

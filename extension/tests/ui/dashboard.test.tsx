@@ -360,6 +360,7 @@ describe('Dashboard', () => {
     let saveCalls = 0;
     sendMessageMock.mockImplementation((request: { type: string; challengeResponse?: string }) => {
       if (request.type === 'GET_DASHBOARD_STATE') return Promise.resolve(makeState());
+      if (request.type === 'GET_SETTINGS') return Promise.resolve(makeState().settings);
       saveCalls += 1;
       if (request.challengeResponse === undefined) {
         return Promise.resolve({ ok: false, challenge, reason: 'challenge-required' });
@@ -409,6 +410,43 @@ describe('Dashboard', () => {
     expect(screen.getByTestId('challenge-code').textContent).toBe(forDisplay(challenge));
   });
 
+  it('after a save, shows and builds on what the worker STORED, not the copy it sent', async () => {
+    // The worker folds a channel id it learned while this tab sat open back into the save, so
+    // what it stores is richer than what we sent. The next save must start from that, or the
+    // dashboard keeps showing (and re-sending) its stale handle-only entry.
+    const handleOnly = { channelId: null, handle: 'veritasium', displayName: '@veritasium', addedAt: 1 };
+    const learned = { channelId: 'UCHnyfMqiRRG1u-2MsSQLbXA', handle: 'veritasium', displayName: 'Veritasium', addedAt: 1 };
+    const withChannel = (channel: typeof handleOnly | typeof learned): NudgeSettings => {
+      const features = defaultFeatures('youtube');
+      features.youtube = { ...features.youtube!, channels: [channel] };
+      return makeSettings({ rules: [makeRule({ features })] });
+    };
+    const saves: NudgeSettings[] = [];
+    sendMessageMock.mockImplementation((request: { type: string; settings?: NudgeSettings }) => {
+      if (request.type === 'GET_DASHBOARD_STATE') return Promise.resolve(makeState({ settings: withChannel(handleOnly) }));
+      if (request.type === 'GET_SETTINGS') {
+        const last = saves[saves.length - 1]!;
+        return Promise.resolve({ ...withChannel(learned), globalEnabled: last.globalEnabled });
+      }
+      saves.push(request.settings!);
+      return Promise.resolve({ ok: true });
+    });
+
+    render(<Dashboard />);
+    await flush();
+    fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
+    fireEvent.click(screen.getByLabelText('Nudge is on'));
+    await flush();
+    fireEvent.click(screen.getByLabelText('Nudge is on'));
+    await flush();
+
+    expect(saves).toHaveLength(2);
+    expect(saves[0]!.rules[0]!.features!.youtube!.channels).toEqual([handleOnly]);
+    expect(saves[1]!.rules[0]!.features!.youtube!.channels).toEqual([learned]);
+    expect(saves[0]!.globalEnabled).toBe(false);
+    expect(saves[1]!.globalEnabled).toBe(true);
+  });
+
   it('shows the tagline', async () => {
     sendMessageMock.mockResolvedValue(makeState());
     render(<Dashboard />);
@@ -436,6 +474,7 @@ describe('SettingsPanel — sites list (ext-13 §5)', () => {
       if (request.type === 'GET_DASHBOARD_STATE') {
         return Promise.resolve(makeState({ settings: saved ?? makeSettings({ rules: [] }) }));
       }
+      if (request.type === 'GET_SETTINGS') return Promise.resolve(saved ?? makeSettings({ rules: [] }));
       saved = request.settings ?? null;
       return Promise.resolve({ ok: true });
     });
