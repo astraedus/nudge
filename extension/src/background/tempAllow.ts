@@ -95,9 +95,23 @@ export async function isTempAllowed(
   domain: string,
   now: number = Date.now(),
 ): Promise<boolean> {
+  return (await tempAllowedUntil(domain, now)) !== null;
+}
+
+/**
+ * When the live grant for `domain` ends (epoch ms), or null when there is none.
+ *
+ * An END TIME rather than a boolean because content scripts cache what they are told: a
+ * boolean "temp-allowed" goes stale the moment the grant expires, while an end time stays
+ * correct for as long as the page holds it.
+ */
+export async function tempAllowedUntil(
+  domain: string,
+  now: number = Date.now(),
+): Promise<number | null> {
   const map = await loadTempAllow();
   const until = map[normalizeToBaseDomain(domain)];
-  return until !== undefined && until > now;
+  return until !== undefined && until > now ? until : null;
 }
 
 /**

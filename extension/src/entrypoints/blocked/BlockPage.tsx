@@ -8,6 +8,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
+import { BLOCK_TARGET_MARKER } from '../../core/blockPage';
 import type { BlockContext } from '../../core/protocol';
 import type { ChannelEntry } from '../../core/settingsSchema';
 import { clearBounces, registerBounce } from '../../core/redirectLoopGuard';
@@ -274,7 +275,7 @@ type LoadState =
   | { status: 'ready'; context: BlockContext; target: string };
 
 /** The marker the DNR redirect appends the original URL after. Must stay last in the URL. */
-const TARGET_PARAM = '?target=';
+const TARGET_PARAM = BLOCK_TARGET_MARKER;
 
 /**
  * Read the blocked URL out of our own address bar.

@@ -47,8 +47,14 @@ import type { BlockMode, SiteMode } from './types';
  * `migrateSettings` is total (every field is rebuilt from whatever it is handed) there is
  * still no per-version branch to keep in sync: `coerceGateSetting` reading a missing
  * `dailyLimitCount` as null IS the v3 -> v4 step.
+ *
+ * 4 -> 5 (v0.4): CREATOR MODE. `YoutubeFeatureSettings` gains `creatorMode` ("allow my
+ * channel and YouTube Studio") and `myChannel` (the user's own channel, an implicit
+ * whitelist entry while creator mode is on). Purely additive, defaulting to off / null, so
+ * nothing opens on upgrade. Same total-migration pattern as 3 -> 4: `coerceYoutubeFeatures`
+ * reading a missing `creatorMode` as false and a missing `myChannel` as null IS the step.
  */
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 /** Delay presets, seconds (Android parity). Custom range 1–300. */
 export const DELAY_PRESETS = [5, 15, 30, 60] as const;
@@ -122,6 +128,20 @@ export interface YoutubeFeatureSettings {
   channelBlockMode: BlockMode;
   channelDelaySeconds: number;
   disableAutoplay: boolean;
+  /**
+   * "Allow my channel and YouTube Studio" (v0.4). While on, studio.youtube.com and the
+   * youtube.com routes that lead to it stay open even when YouTube is blocked or its daily
+   * limit is spent, and time there is not counted against the limit. Turning it ON is a
+   * weakening (Commitment Lock); turning it off is free. See `core/youtubeAccess.ts`.
+   */
+  creatorMode: boolean;
+  /**
+   * The user's own channel. While `creatorMode` is on it is treated as one more allowed
+   * channel, through the same channel-list path every other entry takes, so the user can
+   * watch and manage their own videos while the rest of YouTube is blocked. Ignored while
+   * creator mode is off. Null when the user has not entered it.
+   */
+  myChannel: ChannelEntry | null;
 }
 
 /**
@@ -308,6 +328,8 @@ export function defaultYoutubeFeatureSettings(): YoutubeFeatureSettings {
     channelBlockMode: 'DELAY',
     channelDelaySeconds: DEFAULT_DELAY_SECONDS,
     disableAutoplay: false,
+    creatorMode: false,
+    myChannel: null,
   };
 }
 
@@ -534,6 +556,10 @@ function coerceYoutubeFeatures(value: unknown): YoutubeFeatureSettings {
     channelBlockMode: coerceMode(raw.channelBlockMode, 'DELAY'),
     channelDelaySeconds: coerceDelay(raw.channelDelaySeconds),
     disableAutoplay: raw.disableAutoplay === true,
+    // v4 -> v5: absent on every older blob, and absent means OFF. Only a literal `true`
+    // turns it on, so a malformed value can never open Studio by accident.
+    creatorMode: raw.creatorMode === true,
+    myChannel: coerceChannel(raw.myChannel),
   };
 }
 
@@ -624,6 +650,11 @@ function mergeFeatures(base: SiteFeatures, incoming: SiteFeatures): SiteFeatures
           : a.channelBlockMode,
       channelDelaySeconds: Math.max(a.channelDelaySeconds, b.channelDelaySeconds),
       disableAutoplay: a.disableAutoplay || b.disableAutoplay,
+      // Creator mode OPENS things, so the stronger side is OFF: it survives a merge only
+      // when both sides had it on. The channel is data the user typed, so it is kept from
+      // whichever side has one (base first), never dropped.
+      creatorMode: a.creatorMode && b.creatorMode,
+      myChannel: a.myChannel ?? b.myChannel,
     };
   }
   return merged;
@@ -724,6 +755,9 @@ function legacyYoutubeAsFeatures(yt: Partial<LegacyYoutubeSettings>): SiteFeatur
     channelBlockMode: coerceMode(yt.channelBlockMode, 'DELAY'),
     channelDelaySeconds: coerceDelay(yt.channelDelaySeconds),
     disableAutoplay: yt.disableAutoplay === true,
+    // v2 had no creator mode; a v2 user starts with it off and loses nothing.
+    creatorMode: false,
+    myChannel: null,
   };
   return features;
 }

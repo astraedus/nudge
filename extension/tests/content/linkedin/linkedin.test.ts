@@ -39,6 +39,7 @@ function configWith(overrides: Partial<SiteConfig>): SiteConfig {
     siteDelaySeconds: 15,
     siteApplies: false,
     siteLimitReached: false,
+    tempAllowedUntil: null,
     grayscale: false,
     gates: [],
     hides: {},

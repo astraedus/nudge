@@ -26,13 +26,16 @@ import {
 } from '../core/channelFreshness';
 import type { SiteConfig } from '../core/protocol';
 import { DEFAULT_DELAY_SECONDS } from '../core/settingsSchema';
+import { effectiveChannelLists } from '../core/youtubeAccess';
 import {
+  channelPageIdentity,
   detectCardChannel,
   detectWatchChannel,
   type DetectedChannel,
   feedCards,
   inlineVideoId,
   videoIdFromUrl,
+  watchPlayerVideoId,
 } from './channelDetection';
 import {
   CHANNEL_HIDDEN_CLASS,
@@ -62,6 +65,8 @@ const NO_CHANNEL_LISTS: NonNullable<SiteConfig['youtube']> = {
   channelBlockMode: 'DELAY',
   channelDelaySeconds: DEFAULT_DELAY_SECONDS,
   disableAutoplay: false,
+  creatorMode: false,
+  myChannel: null,
 };
 
 /**
@@ -72,6 +77,18 @@ const NO_CHANNEL_LISTS: NonNullable<SiteConfig['youtube']> = {
  */
 function channelSettings(config: ChannelConfig): NonNullable<SiteConfig['youtube']> {
   return config.youtube ?? NO_CHANNEL_LISTS;
+}
+
+/**
+ * The settings with the lists that are actually ENFORCED: creator mode's own channel folded
+ * in as an implicit whitelist entry (`core/youtubeAccess.effectiveChannelLists`), the same
+ * lists the network layer carves out. Every decision below reads these, never the raw
+ * stored lists, so "may my own video play" has one answer on every layer.
+ */
+function enforcedSettings(config: ChannelConfig): NonNullable<SiteConfig['youtube']> {
+  const settings = channelSettings(config);
+  const lists = effectiveChannelLists(config.youtube, config.siteApplies);
+  return { ...settings, channelMode: lists.channelMode, channels: lists.channels };
 }
 
 export interface ChannelFilterResult {
@@ -107,7 +124,7 @@ export function applyChannelFilter(
   options: { warn?: (message: string) => void } = {},
 ): ChannelFilterResult {
   const result: ChannelFilterResult = { hidden: 0, revealed: 0, unidentified: 0 };
-  const channels = channelSettings(config);
+  const channels = enforcedSettings(config);
   const active = config.enabled && channels.channelMode !== 'OFF';
 
   const shouldHide = new Set<Element>();
@@ -223,6 +240,7 @@ function detectWithFreshness(
   const freshness = channelFreshness({
     videoId: videoIdFromUrl(url),
     inlineVideoId: inlineVideoId(doc),
+    domVideoId: watchPlayerVideoId(doc),
     detectedKey: channelKey(detected),
     previousKey: options.previousKey ?? null,
     msSinceNav: options.msSinceNav ?? Number.POSITIVE_INFINITY,
@@ -242,7 +260,7 @@ export function confirmedWatchChannel(
   config: ChannelConfig,
   options: WatchPageOptions = {},
 ): DetectedChannel | null {
-  const channels = channelSettings(config);
+  const channels = enforcedSettings(config);
   if (!config.enabled || channels.channelMode === 'OFF') return null;
   const url = options.url ?? doc.location?.href ?? '';
   if (pageTypeFor(url) !== 'watch') return null;
@@ -252,30 +270,83 @@ export function confirmedWatchChannel(
 }
 
 /**
- * The gate verdict for the CURRENT watch page, or null when channel lists are off, this is
- * not a watch page, or the detection has not settled yet.
+ * The channel whose page this is, when that is KNOWN: a settled watch page's owner, or a
+ * channel page's own metadata when it provably describes this URL (`channelPageIdentity`).
  *
- * The mode a BLOCK carries comes from `decideWatchGate`, which is where the site rule and
- * the channel rule are reconciled — this function's only jobs are finding the channel and
- * refusing to answer while the byline may still describe the previous video.
+ * Channel pages are where a user most often lands on a channel they listed by one identifier
+ * only (a `/@handle` entry visiting its own page), so they are the cheapest place to learn the
+ * other one. Before this, enrichment ran on watch pages only.
+ */
+export function confirmedPageChannel(
+  doc: Document,
+  config: ChannelConfig,
+  options: WatchPageOptions = {},
+): DetectedChannel | null {
+  const channels = enforcedSettings(config);
+  if (!config.enabled || channels.channelMode === 'OFF') return null;
+  const url = options.url ?? doc.location?.href ?? '';
+  if (pageTypeFor(url) === 'channel') {
+    const msSinceNav = options.msSinceNav ?? Number.POSITIVE_INFINITY;
+    return channelPageIdentity(doc, url, { inlineIsFresh: msSinceNav === Number.POSITIVE_INFINITY });
+  }
+  return confirmedWatchChannel(doc, config, options);
+}
+
+/**
+ * Where the watch-page channel gate stands on the CURRENT page.
+ *
+ *  - `off`       no list is enforced, or this is not a watch page: nothing to wait for
+ *  - `settling`  the owner on screen may still be the previous video's; no answer YET
+ *  - `decided`   the verdict, from `decideWatchGate`
+ *
+ * `settling` is its own state because the controller treats it differently from both of the
+ * others: it holds the video silently (live QA B1: the video played ungated, or the "couldn't
+ * identify" interstitial fired, in the second before YouTube rendered the new owner) and lets
+ * it go the moment the answer is ALLOW.
+ */
+export type WatchGateState =
+  | { kind: 'off' }
+  | { kind: 'settling' }
+  | { kind: 'decided'; verdict: WatchGateVerdict };
+
+export function watchGateState(
+  doc: Document,
+  config: ChannelConfig,
+  options: WatchPageOptions = {},
+): WatchGateState {
+  const channels = enforcedSettings(config);
+  if (!config.enabled || channels.channelMode === 'OFF') return { kind: 'off' };
+  const url = options.url ?? doc.location?.href ?? '';
+  if (pageTypeFor(url) !== 'watch') return { kind: 'off' };
+
+  // Hold fire while the byline may still describe the PREVIOUS video: that is what stops an
+  // allowed channel being accused for several seconds after a navigation.
+  const { detected, freshness } = detectWithFreshness(doc, url, options);
+  if (freshness === 'SETTLING') return { kind: 'settling' };
+
+  return { kind: 'decided', verdict: watchVerdictFor(config, detected) };
+}
+
+/**
+ * The gate verdict for the CURRENT watch page, or null when channel lists are off, this is
+ * not a watch page, or the detection has not settled yet (see `watchGateState`, which tells
+ * those apart).
  */
 export function watchChannelVerdict(
   doc: Document,
   config: ChannelConfig,
   options: WatchPageOptions = {},
 ): WatchGateVerdict | null {
-  const channels = channelSettings(config);
-  if (!config.enabled || channels.channelMode === 'OFF') return null;
-  const url = options.url ?? doc.location?.href ?? '';
-  if (pageTypeFor(url) !== 'watch') return null;
+  const state = watchGateState(doc, config, options);
+  return state.kind === 'decided' ? state.verdict : null;
+}
 
-  // Hold fire while the byline may still describe the PREVIOUS video. Returning null means
-  // "no interstitial yet", NOT "allowed" - the caller simply does not gate, which is the same
-  // fail-open we already take for an unidentifiable channel, and it is what stops an allowed
-  // channel being accused for several seconds after a navigation.
-  const { detected, freshness } = detectWithFreshness(doc, url, options);
-  if (freshness === 'SETTLING') return null;
-
+/**
+ * The mode a BLOCK carries comes from `decideWatchGate`, which is where the site rule and
+ * the channel rule are reconciled.
+ */
+function watchVerdictFor(config: ChannelConfig, detected: DetectedChannel | null): WatchGateVerdict {
+  const channels = enforcedSettings(config);
   return decideWatchGate({
     mode: channels.channelMode,
     channels: channels.channels,
@@ -307,7 +378,7 @@ export function applyGrayColor(
   const root = doc.documentElement;
   if (root === null) return false;
 
-  const channels = channelSettings(config);
+  const channels = enforcedSettings(config);
 
   // `grayscale` is a PER-SITE toggle since v0.2 (it was a YouTube-only global before), and
   // the worker registers the stylesheet only for sites that have it on. The colour REWARD
@@ -320,21 +391,29 @@ export function applyGrayColor(
 
   const url = options.url ?? doc.location?.href ?? '';
   const pageType = pageTypeFor(url);
+  const msSinceNav = options.msSinceNav ?? Number.POSITIVE_INFINITY;
   // Only a watch or channel page has a single channel whose identity could earn colour.
-  // A feed is a mix of many, so it stays gray.
-  const detected =
-    pageType === 'watch' || pageType === 'channel' ? detectWatchChannel(doc, { url }) : null;
+  // A feed is a mix of many, so it stays gray. A channel page is identified by its own
+  // metadata, which `channelPageIdentity` only returns when it provably describes this URL,
+  // so it needs no settle window; the watch page's byline does.
+  const channelPage =
+    pageType === 'channel'
+      ? channelPageIdentity(doc, url, { inlineIsFresh: msSinceNav === Number.POSITIVE_INFINITY })
+      : null;
+  const detected = pageType === 'watch' ? detectWatchChannel(doc, { url }) : channelPage;
 
   // Staying gray through the settle window is the safe half of the tradeoff: an extra second
   // of grayscale on an allowed video is unnoticeable, whereas flashing COLOUR onto a channel
   // the user is avoiding hands them exactly the hit the feature exists to remove.
   const settling =
+    pageType === 'watch' &&
     channelFreshness({
       videoId: videoIdFromUrl(url),
       inlineVideoId: inlineVideoId(doc),
+      domVideoId: watchPlayerVideoId(doc),
       detectedKey: channelKey(detected),
       previousKey: options.previousKey ?? null,
-      msSinceNav: options.msSinceNav ?? Number.POSITIVE_INFINITY,
+      msSinceNav,
       // Colour gets the shorter backstop, see SETTLE_COLOR_MS.
       settleMs: SETTLE_COLOR_MS,
     }) === 'SETTLING';

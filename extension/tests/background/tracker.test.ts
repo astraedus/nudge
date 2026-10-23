@@ -200,6 +200,70 @@ describe('crossing the site budget', () => {
   });
 });
 
+describe('creator mode: YouTube Studio is work, not watching', () => {
+  const creatorRule = (creatorMode: boolean) =>
+    settings({
+      rules: [
+        siteRule({
+          domain: 'youtube.com',
+          mode: 'ALLOW',
+          dailyLimitMinutes: 10,
+          features: featuresWith('youtube', { youtube: { creatorMode } }),
+        }),
+      ],
+    });
+
+  it('time in Studio does not spend the YouTube daily limit', async () => {
+    await seed(creatorRule(true));
+    await spend('https://studio.youtube.com/channel/UCmine/videos', 2);
+    await spend('https://www.youtube.com/upload', 2);
+    expect((await usage('youtube.com'))?.activeSec ?? 0).toBe(0);
+  });
+
+  it('time in Studio DOES count when creator mode is off', async () => {
+    await seed(creatorRule(false));
+    await spend('https://studio.youtube.com/channel/UCmine/videos', 2);
+    expect((await usage('youtube.com'))?.activeSec).toBe(2 * 60);
+  });
+
+  it('watching a video still counts with creator mode on', async () => {
+    await seed(creatorRule(true));
+    await spend('https://www.youtube.com/watch?v=xyz', 2);
+    expect((await usage('youtube.com'))?.activeSec).toBe(2 * 60);
+  });
+
+  it('a spent limit closes the video tab but leaves the Studio tab open', async () => {
+    attention.tabs = [
+      { id: 1, url: 'https://studio.youtube.com/channel/UCmine/editing' },
+      { id: 2, url: 'https://www.youtube.com/watch?v=xyz' },
+      { id: 3, url: 'https://www.youtube.com/upload' },
+    ];
+    await seed(creatorRule(true));
+    await saveDay(localDayKey(new Date(START)), {
+      'youtube.com': { ...emptyDayUsage(), activeSec: 9 * 60 },
+    });
+
+    await spend('https://www.youtube.com/watch?v=xyz', 2);
+
+    expect(Object.keys(attention.navigatedTo)).toEqual(['2']);
+  });
+
+  it('without creator mode, the same crossing closes the Studio tab too', async () => {
+    attention.tabs = [
+      { id: 1, url: 'https://studio.youtube.com/channel/UCmine/editing' },
+      { id: 2, url: 'https://www.youtube.com/watch?v=xyz' },
+    ];
+    await seed(creatorRule(false));
+    await saveDay(localDayKey(new Date(START)), {
+      'youtube.com': { ...emptyDayUsage(), activeSec: 9 * 60 },
+    });
+
+    await spend('https://www.youtube.com/watch?v=xyz', 2);
+
+    expect(Object.keys(attention.navigatedTo).sort()).toEqual(['1', '2']);
+  });
+});
+
 describe('time spent on a subdomain of a ruled site', () => {
   /**
    * The live-QA limit bug (2026-09-20): a `wikipedia.org` Allow + 1-minute rule, browsing

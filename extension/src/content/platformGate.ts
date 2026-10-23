@@ -224,6 +224,7 @@ export const IDLE_SITE_CONFIG: SiteConfig = {
   siteDelaySeconds: 15,
   siteApplies: false,
   siteLimitReached: false,
+  tempAllowedUntil: null,
   grayscale: false,
   gates: [],
   hides: {},
@@ -261,12 +262,16 @@ export function initPlatformContentScript(
     return doc.location?.href ?? '';
   }
 
-  function teardownOverlay(): void {
+  /**
+   * `resume` is true only when the gate is CLEARED in place (a completed pause), never when
+   * the user is leaving or the script stops: see `MediaReleaseOptions` in overlay.ts.
+   */
+  function teardownOverlay(resume: boolean): void {
     overlay?.dispose();
     overlay = null;
     // Release BEFORE the overlay is forgotten: a hold that outlives its interstitial would
     // keep the page's media un-playable with nothing on screen to explain why.
-    mediaHold?.release();
+    mediaHold?.release({ resume });
     mediaHold = null;
   }
 
@@ -295,16 +300,16 @@ export function initPlatformContentScript(
       // Left every gated surface (or nothing applies) — the next gate hit is a fresh
       // decision, exactly like Shorts resetting `gateSatisfied` on leaving the player.
       satisfiedGateId = null;
-      teardownOverlay();
+      teardownOverlay(false);
       return;
     }
     if (gate.mode === 'ALLOW' || gate.id === satisfiedGateId) {
-      teardownOverlay();
+      teardownOverlay(false);
       return;
     }
     if (overlay?.element.isConnected) return;
 
-    teardownOverlay();
+    teardownOverlay(false);
     mediaHold = holdMediaPaused(doc);
 
     const mode = gate.mode;
@@ -312,10 +317,10 @@ export function initPlatformContentScript(
     overlay = createGateOverlay(doc, overlayId, mode, gate.delaySeconds, copy, {
       onComplete: () => {
         satisfiedGateId = gate.id;
-        teardownOverlay();
+        teardownOverlay(true);
       },
       onBail: () => {
-        teardownOverlay();
+        teardownOverlay(false);
         assignSafeLocation(doc, options.bailUrl);
       },
     });
@@ -356,7 +361,7 @@ export function initPlatformContentScript(
       stopped = true;
       nav.dispose();
       chromeApi?.storage?.onChanged?.removeListener(onStorageChanged);
-      teardownOverlay();
+      teardownOverlay(false);
     },
   };
 }

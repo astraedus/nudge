@@ -47,7 +47,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  for (const hold of holds.splice(0)) hold.release();
+  for (const hold of holds.splice(0)) hold.release({ resume: false });
 });
 
 describe('holding media paused while a gate overlay is up', () => {
@@ -95,7 +95,7 @@ describe('holding media paused while a gate overlay is up', () => {
     const { el, pause } = addVideo();
     const hold = holdMediaPaused(document);
 
-    hold.release();
+    hold.release({ resume: false });
     pause.mockClear();
     el.dispatchEvent(new Event('play'));
 
@@ -162,7 +162,7 @@ describe('muting while the overlay is up', () => {
     const { el } = addVideoWithMute(false);
     const hold = holdMediaPaused(document);
 
-    hold.release();
+    hold.release({ resume: false });
 
     expect(el.muted).toBe(false);
   });
@@ -172,8 +172,118 @@ describe('muting while the overlay is up', () => {
     const { el } = addVideoWithMute(true);
     const hold = holdMediaPaused(document);
 
-    hold.release();
+    hold.release({ resume: false });
 
     expect(el.muted).toBe(true);
+  });
+});
+
+describe('releasing the hold', () => {
+  /**
+   * Live QA 2026-10-23 (B1, E1, G1): after a Delay countdown completed, or after the channel
+   * check settled on an ALLOWED channel, the video under the hold stayed paused at 0:00. The
+   * hold had stopped it and nothing ever started it again, so a cleared gate still read as a
+   * block. A release that CLEARS the gate resumes what the hold stopped; a release because the
+   * user is leaving does not.
+   */
+  function addPlayingVideo(paused: boolean): { el: FakeMedia; play: ReturnType<typeof vi.fn> } {
+    const { el } = addVideo();
+    const play = vi.fn(() => Promise.resolve());
+    (el as unknown as { play: unknown }).play = play;
+    Object.defineProperty(el, 'paused', { configurable: true, get: () => paused });
+    return { el, play };
+  }
+
+  it('resumes a video that was playing when the hold started', () => {
+    const { play } = addPlayingVideo(false);
+    const hold = holdMediaPaused(document);
+
+    hold.release({ resume: true });
+
+    expect(play).toHaveBeenCalledTimes(1);
+  });
+
+  it('resumes a video that tried to start while the hold stood', () => {
+    // The SPA hop: the overlay is up before YouTube's player starts the new video.
+    const hold = holdMediaPaused(document);
+    const { el, play } = addPlayingVideo(true);
+    el.dispatchEvent(new Event('play'));
+
+    hold.release({ resume: true });
+
+    expect(play).toHaveBeenCalledTimes(1);
+  });
+
+  it('resumes a video a later repause caught running, even with no play event', () => {
+    // YouTube swaps players during a hop; one can arrive already playing and fire nothing.
+    const hold = holdMediaPaused(document);
+    const { play } = addPlayingVideo(false);
+
+    hold.repause();
+    hold.release({ resume: true });
+
+    expect(play).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not start a video the user had paused themselves', () => {
+    const { play } = addPlayingVideo(true);
+    const hold = holdMediaPaused(document);
+
+    hold.release({ resume: true });
+
+    expect(play).not.toHaveBeenCalled();
+  });
+
+  it('does not resume anything when the user is leaving', () => {
+    const { play } = addPlayingVideo(false);
+    const hold = holdMediaPaused(document);
+
+    hold.release({ resume: false });
+
+    expect(play).not.toHaveBeenCalled();
+  });
+
+  it('skips a player YouTube removed while the hold stood', () => {
+    const { el, play } = addPlayingVideo(false);
+    const hold = holdMediaPaused(document);
+    el.remove();
+
+    hold.release({ resume: true });
+
+    expect(play).not.toHaveBeenCalled();
+  });
+
+  it('restores the muted state before it resumes, so it comes back audible', () => {
+    const { el, play } = addPlayingVideo(false);
+    el.muted = false;
+    let mutedAtPlay: boolean | null = null;
+    play.mockImplementation(() => {
+      mutedAtPlay = el.muted;
+      return Promise.resolve();
+    });
+    const hold = holdMediaPaused(document);
+
+    hold.release({ resume: true });
+
+    expect(mutedAtPlay).toBe(false);
+  });
+
+  it('survives an autoplay refusal', async () => {
+    const { play } = addPlayingVideo(false);
+    play.mockImplementation(() => Promise.reject(new Error('NotAllowedError')));
+    const hold = holdMediaPaused(document);
+
+    expect(() => hold.release({ resume: true })).not.toThrow();
+    await Promise.resolve();
+  });
+
+  it('resumes only once even if released twice', () => {
+    const { play } = addPlayingVideo(false);
+    const hold = holdMediaPaused(document);
+
+    hold.release({ resume: true });
+    hold.release({ resume: true });
+
+    expect(play).toHaveBeenCalledTimes(1);
   });
 });

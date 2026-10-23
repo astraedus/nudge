@@ -277,7 +277,7 @@ describe('applyAutoplayOff', () => {
     try {
       const clicked = applyAutoplayOff(
         root,
-        { enabled: true, youtube: { channelMode: 'OFF', channels: [], channelBlockMode: 'HARD_BLOCK', channelDelaySeconds: 0, disableAutoplay: true } },
+        { enabled: true, youtube: { channelMode: 'OFF', channels: [], channelBlockMode: 'HARD_BLOCK', channelDelaySeconds: 0, disableAutoplay: true, creatorMode: false, myChannel: null } },
         { warn: () => {} },
       );
 
@@ -297,7 +297,7 @@ describe('applyAutoplayOff', () => {
     try {
       const clicked = applyAutoplayOff(
         root,
-        { enabled: true, youtube: { channelMode: 'OFF', channels: [], channelBlockMode: 'HARD_BLOCK', channelDelaySeconds: 0, disableAutoplay: true } },
+        { enabled: true, youtube: { channelMode: 'OFF', channels: [], channelBlockMode: 'HARD_BLOCK', channelDelaySeconds: 0, disableAutoplay: true, creatorMode: false, myChannel: null } },
         { warn: () => {} },
       );
 
@@ -317,7 +317,7 @@ describe('applyAutoplayOff', () => {
     try {
       const clicked = applyAutoplayOff(
         root,
-        { enabled: true, youtube: { channelMode: 'OFF', channels: [], channelBlockMode: 'HARD_BLOCK', channelDelaySeconds: 0, disableAutoplay: false } },
+        { enabled: true, youtube: { channelMode: 'OFF', channels: [], channelBlockMode: 'HARD_BLOCK', channelDelaySeconds: 0, disableAutoplay: false, creatorMode: false, myChannel: null } },
         { warn: () => {} },
       );
 
@@ -358,6 +358,8 @@ describe('applyAutoplayOff', () => {
         channelBlockMode: 'HARD_BLOCK' as const,
         channelDelaySeconds: 0,
         disableAutoplay: true,
+        creatorMode: false,
+        myChannel: null,
       },
     };
     const first = applyAutoplayOff(root, config, { warn: () => {} });
@@ -380,6 +382,8 @@ describe('applyAutoplayOff', () => {
         channelBlockMode: 'HARD_BLOCK' as const,
         channelDelaySeconds: 0,
         disableAutoplay: true,
+        creatorMode: false,
+        myChannel: null,
       },
     };
 

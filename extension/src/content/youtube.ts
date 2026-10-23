@@ -33,11 +33,22 @@ import type { ResolvedGate, SiteConfig } from '../core/protocol';
 import { gateDefinition } from '../core/platforms';
 import type { BlockMode } from '../core/types';
 import { send } from '../ui/rpc';
-import { applyChannelFilter, applyGrayColor, watchChannelVerdict } from './channelFilter';
+import {
+  applyChannelFilter,
+  applyGrayColor,
+  watchGateState,
+  type WatchGateState,
+} from './channelFilter';
 import { createChannelObserver } from './channelObserver';
 import { channelKey, SETTLE_RECHECK_MS } from '../core/channelFreshness';
-import type { WatchGateVerdict } from '../core/channels';
-import { detectWatchChannel } from './channelDetection';
+import { isChannelListed, type WatchGateVerdict } from '../core/channels';
+import { BLOCK_PAGE_PATH, blockPageUrl } from '../core/blockPage';
+import {
+  effectiveChannelLists,
+  youtubePageAccess,
+  type YoutubePageAccess,
+} from '../core/youtubeAccess';
+import { channelPageIdentity, detectWatchChannel } from './channelDetection';
 import { applyAutoplayOff, applyHideToggles } from './unhook';
 import {
   assignSafeLocation,
@@ -341,6 +352,65 @@ export function channelGateCopy(
   };
 }
 
+/* --------------------------------------------------------------- page gate */
+
+/**
+ * What the in-page gate does about a YouTube page AS A WHOLE, before any per-video question.
+ *
+ * DNR decides every full page load, but it cannot see YouTube's client-side navigation, so
+ * before this existed a whitelist was only half enforced: a typed URL to the home feed went
+ * to the block page, while clicking the YouTube logo from an allowed video opened the home
+ * feed, search, any other channel and Shorts with nothing in the way (live QA 2026-10-23,
+ * cells F4, F6, A13). The answer comes from `core/youtubeAccess.youtubePageAccess`, which is
+ * built from the very filter strings DNR compiles, so the two layers cannot disagree.
+ *
+ *  - `none`            nothing to do at page level; the per-video gates still run
+ *  - `wait`            the page would be refused, but the config in hand was fetched for a
+ *                      different page; hold media and ask again (a pause may have expired,
+ *                      a limit may have been crossed)
+ *  - `hand-to-network` an in-SPA arrival on a page DNR redirects: reload it, so the network
+ *                      layer makes the call and the user gets the real block page (with its
+ *                      pause, if the site is on Delay) rather than a second, in-page copy
+ *  - `refuse`          a legacy channel URL whose page is not on the list: straight to the
+ *                      block page, because DNR deliberately lets those URLs through
+ *  - `canary`          a FULL load DNR should have redirected and did not; reloading could
+ *                      loop forever, so it is logged and left alone (the open page is never
+ *                      yanked away, the same rule a pause expiring follows)
+ */
+export type PageGateAction = 'none' | 'wait' | 'hand-to-network' | 'refuse' | 'canary';
+
+export interface PageGateInput {
+  access: YoutubePageAccess;
+  /** The config in hand was fetched for this very URL. */
+  configIsCurrent: boolean;
+  /** No in-SPA navigation has happened since this document loaded. */
+  coldLoad: boolean;
+  /**
+   * For `verify` on a cold load: whether the page's own channel metadata names a channel on
+   * the enforced list. Null when it was not asked (any other case).
+   */
+  legacyListed: boolean | null;
+}
+
+export function decidePageGate(input: PageGateInput): PageGateAction {
+  switch (input.access) {
+    case 'open':
+    case 'creator':
+    case 'carved':
+      return 'none';
+    case 'blocked':
+      if (input.coldLoad) return 'canary';
+      return input.configIsCurrent ? 'hand-to-network' : 'wait';
+    case 'verify':
+      if (!input.configIsCurrent) return 'wait';
+      // After an SPA hop the inline channel metadata still describes the page that was
+      // full-loaded, and a `/c/<name>` URL proves nothing by itself, so the only honest
+      // check is a fresh load.
+      if (!input.coldLoad) return 'hand-to-network';
+      return input.legacyListed === true ? 'none' : 'refuse';
+  }
+}
+
 /* --------------------------------------------------------------- controller */
 
 export interface YoutubeController {
@@ -350,6 +420,22 @@ export interface YoutubeController {
   reload: () => Promise<void>;
   /** Detach every listener, timer and overlay. */
   stop: () => void;
+}
+
+/** How the controller leaves a page. Injected so jsdom tests can see where it went. */
+export interface YoutubeNavigator {
+  /** The block page with `target` appended, as DNR builds it. */
+  blockPageFor: (target: string) => string;
+  /** Replace the current history entry with a FULL load of `url` (one DNR sees). */
+  replace: (url: string) => void;
+}
+
+function defaultNavigator(doc: Document): YoutubeNavigator {
+  return {
+    blockPageFor: (target) =>
+      blockPageUrl(chromeApi?.runtime?.getURL(BLOCK_PAGE_PATH) ?? BLOCK_PAGE_PATH, target),
+    replace: (url) => doc.location.replace(url),
+  };
 }
 
 /**
@@ -377,24 +463,52 @@ export interface YoutubeController {
  * explicitly allowed being accused of being "off your list" for 3-5s after a
  * watch→watch hop — and they are YouTube-shaped (a byline that re-renders late), not
  * navigation-shaped.
+ *
+ * THE MEDIA HOLD has one owner and three users. An interstitial holds the page's media; so
+ * does the page gate while it waits or hands off; and so does the settle window, SILENTLY,
+ * while a watch page's owner is not yet known (live QA B1: in that second the video either
+ * played ungated or drew a false "couldn't identify" interstitial). One hold spans all
+ * three, so a settle hold that turns into an interstitial still remembers what it stopped,
+ * and it is released with `resume: true` only when the gate clears on the page it was
+ * holding. Releasing because the user LEFT never resumes anything: a Shorts player YouTube
+ * keeps alive in the background must not start talking on the home feed.
  */
 export function initYoutubeContentScript(
   doc: Document = document,
   fetchConfig: (url: string) => Promise<SiteConfig> = (url) =>
     send({ type: 'GET_SITE_CONFIG', url }),
+  navigator: YoutubeNavigator = defaultNavigator(doc),
 ): YoutubeController {
   const view = doc.defaultView;
   let config: SiteConfig = IDLE_SITE_CONFIG;
+  /** The URL `config` was fetched for; the page gate only acts on an answer about THIS page. */
+  let configUrl: string | null = null;
+  /** The URL a config request is in flight for, so the poll does not stack requests. */
+  let configPendingFor: string | null = null;
+  /** Bumped per request, so a slow answer for an older page never overwrites a newer one. */
+  let configSeq = 0;
   let overlay: OverlayHandle | null = null;
-  /** Held only while an interstitial is up; see `holdMediaPaused`. */
+  /**
+   * What the interstitial on screen was raised for: `shorts` for the Shorts gate (one gate
+   * per Shorts session, swipes and all), the watch URL for a channel gate. A channel gate is
+   * a decision about ONE video, so an interstitial left up across a hop to another video
+   * would show the wrong copy, and completing it would grant the old URL and let go of the
+   * new video's hold (live after-matrix G1).
+   */
+  let overlayFor: string | null = null;
+  /** See "THE MEDIA HOLD" above. */
   let mediaHold: MediaHold | null = null;
+  /** The page the hold was most recently asserted for. */
+  let holdUrl: string | null = null;
+  /** The page already handed to the network layer, so the hand-off happens once. */
+  let leftFor: string | null = null;
   /** Set once a pause is completed; cleared as soon as we leave the Shorts surface. */
   let gateSatisfied = false;
   /** The watch URL whose channel gate the user has already completed, if any. */
   let channelGateSatisfiedFor: string | null = null;
   /** Identity of the channel confirmed for the video BEFORE the latest navigation. */
   let previousChannelKey: string | null = null;
-  /** When the latest navigation happened, for the settle window. */
+  /** When the latest navigation happened, for the settle window. 0 = no SPA hop yet. */
   let navAt = 0;
   /** Storm-proof re-checks scheduled after a navigation. */
   const settleTimers: number[] = [];
@@ -402,18 +516,103 @@ export function initYoutubeContentScript(
   const channelObserver = createChannelObserver();
   let lastUrl = doc.location?.href ?? '';
   let stopped = false;
+  let warnedAboutMissedRedirect = false;
 
   function currentHref(): string {
     return doc.location?.href ?? '';
   }
 
-  function teardownOverlay(): void {
+  function holdMedia(url: string): void {
+    // Every pass that keeps the hold also re-asserts it: YouTube swaps players during a hop,
+    // and a hold that only listened for `play` would miss one that arrives already running.
+    if (mediaHold === null) mediaHold = holdMediaPaused(doc);
+    else mediaHold.repause();
+    holdUrl = url;
+  }
+
+  /** `resume` only when the gate cleared IN PLACE; see `MediaReleaseOptions`. */
+  function releaseMedia(resume: boolean): void {
+    mediaHold?.release({ resume });
+    mediaHold = null;
+    holdUrl = null;
+  }
+
+  function disposeOverlay(): void {
     overlay?.dispose();
     overlay = null;
-    // Release BEFORE the overlay is forgotten, or the page's media stays un-playable with
-    // nothing on screen to explain why.
-    mediaHold?.release();
-    mediaHold = null;
+    overlayFor = null;
+  }
+
+  /**
+   * Take the interstitial down and give the page its media back. Release BEFORE the hold is
+   * forgotten, or the page's media stays un-playable with nothing on screen to explain why.
+   */
+  function teardownOverlay(resume: boolean): void {
+    disposeOverlay();
+    releaseMedia(resume);
+  }
+
+  function leaveOnce(url: string, destination: string): void {
+    if (leftFor === url) return;
+    leftFor = url;
+    navigator.replace(destination);
+  }
+
+  /** Is the legacy channel page this document FULL-loaded on one the user listed? */
+  function legacyChannelListed(url: string): boolean {
+    const identity = channelPageIdentity(doc, url, { inlineIsFresh: true });
+    if (identity === null) return false;
+    const { channels } = effectiveChannelLists(config.youtube, config.siteApplies);
+    return isChannelListed(channels, identity);
+  }
+
+  /** Returns true when the page gate has taken the page over and nothing else should run. */
+  function enforcePageGate(url: string): boolean {
+    const access: YoutubePageAccess = config.enabled
+      ? youtubePageAccess({
+          url,
+          domain: config.domain,
+          youtube: config.youtube,
+          siteApplies: config.siteApplies,
+          limitReached: config.siteLimitReached,
+          tempAllowed: config.tempAllowedUntil !== null && config.tempAllowedUntil > Date.now(),
+        })
+      : 'open';
+    const coldLoad = navAt === 0;
+    const action = decidePageGate({
+      access,
+      configIsCurrent: configUrl === url,
+      coldLoad,
+      legacyListed: access === 'verify' && coldLoad ? legacyChannelListed(url) : null,
+    });
+
+    switch (action) {
+      case 'none':
+        return false;
+      case 'canary':
+        if (!warnedAboutMissedRedirect) {
+          warnedAboutMissedRedirect = true;
+          console.warn(
+            `[nudge] ${url} loaded although the YouTube rule refuses it. The network rule ` +
+              `may still be compiling; the next navigation is checked again.`,
+          );
+        }
+        return false;
+      case 'wait':
+        disposeOverlay();
+        holdMedia(url);
+        return true;
+      case 'hand-to-network':
+        disposeOverlay();
+        holdMedia(url);
+        leaveOnce(url, url);
+        return true;
+      case 'refuse':
+        disposeOverlay();
+        holdMedia(url);
+        leaveOnce(url, navigator.blockPageFor(url));
+        return true;
+    }
   }
 
   function refresh(): void {
@@ -431,6 +630,10 @@ export function initYoutubeContentScript(
       // Leaving Shorts resets the grant - coming back should cost you the pause again.
       if (pageTypeFor(url) !== 'shorts') gateSatisfied = false;
     }
+    // Every page is judged on a config fetched FOR it: the rule's state moves (a pause
+    // expires, a limit is crossed) and the page gate must not act on yesterday's answer. A
+    // failed request is simply retried on the next pass (the idle poll runs every second).
+    if (configUrl !== url && configPendingFor !== url) void reload();
     const msSinceNav = navAt === 0 ? Number.POSITIVE_INFINITY : Date.now() - navAt;
 
     // The passive layers run on EVERY pass, before and independently of any gate: hiding,
@@ -446,6 +649,8 @@ export function initYoutubeContentScript(
     // content/channelObserver.ts for why that rule lives there and not here.
     channelObserver.observe(doc, config, { url, previousKey: previousChannelKey, msSinceNav });
 
+    if (enforcePageGate(url)) return;
+
     const resolvedShortsGate = resolveShortsGate(url, config);
     // A completed pause buys the rest of the Shorts session — but it cannot buy a budget
     // that has run out since. There is nothing left today to have paid for, so an
@@ -458,24 +663,35 @@ export function initYoutubeContentScript(
     // The channel gate is scoped to the exact URL that satisfied it, so completing a pause
     // on one video does not buy access to the next. (Shorts keeps its own coarser grant:
     // swiping within Shorts is one continuous session, not a fresh decision each time.)
-    const channelVerdict =
+    const watchState: WatchGateState =
       channelGateSatisfiedFor === url
-        ? null
-        : watchChannelVerdict(doc, config, {
-            url,
-            previousKey: previousChannelKey,
-            msSinceNav,
-          });
-    const channelGate = channelVerdict?.action === 'BLOCK' ? channelVerdict : null;
+        ? { kind: 'off' }
+        : watchGateState(doc, config, { url, previousKey: previousChannelKey, msSinceNav });
+    const channelGate =
+      watchState.kind === 'decided' && watchState.verdict.action === 'BLOCK'
+        ? watchState.verdict
+        : null;
 
     if (shortsGate === null && channelGate === null) {
-      teardownOverlay();
+      disposeOverlay();
+      if (watchState.kind === 'settling') {
+        // Not known yet: keep the video still, with nothing on screen to accuse anyone.
+        holdMedia(url);
+        return;
+      }
+      // Cleared ON the page the hold was for (the owner turned out to be allowed, or the user
+      // just listed this channel): give the video back where it was. Anywhere else, the user
+      // left, and nothing starts playing behind them.
+      releaseMedia(holdUrl === url);
       return;
     }
-    if (overlay?.element.isConnected) return;
+    const wantedOverlayFor = shortsGate !== null ? 'shorts' : url;
+    if (overlay?.element.isConnected && overlayFor === wantedOverlayFor) return;
 
-    teardownOverlay();
-    mediaHold = holdMediaPaused(doc);
+    disposeOverlay();
+    overlayFor = wantedOverlayFor;
+    // Keeps a settle hold's record of what it stopped, so completing the pause resumes it.
+    holdMedia(url);
 
     if (shortsGate !== null) {
       overlay = createGateOverlay(
@@ -487,10 +703,10 @@ export function initYoutubeContentScript(
         {
           onComplete: () => {
             gateSatisfied = true;
-            teardownOverlay();
+            teardownOverlay(true);
           },
           onBail: () => {
-            teardownOverlay();
+            teardownOverlay(false);
             assignSafeLocation(doc, BAIL_URL);
           },
         },
@@ -506,7 +722,7 @@ export function initYoutubeContentScript(
         {
           onComplete: () => {
             channelGateSatisfiedFor = gatedUrl;
-            teardownOverlay();
+            teardownOverlay(true);
           },
           onBail: bailFromChannelGate,
         },
@@ -520,7 +736,7 @@ export function initYoutubeContentScript(
    * Re-check on our OWN timers after a navigation.
    *
    * The debounced observer alone is not enough: YouTube's post-navigation mutation storm
-   * keeps resetting the 250ms debounce, so the corrective pass can be starved for seconds, 
+   * keeps resetting the 250ms debounce, so the corrective pass can be starved for seconds,
    * that starvation is what stretched the settle window out to ~5s in live QA. These fire
    * regardless of page mutation, so the verdict is always re-evaluated on schedule.
    */
@@ -550,7 +766,7 @@ export function initYoutubeContentScript(
    * than going back, but it is still an exit.
    */
   function bailFromChannelGate(): void {
-    teardownOverlay();
+    teardownOverlay(false);
     bailAwayFromGate(doc, {
       onNoHistory: () => {
         void send({ type: 'CLOSE_TAB' })
@@ -566,15 +782,24 @@ export function initYoutubeContentScript(
   }
 
   async function reload(): Promise<void> {
+    const href = currentHref();
+    const seq = ++configSeq;
+    configPendingFor = href;
     try {
       // The worker resolves the domain, the rule and the gates from the URL exactly the way
       // the network layer does, so it is handed the page's own address rather than a
       // platform name this script would otherwise have to guess at.
-      config = await fetchConfig(currentHref());
+      const next = await fetchConfig(href);
+      // A newer request owns the answer; an older page's config must never land last.
+      if (seq !== configSeq || stopped) return;
+      config = next;
+      configUrl = href;
     } catch {
       // The service worker can be asleep or mid-reload. Stay in the last known state
-      // rather than failing open on a transient messaging error.
+      // rather than failing open on a transient messaging error; the next pass retries.
       return;
+    } finally {
+      if (seq === configSeq) configPendingFor = null;
     }
     refresh();
   }
@@ -617,7 +842,7 @@ export function initYoutubeContentScript(
       nav.dispose();
       for (const id of settleTimers.splice(0)) view?.clearTimeout(id);
       chromeApi?.storage?.onChanged?.removeListener(onStorageChanged);
-      teardownOverlay();
+      teardownOverlay(false);
     },
   };
 }

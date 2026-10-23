@@ -28,6 +28,7 @@
  */
 
 import type { HideId } from '../core/platforms';
+import { LIVE_VIDEO_PATH as LIVE_VIDEO_PATH_PATTERN } from '../core/youtubeAccess';
 
 /** YouTube surfaces that get their own selector map — one breaking doesn't break the rest. */
 export type YoutubePageType =
@@ -293,6 +294,11 @@ export function queryWithFallback(
  */
 const SHORTS_PATH = /^\/shorts(\/|$)/;
 const CHANNEL_PATH = /^\/(channel|c|user)\//;
+/**
+ * `/live/<id>` plays one video exactly like `/watch?v=<id>`. Built from the SAME string the
+ * network layer compiles (core/youtubeAccess.ts), so the two cannot disagree about it.
+ */
+const LIVE_VIDEO_PATH = new RegExp(`^${LIVE_VIDEO_PATH_PATTERN}$`);
 
 /**
  * Classify a YouTube URL by *pathname only*.
@@ -313,7 +319,7 @@ export function pageTypeFor(url: string): YoutubePageType {
   const path = parsed.pathname.replace(/\/+$/, '') || '/';
 
   if (SHORTS_PATH.test(parsed.pathname)) return 'shorts';
-  if (path === '/watch') return 'watch';
+  if (path === '/watch' || LIVE_VIDEO_PATH.test(path)) return 'watch';
   if (path === '/results') return 'search';
   if (path === '/feed/subscriptions') return 'subscriptions';
   if (path === '/') return 'home';
@@ -341,6 +347,30 @@ export const CHANNEL_ELEMENTS: SelectorRule[] = [
   { selector: 'a[href^="/@"]', note: 'Handle link.' },
   { selector: 'a[href^="/c/"]', note: 'Legacy custom-URL link.' },
   { selector: 'a[href^="/user/"]', note: 'Legacy /user/ link.' },
+];
+
+/**
+ * The watch page's player and its owner byline, from LIVE DOM (2026-10-23 capture).
+ *
+ * YouTube keeps every page it has shown alive under `ytd-page-manager` and hides the ones not
+ * in view with a `hidden` attribute (a channel page's `ytd-browse[hidden]` sits next to the
+ * watch page's `ytd-watch-flexy`). An unscoped channel query therefore reads whichever page
+ * comes first in the document, visible or not, and can stitch one channel's id onto
+ * another's handle. The watch-page DOM tier is scoped to the VISIBLE player and, inside it,
+ * to the owner byline, so the related-videos column cannot answer either.
+ *
+ * `ytd-watch-flexy[video-id]` names the video the player is showing, and YouTube updates it
+ * in the same render as the byline: it is how freshness is judged (core/channelFreshness.ts).
+ */
+export const PAGE_MANAGER_SELECTOR = 'ytd-page-manager';
+export const WATCH_PLAYER_SELECTOR = 'ytd-watch-flexy';
+export const VISIBLE_WATCH_PLAYER_SELECTOR = 'ytd-watch-flexy:not([hidden])';
+export const WATCH_PLAYER_VIDEO_ID_ATTRIBUTE = 'video-id';
+/** The owner byline inside the watch player, most specific first. */
+export const WATCH_OWNER_SCOPES: readonly string[] = [
+  'ytd-watch-metadata #owner',
+  '#owner ytd-video-owner-renderer',
+  'ytd-video-owner-renderer',
 ];
 
 /**

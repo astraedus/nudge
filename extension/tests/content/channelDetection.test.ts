@@ -16,12 +16,24 @@
 
 import { describe, expect, it } from 'vitest';
 import {
+  channelPageHtml,
+  LIVE_OWNER_CHANNEL_ID,
+  LIVE_OWNER_HANDLE,
+  LIVE_OWNER_NAME,
+  liveWatchPage,
+  RELATED_HANDLE,
+  STALE_BROWSE_HANDLE,
+} from './fixtures/youtubeLiveWatch';
+import {
   channelFromDom,
+  channelPageIdentity,
+  watchPlayerVideoId,
   channelFromInitialData,
   channelFromPlayerResponse,
   detectCardChannel,
   detectWatchChannel,
   feedCards,
+  initialDataVideoId,
   videoIdFromUrl,
 } from '../../src/content/channelDetection';
 import {
@@ -343,5 +355,200 @@ describe('a healthy watch page whose identifiers live in different places', () =
 
     expect(detected?.channelId).toBe(REAL_WATCH_ID_INLINE_HANDLE_DOM_CHANNEL_ID);
     expect(detected?.handle).toBe(`@${REAL_WATCH_ID_INLINE_HANDLE_DOM_HANDLE}`);
+  });
+});
+
+describe('a real watch page, with the previous channel page still mounted beside it', () => {
+  /**
+   * Live DOM, 2026-10-23: YouTube keeps every page it has shown under `ytd-page-manager` and
+   * only marks the old ones `hidden`. After a hop from a channel page the document holds that
+   * hidden channel page AND the watch player. The old unscoped query read whichever link came
+   * first and could stitch the hidden page's channel onto the video owner (a "chimera").
+   */
+  const VIDEO = 'liveVideo0001';
+  const url = `https://www.youtube.com/watch?v=${VIDEO}`;
+
+  it("identifies the video's owner, not the hidden channel page's channel", () => {
+    mount(liveWatchPage({ videoId: VIDEO, staleBrowseHandle: STALE_BROWSE_HANDLE }));
+
+    const detected = detectWatchChannel(document, { url });
+
+    expect(detected?.handle).toBe(`@${LIVE_OWNER_HANDLE}`);
+    expect(detected?.channelId).toBeNull();
+  });
+
+  it('does not take a channel from the related-videos column', () => {
+    mount(liveWatchPage({ videoId: VIDEO }));
+
+    expect(detectWatchChannel(document, { url })?.handle).not.toBe(`@${RELATED_HANDLE}`);
+  });
+
+  it('names nobody while the player still shows the PREVIOUS video (not re-rendered yet)', () => {
+    // URL has moved on to VIDEO, but the visible player still declares the old video, so the
+    // owner byline on screen belongs to that old video.
+    mount(liveWatchPage({ videoId: VIDEO, flexyVideoId: 'previousVid01' }));
+
+    expect(detectWatchChannel(document, { url })).toBeNull();
+  });
+
+  it('names nobody when the watch player is hidden (another page is showing)', () => {
+    mount(liveWatchPage({ videoId: VIDEO, flexyHidden: true, staleBrowseHandle: STALE_BROWSE_HANDLE }));
+
+    expect(detectWatchChannel(document, { url })).toBeNull();
+  });
+
+  it('names nobody while the player is up but its owner byline has not rendered', () => {
+    mount(liveWatchPage({ videoId: VIDEO, noOwner: true, staleBrowseHandle: STALE_BROWSE_HANDLE }));
+
+    expect(detectWatchChannel(document, { url })).toBeNull();
+  });
+});
+
+describe('which video the visible watch player declares', () => {
+  it('reads the video id off the visible player', () => {
+    mount(liveWatchPage({ flexyVideoId: 'abcDEF12345' }));
+    expect(watchPlayerVideoId(document)).toBe('abcDEF12345');
+  });
+
+  it('says nothing when the only player is hidden', () => {
+    mount(liveWatchPage({ flexyVideoId: 'abcDEF12345', flexyHidden: true }));
+    expect(watchPlayerVideoId(document)).toBeNull();
+  });
+
+  it('says nothing when the player declares no video', () => {
+    mount(liveWatchPage({ flexyVideoId: null }));
+    expect(watchPlayerVideoId(document)).toBeNull();
+  });
+
+  it('says nothing on a page with no watch player at all', () => {
+    mount('<ytd-app><ytd-page-manager></ytd-page-manager></ytd-app>');
+    expect(watchPlayerVideoId(document)).toBeNull();
+  });
+});
+
+describe('the video id a URL names', () => {
+  it('reads a live stream and a short, the same as a watch URL', () => {
+    expect(videoIdFromUrl('https://www.youtube.com/live/abc123')).toBe('abc123');
+    expect(videoIdFromUrl('https://www.youtube.com/shorts/xyz789')).toBe('xyz789');
+    expect(videoIdFromUrl('https://www.youtube.com/watch?v=q1w2e3')).toBe('q1w2e3');
+  });
+
+  it('stops at a query string or fragment', () => {
+    expect(videoIdFromUrl('https://www.youtube.com/live/abc123?t=30#x')).toBe('abc123');
+  });
+
+  it('names no video for a channel page', () => {
+    expect(videoIdFromUrl('https://www.youtube.com/@veritasium')).toBeNull();
+  });
+});
+
+describe('whose channel page this is', () => {
+  /**
+   * Live capture 2026-10-23: a channel page's `ytInitialData.metadata.channelMetadataRenderer`
+   * carries both identifiers. It goes stale on an SPA hop, so it is only returned when it
+   * provably describes the URL in the address bar.
+   */
+  const FRESH = { inlineIsFresh: true };
+  const AFTER_HOP = { inlineIsFresh: false };
+  const EXPECTED = {
+    channelId: LIVE_OWNER_CHANNEL_ID,
+    handle: `@${LIVE_OWNER_HANDLE}`,
+    displayName: LIVE_OWNER_NAME,
+  };
+
+  function page(): void {
+    mount(channelPageHtml());
+  }
+
+  it('identifies the channel from its /@handle URL, whatever the letter case', () => {
+    page();
+    expect(channelPageIdentity(document, 'https://www.youtube.com/@Veritasium', AFTER_HOP)).toEqual(
+      EXPECTED,
+    );
+  });
+
+  it('identifies it on a sub-page such as /videos', () => {
+    page();
+    expect(
+      channelPageIdentity(document, 'https://www.youtube.com/@veritasium/videos', AFTER_HOP),
+    ).toEqual(EXPECTED);
+  });
+
+  it('identifies it from its /channel/UC URL', () => {
+    page();
+    expect(
+      channelPageIdentity(
+        document,
+        `https://www.youtube.com/channel/${LIVE_OWNER_CHANNEL_ID}`,
+        AFTER_HOP,
+      ),
+    ).toEqual(EXPECTED);
+  });
+
+  it('refuses stale metadata when the URL names a DIFFERENT handle (after an SPA hop)', () => {
+    page();
+    expect(channelPageIdentity(document, 'https://www.youtube.com/@someoneelse', AFTER_HOP)).toBeNull();
+  });
+
+  it('refuses stale metadata when the URL names a DIFFERENT channel id', () => {
+    page();
+    expect(
+      channelPageIdentity(document, 'https://www.youtube.com/channel/UCsomeoneelse0000000000', AFTER_HOP),
+    ).toBeNull();
+  });
+
+  it('trusts the metadata on a legacy /c/ or /user/ URL only on a fresh full load', () => {
+    page();
+    for (const legacy of ['https://www.youtube.com/c/veritasium', 'https://www.youtube.com/user/x']) {
+      expect(channelPageIdentity(document, legacy, FRESH)).toEqual(EXPECTED);
+      expect(channelPageIdentity(document, legacy, AFTER_HOP)).toBeNull();
+    }
+  });
+
+  it('names no channel for a URL that is not a channel page', () => {
+    page();
+    expect(channelPageIdentity(document, 'https://www.youtube.com/watch?v=abc', FRESH)).toBeNull();
+    expect(channelPageIdentity(document, 'https://www.youtube.com/', FRESH)).toBeNull();
+  });
+
+  it('names no channel when the page carries no metadata', () => {
+    mount('<div></div>');
+    expect(channelPageIdentity(document, 'https://www.youtube.com/@veritasium', FRESH)).toBeNull();
+  });
+});
+
+describe('which video the inline ytInitialData is the watch page for', () => {
+  /** Key order as the live payloads (probe, 2026-10-23); only a watch page has `currentVideoEndpoint`. */
+  function inlineData(data: Record<string, unknown>): void {
+    mount(`<script>var ytInitialData = ${JSON.stringify(data)};</script>`);
+  }
+  const card = (videoId: string) => ({
+    videoRenderer: { videoId, navigationEndpoint: { watchEndpoint: { videoId } } },
+  });
+
+  it('names the watch page\'s own video, not a related one', () => {
+    inlineData({
+      responseContext: {},
+      contents: { related: card('relatedVideo1') },
+      currentVideoEndpoint: { watchEndpoint: { videoId: 'thisVideo01' } },
+    });
+    expect(initialDataVideoId(document)).toBe('thisVideo01');
+  });
+
+  it('names no video on a channel page, whose grid is full of other videos\' endpoints', () => {
+    inlineData({
+      responseContext: {},
+      contents: { grid: [card('NiCgcUTL9_Q'), card('AF8d72mA41M')] },
+      header: {},
+      metadata: { channelMetadataRenderer: { externalId: 'UCHnyfMqiRRG1u-2MsSQLbXA' } },
+    });
+    expect(initialDataVideoId(document)).toBeNull();
+  });
+
+  it('names no video when the endpoint is malformed', () => {
+    inlineData({ currentVideoEndpoint: { watchEndpoint: { videoId: '' } } });
+    expect(initialDataVideoId(document)).toBeNull();
+    inlineData({ currentVideoEndpoint: 'nope' });
+    expect(initialDataVideoId(document)).toBeNull();
   });
 });
