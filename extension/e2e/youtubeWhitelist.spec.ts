@@ -7,6 +7,7 @@ import {
   test,
   waitForRuleCount,
 } from './fixtures';
+import type { Page } from '@playwright/test';
 import type { ChannelEntry, NudgeSettings } from '../src/core/settingsSchema';
 
 /**
@@ -35,6 +36,21 @@ function watchUrl(video: string, channelId?: string, name = 'A Channel'): string
   return channelId === undefined
     ? base
     : `${base}&channel=${channelId}&name=${encodeURIComponent(name)}`;
+}
+
+/** A client-side hop, the way YouTube's router makes one: no request, just history. */
+async function spaHop(page: Page, path: string): Promise<void> {
+  await page.evaluate((target) => {
+    window.history.pushState({}, '', target);
+    document.dispatchEvent(new CustomEvent('yt-navigate-finish'));
+  }, path);
+}
+
+/** Loaded, and still there once the in-page gate has had time to act had it disagreed with DNR. */
+async function expectStaysOpen(page: Page, url: RegExp): Promise<void> {
+  await expect(page.locator('#host')).toBeVisible();
+  await page.waitForTimeout(2_000);
+  await expect(page).toHaveURL(url);
 }
 
 /** YouTube itself Hard Blocked, with one channel carved out. */
@@ -185,6 +201,104 @@ test.describe('YouTube Hard Block with a channel whitelist', () => {
     await expect(spent).toHaveURL(/blocked\.html\?target=/);
     await expect(spent.getByText('Daily limit reached')).toBeVisible();
   });
+});
+
+/**
+ * In-page navigation is held to what a full load would allow.
+ *
+ * Live QA 2026-10-23: under "block YouTube except these channels", clicking the YouTube logo
+ * or searching from an allowed video opened the home feed and search results, because
+ * YouTube navigates client-side and DNR only ever sees full loads. The content script now
+ * asks the SAME patterns the network layer compiles and, for a page DNR would have
+ * redirected, reloads it so DNR decides. Only a real browser proves the two layers agree.
+ */
+test.describe('in-page navigation under a channel whitelist', () => {
+  test('a hop from an allowed video to search results lands on the block page', async ({
+    context,
+    setSettings,
+  }) => {
+    await setSettings(blockedExcept([channel(ALLOWED, 'Allowed Channel')]));
+
+    const page = await context.newPage();
+    await page.goto(watchUrl('abc123', ALLOWED, 'Allowed Channel'));
+    await expect(page.locator('#player')).toBeVisible();
+
+    await spaHop(page, '/results?search_query=cats');
+
+    await expect(page).toHaveURL(
+      /blocked\.html\?target=https:\/\/www\.youtube\.com\/results\?search_query=cats$/,
+      { timeout: 10_000 },
+    );
+  });
+
+  test('a hop to the allowed channel\'s own page stays put', async ({ context, setSettings }) => {
+    await setSettings(blockedExcept([channel(ALLOWED, 'Allowed Channel')]));
+
+    const page = await context.newPage();
+    await page.goto(watchUrl('abc123', ALLOWED, 'Allowed Channel'));
+    await expect(page.locator('#player')).toBeVisible();
+
+    await spaHop(page, `/channel/${ALLOWED}/videos`);
+
+    await expectStaysOpen(page, new RegExp(`youtube\\.com/channel/${ALLOWED}/videos$`));
+  });
+});
+
+/**
+ * Creator mode: "Allow YouTube Studio and uploading", ticked on the YouTube rule.
+ *
+ * Anti, 2026-10-23: being able to reach your own channel and YouTube Studio while YouTube is
+ * blocked is "really important". Studio is its own host and the creator routes on www are
+ * plain paths, so this is DNR allow-rules first, and the in-page gate agreeing with them.
+ */
+test.describe('creator mode', () => {
+  function creatorSettings(creatorMode: boolean): Partial<NudgeSettings> {
+    return baseSettings({
+      rules: [
+        platformRule(
+          'youtube.com',
+          { youtube: { channelMode: 'OFF', channels: [], creatorMode } },
+          { mode: 'HARD_BLOCK' },
+        ),
+      ],
+    });
+  }
+
+  test('opens YouTube Studio and the upload page while YouTube is blocked', async ({
+    context,
+    setSettings,
+  }) => {
+    await setSettings(creatorSettings(true));
+
+    const studio = await context.newPage();
+    await studio.goto('https://studio.youtube.com/channel/UCme/videos');
+    await expectStaysOpen(studio, /studio\.youtube\.com\/channel\/UCme\/videos$/);
+
+    const upload = await context.newPage();
+    await upload.goto('https://www.youtube.com/upload');
+    await expectStaysOpen(upload, /www\.youtube\.com\/upload$/);
+
+    // Everything else on YouTube is still blocked, in-page as well as on a full load.
+    const home = await context.newPage();
+    await home.goto('https://www.youtube.com/');
+    await expect(home).toHaveURL(/blocked\.html\?target=/);
+
+    await spaHop(upload, '/feed/subscriptions');
+    await expect(upload).toHaveURL(/blocked\.html\?target=/, { timeout: 10_000 });
+  });
+
+  test('leaves them blocked when the box is not ticked', async ({ context, setSettings }) => {
+    await setSettings(creatorSettings(false));
+
+    const studio = await context.newPage();
+    await studio.goto('https://studio.youtube.com/');
+    await expect(studio).toHaveURL(/blocked\.html\?target=/);
+
+    const upload = await context.newPage();
+    await upload.goto('https://www.youtube.com/upload');
+    await expect(upload).toHaveURL(/blocked\.html\?target=/);
+  });
+
 });
 
 /**
