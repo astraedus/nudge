@@ -6,6 +6,42 @@ independently-numbered products in one file invites the reader to match a `v1.17
 release against a `0.2.0` extension release and conclude something about both; the tag
 namespaces were already split for exactly that reason.
 
+## Unreleased
+
+### Added
+
+- **Creator mode for YouTube.** A new checkbox in the YouTube rule, "Allow my channel and
+  YouTube Studio", keeps YouTube Studio (studio.youtube.com) and the youtube.com pages that lead
+  to it (Upload, Go live, the dashboard, sign-in) open while YouTube is blocked. They stay
+  open after your daily limit is spent. Time spent there is not counted against the limit.
+  The optional "Your channel" field lets your own channel and its videos through as if it
+  were on your list. With the Commitment Lock on, turning creator mode on (or changing your
+  channel while it is on) needs the challenge. Turning it off never does.
+
+### Fixed
+
+- **Videos from an allowed channel play when you open them from the channel's page.**
+  Clicking a video on an allowed channel's page showed "Nudge couldn't identify this
+  video's channel" and then left the video paused at 0:00. Nudge was deciding before
+  YouTube had drawn the video's owner. It now waits quietly for the owner (about two
+  seconds, with the video held and no message), then lets the video play.
+- **A paused video starts again once Nudge is done with it.** After a Delay or Breathing
+  pause finished, or when going Back to an allowed video, the video used to stay paused
+  until you pressed play yourself.
+- **Back to an allowed video no longer says "This channel is off your list".** Nudge was
+  reading channel links from parts of the page YouTube keeps hidden, so it could name the
+  wrong channel.
+- **Clicking around inside YouTube is held to the same rule as opening a page directly.**
+  Under "block YouTube except these channels", the YouTube logo, search, Subscriptions,
+  Shorts and other channels' pages opened freely if you reached them by clicking from an
+  allowed video. They now go to the block page, as they always did when typed into the
+  address bar.
+- **More of an allowed channel is reachable.** Live streams (`/live/...`), playlists, and the
+  old `/c/name` and `/user/name` channel addresses no longer go to the block page. The old
+  addresses are checked against the channel the page belongs to. Each allowed channel's
+  `@handle` and `/channel/UC...` addresses now both work as soon as you visit the channel
+  once, not only after watching one of its videos.
+
 ## 0.3.2 — 2026-10-05
 
 ### Fixed

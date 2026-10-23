@@ -10,7 +10,9 @@
  *
  * THE THREE RULES:
  *
- *  1. CONFIRMED ONLY. `confirmedWatchChannel` withholds the channel while the settle window
+ *  1. CONFIRMED ONLY. `confirmedPageChannel` (a watch page via `confirmedWatchChannel`, a
+ *     channel page via `channelPageIdentity`, which trusts its inline metadata only on a
+ *     full load) withholds the channel while the settle window
  *     is open, because for ~1.5-5s after a watch -> watch hop the owner byline still names
  *     the PREVIOUS video's channel (core/channelFreshness.ts). Acting on that is already a
  *     documented P0 when it only shows an interstitial for three seconds; writing it into

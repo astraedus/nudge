@@ -125,9 +125,28 @@ unit-testable, exactly as the Android domain layer is.
    lets a site be Allowed while one of its surfaces is blocked. In-SPA navigation to the same
    surface is the content script's job — DNR cannot see it.
 1c. **YouTube channel allow-rules.** When the youtube.com rule applies AND a whitelist with
-   ≥1 channel is on, `/watch` and each listed channel's `/@handle` and `/channel/UC…` get
-   `allow` rules above the site redirect, while `/`, `/feed/*`, `/results` and `/shorts/`
-   stay redirected. A channel identifier containing anything outside `[A-Za-z0-9_.-]` is
+   ≥1 channel is on, `/watch`, `/live/<id>`, `/playlist`, the legacy `/c/` and `/user/`
+   channel URLs (verified in-page, see below) and each listed channel's `/@handle` and
+   `/channel/UC…` get `allow` rules above the site redirect, while `/`, `/feed/*`,
+   `/results` and `/shorts/` stay redirected. **Every pattern comes from
+   `core/youtubeAccess.ts`**, and the content script's in-SPA page gate
+   (`youtubePageAccess`) tests the SAME strings with `urlMatchesFilter` (case-insensitive,
+   like DNR's regex): before it existed, in-SPA clicks to the home feed, search and other
+   channels were wide open while the same URLs typed in went to the block page. For a
+   page DNR would redirect, the content script does not draw its own wall: it
+   `location.replace`s the URL so DNR decides, once per URL, and only with the config
+   fetched FOR that URL (a pause may have expired since). On a FULL load it never reloads
+   (DNR already let it through; a reload could loop), it logs a one-shot canary. `/c/` and
+   `/user/` do not equal the handle, so they are allowed wholesale and checked on a full
+   load against the page's own `channelMetadataRenderer` (`channelPageIdentity`); unlisted
+   or unidentifiable = `replace(blockPageUrl(...))`, built by `core/blockPage.ts`, the ONE
+   block-page URL builder that DNR's substitution also uses.
+   **Creator mode** (`creatorMode`, schema v5) adds `studio.youtube.com` as ONE EXACT host
+   (never the subdomain wildcard) plus the www routes that redirect into Studio
+   (`CREATOR_PATHS`). These stay open after the budget is spent, are not counted by the
+   tracker, and `myChannel` is an implicit whitelist entry through `effectiveChannelLists`,
+   the one place both the DNR compiler and `decideWatchGate` read the lists from. Turning it
+   ON (or changing `myChannel` while on) is a Strict-Mode weakening; OFF is free. A channel identifier containing anything outside `[A-Za-z0-9_.-]` is
    SKIPPED rather than interpolated, so a hand-edited settings blob cannot inject a pattern
    that allows all of YouTube. **An EXHAUSTED daily limit compiles no allow-rules**: a limit
    budgets how MUCH of the site, a channel list restricts WHAT, so once the budget is spent
@@ -537,6 +556,27 @@ xvfb), scoped with `paths: ['extension/**']`. The Android workflow carries the m
   animation frame (frozen while hidden, at most 250ms per frame) and writes
   `style.transform`/`opacity` directly. In React, keep the driven properties OUT of the JSX
   `style` prop or the once-a-second re-render resets them mid-breath.
+- **"Nothing identified YET" is not "unknowable" (live QA 2026-10-23).** Opening an allowed
+  channel's video from its channel page failed closed with "couldn't identify this video's
+  channel": the channel page has no watch byline, so `previousChannelKey` was null, so the
+  freshness check had no stale value to wait out and called the empty detection CONFIRMED.
+  A null detection inside the settle window after an SPA hop is SETTLING. The DOM tier's
+  real freshness signal is `ytd-watch-flexy[video-id]`: live capture shows it and the owner
+  byline update in the same render, ~1.6-2.3s after the URL changes, so a flexy naming a
+  different video than the URL is stale whatever the byline says.
+- **Unscoped DOM detection makes chimeras.** `ytd-page-manager` keeps the page you came from
+  as a HIDDEN `ytd-browse`, full of channel links. A document-wide query welded one
+  channel's handle to another's id and said "off your list" on Back to an allowed video.
+  The watch DOM tier reads only the visible flexy's `ytd-watch-metadata #owner`.
+- **A media hold must resume what it stopped, and only in place.** `MediaHold.release`
+  takes a REQUIRED `{ resume }`: resume when the gate cleared on the same URL (the owner
+  turned out allowed, a pause completed), never when the user left. Before this, every
+  cleared gate left the video paused at 0:00, which reads as a block. Each pass that keeps
+  the hold calls `repause()`, which also records a player YouTube swapped in already running.
+- **Fixtures from the live DOM, not the taxonomy.** Every one of these four bugs passed a
+  green unit suite whose hand-authored fixture had no page manager, no hidden browse page
+  and no `video-id`. `tests/content/fixtures/youtubeLiveWatch.ts` is built from the
+  2026-10-23 capture; new YouTube DOM tests should use it.
 - The React Compiler advisory lint rules (`set-state-in-effect`,
   `preserve-manual-memoization`, `use-memo`) are deliberately **off**; `rules-of-hooks` is
   deliberately **on** and has already earned its keep.
@@ -545,8 +585,9 @@ xvfb), scoped with `paths: ['extension/**']`. The Android workflow carries the m
 
 - Strict Mode cannot stop removal from `chrome://extensions`. The dashboard says so plainly
   rather than pretending; honesty is the differentiator (ext-02).
-- YouTube fixtures in `tests/content/fixtures/` are hand-authored from the ext-03 taxonomy,
-  not live DOM captures. Refresh them from real YouTube DOM when possible.
+- Most YouTube fixtures in `tests/content/fixtures/` are hand-authored from the ext-03
+  taxonomy; only `youtubeLiveWatch.ts` (watch + channel page, 2026-10-23) is from a live
+  capture. Refresh the others from real YouTube DOM when they are next touched.
 - **Reels mixed INTO a feed cannot be filtered out, or counted.** No OSS implementation
   anywhere does per-card filtering of reels/short videos in a mixed feed (ext-12), so Nudge
   ships whole-surface control only: the Reels/For You/Explore *pages* are gated by URL, and

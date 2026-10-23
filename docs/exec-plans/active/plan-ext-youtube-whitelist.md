@@ -39,6 +39,30 @@ Branch `worktree-agent-a9da64c289bc5d3f4`, scope `extension/` only. No version b
   vanity handle), through the same CHANNEL_OBSERVED path.
 - SiteConfig gains `tempAllowedUntil` (an epoch, not a boolean, so expiry is not stale).
 
+## As built (2026-10-23)
+
+- **The in-SPA page gate hands off to the network instead of drawing its own wall.**
+  `youtubePageAccess(url)` answers open / creator / carved / verify / blocked from the same
+  strings DNR compiles. `decidePageGate` (pure) turns that into an action:
+  - blocked, in-SPA, with config fetched FOR THIS URL: `location.replace(url)`, so DNR
+    redirects to the block page with all of its context. This happens once per URL.
+  - blocked on a FULL load (DNR let it through): a one-shot console canary, never a reload,
+    since a reload could loop.
+  - verify (`/c/`, `/user/`): on a full load, check the page's own channel metadata against
+    the list and refuse with `replace(blockPageUrl)`. In-SPA, the inline data is stale, so
+    reload and let the full-load path decide.
+  - config not current yet: hold media and wait.
+- **Settle hold, not settle overlay.** While the owner is not known yet, the video is held
+  silently. That covers a null detection in the window, or a flexy `video-id` that differs from the
+  URL's. On real YouTube the flexy video-id and the byline arrive together, about 1.6-2.3s after the
+  URL changes. **Tradeoff:** an allowed video starts about 2s late on an SPA hop.
+- **The hold resumes only in place.** Resume happens when the gate clears on the URL the hold was
+  asserted for, or when the Delay/Breathing pause completes. It never happens when the user leaves.
+  Every pass that keeps the hold re-asserts it (`repause`), which also records players YouTube
+  swapped in already running.
+- `core/blockPage.ts`: ONE builder for the block-page URL (DNR substitution, open-tab redirect,
+  content-script refusal).
+
 ## Creator mode (schema v5)
 
 - `YoutubeFeatureSettings.creatorMode: boolean` (default false) and `myChannel: ChannelEntry | null`.
