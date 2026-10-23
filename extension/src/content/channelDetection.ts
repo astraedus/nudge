@@ -517,12 +517,22 @@ export function playerResponseVideoId(doc: Document): string | null {
   });
 }
 
-/** The video id the inline `ytInitialData` describes, if it says. */
+/**
+ * The video the inline `ytInitialData` is the WATCH PAGE for, if it is one.
+ *
+ * Read from the root's `currentVideoEndpoint` only, never from the first `watchEndpoint` a
+ * search happens to meet. Every page's data is full of watchEndpoints (each video card has
+ * one), and only a watch page has `currentVideoEndpoint` (live probe, 2026-10-23). A search
+ * on a channel page met the first video in its grid. That is the video a user clicks
+ * first, and after that SPA hop the stale channel-page data "proved" itself current. That
+ * vouched for an empty detection, which put up "couldn't identify this video's channel" on
+ * an allowed channel's video, and left the video paused on Back (live after-matrix B1, G1).
+ */
 export function initialDataVideoId(doc: Document): string | null {
   return safeCall(() => {
     const data = findAssignedObject(doc, 'ytInitialData');
-    if (!data) return null;
-    const endpoint = findRenderer(data, 'watchEndpoint');
+    if (!data || !isRecord(data.currentVideoEndpoint)) return null;
+    const endpoint = data.currentVideoEndpoint.watchEndpoint;
     const id = isRecord(endpoint) ? endpoint.videoId : null;
     return typeof id === 'string' && id !== '' ? id : null;
   });

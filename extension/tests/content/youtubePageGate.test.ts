@@ -520,3 +520,135 @@ describe('legacy /c/ and /user/ channel URLs are checked against the page itself
     expect(leftFor).toEqual([`${ORIGIN}/c/MrBeast`]);
   });
 });
+
+/* ------------------------------------------------------------------ live after-matrix */
+
+/**
+ * The channel page's own inline data, in the shape a live probe recorded (2026-10-23,
+ * `/@veritasium/videos`): `ytInitialData` has NO `currentVideoEndpoint` (only a watch page
+ * has one), and the first `watchEndpoint` a breadth-first walk meets is the first video in
+ * the grid. That is the video a user clicks first, so an SPA hop to it lands on a page whose
+ * stale inline data names the video in the address bar.
+ */
+function channelPageWithInlineData(handle: string, firstGridVideo: string): string {
+  const data = {
+    responseContext: {},
+    contents: {
+      twoColumnBrowseResultsRenderer: {
+        tabs: [
+          {
+            tabRenderer: {
+              content: {
+                richGridRenderer: {
+                  contents: [
+                    {
+                      richItemRenderer: {
+                        content: {
+                          videoRenderer: {
+                            videoId: firstGridVideo,
+                            navigationEndpoint: { watchEndpoint: { videoId: firstGridVideo } },
+                          },
+                        },
+                      },
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        ],
+      },
+    },
+    header: {},
+    metadata: {
+      channelMetadataRenderer: {
+        externalId: LISTED_ID,
+        vanityChannelUrl: `http://www.youtube.com/@${handle}`,
+      },
+    },
+  };
+  return `<script>var ytInitialData = ${JSON.stringify(data)};</script>${channelPageHtml(handle)}`;
+}
+
+describe('a channel page\'s inline data never vouches for the video after an SPA hop (live B1, G1)', () => {
+  it('B1: clicking the first video in the grid is not accused while its owner renders', async () => {
+    await startOn('/@veritasium/videos', channelPageWithInlineData(LISTED_HANDLE, VIDEO), blockedSiteConfig());
+
+    spaHop(`/watch?v=${VIDEO}`);
+    const flexy = addEmptyWatchPlayer();
+    const video = addPlayingVideo(flexy);
+    await settleConfig();
+
+    // The live after-matrix showed "couldn't identify this video's channel" here for ~1s:
+    // the grid's watchEndpoint named this video, so the stale channel-page data "proved"
+    // the empty detection fresh.
+    expect(isInterrupted()).toBe(false);
+
+    vi.advanceTimersByTime(1_600);
+    renderOwner(flexy, VIDEO, LISTED_HANDLE);
+    vi.advanceTimersByTime(1_000);
+
+    expect(isInterrupted()).toBe(false);
+    expect(video.play).toHaveBeenCalled();
+  });
+
+  it('G1: Back from a blocked video to an allowed one plays it', async () => {
+    await startOn('/@veritasium/videos', channelPageWithInlineData(LISTED_HANDLE, VIDEO), blockedSiteConfig());
+
+    spaHop(`/watch?v=${OTHER_VIDEO}`);
+    const flexy = addEmptyWatchPlayer();
+    const video = addPlayingVideo(flexy);
+    await settleConfig();
+    vi.advanceTimersByTime(1_600);
+    renderOwner(flexy, OTHER_VIDEO, 'HardwareGridyt');
+    vi.advanceTimersByTime(1_000);
+    expect(isInterrupted()).toBe(true);
+    expect(video.play).not.toHaveBeenCalled();
+
+    // Back. YouTube reuses the same player, which still shows the blocked video for a beat.
+    spaHop(`/watch?v=${VIDEO}`);
+    await settleConfig();
+    vi.advanceTimersByTime(1_600);
+    renderOwner(flexy, VIDEO, LISTED_HANDLE);
+    vi.advanceTimersByTime(1_000);
+
+    expect(isInterrupted()).toBe(false);
+    expect(video.play).toHaveBeenCalled();
+    expect(video.el.paused).toBe(false);
+  });
+});
+
+describe('an interstitial belongs to the one page it was raised for', () => {
+  it('a hop to another blocked video starts that video\'s own pause, and the old one cannot release it', async () => {
+    const config = blockedSiteConfig({ siteMode: 'DELAY', siteDelaySeconds: 3 });
+    await startOn('/@veritasium/videos', channelPageHtml(LISTED_HANDLE), config);
+
+    spaHop(`/watch?v=${OTHER_VIDEO}`);
+    const flexy = addEmptyWatchPlayer();
+    const video = addPlayingVideo(flexy);
+    await settleConfig();
+    vi.advanceTimersByTime(1_600);
+    renderOwner(flexy, OTHER_VIDEO, 'HardwareGridyt');
+    vi.advanceTimersByTime(500);
+    expect(isInterrupted()).toBe(true);
+
+    // Two seconds into its three-second pause, the page moves to a different blocked video.
+    // YouTube has already drawn it by the time the URL tick lands, so the very first pass
+    // on the new page is decided, not settling.
+    vi.advanceTimersByTime(2_000);
+    const thirdVideo = 'dQw4w9WgXcQ';
+    renderOwner(flexy, thirdVideo, 'SomeoneElse');
+    spaHop(`/watch?v=${thirdVideo}`);
+    await settleConfig();
+
+    // The first video's countdown would have finished here. It must not hand this one back.
+    vi.advanceTimersByTime(1_500);
+    expect(isInterrupted()).toBe(true);
+    expect(video.play).not.toHaveBeenCalled();
+
+    // This video's own pause, completed, is what releases it.
+    vi.advanceTimersByTime(2_000);
+    expect(isInterrupted()).toBe(false);
+    expect(video.play).toHaveBeenCalledTimes(1);
+  });
+});

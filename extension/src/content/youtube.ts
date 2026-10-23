@@ -488,6 +488,14 @@ export function initYoutubeContentScript(
   /** Bumped per request, so a slow answer for an older page never overwrites a newer one. */
   let configSeq = 0;
   let overlay: OverlayHandle | null = null;
+  /**
+   * What the interstitial on screen was raised for: `shorts` for the Shorts gate (one gate
+   * per Shorts session, swipes and all), the watch URL for a channel gate. A channel gate is
+   * a decision about ONE video, so an interstitial left up across a hop to another video
+   * would show the wrong copy, and completing it would grant the old URL and let go of the
+   * new video's hold (live after-matrix G1).
+   */
+  let overlayFor: string | null = null;
   /** See "THE MEDIA HOLD" above. */
   let mediaHold: MediaHold | null = null;
   /** The page the hold was most recently asserted for. */
@@ -532,6 +540,7 @@ export function initYoutubeContentScript(
   function disposeOverlay(): void {
     overlay?.dispose();
     overlay = null;
+    overlayFor = null;
   }
 
   /**
@@ -676,9 +685,11 @@ export function initYoutubeContentScript(
       releaseMedia(holdUrl === url);
       return;
     }
-    if (overlay?.element.isConnected) return;
+    const wantedOverlayFor = shortsGate !== null ? 'shorts' : url;
+    if (overlay?.element.isConnected && overlayFor === wantedOverlayFor) return;
 
     disposeOverlay();
+    overlayFor = wantedOverlayFor;
     // Keeps a settle hold's record of what it stopped, so completing the pause resumes it.
     holdMedia(url);
 

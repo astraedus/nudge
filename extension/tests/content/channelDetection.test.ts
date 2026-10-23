@@ -33,6 +33,7 @@ import {
   detectCardChannel,
   detectWatchChannel,
   feedCards,
+  initialDataVideoId,
   videoIdFromUrl,
 } from '../../src/content/channelDetection';
 import {
@@ -513,5 +514,41 @@ describe('whose channel page this is', () => {
   it('names no channel when the page carries no metadata', () => {
     mount('<div></div>');
     expect(channelPageIdentity(document, 'https://www.youtube.com/@veritasium', FRESH)).toBeNull();
+  });
+});
+
+describe('which video the inline ytInitialData is the watch page for', () => {
+  /** Key order as the live payloads (probe, 2026-10-23); only a watch page has `currentVideoEndpoint`. */
+  function inlineData(data: Record<string, unknown>): void {
+    mount(`<script>var ytInitialData = ${JSON.stringify(data)};</script>`);
+  }
+  const card = (videoId: string) => ({
+    videoRenderer: { videoId, navigationEndpoint: { watchEndpoint: { videoId } } },
+  });
+
+  it('names the watch page\'s own video, not a related one', () => {
+    inlineData({
+      responseContext: {},
+      contents: { related: card('relatedVideo1') },
+      currentVideoEndpoint: { watchEndpoint: { videoId: 'thisVideo01' } },
+    });
+    expect(initialDataVideoId(document)).toBe('thisVideo01');
+  });
+
+  it('names no video on a channel page, whose grid is full of other videos\' endpoints', () => {
+    inlineData({
+      responseContext: {},
+      contents: { grid: [card('NiCgcUTL9_Q'), card('AF8d72mA41M')] },
+      header: {},
+      metadata: { channelMetadataRenderer: { externalId: 'UCHnyfMqiRRG1u-2MsSQLbXA' } },
+    });
+    expect(initialDataVideoId(document)).toBeNull();
+  });
+
+  it('names no video when the endpoint is malformed', () => {
+    inlineData({ currentVideoEndpoint: { watchEndpoint: { videoId: '' } } });
+    expect(initialDataVideoId(document)).toBeNull();
+    inlineData({ currentVideoEndpoint: 'nope' });
+    expect(initialDataVideoId(document)).toBeNull();
   });
 });
