@@ -58,7 +58,13 @@ import {
   normalizeToBaseDomain,
 } from '../core/domainMatcher';
 import { platformById, type GateId } from '../core/platforms';
-import type { ChannelEntry, NudgeSettings, SiteRule } from '../core/settingsSchema';
+import type { NudgeSettings, SiteRule } from '../core/settingsSchema';
+import { domainRegexFilter, gateRegexFilter } from '../core/urlFilters';
+import {
+  allYoutubeAllowFilters,
+  youtubeAllowFilters,
+  youtubeWhitelistPaths,
+} from '../core/youtubeAccess';
 import { surfaceKey } from '../core/surfaceKeys';
 import type { UsageSnapshot } from '../core/protocol';
 import { todayUsageSnapshot } from './storage';
@@ -107,46 +113,9 @@ export const CHANNEL_ALLOW_PRIORITY = 3;
 /** Strictly greater than every redirect priority so a temporary grant always wins. */
 export const TEMP_ALLOW_PRIORITY = 4;
 
-/**
- * Characters a channel handle or id may contain to be interpolated into a regex.
- *
- * The list is stored data: it arrives from the YouTube DOM, from a user typing, or from a
- * hand-edited / imported settings blob. An identifier of `.*` interpolated into an allow
- * pattern would open ALL of YouTube while the UI still showed a whitelist — a silent,
- * total defeat of the feature. Escaping alone is not enough reassurance here, so anything
- * outside this set is SKIPPED (the channel simply gets no network allow-rule and falls to
- * the content script's own check) rather than sanitized into something unrecognisable.
- */
-const SAFE_CHANNEL_IDENTIFIER = /^[A-Za-z0-9_.-]+$/;
-
-/** Escape a literal for embedding in a RE2 pattern. */
-function escapeForRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-/**
- * Match `domain` and every subdomain of it, over http(s), for the whole URL.
- *
- * Anchored at both ends so the entire URL is the match — `\0` in the substitution then
- * yields the full original URL for the block page's `target`.
- */
-export function domainRegexFilter(domain: string): string {
-  const base = escapeForRegex(normalizeToBaseDomain(domain));
-  return `^https?://([^/:@?#]*\\.)?${base}(?::[0-9]+)?(?:[/?#].*)?$`;
-}
-
-/**
- * The same, narrowed to one PATH pattern from the platform registry.
- *
- * The path patterns live in `core/platforms.ts` in the RE2 ∩ JavaScript subset precisely so
- * this string and the content script's `RegExp` are built from the same source — a surface
- * the network layer redirects but the SPA overlay ignores is the classic half-enforced
- * feature. Still anchored `^...$`, so `\0` remains the whole URL.
- */
-export function gateRegexFilter(domain: string, pathPattern: string): string {
-  const base = escapeForRegex(normalizeToBaseDomain(domain));
-  return `^https?://([^/:@?#]*\\.)?${base}(?::[0-9]+)?${pathPattern}(?:[?#].*)?$`;
-}
+// The filter builders live in core so the YouTube content script builds its in-SPA check
+// from the SAME strings (see core/urlFilters.ts); re-exported for existing importers.
+export { domainRegexFilter, gateRegexFilter };
 
 /** The blocked.html URL, with the original URL appended verbatim as the last query param. */
 function blockedPageSubstitution(): string {
@@ -246,37 +215,17 @@ function gateRedirects(settings: NudgeSettings, usage: UsageSnapshot): GateRedir
   return redirects;
 }
 
-/**
- * The path patterns a YouTube whitelist must let through the network layer.
- *
- * `/watch` is allowed WHOLESALE and then gated per-video by the content script, because the
- * channel of a video is not knowable from its URL. That is a deliberate split: the network
- * layer opens the door, the content script decides whether the video plays, and an
- * unidentifiable channel falls back to the site's own mode (see `core/channels.ts`).
- *
- * The channel's own pages are allowed outright so the user can actually navigate to what
- * they said they wanted — with the home feed, search and subscriptions all redirected,
- * there would otherwise be no route in at all.
- */
-export function youtubeWhitelistPaths(channels: readonly ChannelEntry[]): string[] {
-  const paths = new Set<string>(['/watch']);
-  for (const channel of channels) {
-    if (channel.handle !== null && SAFE_CHANNEL_IDENTIFIER.test(channel.handle)) {
-      paths.add(`/@${escapeForRegex(channel.handle)}(?:/.*)?`);
-    }
-    if (channel.channelId !== null && SAFE_CHANNEL_IDENTIFIER.test(channel.channelId)) {
-      paths.add(`/channel/${escapeForRegex(channel.channelId)}(?:/.*)?`);
-    }
-  }
-  return [...paths].sort();
-}
+// Moved to core/youtubeAccess.ts (the content script needs the same answer); re-exported
+// for existing importers.
+export { youtubeWhitelistPaths };
 
 /**
- * The "block YouTube by default, allow these channels" carve-out.
+ * The youtube.com carve-outs: "block YouTube by default, allow these channels", plus
+ * creator mode's Studio routes.
  *
- * Compiled only while the youtube.com rule is actually in force AND the list is a
- * non-empty whitelist. Outside that, the site is either open anyway (nothing to carve out
- * of) or the list is a blacklist (a carve-out would invert its meaning).
+ * WHICH URLs is not decided here: `core/youtubeAccess.youtubeAllowFilters` owns that, and
+ * the YouTube content script reads the same function for in-SPA navigation. This only
+ * walks the rules and asks whether each one is in force (and whether its budget is spent).
  */
 function channelAllowFilters(
   settings: NudgeSettings,
@@ -289,21 +238,13 @@ function channelAllowFilters(
   for (const rule of settings.rules) {
     const youtube = rule.features?.youtube;
     if (!rule.enabled || youtube === undefined) continue;
-    if (youtube.channelMode !== 'WHITELIST' || youtube.channels.length === 0) continue;
     const domain = siteUsageKey(rule);
     const verdict = siteRuleAppliesNow(rule, usage.ms[domain] ?? 0, now);
-    if (!verdict.applies) continue;
-    // A daily limit and a channel list answer DIFFERENT questions: the limit budgets HOW
-    // MUCH of the site, the list restricts WHAT. Once the budget is spent there is no
-    // remaining allowance for the whitelist to carve out of, so the allow-rules must go —
-    // otherwise "1 hour of YouTube a day" would be unlimited for every allowed channel,
-    // and the limit would only ever bite the content the user already said they wanted
-    // less of. Exactly inverted.
-    if (verdict.reason === 'limit-exhausted') continue;
-
-    for (const path of youtubeWhitelistPaths(youtube.channels)) {
-      filters.add(gateRegexFilter(domain, path));
-    }
+    const allowed = youtubeAllowFilters(domain, youtube, {
+      siteApplies: verdict.applies,
+      limitReached: verdict.reason === 'limit-exhausted',
+    });
+    for (const filter of allYoutubeAllowFilters(allowed)) filters.add(filter);
   }
   return [...filters].sort();
 }

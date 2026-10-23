@@ -197,7 +197,7 @@ describe('migrateSettings — v3 -> v4 (COUNT budgets)', () => {
 
   it('round-trips a v3 blob to v4 with the gate’s dailyLimitCount read as null', () => {
     const migrated = migrateSettings(V3_SETTINGS);
-    expect(migrated.schemaVersion).toBe(4);
+    expect(migrated.schemaVersion).toBe(5);
     expect(migrated.schemaVersion).toBe(SCHEMA_VERSION);
     expect(migrated.rules[0]?.features?.gates.shorts).toMatchObject({
       mode: 'HARD_BLOCK',
@@ -518,7 +518,7 @@ describe('upgrading an existing user from schema v1', () => {
     // axis lands as v4) run from a single call — `migrateSettings` has no per-version branch
     // to get half right, but this pins the whole distance travelled in one assertion.
     const migrated = migrateSettings(V1_SETTINGS);
-    expect(migrated.schemaVersion).toBe(4);
+    expect(migrated.schemaVersion).toBe(5);
     expect(migrated.schemaVersion).toBe(SCHEMA_VERSION);
     // The v1 user never had a count axis to configure, so it reads null, not invented.
     expect(youtubeRule(migrated).features?.gates.shorts?.dailyLimitCount).toBeNull();

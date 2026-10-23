@@ -62,6 +62,8 @@ const NO_CHANNEL_LISTS: NonNullable<SiteConfig['youtube']> = {
   channelBlockMode: 'DELAY',
   channelDelaySeconds: DEFAULT_DELAY_SECONDS,
   disableAutoplay: false,
+  creatorMode: false,
+  myChannel: null,
 };
 
 /**

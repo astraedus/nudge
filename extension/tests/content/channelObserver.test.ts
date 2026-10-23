@@ -42,6 +42,8 @@ function config(overrides: Partial<ChannelConfig> = {}): ChannelConfig {
       channelBlockMode: 'DELAY',
       channelDelaySeconds: 15,
       disableAutoplay: false,
+      creatorMode: false,
+      myChannel: null,
     },
     ...overrides,
   };
@@ -205,6 +207,8 @@ describe('staying quiet when there is nothing to learn', () => {
         channelBlockMode: 'DELAY',
         channelDelaySeconds: 15,
         disableAutoplay: false,
+        creatorMode: false,
+        myChannel: null,
       },
     });
 

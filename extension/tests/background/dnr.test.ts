@@ -15,6 +15,7 @@ import { emptyDayUsage } from '../../src/core/stats';
 import { surfaceKey } from '../../src/core/surfaceKeys';
 import type { UsageSnapshot } from '../../src/core/protocol';
 import { enrichEntries } from '../../src/core/channels';
+import { PLAYLIST_PATH, WATCH_PATHS } from '../../src/core/youtubeAccess';
 import type { ChannelEntry } from '../../src/core/settingsSchema';
 import { featuresWith, settings, siteRule } from '../helpers/rules';
 import { installAttention, installDnr, resetBrowser } from './fakeApis';
@@ -408,8 +409,8 @@ describe('YouTube channel whitelist', () => {
     // outside `[A-Za-z0-9_.-]` is dropped rather than interpolated.
     const hostile = channel({ handle: '.*', channelId: 'UC.*' });
 
-    // Dropped: the only path this entry contributes is the unconditional /watch one.
-    expect(youtubeWhitelistPaths([hostile])).toEqual(['/watch']);
+    // Dropped: the only paths this entry contributes are the unconditional watch/playlist ones.
+    expect(youtubeWhitelistPaths([hostile])).toEqual([...WATCH_PATHS, PLAYLIST_PATH].sort());
 
     const rules = compileRules(whitelisted([hostile, veritasium]), NO_USAGE, MIDDAY);
     expect(resolve(rules, 'https://www.youtube.com/@anything')).toBe('block-page');

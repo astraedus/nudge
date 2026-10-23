@@ -82,7 +82,7 @@ import {
   todayItemCount,
   todayUsageMs,
 } from './storage';
-import { grantTempAllow } from './tempAllow';
+import { grantTempAllow, tempAllowedUntil } from './tempAllow';
 import { logBlocked, logWalkedAway, onActivityEvent } from './tracker';
 
 const PENDING_CHALLENGE_KEY = 'nudge:pendingChallenge';
@@ -411,6 +411,7 @@ async function buildSiteConfig(url: string, now: Date): Promise<SiteConfig> {
       siteDelaySeconds: DEFAULT_DELAY_SECONDS,
       siteApplies: false,
       siteLimitReached: false,
+      tempAllowedUntil: null,
       grayscale: false,
       gates: [],
       hides: {},
@@ -458,6 +459,9 @@ async function buildSiteConfig(url: string, now: Date): Promise<SiteConfig> {
     siteDelaySeconds: verdict.delaySeconds,
     siteApplies: verdict.applies,
     siteLimitReached: verdict.reason === 'limit-exhausted',
+    // Read by the YouTube page gate ONLY (in-SPA navigation off a carve-out), never by a
+    // gate: see the note above `gates`.
+    tempAllowedUntil: await tempAllowedUntil(domain, now.getTime()),
     grayscale: rule.grayscale,
     gates,
     hides: features?.hides ?? {},

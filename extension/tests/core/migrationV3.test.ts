@@ -300,7 +300,7 @@ describe('v3 features validation', () => {
 describe('v2 -> v4: the fold still lands on the current schema, count axis included', () => {
   it('a v2 blob migrates all the way through to v4', () => {
     const migrated = migrateSettings(v2WithEverythingOn());
-    expect(migrated.schemaVersion).toBe(4);
+    expect(migrated.schemaVersion).toBe(5);
     expect(migrated.schemaVersion).toBe(SCHEMA_VERSION);
     // The v2 fold itself is undisturbed: the shorts gate still carries what v2 configured.
     const rule = ruleFor(migrated, 'youtube.com');

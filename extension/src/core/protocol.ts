@@ -15,6 +15,7 @@ import type {
   ChannelListMode,
   NudgeSettings,
   SiteRule,
+  YoutubeFeatureSettings,
 } from './settingsSchema';
 
 /** Everything the block page needs to render, fetched in one round trip. */
@@ -269,17 +270,18 @@ export interface SiteConfig {
   siteApplies: boolean;
   /** True when the site rule is in force only because its daily budget is spent. */
   siteLimitReached: boolean;
+  /**
+   * When a completed pause on this site stops opening it (epoch ms), or null. An end time,
+   * not a boolean, so a page that cached its config never treats an expired grant as live.
+   * The in-page SITE gate reads it (a granted site is open in-SPA as it is on a full load);
+   * the GATES never do, see the note in `buildSiteConfig`.
+   */
+  tempAllowedUntil: number | null;
   grayscale: boolean;
   gates: ResolvedGate[];
   hides: Partial<Record<HideId, boolean>>;
-  /** YouTube's channel lists; null on every other platform. */
-  youtube: {
-    channelMode: ChannelListMode;
-    channels: ChannelEntry[];
-    channelBlockMode: BlockMode;
-    channelDelaySeconds: number;
-    disableAutoplay: boolean;
-  } | null;
+  /** YouTube's channel lists and creator mode; null on every other platform. */
+  youtube: YoutubeFeatureSettings | null;
 }
 
 /**

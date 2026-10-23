@@ -92,6 +92,7 @@ function whitelistConfig(overrides: { grayscale?: boolean } = {}): SiteConfig {
     siteDelaySeconds: 15,
     siteApplies: false,
     siteLimitReached: false,
+    tempAllowedUntil: null,
     grayscale: overrides.grayscale === true,
     gates: [],
     hides: {},
@@ -103,6 +104,8 @@ function whitelistConfig(overrides: { grayscale?: boolean } = {}): SiteConfig {
       channelBlockMode: 'HARD_BLOCK',
       channelDelaySeconds: 15,
       disableAutoplay: false,
+      creatorMode: false,
+      myChannel: null,
     },
   };
 }
