@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { BLOCK_TARGET_MARKER } from '../../core/blockPage';
-import type { BlockContext } from '../../core/protocol';
+import type { BlockContext, CreatorLinks } from '../../core/protocol';
 import type { ChannelEntry } from '../../core/settingsSchema';
 import { clearBounces, registerBounce } from '../../core/redirectLoopGuard';
 import { Button, NudgeMark, RuleFooter } from '../../ui/components';
@@ -99,14 +99,53 @@ function ChannelArrow() {
   );
 }
 
-function AllowedChannels({ channels }: { channels: ChannelEntry[] }) {
+/** One row of the "still open" list: a label and the page it opens. */
+interface OpenLink {
+  href: string;
+  label: string;
+}
+
+/**
+ * Creator mode's two doors, as rows. Studio first (the one creators come here for), then
+ * the user's own channel when they named one. The copy says literally what tapping does.
+ */
+export function creatorLinks(creator: CreatorLinks | null | undefined): OpenLink[] {
+  if (!creator) return [];
+  const rows: OpenLink[] = [];
+  if (isNavigableTarget(creator.studioUrl)) {
+    rows.push({ href: creator.studioUrl, label: 'Open YouTube Studio' });
+  }
+  const own = creator.channel ? channelHomeUrl(creator.channel) : null;
+  if (creator.channel && own !== null) {
+    const handle = creator.channel.handle?.trim().replace(/^@/, '') ?? '';
+    const name = handle !== '' ? `@${handle}` : creator.channel.displayName;
+    rows.push({ href: own, label: `Go to your channel (${name})` });
+  }
+  return rows;
+}
+
+function AllowedChannels({
+  channels,
+  creator,
+}: {
+  channels: ChannelEntry[];
+  creator: CreatorLinks | null;
+}) {
   // `?? []` is not defensive typing theatre: this page's whole job is to appear when a
   // site is blocked, and a worker that answers without this field (mid-update, or an old
   // service worker still alive after a reload) would otherwise throw here and leave the
   // user staring at a blank tab instead of a block page, failing open in the worst way.
-  const links = (channels ?? [])
-    .map((entry) => ({ entry, href: channelHomeUrl(entry) }))
-    .filter((row): row is { entry: ChannelEntry; href: string } => row.href !== null);
+  // The same goes for `creator`, which an older worker does not send at all.
+  const channelRows: OpenLink[] = (channels ?? []).flatMap((entry) => {
+    const href = channelHomeUrl(entry);
+    return href === null ? [] : [{ href, label: entry.displayName }];
+  });
+  const seen = new Set<string>();
+  const links = [...creatorLinks(creator), ...channelRows].filter((row) => {
+    if (seen.has(row.href)) return false;
+    seen.add(row.href);
+    return true;
+  });
 
   if (links.length === 0) return null;
 
@@ -129,7 +168,7 @@ function AllowedChannels({ channels }: { channels: ChannelEntry[] }) {
           color: 'var(--nudge-on-surface-variant)',
         }}
       >
-        Your allowed channels
+        {channelRows.length > 0 ? 'Your allowed channels' : 'Still open'}
       </h2>
       <p style={{ margin: '0 0 12px', fontSize: 13, color: 'var(--nudge-on-surface-variant)' }}>
         These are still open. Pick one to carry on.
@@ -156,7 +195,7 @@ function AllowedChannels({ channels }: { channels: ChannelEntry[] }) {
           gap: 8,
         }}
       >
-        {links.map(({ entry, href }) => (
+        {links.map(({ href, label }) => (
           <li key={href}>
             <a
               className="nudge-channel-link"
@@ -189,7 +228,7 @@ function AllowedChannels({ channels }: { channels: ChannelEntry[] }) {
                   whiteSpace: 'nowrap',
                 }}
               >
-                {entry.displayName}
+                {label}
               </span>
               <ChannelArrow />
             </a>
@@ -548,7 +587,7 @@ export function BlockPage() {
       {context.decision.mode === 'HARD_BLOCK' && <HardBlockView context={context} />}
       {context.decision.mode === 'DELAY' && <DelayView context={context} target={target} />}
       {context.decision.mode === 'BREATHING' && <BreathingView context={context} target={target} />}
-      <AllowedChannels channels={context.allowedChannels} />
+      <AllowedChannels channels={context.allowedChannels} creator={context.creator} />
       <EscapeHatch context={context} target={target} />
     </PageShell>
   );

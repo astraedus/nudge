@@ -391,6 +391,39 @@ describe('GET_BLOCK_CONTEXT', () => {
     expect(reddit.allowedChannels).toEqual([]);
   });
 
+  it('offers Studio and the own channel only while creator mode is on', async () => {
+    const youtubeRule = (youtube: Record<string, unknown>) =>
+      settings({
+        rules: [
+          siteRule({
+            domain: 'youtube.com',
+            mode: 'HARD_BLOCK',
+            features: featuresWith('youtube', { youtube }),
+          }),
+        ],
+      });
+    const ctx = () =>
+      ask<BlockContext>({ type: 'GET_BLOCK_CONTEXT', target: 'https://www.youtube.com/' });
+
+    await seed(
+      youtubeRule({
+        creatorMode: true,
+        myChannel: channel({ handle: 'me', displayName: 'Me' }),
+      }),
+    );
+    const on = await ctx();
+    expect(on.creator?.studioUrl).toBe('https://studio.youtube.com/');
+    expect(on.creator?.channel?.handle).toBe('me');
+    // The own channel is an implicit whitelist entry, not a stored one: never listed twice.
+    expect(on.allowedChannels).toEqual([]);
+
+    await seed(youtubeRule({ creatorMode: true, myChannel: null }));
+    expect((await ctx()).creator).toEqual({ studioUrl: 'https://studio.youtube.com/', channel: null });
+
+    await seed(youtubeRule({ creatorMode: false, myChannel: channel({ handle: 'me' }) }));
+    expect((await ctx()).creator).toBeNull();
+  });
+
   it('names the COUNT budget when that is what closed the gate, distinct from a minute limit', async () => {
     // "Daily Shorts limit reached" is the wrong sentence for someone who set a count of 20
     // and no time budget at all — they would go looking in the editor for a minutes limit

@@ -67,6 +67,20 @@ export interface BlockContext {
    * typing a URL from memory. The block page has to BE the way in.
    */
   allowedChannels: ChannelEntry[];
+  /**
+   * Creator mode's doors, when the rule that blocked this page has it on; null otherwise.
+   * A creator is blocked from YouTube's home feed too, so without these the page shows the
+   * allowed channels and nothing about the Studio they turned creator mode on to reach.
+   */
+  creator: CreatorLinks | null;
+}
+
+/** Where creator mode lets the user go from the block page. */
+export interface CreatorLinks {
+  /** YouTube Studio's address, built from the rule's domain. */
+  studioUrl: string;
+  /** The user's own channel, or null when "Your channel" is not set. */
+  channel: ChannelEntry | null;
 }
 
 export interface PopupState {

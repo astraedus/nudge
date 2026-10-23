@@ -47,6 +47,7 @@ function makeContext(overrides: Partial<BlockContext> = {}): BlockContext {
     gateCountLimit: null,
     gateItemNoun: null,
     allowedChannels: [],
+    creator: null,
     ...overrides,
   };
 }
@@ -586,6 +587,53 @@ describe('BlockPage — allowed channels (the way back in)', () => {
     expect(screen.getByText('Your allowed channels')).toBeTruthy();
     expect(screen.queryByText('Nameless Channel')).toBeNull();
     expect(screen.getByRole('link', { name: 'Real Channel' })).toBeTruthy();
+  });
+});
+
+describe('BlockPage — creator mode links', () => {
+  const STUDIO = 'https://studio.youtube.com/';
+
+  async function renderWith(overrides: Partial<BlockContext>) {
+    setTarget(TARGET);
+    sendMessageMock.mockResolvedValueOnce(makeContext(overrides));
+    render(<BlockPage />);
+    await flush();
+  }
+
+  it('links to Studio and to the own channel, with plain copy, next to the allowed channels', async () => {
+    await renderWith({
+      allowedChannels: [channel({ handle: 'veritasium', displayName: 'Veritasium' })],
+      creator: {
+        studioUrl: STUDIO,
+        channel: channel({ handle: '@mychannel', displayName: 'My Channel' }),
+      },
+    });
+    expect(screen.getByRole('link', { name: 'Open YouTube Studio' }).getAttribute('href')).toBe(
+      STUDIO,
+    );
+    expect(
+      screen.getByRole('link', { name: 'Go to your channel (@mychannel)' }).getAttribute('href'),
+    ).toBe('https://www.youtube.com/@mychannel');
+    expect(screen.getByText('Your allowed channels')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Veritasium' })).toBeTruthy();
+  });
+
+  it('shows only the Studio link when no own channel is set, even with no allowed channels', async () => {
+    await renderWith({ creator: { studioUrl: STUDIO, channel: null } });
+    expect(screen.getByRole('link', { name: 'Open YouTube Studio' })).toBeTruthy();
+    expect(screen.queryByRole('link', { name: /Go to your channel/ })).toBeNull();
+    expect(screen.queryByText('Your allowed channels')).toBeNull();
+  });
+
+  it('renders nothing extra when creator mode is off', async () => {
+    await renderWith({ creator: null });
+    expect(screen.queryByRole('link', { name: 'Open YouTube Studio' })).toBeNull();
+    expect(screen.queryByRole('link', { name: /Go to your channel/ })).toBeNull();
+  });
+
+  it('does not render a Studio link whose address is not http(s)', async () => {
+    await renderWith({ creator: { studioUrl: 'javascript:alert(1)', channel: null } });
+    expect(screen.queryByRole('link', { name: 'Open YouTube Studio' })).toBeNull();
   });
 });
 
