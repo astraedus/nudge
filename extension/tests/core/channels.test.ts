@@ -7,6 +7,8 @@ import {
   enrichEntries,
   findChannel,
   isChannelListed,
+  keepLearnedChannelIdentifiers,
+  keepLearnedIdentifiers,
   parseChannelInput,
   removeChannel,
   sameChannel,
@@ -1114,4 +1116,106 @@ describe('enrichEntries — it can only ever learn, never weaken', () => {
       expect(isWeakening(withChannels(before), withChannels(after))).toBe(false);
     }
   });
+});
+
+// -----------------------------------------------------------------------------------
+// keepLearnedIdentifiers, a save from an older copy keeps what the worker learned
+// -----------------------------------------------------------------------------------
+
+describe('keepLearnedIdentifiers, a stale save keeps learned ids', () => {
+  const learnedAlpha = entry({ channelId: VERITASIUM_ID, handle: 'veritasium', displayName: 'Veritasium', addedAt: 1 });
+  const typedAlpha = entry({ handle: 'veritasium', displayName: '@veritasium', addedAt: 1 });
+
+  it('fills the id the stored list learned into the matching handle-only entry', () => {
+    expect(keepLearnedIdentifiers([learnedAlpha], [typedAlpha])).toEqual([learnedAlpha]);
+  });
+
+  it('leaves a channel the save removed removed', () => {
+    expect(keepLearnedIdentifiers([learnedAlpha], [])).toEqual([]);
+  });
+
+  it('never overwrites an identifier the save carries with a contradicting stored one', () => {
+    const otherIdSameHandle = entry({ channelId: OTHER_ID, handle: 'veritasium', displayName: 'X', addedAt: 1 });
+    expect(keepLearnedIdentifiers([learnedAlpha], [otherIdSameHandle])).toEqual([otherIdSameHandle]);
+  });
+
+  it('pairs rules by id and returns the incoming object itself when nothing changes', () => {
+    const withRule = (id: string, channels: ChannelEntry[]): NudgeSettings =>
+      settings({ rules: [siteRule({ id, features: featuresWith('youtube', { youtube: { channels } }) })] });
+
+    const fresh = withRule('yt', [learnedAlpha]);
+    expect(keepLearnedChannelIdentifiers(withRule('yt', [learnedAlpha]), fresh)).toBe(fresh);
+
+    // A rule deleted and re-added under a new id is a new rule: it inherits nothing.
+    const readded = withRule('yt-2', [typedAlpha]);
+    expect(keepLearnedChannelIdentifiers(withRule('yt', [learnedAlpha]), readded)).toBe(readded);
+
+    const stale = withRule('yt', [typedAlpha]);
+    const kept = keepLearnedChannelIdentifiers(withRule('yt', [learnedAlpha]), stale);
+    expect(kept.rules[0]!.features!.youtube!.channels).toEqual([learnedAlpha]);
+  });
+});
+
+describe('keepLearnedIdentifiers, it can never widen or narrow what the user saved', () => {
+  /**
+   * The fold runs BEFORE the Commitment Lock judges a save, so it must never change what the
+   * save covers: every list it returns covers exactly the channels the incoming list covered,
+   * and the lock's verdict on (stored -> result) equals its verdict on (stored -> incoming).
+   * Asserted over every pairing of stored and incoming lists built from two channels, each
+   * absent or present by id, by handle, or by both: a table, because the failure this guards
+   * is a future edit, not today's code.
+   */
+  const channels = [
+    { id: VERITASIUM_ID, handle: 'veritasium' },
+    { id: OTHER_ID, handle: 'kurzgesagt' },
+  ];
+  type Variant = 'absent' | 'both' | 'handle' | 'id';
+  const variants: Variant[] = ['absent', 'both', 'handle', 'id'];
+  const build = (pick: Variant[]): ChannelEntry[] =>
+    pick.flatMap((variant, index) => {
+      const channel = channels[index]!;
+      if (variant === 'absent') return [];
+      return [
+        entry({
+          channelId: variant === 'handle' ? null : channel.id,
+          handle: variant === 'id' ? null : channel.handle,
+          displayName: variant === 'id' ? channel.id : `@${channel.handle}`,
+          addedAt: index,
+        }),
+      ];
+    });
+  const lists: Array<{ name: string; list: ChannelEntry[] }> = variants.flatMap((a) =>
+    variants.map((b) => ({ name: `[${a},${b}]`, list: build([a, b]) })),
+  );
+  const probes = channels.flatMap((c) => [{ channelId: c.id }, { handle: c.handle }]);
+  const listsChannel = (list: readonly ChannelEntry[], index: number): boolean =>
+    isChannelListed(list, { channelId: channels[index]!.id }) ||
+    isChannelListed(list, { handle: channels[index]!.handle });
+
+  for (const { name: storedName, list: stored } of lists) {
+    it(`stored ${storedName}: every incoming list keeps exactly its own channels`, () => {
+      for (const { list: incoming } of lists) {
+        const result = keepLearnedIdentifiers(stored, incoming);
+
+        channels.forEach((_, index) => {
+          // Nothing new, nothing lost, nothing resurrected.
+          expect(listsChannel(result, index)).toBe(listsChannel(incoming, index));
+        });
+        // Every identifier the user's save matched still matches.
+        for (const probe of probes) {
+          if (isChannelListed(incoming, probe)) expect(isChannelListed(result, probe)).toBe(true);
+        }
+        // The lock judges the user's change, never the fold.
+        for (const channelMode of ['WHITELIST', 'BLACKLIST'] as const) {
+          const locked = (list: ChannelEntry[]): NudgeSettings =>
+            settings({
+              strictMode: { ...DEFAULT_SETTINGS.strictMode, enabled: true },
+              rules: [siteRule({ features: featuresWith('youtube', { youtube: { channelMode, channels: list } }) })],
+            });
+          expect(isWeakening(locked(incoming), locked(result))).toBe(false);
+          expect(isWeakening(locked(stored), locked(result))).toBe(isWeakening(locked(stored), locked(incoming)));
+        }
+      }
+    });
+  }
 });

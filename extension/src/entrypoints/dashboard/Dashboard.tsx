@@ -85,6 +85,11 @@ export function Dashboard() {
           if (result.ok) {
             setPending(null);
             setData((current) => (current ? { ...current, settings: next } : current));
+            // What the worker stored can differ from what we sent: it folds back channel ids it
+            // learned while this tab sat open. Show (and later edit) the stored copy, not ours.
+            send({ type: 'GET_SETTINGS' })
+              .then((stored) => setData((current) => (current ? { ...current, settings: stored } : current)))
+              .catch(() => undefined);
             return;
           }
           if (result.challenge !== undefined) {

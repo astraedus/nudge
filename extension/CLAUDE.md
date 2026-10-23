@@ -305,6 +305,12 @@ unit-testable, exactly as the Android domain layer is.
   is therefore unchanged, which is exactly what `strictMode.isWeakening` measures, so the
   save goes through the normal gated `handleSave` and the Commitment Lock simply never fires.
   Full reasoning and the rules in `core/channels.ts`; tests pin the invariant over a table.
+  **A learned id must also survive the USER's next save.** Screens save the whole settings
+  object they loaded, so a dashboard tab opened before the visit wrote the handle-only entry
+  back over the id. `handleSave` therefore runs `keepLearnedChannelIdentifiers(current, next)`
+  BEFORE the lock judges the save (the same `enrichEntries` rules, replaying each stored
+  entry as an observation, so it inherits the invariant), and the dashboard re-reads
+  `GET_SETTINGS` after a successful save. Tests: `tests/background/learnedChannelSurvivesSave.test.ts`.
 - **The channel gate bails BACKWARDS, not to the site root.** "I changed my mind" on the
   channel interstitial calls `history.back()` (`content/overlay.ts`'s `bailAwayFromGate`),
   and when there is no previous entry — a tab opened straight onto the gated video — asks
@@ -417,6 +423,11 @@ xvfb), scoped with `paths: ['extension/**']`. The Android workflow carries the m
 - **Return `true` from the `onMessage` listener** to keep the channel open for an async
   response, and always send *something* — otherwise callers hang forever.
 - **Gate settings changes in the WORKER, not the UI.** A gate a page can skip is not a gate.
+- **Anything the worker writes into settings on its own is lost to the next UI save** unless
+  `handleSave` folds it back in. `SAVE_SETTINGS` is last-writer-wins on a whole object, and
+  a dashboard tab stays open for hours. 0.4.0 shipped learned channel ids that a stale tab
+  silently erased (signed-in QA). A new background writer gets its own fold in `handleSave`,
+  ahead of `isWeakening`, plus a stale-save test.
 - **`chrome.scripting.registerContentScripts` accepts `css` and injects it before first
   paint.** That is the only way to have CSS that is BOTH runtime-gateable and flash-free;
   static manifest CSS cannot be turned off and JS-injected CSS is always too late.

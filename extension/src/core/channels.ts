@@ -11,7 +11,7 @@
  */
 
 import { isBlockMode, type BlockMode, type SiteMode } from './types';
-import type { ChannelEntry, ChannelListMode } from './settingsSchema';
+import type { ChannelEntry, ChannelListMode, NudgeSettings } from './settingsSchema';
 
 // ---------------------------------------------------------------------------------------
 // parseChannelInput
@@ -763,4 +763,68 @@ export function enrichEntries(
     .filter((_, index) => !absorbed.has(index));
 
   return { entries: next, changed: true, reason: matched.length > 1 ? 'merged' : 'enriched' };
+}
+
+/**
+ * Carry every identifier the STORED list has learned into a list about to be saved over it.
+ * PURE.
+ *
+ * WHY THIS EXISTS. Two writers share one channel list: the user, through settings screens
+ * that save the WHOLE settings object they loaded, and the worker, which enriches entries in
+ * the background (`enrichEntries`, via `CHANNEL_OBSERVED`). A dashboard tab opened before an
+ * entry learned its id still holds the handle-only copy, and its next save, for anything at
+ * all (creator mode, a delay, another channel), replaced the learned id wholesale. Signed-in
+ * QA (0.4.0) hit exactly that: the id was learned on the channel page, then lost again to two
+ * unrelated "Save rule" clicks in a dashboard tab that had been open all along.
+ *
+ * Refreshing the screen alone cannot close it: the rule editor keeps a draft from the moment
+ * it opens, and onboarding and import save whole objects too. So the worker folds what it
+ * already knows back in on every save, through the same `enrichEntries` an observation goes
+ * through: each stored entry is replayed as an observation of its own channel.
+ *
+ * WHAT THIS CAN AND CANNOT DO, inherited from `enrichEntries` rule for rule: it only fills a
+ * null identifier (or upgrades a placeholder name) on an entry the incoming list ALREADY
+ * HAS. A channel the save removed matches nothing and stays removed; a channel the save added
+ * gains nothing unless the stored list already knew it; a contradiction is left alone. Every
+ * identifier it adds was already in the stored list, so the result covers no channel that
+ * neither list covered, and `strictMode.isWeakening`, which compares the stored settings
+ * against the result, still judges exactly the change the user made.
+ */
+export function keepLearnedIdentifiers(
+  stored: readonly ChannelEntry[],
+  incoming: readonly ChannelEntry[],
+): ChannelEntry[] {
+  let entries: ChannelEntry[] = [...incoming];
+  for (const known of stored) {
+    const result = enrichEntries(entries, known);
+    if (result.changed) entries = result.entries;
+  }
+  return entries;
+}
+
+/**
+ * `keepLearnedIdentifiers` over every rule's channel list, pairing rules by id (a rule that
+ * was deleted and re-added is a new rule and inherits nothing). Returns `next` itself when
+ * nothing was carried over.
+ */
+export function keepLearnedChannelIdentifiers(
+  current: NudgeSettings,
+  next: NudgeSettings,
+): NudgeSettings {
+  let changed = false;
+  const rules = next.rules.map((rule) => {
+    const youtube = rule.features?.youtube;
+    if (rule.features === null || youtube === undefined) return rule;
+    const stored = current.rules.find((candidate) => candidate.id === rule.id)?.features?.youtube;
+    if (stored === undefined || stored.channels.length === 0) return rule;
+
+    const channels = keepLearnedIdentifiers(stored.channels, youtube.channels);
+    const unchanged =
+      channels.length === youtube.channels.length &&
+      channels.every((entry, index) => sameEntry(entry, youtube.channels[index]!));
+    if (unchanged) return rule;
+    changed = true;
+    return { ...rule, features: { ...rule.features, youtube: { ...youtube, channels } } };
+  });
+  return changed ? { ...next, rules } : next;
 }
