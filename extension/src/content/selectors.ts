@@ -206,8 +206,15 @@ export const SHORTS_PLAYER_CONTAINERS: SelectorRule[] = [
   { selector: 'body', fallback: true, note: 'Always present; overlay still covers the viewport.' },
 ];
 
-/** Elements Nudge itself injects, so we never hide our own overlay. */
-export const NUDGE_OVERLAY_ID = 'nudge-shorts-gate';
+/**
+ * Id of the YouTube interstitial Nudge injects, so we never hide our own overlay. Shared by
+ * the Shorts gate and the channel gate; `data-nudge-gate` (`NUDGE_GATE_KIND_ATTR`) says which.
+ */
+export const NUDGE_OVERLAY_ID = 'nudge-gate';
+
+/** Dataset key / attribute naming which YouTube gate an overlay is. */
+export const NUDGE_GATE_KIND_ATTR = 'nudgeGate';
+export type YoutubeGateKind = 'shorts' | 'channel';
 
 export interface QueryResult {
   /** Everything the first matching rung matched. Empty when nothing in the chain matched. */

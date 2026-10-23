@@ -65,7 +65,7 @@ export const HOME_PAGE_HTML = `
  *    happens to look like a Short — irrelevant here, `sidebar-recs` hides the whole block.
  *  - end-screen: TWO `.ytp-endscreen-content` elements match the SAME winning rung — one is
  *    the real in-player suggestion grid, the other is nested inside our own overlay
- *    (`#nudge-shorts-gate`, `NUDGE_OVERLAY_ID`). Both match the selector; only the real one
+ *    (`#nudge-gate`, `NUDGE_OVERLAY_ID`). Both match the selector; only the real one
  *    may ever be hidden. This is the "never hide our own overlay, whatever a selector
  *    claims" case — the decoy shares a rung with a genuine match, so both come back from
  *    the SAME `queryWithFallback` call and the overlay-guard in `applyHideToggles` is what
@@ -93,7 +93,7 @@ export const WATCH_PAGE_ALL_SURFACES_HTML = `
             Real in-player end-screen suggestions
           </div>
         </div>
-        <div id="nudge-shorts-gate" class="nudge-overlay" data-testid="nudge-overlay">
+        <div id="nudge-gate" data-nudge-gate="shorts" class="nudge-overlay" data-testid="nudge-overlay">
           <div class="nudge-overlay__card">
             <div class="ytp-endscreen-content" data-testid="overlay-endscreen-decoy">
               Coincidentally matches the end-screen selector — lives INSIDE our own overlay

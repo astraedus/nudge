@@ -243,6 +243,14 @@ describe('the forward hop (allowed -> blocked)', () => {
   });
 });
 
+describe('the channel gate overlay identity', () => {
+  it('is tagged as the channel gate, not the Shorts gate', async () => {
+    await startOn(BLOCKED_CHANNEL, whitelistConfig());
+
+    expect(overlayEl()?.getAttribute('data-nudge-gate')).toBe('channel');
+  });
+});
+
 describe('the same-channel hop: only the backstop can end the wait', () => {
   /**
    * When both videos are by the same channel the byline never changes, so nothing can ever
