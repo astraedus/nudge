@@ -381,6 +381,13 @@ match an Android `v1.17.0` against an extension `0.2.0` and conclude something a
 `.github/workflows/extension-publish.yml` gates, builds, uploads to the Chrome Web Store
 (API v2, service account) and submits for review.
 
+**Merged means released.** A user-facing change merged to main ships in the SAME session:
+bump `package.json` + `package-lock.json`, rename `## Unreleased` to `## <version> (date)`,
+merge, then push the tag. `## Unreleased` never outlives the session that merged into it.
+Dispatches that say "do not tag" only mean the dev agent leaves it to the orchestrator; the
+orchestrator still tags. If a case can only be checked signed in, run it on a copy of the real
+Chrome profile with `--load-extension` before tagging, not after.
+
 CI: `.github/workflows/extension-ci.yml` (lint → typecheck → unit → build → Playwright under
 xvfb), scoped with `paths: ['extension/**']`. The Android workflow carries the mirror-image
 `paths-ignore: ['extension/**']`.
