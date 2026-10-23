@@ -251,3 +251,100 @@ describe('ChannelListEditor — a setting that cannot do anything is not offered
     expect(screen.queryByText(/Not used while this site is set to/)).toBeNull();
   });
 });
+
+describe('ChannelListEditor, creator mode', () => {
+  const CHECKBOX = { name: 'Allow my channel and YouTube Studio' };
+  const own = {
+    channelId: null,
+    handle: 'mychannel',
+    displayName: '@mychannel',
+    addedAt: 0,
+  };
+
+  function setMyChannel(text: string) {
+    fireEvent.change(screen.getByLabelText('Your channel (optional)'), { target: { value: text } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save channel' }));
+  }
+
+  it('renders the checkbox unchecked by default', () => {
+    render(<Harness initial={makeYoutubeSettings()} />);
+    expect((screen.getByRole('checkbox', CHECKBOX) as HTMLInputElement).checked).toBe(false);
+  });
+
+  it('toggling it patches creatorMode and nothing else', () => {
+    const initial = makeYoutubeSettings();
+    const onEmit = vi.fn();
+    render(<Harness initial={initial} onEmit={onEmit} />);
+
+    fireEvent.click(screen.getByRole('checkbox', CHECKBOX));
+
+    expect(onEmit).toHaveBeenCalledTimes(1);
+    expect(onEmit.mock.calls[0]![0]).toEqual({ ...initial, creatorMode: true });
+  });
+
+  it('hides the channel input while off and shows it while on', () => {
+    render(<Harness initial={makeYoutubeSettings()} />);
+    expect(screen.queryByLabelText('Your channel (optional)')).toBeNull();
+
+    fireEvent.click(screen.getByRole('checkbox', CHECKBOX));
+    expect(screen.getByLabelText('Your channel (optional)')).toBeDefined();
+  });
+
+  it('saves a valid @handle as myChannel', () => {
+    const onEmit = vi.fn();
+    render(<Harness initial={makeYoutubeSettings({ creatorMode: true })} onEmit={onEmit} />);
+
+    setMyChannel('@mychannel');
+
+    const emitted = onEmit.mock.calls[0]![0] as YoutubeFeatureSettings;
+    expect(emitted.myChannel?.handle).toBe('mychannel');
+    expect(emitted.channels).toEqual([]);
+    expect(screen.getByText('@mychannel')).toBeDefined();
+  });
+
+  it('saves a channel URL as myChannel', () => {
+    const onEmit = vi.fn();
+    render(<Harness initial={makeYoutubeSettings({ creatorMode: true })} onEmit={onEmit} />);
+    const channelId = 'UCabcdefghijklmnopqrstuv';
+
+    setMyChannel(`https://www.youtube.com/channel/${channelId}`);
+
+    expect((onEmit.mock.calls[0]![0] as YoutubeFeatureSettings).myChannel?.channelId).toBe(channelId);
+  });
+
+  it('shows an inline error and saves nothing for invalid input', () => {
+    const onEmit = vi.fn();
+    render(<Harness initial={makeYoutubeSettings({ creatorMode: true })} onEmit={onEmit} />);
+
+    setMyChannel('this is not a channel at all!!');
+
+    expect(screen.getByText(/doesn't look like a channel/i)).toBeDefined();
+    expect(onEmit).not.toHaveBeenCalled();
+  });
+
+  it('Remove sets myChannel to null', () => {
+    const onEmit = vi.fn();
+    render(
+      <Harness initial={makeYoutubeSettings({ creatorMode: true, myChannel: own })} onEmit={onEmit} />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove my channel' }));
+
+    expect((onEmit.mock.calls[0]![0] as YoutubeFeatureSettings).myChannel).toBeNull();
+    expect(screen.getByLabelText('Your channel (optional)')).toBeDefined();
+  });
+
+  it('turning creatorMode off keeps myChannel, and turning it back on restores it', () => {
+    const onEmit = vi.fn();
+    render(
+      <Harness initial={makeYoutubeSettings({ creatorMode: true, myChannel: own })} onEmit={onEmit} />,
+    );
+
+    fireEvent.click(screen.getByRole('checkbox', CHECKBOX));
+    expect(onEmit.mock.calls[0]![0]).toMatchObject({ creatorMode: false, myChannel: own });
+    expect(screen.queryByText('@mychannel')).toBeNull();
+
+    fireEvent.click(screen.getByRole('checkbox', CHECKBOX));
+    expect(screen.getByText('@mychannel')).toBeDefined();
+  });
+});

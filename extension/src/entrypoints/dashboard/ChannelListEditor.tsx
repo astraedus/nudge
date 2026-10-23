@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import type { CSSProperties } from 'react';
 import { addChannel, parseChannelInput, removeChannel } from '../../core/channels';
 import { DELAY_MAX_SECONDS, DELAY_MIN_SECONDS, DELAY_PRESETS } from '../../core/settingsSchema';
 import type { ChannelEntry, ChannelListMode, YoutubeFeatureSettings } from '../../core/settingsSchema';
@@ -26,6 +27,18 @@ const CHANNEL_MODE_OPTIONS: { mode: ChannelListMode; label: string; description:
       'Only videos from the channels you list below are allowed. Everything else on YouTube gets blocked.',
   },
 ];
+
+const INVALID_CHANNEL_MESSAGE = "That doesn't look like a channel handle, URL, or channel ID.";
+
+const CHANNEL_INPUT_STYLE: CSSProperties = {
+  flex: '1 1 220px',
+  padding: '10px 12px',
+  fontSize: 14,
+  borderRadius: 8,
+  border: '1px solid var(--nudge-outline)',
+  background: 'var(--nudge-background)',
+  color: 'var(--nudge-on-surface)',
+};
 
 function clamp(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return min;
@@ -160,6 +173,104 @@ function channelIdentifierLine(entry: ChannelEntry): string | null {
 }
 
 /**
+ * The creator-mode block: the checkbox, and (while it is on) the optional field for the
+ * user's own channel. `myChannel` is kept when the box is switched off so turning it back
+ * on restores it; the field is merely hidden. Saving goes through the same `onChange` as
+ * every other edit, so the worker's Commitment Lock gate sees it like any other weakening.
+ */
+function CreatorModeSection({
+  creatorMode,
+  myChannel,
+  onCreatorMode,
+  onMyChannel,
+}: {
+  creatorMode: boolean;
+  myChannel: ChannelEntry | null;
+  onCreatorMode: (next: boolean) => void;
+  onMyChannel: (next: ChannelEntry | null) => void;
+}) {
+  const [input, setInput] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const identifierLine = myChannel === null ? null : channelIdentifierLine(myChannel);
+
+  function handleSave() {
+    const entry = parseChannelInput(input);
+    if (entry === null) {
+      setError(INVALID_CHANNEL_MESSAGE);
+      return;
+    }
+    setError(null);
+    setInput('');
+    onMyChannel(entry);
+  }
+
+  return (
+    <div style={{ marginTop: 18, borderTop: '1px solid var(--nudge-surface-variant)', paddingTop: 14 }}>
+      <Toggle checked={creatorMode} onChange={onCreatorMode} label="Allow my channel and YouTube Studio" />
+      <p style={{ margin: '6px 0 0 30px', fontSize: 12, color: 'var(--nudge-on-surface-variant)' }}>
+        Keeps YouTube Studio and uploading open while YouTube is blocked or limited, and lets
+        videos from your own channel play. Studio time does not count toward your daily limit.
+      </p>
+
+      {creatorMode && (
+        <div style={{ margin: '12px 0 0 30px' }}>
+          {myChannel === null ? (
+            <>
+              <label
+                htmlFor="nudge-my-channel"
+                style={{ display: 'block', marginBottom: 6, fontSize: 13, fontWeight: 600 }}
+              >
+                Your channel (optional)
+              </label>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <input
+                  id="nudge-my-channel"
+                  type="text"
+                  value={input}
+                  placeholder="@handle, channel URL or UC… id"
+                  onChange={(e) => {
+                    setInput(e.target.value);
+                    setError(null);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleSave();
+                  }}
+                  style={CHANNEL_INPUT_STYLE}
+                />
+                <Button onClick={handleSave}>Save channel</Button>
+              </div>
+              {error && (
+                <p style={{ margin: '8px 0 0', fontSize: 13, color: 'var(--nudge-danger)' }}>{error}</p>
+              )}
+            </>
+          ) : (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+                <span style={{ fontSize: 13, fontWeight: 600 }}>Your channel</span>
+                <span style={{ fontSize: 14 }}>{myChannel.displayName}</span>
+                {identifierLine !== null && (
+                  <span style={{ fontSize: 12, color: 'var(--nudge-on-surface-variant)', wordBreak: 'break-all' }}>
+                    {identifierLine}
+                  </span>
+                )}
+              </div>
+              <Button
+                variant="muted"
+                onClick={() => onMyChannel(null)}
+                aria-label="Remove my channel"
+                style={{ padding: '6px 12px', fontSize: 13, flexShrink: 0 }}
+              >
+                Remove
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
  * The YouTube channel allowlist/blocklist block of the youtube.com rule's features —
  * moved out of the old standalone YoutubePanel tab (ext-13 §5) into a component owned by
  * `RuleEditor`, since a channel list is a per-site-rule setting like everything else now.
@@ -189,7 +300,7 @@ export function ChannelListEditor({
   function handleAddChannel() {
     const entry = parseChannelInput(channelInput);
     if (entry === null) {
-      setChannelInputError("That doesn't look like a channel handle, URL, or channel ID.");
+      setChannelInputError(INVALID_CHANNEL_MESSAGE);
       return;
     }
     setChannelInputError(null);
@@ -304,15 +415,7 @@ export function ChannelListEditor({
               onKeyDown={(e) => {
                 if (e.key === 'Enter') handleAddChannel();
               }}
-              style={{
-                flex: '1 1 220px',
-                padding: '10px 12px',
-                fontSize: 14,
-                borderRadius: 8,
-                border: '1px solid var(--nudge-outline)',
-                background: 'var(--nudge-background)',
-                color: 'var(--nudge-on-surface)',
-              }}
+              style={CHANNEL_INPUT_STYLE}
             />
             <Button onClick={handleAddChannel}>Add channel</Button>
           </div>
@@ -383,6 +486,13 @@ export function ChannelListEditor({
           )}
         </>
       )}
+
+      <CreatorModeSection
+        creatorMode={youtube.creatorMode}
+        myChannel={youtube.myChannel}
+        onCreatorMode={(creatorMode) => patch({ creatorMode })}
+        onMyChannel={(myChannel) => patch({ myChannel })}
+      />
 
       <div style={{ marginTop: 18, borderTop: '1px solid var(--nudge-surface-variant)', paddingTop: 14 }}>
         <Toggle

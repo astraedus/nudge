@@ -229,6 +229,17 @@ function isYoutubeFeatureWeakened(
   if (newYt.channelDelaySeconds < oldYt.channelDelaySeconds) return true;
   if (oldYt.disableAutoplay && !newYt.disableAutoplay) return true;
 
+  // Creator mode opens Studio and the user's own channel while YouTube is blocked, so turning
+  // it ON is a weakening and turning it OFF is free. A new own channel while it is on is the
+  // same as adding a whitelist entry; clearing it is free. An entry that only LEARNED its
+  // missing identifier (`core/channels.enrichEntries`) still matches the old one, so it never
+  // trips the lock.
+  if (!oldYt.creatorMode && newYt.creatorMode) return true;
+  if (newYt.creatorMode && newYt.myChannel !== null) {
+    const previous = oldYt.creatorMode ? oldYt.myChannel : null;
+    if (previous === null || !channelMatches(previous, newYt.myChannel)) return true;
+  }
+
   // Only judge the list against the mode that is now in force; a mode CHANGE is already
   // covered above, and re-judging the list under the old mode would double-gate it.
   if (newYt.channelMode === 'BLACKLIST') {

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { isWeakening } from '../../src/core/strictMode';
 import type { GateSetting, NudgeSettings, SiteRule } from '../../src/core/settingsSchema';
-import type { ChannelEntry } from '../../src/core/settingsSchema';
+import type { ChannelEntry, YoutubeFeatureSettings } from '../../src/core/settingsSchema';
 import { featuresWith, scheduleOverride, settings, siteRule } from '../helpers/rules';
 
 /**
@@ -344,6 +344,60 @@ describe('weakening: the YouTube channel lists cut in OPPOSITE directions', () =
       features: featuresWith('youtube', { youtube: { disableAutoplay: false } }),
     });
     expect(isWeakening(before, after)).toBe(true);
+  });
+});
+
+describe('weakening: creator mode (schema v5)', () => {
+  const mine = { channelId: null, handle: 'mychannel', displayName: '@mychannel', addedAt: 0 };
+  const other = { channelId: null, handle: 'someoneelse', displayName: '@someoneelse', addedAt: 0 };
+  const yt = (youtube: Partial<YoutubeFeatureSettings>) =>
+    withRule({ mode: 'HARD_BLOCK', features: featuresWith('youtube', { youtube }) });
+
+  it('turning creator mode ON is weakening: it opens Studio while YouTube is blocked', () => {
+    expect(isWeakening(yt({ creatorMode: false }), yt({ creatorMode: true }))).toBe(true);
+  });
+
+  it('turning creator mode OFF is free', () => {
+    expect(
+      isWeakening(yt({ creatorMode: true, myChannel: mine }), yt({ creatorMode: false, myChannel: mine })),
+    ).toBe(false);
+  });
+
+  it('setting your own channel while creator mode is on is weakening (it lets that channel play)', () => {
+    expect(
+      isWeakening(yt({ creatorMode: true, myChannel: null }), yt({ creatorMode: true, myChannel: mine })),
+    ).toBe(true);
+  });
+
+  it('swapping your own channel for a different one is weakening', () => {
+    expect(
+      isWeakening(yt({ creatorMode: true, myChannel: mine }), yt({ creatorMode: true, myChannel: other })),
+    ).toBe(true);
+  });
+
+  it('clearing your own channel is free', () => {
+    expect(
+      isWeakening(yt({ creatorMode: true, myChannel: mine }), yt({ creatorMode: true, myChannel: null })),
+    ).toBe(false);
+  });
+
+  it('your own channel learning its channel id is not weakening (enrichment)', () => {
+    const enriched = { ...mine, channelId: 'UCmine0000000000000000000' };
+    expect(
+      isWeakening(yt({ creatorMode: true, myChannel: mine }), yt({ creatorMode: true, myChannel: enriched })),
+    ).toBe(false);
+  });
+
+  it('a channel kept while creator mode was off counts as new when it is turned back on', () => {
+    expect(
+      isWeakening(yt({ creatorMode: false, myChannel: mine }), yt({ creatorMode: true, myChannel: mine })),
+    ).toBe(true);
+  });
+
+  it('editing your own channel while creator mode is off is free (it does nothing)', () => {
+    expect(
+      isWeakening(yt({ creatorMode: false, myChannel: mine }), yt({ creatorMode: false, myChannel: other })),
+    ).toBe(false);
   });
 });
 

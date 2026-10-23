@@ -37,6 +37,7 @@ import { localDayKey } from '../core/scheduleEvaluator';
 import { addActiveSeconds, recordBlocked, recordWalkedAway } from '../core/stats';
 import { crossesLimit, tightestGateMinutes, tightestLimit } from '../core/budgets';
 import { surfaceKey } from '../core/surfaceKeys';
+import { isCreatorExemptUrl } from '../core/youtubeAccess';
 import {
   loadSettings,
   loadTrackerState,
@@ -132,6 +133,13 @@ export async function accountAndSwitch(
   // could never fire, however long you sat there (live QA 2026-09-20). With no rule
   // covering the host this is the host itself, so un-ruled sites track exactly as before.
   const settings = await loadSettings();
+
+  // Creator mode: time in YouTube Studio (or on a route to it) is work, not watching, so it
+  // never spends the YouTube budget. Without this, an hour of editing would lock the user out
+  // of the very videos their limit allows, and the crossing below would then push the Studio
+  // tab itself to the block page. Judged on the URL the interval was spent ON.
+  if (state.url !== null && isCreatorExemptUrl(settings.rules, state.url)) return;
+
   const usageKey = usageKeyForHost(settings.rules, domain);
 
   const previousSiteMs = await todayUsageMs(usageKey, at);
@@ -219,7 +227,9 @@ async function enforceBudget(step: AccountingStep, now: Date): Promise<void> {
 
   if (siteCrossed) {
     // The site redirect already covers every tab on the domain, gate surfaces included.
-    await redirectOpenTabs(step.domain);
+    // Creator-mode pages are the one exception: DNR keeps them open past a spent limit, so
+    // pushing them to the block page would only bounce the user out of Studio mid-edit.
+    await redirectOpenTabs(step.domain, (url) => !isCreatorExemptUrl(settings.rules, url));
   } else {
     await redirectOpenTabs(
       step.domain,
