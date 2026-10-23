@@ -247,7 +247,22 @@ export interface MediaHold {
   /** Re-pause right now — for callers that already have a periodic pass. */
   repause: () => void;
   /** Stop holding. MUST be called on overlay teardown or media can never play again. */
-  release: () => void;
+  release: (options: MediaReleaseOptions) => void;
+}
+
+/** How a hold ends. */
+export interface MediaReleaseOptions {
+  /**
+   * Play again whatever the hold stopped: media that was playing when the hold began, or
+   * that tried to start while it stood. True when the hold ends because the page was CLEARED
+   * (a pause completed, the channel turned out to be allowed); false when the user is
+   * leaving (a bail, a navigation away, the script stopping).
+   *
+   * REQUIRED, with no default, because both answers are wrong somewhere: never resuming left
+   * an allowed video sitting paused at 0:00 after the gate cleared (live QA, 2026-10-23), and
+   * always resuming would start a video the user just said "I changed my mind" about.
+   */
+  resume: boolean;
 }
 
 /**
@@ -277,6 +292,17 @@ export function holdMediaPaused(doc: Document): MediaHold {
    * silently un-muting a video the user had muted themselves would be its own small bug.
    */
   const previouslyMuted = new WeakMap<HTMLMediaElement, boolean>();
+  /** Media the hold kept from playing, so a release that clears the page can resume it. */
+  const stopped = new Set<HTMLMediaElement>();
+
+  for (const element of Array.from(doc.querySelectorAll('video, audio'))) {
+    const media = element as HTMLMediaElement;
+    try {
+      if (media.paused === false) stopped.add(media);
+    } catch {
+      // A player that cannot report its state is simply not resumed.
+    }
+  }
 
   const muteAll = (): void => {
     for (const element of Array.from(doc.querySelectorAll('video, audio'))) {
@@ -300,6 +326,7 @@ export function holdMediaPaused(doc: Document): MediaHold {
     if (target === null || typeof target.pause !== 'function') return;
     try {
       const media = target as HTMLMediaElement;
+      stopped.add(media);
       if (!previouslyMuted.has(media)) previouslyMuted.set(media, media.muted === true);
       media.muted = true;
       target.pause();
@@ -315,7 +342,7 @@ export function holdMediaPaused(doc: Document): MediaHold {
 
   return {
     repause,
-    release: () => {
+    release: ({ resume }) => {
       doc.removeEventListener('play', onPlay, true);
       doc.removeEventListener('playing', onPlay, true);
       // Give each element back the muted state it had BEFORE the overlay, not a blanket
@@ -330,6 +357,22 @@ export function holdMediaPaused(doc: Document): MediaHold {
           // Nothing to do; the page is already usable again.
         }
       }
+      // Muted state first, so a resumed video comes back at the volume the user left it.
+      if (resume) {
+        for (const media of stopped) {
+          // A player YouTube replaced while the hold stood is gone; its successor fired its
+          // own `play` and is in the set too.
+          if (!media.isConnected) continue;
+          try {
+            const started = media.play() as Promise<void> | undefined;
+            // Autoplay policy can refuse; the user still has the player's own button.
+            started?.catch(() => {});
+          } catch {
+            // jsdom and some embeds throw on play(); nothing further to do.
+          }
+        }
+      }
+      stopped.clear();
     },
   };
 }

@@ -51,6 +51,7 @@
  * surfaces for the grant window, which is the documented per-origin semantics.
  */
 
+import { BLOCK_PAGE_PATH, blockPageUrl } from '../core/blockPage';
 import { gateAppliesNow, siteRuleAppliesNow } from '../core/applies';
 import {
   extractDomain,
@@ -122,7 +123,7 @@ function blockedPageSubstitution(): string {
   // `target` is deliberately LAST and unencoded: the original URL may contain '?' and '&',
   // so the block page reads everything after the first "?target=" rather than parsing
   // query params. (regexSubstitution cannot URL-encode.)
-  return `${chrome.runtime.getURL('blocked.html')}?target=\\0`;
+  return blockPageUrl(chrome.runtime.getURL(BLOCK_PAGE_PATH), '\\0');
 }
 
 function redirectAction(): chrome.declarativeNetRequest.RuleAction {
@@ -399,7 +400,7 @@ export async function redirectOpenTabs(
 ): Promise<void> {
   const base = normalizeToBaseDomain(domain);
   const tabs = await chrome.tabs.query({ url: ['http://*/*', 'https://*/*'] });
-  const blockedUrl = chrome.runtime.getURL('blocked.html');
+  const blockedUrl = chrome.runtime.getURL(BLOCK_PAGE_PATH);
   await Promise.all(
     tabs.map(async (tab) => {
       if (tab.id === undefined || tab.url === undefined) return;
@@ -410,7 +411,7 @@ export async function redirectOpenTabs(
       if (host === null || !hostMatchesRuleDomain(host, base)) return;
       if (!matchesUrl(tab.url)) return;
       try {
-        await chrome.tabs.update(tab.id, { url: `${blockedUrl}?target=${tab.url}` });
+        await chrome.tabs.update(tab.id, { url: blockPageUrl(blockedUrl, tab.url) });
       } catch {
         // Tab closed or is otherwise not updatable — nothing to do.
       }

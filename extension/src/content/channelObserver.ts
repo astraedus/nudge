@@ -31,7 +31,7 @@
 
 import type { ChannelObservation } from '../core/channels';
 import { send } from '../ui/rpc';
-import { confirmedWatchChannel, type ChannelConfig, type WatchPageOptions } from './channelFilter';
+import { confirmedPageChannel, type ChannelConfig, type WatchPageOptions } from './channelFilter';
 
 export interface ChannelObserver {
   /**
@@ -94,7 +94,7 @@ export function createChannelObserver(report: ReportObservation = defaultReport)
 
   return {
     observe(doc: Document, config: ChannelConfig, options: WatchPageOptions = {}): void {
-      const detected = confirmedWatchChannel(doc, config, options);
+      const detected = confirmedPageChannel(doc, config, options);
       if (detected === null) return;
 
       const observation: ChannelObservation = {

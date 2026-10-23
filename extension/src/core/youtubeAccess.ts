@@ -45,7 +45,8 @@ export const SAFE_CHANNEL_IDENTIFIER = /^[A-Za-z0-9_.-]+$/;
  * `/live/<id>` is a watch page under another name (live QA: it answers 200 with a canonical
  * of `/watch?v=<id>`), so leaving it out redirected a whitelisted channel's live stream.
  */
-export const WATCH_PATHS: readonly string[] = ['/watch', '/live/[A-Za-z0-9_-]+'];
+export const LIVE_VIDEO_PATH = '/live/[A-Za-z0-9_-]+';
+export const WATCH_PATHS: readonly string[] = ['/watch', LIVE_VIDEO_PATH];
 
 /**
  * A playlist page lists videos from any channel, so it is opened wholesale like `/watch`:

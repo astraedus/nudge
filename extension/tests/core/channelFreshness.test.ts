@@ -25,6 +25,7 @@ function input(overrides: Partial<FreshnessInput> = {}): FreshnessInput {
   return {
     videoId: 'newvideo001',
     inlineVideoId: 'oldvideo000',
+    domVideoId: null,
     detectedKey: OTHER,
     previousKey: ALLOWED,
     msSinceNav: 0,
@@ -84,13 +85,86 @@ describe('right after navigating to a different video', () => {
     );
   });
 
-  it('stops waiting when nothing can be identified, leaving the fail-open to handle it', () => {
-    // Detecting NOTHING is already safe to act on: the caller's unknown-channel path allows
-    // the video through without an interstitial and withholds colour. Waiting here would add
-    // latency without changing any outcome.
+  it('keeps waiting when nothing is identified yet, instead of calling it unknowable', () => {
+    // CONTRACT CHANGE (live QA, 2026-10-23). The old test here said detecting nothing was
+    // "already safe to act on" because the unknown-channel path fails OPEN. That premise is
+    // false since v0.2: on a site in a BlockMode the unknown path fails CLOSED, so acting on
+    // a byline that simply had not rendered yet put "couldn't identify this video's channel"
+    // over a video from an ALLOWED channel the user had just clicked, and it never played.
+    // Inside the window, "nothing yet" is a page catching up, not an answer.
     expect(channelFreshness(input({ detectedKey: null, previousKey: ALLOWED }))).toBe(
-      'CONFIRMED',
+      'SETTLING',
     );
+    expect(channelFreshness(input({ detectedKey: null, previousKey: null }))).toBe('SETTLING');
+  });
+
+  it('accepts that nothing can be identified once the window has elapsed', () => {
+    // Then the caller's unknown-channel path (fail to the site default) is the honest answer.
+    expect(
+      channelFreshness(input({ detectedKey: null, previousKey: null, msSinceNav: SETTLE_MS })),
+    ).toBe('CONFIRMED');
+  });
+
+  it('acts on a cold load with no hop at all, where there is no window to wait out', () => {
+    // The controller passes an infinite msSinceNav before the first navigation.
+    expect(
+      channelFreshness(
+        input({ detectedKey: null, previousKey: null, msSinceNav: Number.POSITIVE_INFINITY }),
+      ),
+    ).toBe('CONFIRMED');
+  });
+});
+
+describe('the player says which video it is showing', () => {
+  /**
+   * Live hop timing (2026-10-23): the URL's `v` changes first, then ~1.6-2.3s later
+   * `ytd-watch-flexy[video-id]` and the owner byline update in the SAME render. So a player
+   * id that matches the URL proves the byline is fresh, and one that does not proves it is
+   * stale, whatever channel it happens to name.
+   */
+  it('acts immediately when the player declares this video and a channel was found', () => {
+    expect(
+      channelFreshness(
+        input({ domVideoId: 'newvideo001', detectedKey: ALLOWED, previousKey: ALLOWED }),
+      ),
+    ).toBe('CONFIRMED');
+  });
+
+  it('ends the same-channel wait without the backstop, for colour too', () => {
+    // Before this, two videos by one channel could only be told apart by waiting it out.
+    const sameChannel = input({
+      domVideoId: 'newvideo001',
+      detectedKey: ALLOWED,
+      previousKey: ALLOWED,
+      msSinceNav: 50,
+    });
+    expect(channelFreshness({ ...sameChannel, settleMs: SETTLE_COLOR_MS })).toBe('CONFIRMED');
+  });
+
+  it('keeps waiting while the player still declares the previous video', () => {
+    // Even though the byline names a channel that differs from before: a different channel
+    // read off a player still showing another video is not evidence of anything.
+    expect(
+      channelFreshness(
+        input({ domVideoId: 'oldvideo000', detectedKey: OTHER, previousKey: ALLOWED }),
+      ),
+    ).toBe('SETTLING');
+  });
+
+  it('stops waiting on a stale player once the window has elapsed', () => {
+    expect(
+      channelFreshness(
+        input({ domVideoId: 'oldvideo000', detectedKey: OTHER, msSinceNav: SETTLE_MS }),
+      ),
+    ).toBe('CONFIRMED');
+  });
+
+  it('is not fooled by a matching player with nothing identified', () => {
+    // The player can re-render a beat before its byline; a matching id with no channel is
+    // still a page catching up.
+    expect(
+      channelFreshness(input({ domVideoId: 'newvideo001', detectedKey: null, previousKey: null })),
+    ).toBe('SETTLING');
   });
 });
 

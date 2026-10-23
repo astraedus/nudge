@@ -52,7 +52,12 @@
 import {
   CHANNEL_ELEMENTS,
   CHANNEL_NAME_NOISE,
+  PAGE_MANAGER_SELECTOR,
   VIDEO_RENDERER_SELECTOR,
+  VISIBLE_WATCH_PLAYER_SELECTOR,
+  WATCH_OWNER_SCOPES,
+  WATCH_PLAYER_SELECTOR,
+  WATCH_PLAYER_VIDEO_ID_ATTRIBUTE,
 } from './selectors';
 
 /** What this module knows about a channel. Any field may be unavailable on a given page. */
@@ -489,14 +494,14 @@ export function assembleChannel(
   return assembled.displayName === null ? null : assembled;
 }
 
-/** The video id a watch/shorts URL refers to, or null when the URL names no video. */
+/** The video id a watch, `/live/` or Shorts URL refers to, or null when the URL names none. */
 export function videoIdFromUrl(url: string): string | null {
   try {
     const parsed = new URL(url);
     const fromQuery = parsed.searchParams.get('v');
     if (fromQuery !== null && fromQuery !== '') return fromQuery;
-    const shorts = /^\/shorts\/([^/?#]+)/.exec(parsed.pathname);
-    return shorts?.[1] ?? null;
+    const path = /^\/(?:shorts|live)\/([^/?#]+)/.exec(parsed.pathname);
+    return path?.[1] ?? null;
   } catch {
     return null;
   }
@@ -570,11 +575,75 @@ export function detectWatchChannel(
   if (inlineTierIsCurrent(initialDataVideoId(doc))) {
     observations.push(channelFromInitialData(doc));
   }
-  // Always fresh: YouTube re-renders the byline on every navigation.
-  observations.push(channelFromDom(doc));
+  // The byline is fresh only when it belongs to the player showing THIS video; see
+  // `watchBylineScope`. A stale or missing scope contributes nothing.
+  const byline = watchBylineScope(doc, expectedVideoId);
+  if (byline !== null) observations.push(channelFromDom(byline));
 
   const assembled = assembleChannel(observations);
   return hasIdentifier(assembled) ? assembled : null;
+}
+
+/** The player currently on screen, or null when no watch player is visible. */
+function visibleWatchPlayer(doc: Document): Element | null {
+  try {
+    return doc.querySelector(VISIBLE_WATCH_PLAYER_SELECTOR);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The video id the visible watch player declares (`ytd-watch-flexy[video-id]`), or null.
+ *
+ * YouTube updates it in the same render as the owner byline (live hop timing, 2026-10-23),
+ * so it is what says whether the byline is describing the video in the address bar yet.
+ */
+export function watchPlayerVideoId(doc: Document): string | null {
+  const id = visibleWatchPlayer(doc)?.getAttribute(WATCH_PLAYER_VIDEO_ID_ATTRIBUTE) ?? null;
+  return id === null || id.trim() === '' ? null : id;
+}
+
+/**
+ * Where the watch page's DOM tier may look, or null when nothing on screen is trustworthy.
+ *
+ * Live DOM (2026-10-23): YouTube keeps every page it has shown alive under
+ * `ytd-page-manager`, hiding the ones out of view, so after a hop from a channel page the
+ * document holds the HIDDEN channel page and the watch player side by side. The old
+ * unscoped query read whichever came first and could stitch the channel page's id onto the
+ * video owner's handle. So:
+ *
+ *  - the visible player declares a DIFFERENT video: its byline is stale, nothing is trusted;
+ *  - the visible player has an owner byline: only that byline speaks, never the
+ *    related-videos column beside it;
+ *  - the visible player has a video id but no byline yet: still rendering, nothing yet;
+ *  - a page manager or a player exists but none is visible: we are not on a watch view;
+ *  - none of those elements exists at all (a shape we have never seen live, or a page
+ *    YouTube restructured): the whole document, which is how this tier always behaved.
+ */
+function watchBylineScope(doc: Document, expectedVideoId: string | null): ParentNode | null {
+  return safeCall<ParentNode>(() => {
+    const player = visibleWatchPlayer(doc);
+    if (player === null) {
+      const knownShape =
+        doc.querySelector(PAGE_MANAGER_SELECTOR) !== null ||
+        doc.querySelector(WATCH_PLAYER_SELECTOR) !== null;
+      return knownShape ? null : doc;
+    }
+
+    const playerVideoId = watchPlayerVideoId(doc);
+    if (expectedVideoId !== null && playerVideoId !== null && playerVideoId !== expectedVideoId) {
+      return null;
+    }
+    for (const selector of WATCH_OWNER_SCOPES) {
+      const owner = player.querySelector(selector);
+      if (owner !== null) return owner;
+    }
+    // A player that names its video is a real, rendered YouTube player whose byline simply
+    // is not there yet. One that names none is a shape we have not seen live; read it whole
+    // rather than fail detection outright.
+    return playerVideoId === null ? player : null;
+  });
 }
 
 /**
@@ -604,4 +673,102 @@ export function feedCards(root: ParentNode): Element[] {
  */
 export function inlineVideoId(doc: Document): string | null {
   return playerResponseVideoId(doc) ?? initialDataVideoId(doc);
+}
+
+/* ---------------------------------------------------------------------- channel pages */
+
+/** What a channel page's own URL says about whose page it is. */
+type ChannelPathClaim =
+  | { kind: 'handle'; handle: string }
+  | { kind: 'id'; channelId: string }
+  | { kind: 'legacy' }
+  | { kind: 'none' };
+
+function channelPathClaim(url: string): ChannelPathClaim {
+  let path: string;
+  try {
+    path = new URL(url).pathname;
+  } catch {
+    return { kind: 'none' };
+  }
+  const handle = /^\/@([^/?#]+)/.exec(path);
+  if (handle !== null) {
+    let decoded = handle[1] ?? '';
+    try {
+      decoded = decodeURIComponent(decoded);
+    } catch {
+      // Keep the raw segment; a bad escape simply fails to match the metadata.
+    }
+    return { kind: 'handle', handle: `@${decoded}` };
+  }
+  const id = /^\/channel\/([^/?#]+)/.exec(path);
+  if (id !== null) return { kind: 'id', channelId: id[1] ?? '' };
+  if (/^\/(?:c|user)\/[^/?#]+/.test(path)) return { kind: 'legacy' };
+  return { kind: 'none' };
+}
+
+/** The identity a channel page's `channelMetadataRenderer` declares, if any. */
+function channelMetadata(doc: Document): DetectedChannel | null {
+  return safeCall(() => {
+    const data = findAssignedObject(doc, 'ytInitialData');
+    if (!data) return null;
+    const renderer = findRenderer(data, 'channelMetadataRenderer');
+    if (!isRecord(renderer)) return null;
+
+    const channelId =
+      typeof renderer.externalId === 'string' && renderer.externalId !== ''
+        ? renderer.externalId
+        : null;
+    let handle: string | null = null;
+    if (typeof renderer.vanityChannelUrl === 'string') {
+      try {
+        const path = decodeURIComponent(new URL(renderer.vanityChannelUrl).pathname);
+        handle = handleFromCanonicalPath(path);
+      } catch {
+        handle = null;
+      }
+    }
+    const displayName = typeof renderer.title === 'string' ? renderer.title : null;
+    if (channelId === null && handle === null) return null;
+    return { channelId, handle, displayName };
+  });
+}
+
+/**
+ * Whose channel page this is, from the page's own `channelMetadataRenderer`, or null.
+ *
+ * Live capture (2026-10-23): a channel page's `ytInitialData.metadata.channelMetadataRenderer`
+ * carries `externalId` (the `UC…` id) and `vanityChannelUrl` (`http://www.youtube.com/@handle`),
+ * which between them are both identifiers a stored entry can hold.
+ *
+ * Inline data goes stale on an SPA hop, so the answer is only returned when it is provably
+ * about THIS page:
+ *  - `/@handle` and `/channel/UC…` pages: the metadata must agree with the URL (handles
+ *    compared case-insensitively, as YouTube resolves them);
+ *  - `/c/<name>` and `/user/<name>` pages: that name is not a handle and proves nothing, so
+ *    the metadata is trusted only when `inlineIsFresh` (no SPA hop since the page loaded);
+ *  - anything else is not a channel page.
+ */
+export function channelPageIdentity(
+  doc: Document,
+  url: string,
+  options: { inlineIsFresh: boolean },
+): DetectedChannel | null {
+  const claim = channelPathClaim(url);
+  if (claim.kind === 'none') return null;
+
+  const metadata = channelMetadata(doc);
+  if (metadata === null) return null;
+
+  switch (claim.kind) {
+    case 'handle':
+      return metadata.handle !== null &&
+        metadata.handle.toLowerCase() === claim.handle.toLowerCase()
+        ? metadata
+        : null;
+    case 'id':
+      return metadata.channelId === claim.channelId ? metadata : null;
+    case 'legacy':
+      return options.inlineIsFresh ? metadata : null;
+  }
 }

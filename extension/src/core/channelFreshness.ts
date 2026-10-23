@@ -70,6 +70,14 @@ export interface FreshnessInput {
   videoId: string | null;
   /** The video id the inline page data declares, if any. */
   inlineVideoId: string | null;
+  /**
+   * The video id the visible watch player declares (`ytd-watch-flexy[video-id]`), or null
+   * when there is no such element or it declares none.
+   *
+   * REQUIRED, not optional: it is the one signal that says whether the DOM byline is fresh,
+   * and a default of null would quietly put every caller back on the old guesswork.
+   */
+  domVideoId: string | null;
   /** Identity of the channel detected right now. */
   detectedKey: string | null;
   /** Identity confirmed for the PREVIOUS video, or null if there was none. */
@@ -84,18 +92,39 @@ export interface FreshnessInput {
  *
  * CONFIRMED as soon as ANY of these hold, cheapest first:
  *  - the inline data declares the video the URL names (authoritative; a full page load)
+ *  - the visible player declares the video the URL names AND a channel was found (live QA,
+ *    2026-10-23: YouTube updates `ytd-watch-flexy[video-id]` and the owner byline in the SAME
+ *    render, ~1.6-2.3s after the URL changes, so a matching player id proves the byline
+ *    describes this video. It also ends the same-channel wait, which before this could only
+ *    end on the backstop.)
+ *
+ * SETTLING, inside the window, when the page has not caught up yet:
+ *  - nothing was identified. Right after an SPA hop that is the normal state of a page that
+ *    has not rendered its byline, NOT evidence that the channel is unknowable. Treating it
+ *    as final was the core whitelist bug (live QA, 2026-10-23): clicking a video on an
+ *    allowed channel's page put up "couldn't identify this video's channel" on a site in a
+ *    BlockMode, which fails closed, and the video never played.
+ *  - the visible player still declares a DIFFERENT video.
+ *
+ * Then the older rules:
  *  - there is no previous channel to be stale from (first view of the session)
  *  - what we detect now differs from before the nav (the byline demonstrably re-rendered)
  *  - the backstop elapsed (accept it rather than wait forever)
  */
 export function channelFreshness(input: FreshnessInput): Freshness {
-  const { videoId, inlineVideoId, detectedKey, previousKey, msSinceNav } = input;
+  const { videoId, inlineVideoId, domVideoId, detectedKey, previousKey, msSinceNav } = input;
   const settleMs = input.settleMs ?? SETTLE_MS;
+  const withinWindow = msSinceNav < settleMs;
 
   if (videoId !== null && inlineVideoId === videoId) return 'CONFIRMED';
+  if (videoId !== null && domVideoId === videoId && detectedKey !== null) return 'CONFIRMED';
+
+  if (withinWindow && detectedKey === null) return 'SETTLING';
+  if (withinWindow && domVideoId !== null && domVideoId !== videoId) return 'SETTLING';
+
   if (previousKey === null) return 'CONFIRMED';
   if (detectedKey !== previousKey) return 'CONFIRMED';
-  if (msSinceNav >= settleMs) return 'CONFIRMED';
+  if (!withinWindow) return 'CONFIRMED';
 
   return 'SETTLING';
 }
