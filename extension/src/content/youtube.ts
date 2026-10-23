@@ -63,6 +63,7 @@ import { IDLE_SITE_CONFIG } from './platformGate';
 import { observeNavigation } from './spaNav';
 import {
   HIDDEN_CLASS,
+  NUDGE_GATE_KIND_ATTR,
   NUDGE_OVERLAY_ID,
   SHORTS_FALLBACK_SURFACE,
   SHORTS_PLAYER_CONTAINERS,
@@ -711,6 +712,7 @@ export function initYoutubeContentScript(
           },
         },
       );
+      overlay.element.dataset[NUDGE_GATE_KIND_ATTR] = 'shorts';
     } else if (channelGate !== null) {
       const gatedUrl = url;
       overlay = createGateOverlay(
@@ -727,6 +729,7 @@ export function initYoutubeContentScript(
           onBail: bailFromChannelGate,
         },
       );
+      overlay.element.dataset[NUDGE_GATE_KIND_ATTR] = 'channel';
     }
 
     if (overlay !== null) overlayHost(doc).append(overlay.element);

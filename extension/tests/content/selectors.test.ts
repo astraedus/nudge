@@ -587,7 +587,7 @@ describe('the /shorts/* interstitial overlay', () => {
     vi.useRealTimers();
   });
 
-  // youtube.css styles the interstitial via `#nudge-shorts-gate.nudge-overlay`, so an
+  // youtube.css styles the interstitial via `#nudge-gate.nudge-overlay`, so an
   // overlay built with any other id would render completely unstyled — that is the exact
   // failure the migration onto the shared overlay builder (src/content/overlay.ts) could
   // have introduced.
@@ -604,7 +604,7 @@ describe('the /shorts/* interstitial overlay', () => {
       { onComplete: () => {}, onBail: () => {} },
     );
 
-    expect(NUDGE_OVERLAY_ID).toBe('nudge-shorts-gate');
+    expect(NUDGE_OVERLAY_ID).toBe('nudge-gate');
     expect(overlay.element.id).toBe(NUDGE_OVERLAY_ID);
 
     overlay.dispose();
