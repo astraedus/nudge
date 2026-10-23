@@ -5,6 +5,7 @@ import { createChannelObserver } from '../../src/content/channelObserver';
 import type { ChannelConfig } from '../../src/content/channelFilter';
 import { SETTLE_MS, channelKey } from '../../src/core/channelFreshness';
 import type { ChannelObservation } from '../../src/core/channels';
+import { channelPageHtml, LIVE_OWNER_CHANNEL_ID } from './fixtures/youtubeLiveWatch';
 import {
   REAL_WATCH_ID_INLINE_HANDLE_DOM_CHANNEL_ID,
   REAL_WATCH_ID_INLINE_HANDLE_DOM_HANDLE,
@@ -115,6 +116,70 @@ describe('reporting a confirmed channel', () => {
     createChannelObserver(report).observe(doc, config(), { url: BOTH_AXES_URL });
 
     expect(sent).toHaveLength(2);
+  });
+});
+
+describe('reporting from a channel page', () => {
+  /**
+   * A channel page is the cheapest place to learn the identifier the user never typed (a
+   * `/@handle` entry visiting its own page). Live metadata shape, 2026-10-23. The metadata
+   * goes stale on an SPA hop, so a page it does not provably describe must report nothing.
+   */
+  const CHANNEL_URL = 'https://www.youtube.com/@veritasium';
+
+  it('reports both identifiers and the name once from a cold-loaded channel page', () => {
+    const { sent, report } = recorder();
+    const doc = load(channelPageHtml());
+    const observer = createChannelObserver(report);
+
+    for (let i = 0; i < 3; i += 1) observer.observe(doc, config(), { url: CHANNEL_URL });
+
+    expect(sent).toEqual([
+      { channelId: LIVE_OWNER_CHANNEL_ID, handle: '@veritasium', displayName: 'Veritasium' },
+    ]);
+  });
+
+  it('reports nothing after a hop to a different channel whose page still carries the old metadata', () => {
+    const { sent, report } = recorder();
+    const doc = load(channelPageHtml());
+
+    createChannelObserver(report).observe(doc, config(), {
+      url: 'https://www.youtube.com/@someoneelse',
+      msSinceNav: 500,
+    });
+
+    expect(sent).toEqual([]);
+  });
+
+  it('reports nothing for a legacy /c/ page after a hop, where the URL proves nothing', () => {
+    const { sent, report } = recorder();
+    const doc = load(channelPageHtml());
+
+    createChannelObserver(report).observe(doc, config(), {
+      url: 'https://www.youtube.com/c/veritasium',
+      msSinceNav: 500,
+    });
+
+    expect(sent).toEqual([]);
+  });
+
+  it('reports nothing from a channel page while the channel lists are off', () => {
+    const { sent, report } = recorder();
+    const off = config({
+      youtube: {
+        channelMode: 'OFF',
+        channels: [],
+        channelBlockMode: 'DELAY',
+        channelDelaySeconds: 15,
+        disableAutoplay: false,
+        creatorMode: false,
+        myChannel: null,
+      },
+    });
+
+    createChannelObserver(report).observe(load(channelPageHtml()), off, { url: CHANNEL_URL });
+
+    expect(sent).toEqual([]);
   });
 });
 

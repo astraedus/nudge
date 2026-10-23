@@ -110,6 +110,15 @@ describe('pageTypeFor', () => {
     expect(pageTypeFor('https://www.youtube.com/shorts')).toBe('shorts');
   });
 
+  it('treats a /live/<id> stream as a watch page, and bare /live/ as nothing', () => {
+    // Live QA: /live/<id> answers 200 as a watch page. Calling it "other" left a live stream
+    // from a non-listed channel ungated in the SPA.
+    expect(pageTypeFor('https://www.youtube.com/live/abc123')).toBe('watch');
+    expect(pageTypeFor('https://www.youtube.com/live/abc123?feature=share')).toBe('watch');
+    expect(pageTypeFor('https://www.youtube.com/live/')).toBe('other');
+    expect(pageTypeFor('https://www.youtube.com/live')).toBe('other');
+  });
+
   it('does NOT classify a video merely titled or searched as "shorts" as Shorts', () => {
     // The precision case: "shorts" in a query string, a fragment or a longer path
     // segment is not the Shorts surface. Gating these would block ordinary videos.

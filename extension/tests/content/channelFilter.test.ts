@@ -5,8 +5,11 @@ import {
   applyChannelFilter,
   applyGrayColor,
   watchChannelVerdict,
+  watchGateState,
   type ChannelConfig,
 } from '../../src/content/channelFilter';
+import { SETTLE_MS } from '../../src/core/channelFreshness';
+import { liveWatchPage } from './fixtures/youtubeLiveWatch';
 import { CHANNEL_HIDDEN_CLASS, COLOR_CLASS } from '../../src/content/selectors';
 import type { ChannelEntry } from '../../src/core/settingsSchema';
 import {
@@ -599,5 +602,113 @@ describe('a channel the user added by @handle, on a real watch page', () => {
       { url: WATCH_URL },
     );
     expect(verdict).toEqual({ action: 'ALLOW', reason: 'listed' });
+  });
+});
+
+describe('where the watch gate stands', () => {
+  /**
+   * `settling` is its own state: the controller holds the video silently while YouTube has
+   * not yet rendered the new owner, instead of accusing a channel the user may have allowed.
+   */
+  const whitelist = withYoutube({ channelMode: 'WHITELIST', channels: [channel({ channelId: ALPHA })] });
+
+  it('has nothing to wait for while the channel lists are off', () => {
+    document.body.innerHTML = WATCH_PLAYER_RESPONSE_HTML;
+    expect(
+      watchGateState(document, withYoutube({ channelMode: 'OFF' }), { url: WATCH_URL }),
+    ).toEqual({ kind: 'off' });
+  });
+
+  it('has nothing to wait for on a page that is not a watch page', () => {
+    document.body.innerHTML = WATCH_PLAYER_RESPONSE_HTML;
+    expect(watchGateState(document, whitelist, { url: HOME_URL })).toEqual({ kind: 'off' });
+  });
+
+  it('holds fire just after navigating when nobody has been identified yet', () => {
+    document.body.innerHTML = WATCH_NOTHING_HTML;
+    expect(
+      watchGateState(document, whitelist, { url: WATCH_URL, msSinceNav: 100, previousKey: null }),
+    ).toEqual({ kind: 'settling' });
+  });
+
+  it('gives a verdict once the window has passed, even though nobody was identified', () => {
+    document.body.innerHTML = WATCH_NOTHING_HTML;
+    expect(
+      watchGateState(document, whitelist, { url: WATCH_URL, msSinceNav: SETTLE_MS + 1 }),
+    ).toMatchObject({ kind: 'decided' });
+  });
+
+  it('gives a verdict at once on a full page load whose channel is known', () => {
+    document.body.innerHTML = WATCH_PLAYER_RESPONSE_HTML;
+    expect(watchGateState(document, whitelist, { url: WATCH_URL })).toMatchObject({
+      kind: 'decided',
+      verdict: { action: 'BLOCK', reason: 'not-listed' },
+    });
+  });
+});
+
+describe('creator mode: the signed-in creator keeps their own channel on a blocked site', () => {
+  /**
+   * The site is Hard Blocked and the lists are off, but creator mode says "except my
+   * channel". Own channel plays; everyone else is still held.
+   */
+  const OWN = channel({ handle: 'mychannel', displayName: '@mychannel' });
+  const VIDEO = 'liveVideo0001';
+  const url = `https://www.youtube.com/watch?v=${VIDEO}`;
+
+  function creatorConfig(creatorMode: boolean): ChannelConfig {
+    return withYoutube(
+      { channelMode: 'OFF', channels: [], creatorMode, myChannel: OWN },
+      { siteApplies: true, siteMode: 'HARD_BLOCK' },
+    );
+  }
+
+  it('plays a video from their own channel', () => {
+    document.body.innerHTML = liveWatchPage({ videoId: VIDEO, ownerHandle: 'mychannel' });
+
+    expect(watchChannelVerdict(document, creatorConfig(true), { url })).toMatchObject({
+      action: 'ALLOW',
+    });
+  });
+
+  it("still holds someone else's video behind the site's Hard Block", () => {
+    document.body.innerHTML = liveWatchPage({ videoId: VIDEO, ownerHandle: 'veritasium' });
+
+    expect(watchChannelVerdict(document, creatorConfig(true), { url })).toMatchObject({
+      action: 'BLOCK',
+      mode: 'HARD_BLOCK',
+    });
+  });
+
+  it('gives their own channel no exception when creator mode is off', () => {
+    // Lists are OFF and creator mode is off, so no channel rule is enforced at this layer
+    // (the site rule stands in the network layer): in particular it is not an ALLOW.
+    document.body.innerHTML = liveWatchPage({ videoId: VIDEO, ownerHandle: 'mychannel' });
+
+    const verdict = watchChannelVerdict(document, creatorConfig(false), { url });
+
+    expect(verdict?.action).not.toBe('ALLOW');
+  });
+
+  it("hides another channel's card in the feed but keeps their own", () => {
+    document.body.innerHTML =
+      FEED_MULTI_CHANNEL_HTML +
+      `<ytd-rich-item-renderer data-testid="card-mine">
+         <ytd-channel-name id="channel-name"><a class="yt-formatted-string" href="/@mychannel">mine</a></ytd-channel-name>
+       </ytd-rich-item-renderer>`;
+
+    applyChannelFilter(document, creatorConfig(true));
+
+    expect(isHidden('card-alpha')).toBe(true);
+    expect(isHidden('card-bravo')).toBe(true);
+    expect(isHidden('card-mine')).toBe(false);
+  });
+
+  it('leaves the feed alone when creator mode is off and no list is on', () => {
+    document.body.innerHTML = FEED_MULTI_CHANNEL_HTML;
+
+    applyChannelFilter(document, creatorConfig(false));
+
+    expect(isHidden('card-alpha')).toBe(false);
   });
 });
