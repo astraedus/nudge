@@ -24,8 +24,8 @@ android {
         applicationId = "dev.astraedus.nudge"
         minSdk = 26
         targetSdk = 36
-        versionCode = 63
-        versionName = "1.22.2"
+        versionCode = 64
+        versionName = "1.22.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -53,6 +53,13 @@ android {
 
     kotlinOptions {
         jvmTarget = "17"
+    }
+
+    // F-Droid rejects an APK that carries Google's encrypted "Dependency metadata" signing block.
+    // Keep it in the Play bundle, drop it from the APK we publish on GitHub.
+    dependenciesInfo {
+        includeInApk = false
+        includeInBundle = true
     }
 
     buildFeatures {
