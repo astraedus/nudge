@@ -1,0 +1,1 @@
+Build change only: the GitHub APK no longer carries Google's dependency-metadata block, so Nudge can be listed on F-Droid. The app itself is unchanged.

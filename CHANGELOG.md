@@ -4,6 +4,11 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+## [1.22.3] - 2026-10-24
+
+### Changed
+- The APK attached to GitHub releases no longer carries Google's encrypted dependency-metadata block, so Nudge can be listed on F-Droid. The app itself is unchanged. (#93)
+
 ## [1.22.2] - 2026-10-23
 
 ### Fixed
