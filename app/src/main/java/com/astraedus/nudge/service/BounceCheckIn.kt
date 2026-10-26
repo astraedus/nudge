@@ -80,12 +80,17 @@ class BounceCheckIn(
         alert?.let(notify)
     }
 
-    /** Nudge just stopped [packageName]: an overlay went up for it, or it was auto-kicked. */
-    fun onWall(packageName: String) {
+    /**
+     * Nudge just stopped [packageName]: an overlay went up for it, or it was auto-kicked.
+     *
+     * @param siteDomain the blocked site, for a website block (the package is then the browser).
+     *   Null for an app wall.
+     */
+    fun onWall(packageName: String, siteDomain: String? = null) {
         if (!enabled) return
         val alert = synchronized(this) {
             if (!enabled) return
-            detector.onWall(packageName, clock())
+            detector.onWall(packageName, clock(), siteDomain)
         }
         alert?.let(notify)
     }

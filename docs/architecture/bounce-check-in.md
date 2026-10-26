@@ -23,11 +23,13 @@ All of it lives in `domain/bounce/BounceDetector.kt`, pure Kotlin, every thresho
 | **Armed** | The first wall arms a streak. Nothing is tracked before it. |
 | **Window** | `WINDOW_MS` = 5 min, measured from the MOST RECENT wall, so a streak that keeps hitting walls keeps being tracked. When it passes with no new wall the streak is dropped, all of it. |
 | **App opened** | A classifier `ForegroundSignal.AppWindow` while armed. The walled app counts (the user opened it). Each package counts once. |
-| **Fire** | Inside one streak: walls ≥ `MIN_WALLS` (2) AND distinct apps ≥ `MIN_APPS` (4). |
-| **Cooldown** | `COOLDOWN_MS` = 30 min after a fire. Nothing is fed or held during it; the next wall after it starts fresh. |
+| **Site** | A blocked website, carried on its own identity (`web:<normalised domain>`, `WebSessionKey`), so three different sites in one browser are three walls, not one browser wall. `www.`/`m.` spellings are one site. |
+| **Fire** | Inside one streak: walls ≥ `MIN_WALLS` (2) AND distinct apps ≥ `MIN_APPS` (4), OR distinct blocked sites ≥ `MIN_SITES` (3). The app rule is checked first, so a mixed streak reads as apps. |
+| **Cooldown** | `COOLDOWN_MS` = 30 min after a fire, shared by both rules. Nothing is fed or held during it; the next wall after it starts fresh. |
 
 The notification: title **"Bro. wtf."**, body *"You've bounced through N apps in M minutes. Wanna
-take a break?"*. N is the distinct app count. M is first wall to fire, rounded UP (a 40-second bounce
+take a break?"* — or **N sites** when the streak fired on the site rule. N is the distinct app (or
+site) count. M is first wall to fire, rounded UP (a 40-second bounce
 reads "1 minute", never "0 minutes"); singular "minute" at 1. The copy is in `BounceAlert` so the
 numbers in it are unit-tested.
 
@@ -40,6 +42,10 @@ fire this on someone sitting still with two apps in the count. So a wall for the
 previous wall counts only if the user has demonstrably been elsewhere in between: another app
 (`onAppOpened`) or Home (`onWentHome`). A wall for a different package always counts. A re-launch for
 the same app still slides the window: the wall is still in their face.
+
+A **site** wall follows the same rule one level down: the same site re-blocked while the user has not
+left the browser is one wall, a different site is always a new one, and the browser is still what
+decides whether the user "left". Navigating from one blocked site to another is not leaving Chrome.
 
 ### What is NOT an app
 
@@ -62,8 +68,8 @@ failure direction is what makes a short list acceptable here and nowhere near en
 | Feed | Site | Why there |
 |---|---|---|
 | Apps / Home | `applyForegroundSignal` → `bounceCheckIn.onForegroundSignal(signal)` | The one place every classified signal passes, above every early return. The fourth consumer next to the launch guard, the sitting and the tab cover. |
-| Overlay walls | `launchBlockOverlay`, after the gate's refusal return, before `startActivity` | Every overlay in the service passes through here once per ALLOWED launch. A dropped launch is no wall the user saw. Reports `targetPackage` (the browser, for a website block: the app they were in). |
-| Kick walls | `AutoKickExecutor.kick` → `onKicked(key)` | The single kick path for both triggers. A `web:<domain>` key is mapped back to the browser the user was in. |
+| Overlay walls | `launchBlockOverlay`, after the gate's refusal return, before `startActivity` | Every overlay in the service passes through here once per ALLOWED launch. A dropped launch is no wall the user saw. Reports `targetPackage` (the browser, for a website block: the app they were in) plus `webDomain` when it is a website. |
+| Kick walls | `AutoKickExecutor.kick` → `onKicked(key)` | The single kick path for both triggers. A `web:<domain>` key is mapped back to the browser and its domain. |
 | Reset | `onGlobalDisabled` | Nudge off behaves as if uninstalled, a half-finished streak included. |
 
 Pinned by `BounceCheckInWiringContractTest` (source level: the four sites above, one wall report per
@@ -75,7 +81,10 @@ launch, after the gate, and the event path never reads the preference).
   collector on `NudgePreferences.bounceCheckInEnabled` (with `distinctUntilChanged`, #63). Off, both
   feeds return on their first line. No DataStore read on the event path, ever.
 - **On, not armed:** one volatile read plus one uncontended lock and a null check per event.
-- **On, armed:** a constant-time update of a `LinkedHashSet` bounded at `MAX_TRACKED_APPS` (64).
+- **On, armed:** a constant-time update of a `LinkedHashSet` bounded at `MAX_TRACKED_APPS` (64), plus
+  the site set bounded at `MAX_TRACKED_SITES` (64).
+- **No browsing history:** blocked domains live in one in-memory set for the length of a streak. They
+  are never persisted, logged, exported or sent anywhere; a process death forgets them.
 - **No** timer, alarm, WorkManager, wakelock, polling or I/O. Lapsing is checked lazily on the next
   event (a lapsed streak that nothing touches costs nothing and fires nothing). Time is
   `SystemClock.elapsedRealtime()`, read on an event already being handled, so a wall-clock change can
@@ -102,7 +111,7 @@ refused on some OEM builds) is swallowed: the accessibility thread must never di
 ## Settings
 
 "Check-ins" section, one row (`ui/screens/settings/BounceCheckInRow.kt`): **"Bro. wtf."**, *"Get a
-nudge when you bounce between apps after hitting a wall."*, default OFF. Not a protection setting, so
+nudge when you bounce between apps or blocked sites after hitting a wall."*, default OFF. Not a protection setting, so
 Strict Mode does not gate it either way. Turning it ON on Android 13+ without the notification grant
 asks for `POST_NOTIFICATIONS` there and then. While it is ON and notifications cannot be posted
 (app notifications off, or this channel blocked), the subtitle says so in the error colour and a tap
@@ -120,10 +129,14 @@ export settings set is pinned by `ImportedSettingsWriteContractTest`).
   counterfactual on the same config); the same app twice counts once; exclusions neither count nor
   count as leaving; window expiry disarms and leaves nothing behind; the window edge; the sliding
   window; a backwards clock; cooldown suppresses then resets; `reset`; the bounded set; config
-  validation; the copy.
+  validation; the copy. Sites: three distinct sites in one browser fire on the third, two do not;
+  the same site re-blocked is one wall; `www.`/`m.` spellings are one site; Home-and-back to the same
+  site is a wall but not a new site; site and app counts never add up; a mixed streak still reads as
+  apps; the one shared cooldown; the site streak lapses with the window; the site copy.
 - `BounceCheckInTest` (L1): the owner's sequence through real `ForegroundSignal`s; the toggle-OFF path
   feeds nothing; default off; switch-off mid-streak drops it; only `AppWindow` counts; cooldown across
-  the adapter; the master-toggle reset; the auto-kick reports its key.
+  the adapter; the master-toggle reset; the auto-kick reports its key; three blocked sites through
+  the adapter post one site check-in.
 - `BounceCheckInWiringContractTest` (source level, the residue no value test can see).
 - `BounceCheckInRowCopyTest`: the row is never ON-and-silent.
 - **L6 (device), 2026-10-05, v1.21.0 vc60 release APK on the bench Pixel 3:** YouTube DELAY wall, Home, three apps, YouTube wall posted `apps=4 minutes=1` (notification id 3 on `nudge_bounce_checkins` with the exact copy); an immediate repeat inside the cooldown posted nothing; switched off, the same sequence posted nothing; switched back on, it fired again; the 1.20.0 redirect bubble and picker still worked; no crashes. Screenshots `~/Pictures/screenshots/nudge-browtf-*.png`.

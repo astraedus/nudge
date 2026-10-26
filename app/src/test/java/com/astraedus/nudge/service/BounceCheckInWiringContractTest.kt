@@ -66,15 +66,19 @@ class BounceCheckInWiringContractTest {
     fun `an overlay launch reports a wall only after the gate allowed it`() {
         val body = bodyOf("private fun launchBlockOverlay(")
         val refusal = body.indexOf("decision != BlockLaunchGate.Decision.LAUNCH")
-        val wall = body.indexOf("bounceCheckIn.onWall(targetPackage)")
+        val wall = body.indexOf("bounceCheckIn.onWall(targetPackage, webDomain)")
         val start = body.indexOf("startActivity(overlayIntent)")
         assertTrue("the gate refusal must be present", refusal >= 0)
-        assertTrue("launchBlockOverlay must report the wall", wall >= 0)
+        assertTrue("launchBlockOverlay must report the wall, with its site", wall >= 0)
         assertTrue("the wall is reported after the refusal returns", wall > refusal)
         assertTrue("and before the activity starts, on the same path", wall < start)
         assertTrue(
             "exactly one wall report per launch",
             Regex("""bounceCheckIn\.onWall\(""").findAll(body).count() == 1
+        )
+        assertTrue(
+            "the site must reach the check-in, or three blocked sites are one browser wall",
+            body.contains("webDomain")
         )
     }
 
@@ -84,7 +88,10 @@ class BounceCheckInWiringContractTest {
         val wiring = code.substringAfter("autoKickExecutor = AutoKickExecutor(")
             .substringBefore("autoKickTimeHandler = AutoKickTimeHandler(")
         assertTrue(wiring.contains("onKicked ="))
-        assertTrue(wiring.contains("bounceCheckIn::onWall"))
+        assertTrue(
+            "a web kick must report its site too, not just the browser",
+            wiring.contains("bounceCheckIn.onWall(it, WebSessionKey.domainOf(key))")
+        )
 
         val executor = stripComments(read("main/java/com/astraedus/nudge/service/AutoKickExecutor.kt"))
         val kick = executor.substringAfter("fun kick(")

@@ -50,7 +50,7 @@ internal fun bounceCheckInRowCopy(enabled: Boolean, canPostNotifications: Boolea
 
 internal const val BOUNCE_ROW_TITLE = "Bro. wtf."
 internal const val BOUNCE_ROW_SUBTITLE =
-    "Get a nudge when you bounce between apps after hitting a wall."
+    "Get a nudge when you bounce between apps or blocked sites after hitting a wall."
 internal const val BOUNCE_ROW_BLOCKED_SUBTITLE =
     "Notifications are off for Nudge, so these can't reach you. Tap to turn them on."
 
