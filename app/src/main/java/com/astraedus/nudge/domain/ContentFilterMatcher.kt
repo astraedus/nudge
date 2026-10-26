@@ -331,16 +331,17 @@ object ContentFilterMatcher {
      * subdomains.
      *
      * [allowlist] is the correction path, and it is the ONE place that list reaches beyond strict
-     * keyword matching. It does two narrow things here, never more:
-     * - a site entry cancels a BLOCK of that site ("allow this site" beats "block this site");
-     * - a blocked word is excused only when its whole occurrence sits inside an allow entry
-     *   (a phrase, or the allowed host itself: "sex" in "sussex.ac.uk").
+     * keyword matching: a page on an allowed host skips this layer entirely (paths and searches
+     * included), and a blocked word whose every occurrence sits inside an allowed phrase is excused.
+     * Without that, a user word that is too broad would have no fix from inside the app — blocking
+     * `sex` and allowing `sussex.ac.uk` has to make that university usable, including its
+     * sex-education pages.
      *
-     * It deliberately does NOT switch the word layer off for an allowed host. Allowing
-     * `google.com` to quiet strict-keyword noise must not make a `crypto` block inert in every
-     * Google search: that is one free entry buying unlimited, invisible scope over the feature's
-     * headline case, and removing it again is gated (#105 review). The curated domains and
-     * [DEFAULT_KEYWORDS] stay out of the allow list's reach either way.
+     * That reach is bounded in two ways. It never touches the curated domain list or
+     * [DEFAULT_KEYWORDS], so the built-in protection still applies on an allowed host. And ADDING an
+     * allow entry is itself a weakening change, gated by Strict Mode
+     * ([com.astraedus.nudge.domain.lock.ContentFilterAllowlistWeakening]), so widening this layer is
+     * a deliberate, challenged act rather than a free one.
      */
     fun matchesUserBlocklist(
         urlBarText: String,
@@ -352,33 +353,14 @@ object ContentFilterMatcher {
         if (trimmed.isBlank()) return false
         val lower = trimmed.lowercase()
         if (INTERNAL_SCHEME_PREFIXES.any { lower.startsWith(it) }) return false
+        if (allowlist.coversHost(trimmed)) return false
 
         val host = WebDomainMatcher.extractDomain(trimmed)
-        val hostAllowed = allowlist.coversHost(trimmed)
-        if (!hostAllowed && host != null &&
-            ContentFilterUserList.hostMatches(host, blocklist.domains)
-        ) {
-            return true
-        }
-
-        // On an allowed host a word hit is excused only when it lies inside the host itself.
-        val hostSpan = if (hostAllowed && host != null) {
-            val start = lower.indexOf(host)
-            if (start >= 0) start until (start + host.length) else null
-        } else {
-            null
-        }
+        if (host != null && ContentFilterUserList.hostMatches(host, blocklist.domains)) return true
 
         for (pattern in blocklist.wordPatterns) {
             for (hit in pattern.findAll(lower)) {
-                val range = hit.range
-                if (allowlist.excuses(lower, range)) continue
-                if (hostSpan != null &&
-                    range.first >= hostSpan.first && range.last <= hostSpan.last
-                ) {
-                    continue
-                }
-                return true
+                if (!allowlist.excuses(lower, hit.range)) return true
             }
         }
         return false

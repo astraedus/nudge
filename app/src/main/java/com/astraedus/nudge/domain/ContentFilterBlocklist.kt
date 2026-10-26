@@ -16,13 +16,15 @@ package com.astraedus.nudge.domain
  *
  * ## What can take it back
  *
- * [ContentFilterAllowlist] excuses this list too, narrowly: a site entry cancels a BLOCK of that
- * site, and a blocked word is excused only when its occurrence sits inside an allowed phrase or
- * inside the allowed host itself. It deliberately does not switch the word layer off for an allowed
- * host: allowing `google.com` must not make a `crypto` block inert in every Google search (one free
- * entry would otherwise buy unlimited, invisible scope, and removing it is gated — #105 review). The
- * two HARD layers stay out of reach, so the allow list still cannot switch off the curated domains
- * or [ContentFilterMatcher.DEFAULT_KEYWORDS].
+ * [ContentFilterAllowlist] excuses this list too: a page on an allowed host skips it entirely
+ * (paths and searches included), and a blocked word whose every occurrence sits inside an allowed
+ * phrase is excused. This is the correction path, and it has to reach this far: block `sex`, allow
+ * `sussex.ac.uk`, and that university is usable, its sex-education pages included.
+ *
+ * The reach is bounded. The two HARD layers stay out of it, so the allow list still cannot switch
+ * off a curated domain or [ContentFilterMatcher.DEFAULT_KEYWORDS] on that host, and adding an allow
+ * entry is itself a weakening change gated by Strict Mode
+ * ([com.astraedus.nudge.domain.lock.ContentFilterAllowlistWeakening]).
  *
  * ## Cost
  *

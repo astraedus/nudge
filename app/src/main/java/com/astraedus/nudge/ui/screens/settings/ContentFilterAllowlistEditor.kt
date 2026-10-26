@@ -38,8 +38,8 @@ import com.astraedus.nudge.domain.lock.ContentFilterAllowlistWeakening
 
 internal const val ALLOWLIST_TITLE = "Allowed words & sites"
 internal const val ALLOWLIST_SUBTITLE =
-    "Words here excuse strict keyword matches and your blocked words. An allowed site also " +
-        "skips strict keywords and cancels a block on that site."
+    "Words here excuse strict keyword matches and your blocked words. An allowed site skips " +
+        "both on that site."
 internal const val ALLOWLIST_STRICT_SUFFIX = " Adding one requires the unlock challenge."
 internal const val ALLOWLIST_UNLOCK_PROMPT = "Add an allowed word or site"
 internal const val ALLOWLIST_INVALID =

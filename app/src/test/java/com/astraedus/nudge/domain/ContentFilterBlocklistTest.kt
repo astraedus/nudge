@@ -70,19 +70,22 @@ class ContentFilterBlocklistTest {
     }
 
     /**
-     * #105 review's P0. One allow-SITE entry used to switch the whole word layer off on that host:
-     * allowing google.com to quiet strict-keyword noise silently made a "crypto" block inert in
-     * every Google search, and removing the entry again is gated. A site entry cancels a BLOCK of
-     * that site; it does not excuse words in its queries or paths.
+     * The allow list is the correction path, so an allowed site excuses the user's OWN blocks on it
+     * — paths and searches included. That is the point: block `sex`, allow `sussex.ac.uk`, and the
+     * university's sex-education pages load. The built-in layers stay out of its reach (pinned
+     * below), and adding an allow entry is itself Strict-Mode gated, so this is deliberate.
      */
     @Test
-    fun `allowing a site does not switch off a blocked word in its searches`() {
-        assertTrue(
+    fun `allowing a site excuses the user's blocks on it, paths and searches included`() {
+        assertFalse(
             blocked(
                 "https://www.google.com/search?q=crypto+bet",
                 "crypto",
                 allow = listOf("google.com")
             )
+        )
+        assertFalse(
+            blocked("https://example.com/crypto", "crypto", allow = listOf("example.com"))
         )
     }
 

@@ -32,9 +32,10 @@ package com.astraedus.nudge.domain
  * is why [com.astraedus.nudge.domain.lock.ContentFilterAllowlistWeakening] can gate additions and
  * leave removals free.
  *
- * An entry that looks like a site ("cnc-shop.com", or a pasted URL) is ALSO a domain: searches on
- * that host or any subdomain of it skip the strict layer, and a block of that site is cancelled. It
- * does not excuse the user's own words in that host's queries or paths (#105 review).
+ * An entry that looks like a site ("cnc-shop.com", or a pasted URL) is ALSO a domain: pages and
+ * searches on that host or any subdomain of it skip the layers this list reaches entirely. The hard
+ * layers are still out of reach, and adding an entry is gated under Strict Mode, so widening is
+ * deliberate.
  *
  * Canonicalisation is [ContentFilterUserList]'s, shared with [ContentFilterBlocklist].
  */
