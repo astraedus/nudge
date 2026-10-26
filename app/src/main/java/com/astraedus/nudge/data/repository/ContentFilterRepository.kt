@@ -2,6 +2,7 @@ package com.astraedus.nudge.data.repository
 
 import android.content.Context
 import com.astraedus.nudge.domain.ContentFilterAllowlist
+import com.astraedus.nudge.domain.ContentFilterBlocklist
 import com.astraedus.nudge.domain.ContentFilterMatcher
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
@@ -21,13 +22,17 @@ interface ContentFilter {
      *
      * @param strictKeywords when true, ALSO matches ambiguous slang keywords found as
      *   whole words in the URL's search query (opt-in; a no-op otherwise).
-     * @param allowlist the user's exceptions. They only ever excuse a STRICT keyword hit, never the
-     *   bundled domain list or a high-signal keyword (see [ContentFilterAllowlist]).
+     * @param allowlist the user's exceptions. They excuse a strict keyword hit and a hit from
+     *   [userBlocklist], never the bundled domain list or a high-signal keyword (see
+     *   [ContentFilterAllowlist]).
+     * @param userBlocklist the user's own blocked words and sites (see [ContentFilterBlocklist]).
+     *   Empty by default, which keeps the old call sites honest.
      */
     suspend fun isBlocked(
         urlBarText: String,
         strictKeywords: Boolean,
-        allowlist: ContentFilterAllowlist
+        allowlist: ContentFilterAllowlist,
+        userBlocklist: ContentFilterBlocklist = ContentFilterBlocklist.EMPTY
     ): Boolean
 }
 
@@ -57,11 +62,14 @@ class ContentFilterRepository @Inject constructor(
     override suspend fun isBlocked(
         urlBarText: String,
         strictKeywords: Boolean,
-        allowlist: ContentFilterAllowlist
+        allowlist: ContentFilterAllowlist,
+        userBlocklist: ContentFilterBlocklist
     ): Boolean {
         if (urlBarText.isBlank()) return false
         val list = ensureLoaded()
-        return ContentFilterMatcher.isBlocked(urlBarText, list, strictKeywords, allowlist)
+        return ContentFilterMatcher.isBlocked(
+            urlBarText, list, strictKeywords, allowlist, userBlocklist
+        )
     }
 
     private suspend fun ensureLoaded(): Set<String> {

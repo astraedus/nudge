@@ -12,6 +12,8 @@ import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.astraedus.nudge.data.export.ExportedSettings
 import com.astraedus.nudge.domain.ContentFilterAllowlist
+import com.astraedus.nudge.domain.ContentFilterBlocklist
+import com.astraedus.nudge.domain.ContentFilterUserList
 import com.astraedus.nudge.domain.nuke.NukeKeyKind
 import com.astraedus.nudge.domain.nuke.NukeState
 import com.astraedus.nudge.service.GlobalEnabledProvider
@@ -38,6 +40,7 @@ class NudgePreferences @Inject constructor(
         val CONTENT_FILTER_MODE = stringPreferencesKey("content_filter_mode")
         val CONTENT_FILTER_STRICT_KEYWORDS = booleanPreferencesKey("content_filter_strict_keywords")
         val CONTENT_FILTER_ALLOWLIST = stringSetPreferencesKey("content_filter_allowlist")
+        val CONTENT_FILTER_BLOCKLIST = stringSetPreferencesKey("content_filter_blocklist")
         val CUSTOM_DELAY_TITLES = stringPreferencesKey("custom_delay_titles")
         val CUSTOM_DELAY_SUBTITLES = stringPreferencesKey("custom_delay_subtitles")
         val CUSTOM_HARD_BLOCK_MESSAGES = stringPreferencesKey("custom_hard_block_messages")
@@ -141,7 +144,7 @@ class NudgePreferences @Inject constructor(
 
     /**
      * "Allowed words & sites": the user's exceptions to strict keyword matching (issue #78), stored
-     * in canonical form ([ContentFilterAllowlist.normalize]). They only ever excuse a strict-layer
+     * in canonical form ([ContentFilterUserList.normalize]). They only ever excuse a strict-layer
      * hit; see [ContentFilterAllowlist] for what they can never override.
      *
      * Adding an entry WEAKENS the filter, so the screen routes additions through the Strict Mode
@@ -152,12 +155,12 @@ class NudgePreferences @Inject constructor(
         .map { prefs -> prefs[Keys.CONTENT_FILTER_ALLOWLIST] ?: emptySet() }
         .distinctUntilChanged()
 
-    /** Add one entry, normalised; invalid input is dropped and the [ContentFilterAllowlist.MAX_ENTRIES] cap holds. */
+    /** Add one entry, normalised; invalid input is dropped and the [ContentFilterUserList.MAX_ENTRIES] cap holds. */
     suspend fun addContentFilterAllowlistEntry(raw: String) {
         context.dataStore.edit { prefs ->
             val current = prefs[Keys.CONTENT_FILTER_ALLOWLIST] ?: emptySet()
             prefs[Keys.CONTENT_FILTER_ALLOWLIST] =
-                ContentFilterAllowlist.canonicalize(current + raw).toSet()
+                ContentFilterUserList.canonicalize(current + raw).toSet()
         }
     }
 
@@ -166,6 +169,37 @@ class NudgePreferences @Inject constructor(
         context.dataStore.edit { prefs ->
             prefs[Keys.CONTENT_FILTER_ALLOWLIST] =
                 (prefs[Keys.CONTENT_FILTER_ALLOWLIST] ?: emptySet()) - entry
+        }
+    }
+
+    /**
+     * "Blocked words & sites": the user's own additions to the content filter, stored in canonical
+     * form ([ContentFilterUserList.normalize]). Live whenever the content filter is on; deliberately
+     * NOT behind [contentFilterStrictKeywords], because that toggle ships off and a user's own word
+     * would then look broken.
+     *
+     * Removing an entry WEAKENS the filter, so the screen routes removals through the Strict Mode
+     * gate ([com.astraedus.nudge.domain.lock.ContentFilterBlocklistWeakening]); these writers do not
+     * gate, exactly like every other setter here.
+     */
+    val contentFilterBlocklist: Flow<Set<String>> = context.dataStore.data
+        .map { prefs -> prefs[Keys.CONTENT_FILTER_BLOCKLIST] ?: emptySet() }
+        .distinctUntilChanged()
+
+    /** Add one entry, normalised; invalid input is dropped and the [ContentFilterUserList.MAX_ENTRIES] cap holds. */
+    suspend fun addContentFilterBlocklistEntry(raw: String) {
+        context.dataStore.edit { prefs ->
+            val current = prefs[Keys.CONTENT_FILTER_BLOCKLIST] ?: emptySet()
+            prefs[Keys.CONTENT_FILTER_BLOCKLIST] =
+                ContentFilterUserList.canonicalize(current + raw).toSet()
+        }
+    }
+
+    /** Remove one entry. Removing a block weakens the filter; the caller owns the Strict Mode gate. */
+    suspend fun removeContentFilterBlocklistEntry(entry: String) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.CONTENT_FILTER_BLOCKLIST] =
+                (prefs[Keys.CONTENT_FILTER_BLOCKLIST] ?: emptySet()) - entry
         }
     }
 
@@ -446,6 +480,7 @@ class NudgePreferences @Inject constructor(
         contentFilterMode = contentFilterMode.first(),
         contentFilterStrictKeywords = contentFilterStrictKeywords.first(),
         contentFilterAllowlist = contentFilterAllowlist.first().sorted(),
+        contentFilterBlocklist = contentFilterBlocklist.first().sorted(),
         strictModeEnabled = isStrictModeEnabled.first(),
         strictModeChallengeLength = strictModeChallengeLength.first(),
         emergencyPassEnabled = emergencyPassEnabled.first(),
@@ -477,7 +512,12 @@ class NudgePreferences @Inject constructor(
             // REPLACES this device's list, like every other setting a backup carries. An import
             // that adds entries is weakening and was gated before this ran (ImportedSettingsWeakening).
             settings.contentFilterAllowlist?.let {
-                prefs[Keys.CONTENT_FILTER_ALLOWLIST] = ContentFilterAllowlist.canonicalize(it).toSet()
+                prefs[Keys.CONTENT_FILTER_ALLOWLIST] = ContentFilterUserList.canonicalize(it).toSet()
+            }
+            // REPLACES this device's list. An import that REMOVES blocks is weakening and was gated
+            // before this ran (ImportedSettingsWeakening).
+            settings.contentFilterBlocklist?.let {
+                prefs[Keys.CONTENT_FILTER_BLOCKLIST] = ContentFilterUserList.canonicalize(it).toSet()
             }
             settings.strictModeEnabled?.let { prefs[Keys.STRICT_MODE_ENABLED] = it }
             settings.strictModeChallengeLength?.let {

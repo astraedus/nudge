@@ -74,6 +74,16 @@ object ImportedSettingsWeakening {
         ) {
             return true
         }
+        // Its block list is the mirror image: it weakens by LOSING entries, because each one is a
+        // block the device had and the file would drop. A file carrying more blocks only strengthens.
+        if (incoming.contentFilterBlocklist != null &&
+            ContentFilterBlocklistWeakening.isWeakening(
+                current.contentFilterBlocklist.orEmpty(),
+                incoming.contentFilterBlocklist
+            )
+        ) {
+            return true
+        }
 
         return false
     }

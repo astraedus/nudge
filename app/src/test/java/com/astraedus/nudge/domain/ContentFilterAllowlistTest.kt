@@ -108,7 +108,7 @@ class ContentFilterAllowlistTest {
 
     @Test
     fun `a pasted URL is stored as its site`() {
-        assertEquals("cnc-shop.com", ContentFilterAllowlist.normalize("https://www.CNC-Shop.com/parts?x=1"))
+        assertEquals("cnc-shop.com", ContentFilterUserList.normalize("https://www.CNC-Shop.com/parts?x=1"))
         assertFalse(strictMatch("https://cnc-shop.com/search?q=cnc", "https://www.cnc-shop.com/parts"))
     }
 
@@ -153,37 +153,37 @@ class ContentFilterAllowlistTest {
 
     @Test
     fun `entries are trimmed, lowercased and whitespace-collapsed`() {
-        assertEquals("bbc news", ContentFilterAllowlist.normalize("  BBC \t  News "))
-        assertEquals("cnc", ContentFilterAllowlist.normalize("CNC"))
+        assertEquals("bbc news", ContentFilterUserList.normalize("  BBC \t  News "))
+        assertEquals("cnc", ContentFilterUserList.normalize("CNC"))
     }
 
     @Test
     fun `junk is rejected`() {
-        assertNull(ContentFilterAllowlist.normalize(""))
-        assertNull(ContentFilterAllowlist.normalize("   "))
-        assertNull(ContentFilterAllowlist.normalize("!!!"))
-        assertNull(ContentFilterAllowlist.normalize("a".repeat(ContentFilterAllowlist.MAX_ENTRY_LENGTH + 1)))
+        assertNull(ContentFilterUserList.normalize(""))
+        assertNull(ContentFilterUserList.normalize("   "))
+        assertNull(ContentFilterUserList.normalize("!!!"))
+        assertNull(ContentFilterUserList.normalize("a".repeat(ContentFilterUserList.MAX_ENTRY_LENGTH + 1)))
     }
 
     @Test
     fun `an entry of exactly the maximum length is kept`() {
-        val max = "a".repeat(ContentFilterAllowlist.MAX_ENTRY_LENGTH)
-        assertEquals(max, ContentFilterAllowlist.normalize(max))
+        val max = "a".repeat(ContentFilterUserList.MAX_ENTRY_LENGTH)
+        assertEquals(max, ContentFilterUserList.normalize(max))
     }
 
     @Test
     fun `only host-shaped single tokens are sites`() {
-        assertTrue(ContentFilterAllowlist.isDomainEntry("cnc-shop.com"))
-        assertFalse(ContentFilterAllowlist.isDomainEntry("cnc"))
-        assertFalse(ContentFilterAllowlist.isDomainEntry("bbc news"))
-        assertFalse(ContentFilterAllowlist.isDomainEntry("e.g."))
+        assertTrue(ContentFilterUserList.isDomainEntry("cnc-shop.com"))
+        assertFalse(ContentFilterUserList.isDomainEntry("cnc"))
+        assertFalse(ContentFilterUserList.isDomainEntry("bbc news"))
+        assertFalse(ContentFilterUserList.isDomainEntry("e.g."))
     }
 
     @Test
     fun `canonicalize de-duplicates, sorts and caps`() {
-        assertEquals(listOf("bbc", "cnc"), ContentFilterAllowlist.canonicalize(listOf("CNC", "bbc", " cnc ", "")))
-        val many = (1..ContentFilterAllowlist.MAX_ENTRIES + 5).map { "word$it" }
-        assertEquals(ContentFilterAllowlist.MAX_ENTRIES, ContentFilterAllowlist.canonicalize(many).size)
+        assertEquals(listOf("bbc", "cnc"), ContentFilterUserList.canonicalize(listOf("CNC", "bbc", " cnc ", "")))
+        val many = (1..ContentFilterUserList.MAX_ENTRIES + 5).map { "word$it" }
+        assertEquals(ContentFilterUserList.MAX_ENTRIES, ContentFilterUserList.canonicalize(many).size)
     }
 
     @Test
