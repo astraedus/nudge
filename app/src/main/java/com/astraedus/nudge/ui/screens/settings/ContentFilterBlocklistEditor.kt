@@ -4,10 +4,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Block
 import androidx.compose.runtime.Composable
 import com.astraedus.nudge.domain.ContentFilterUserList
+import com.astraedus.nudge.domain.lock.ContentFilterBlocklistWeakening
 
 internal const val BLOCKLIST_TITLE = "Blocked words & sites"
 internal const val BLOCKLIST_SUBTITLE =
-    "Pages and searches containing these words, or on these sites, are blocked."
+    "Words and phrases block pages and searches containing them. A site blocks pages on that " +
+        "site and its subdomains."
 internal const val BLOCKLIST_STRICT_SUFFIX = " Removing one requires the unlock challenge."
 internal const val BLOCKLIST_UNLOCK_PROMPT = "Remove a blocked word or site"
 internal const val BLOCKLIST_INVALID =
@@ -43,6 +45,21 @@ internal fun blocklistSubmit(input: String, current: Set<String>): UserListSubmi
     }
     return UserListSubmit.Add(entry = entry, needsUnlock = false)
 }
+
+/**
+ * Removing one entry from the block list: the host screen's whole decision, pure so it is testable
+ * without Compose. A removal that loses a block weakens the filter, so Strict Mode gates it; one
+ * that changes nothing (entry absent, or already canonicalised away) does not.
+ */
+internal fun blocklistRemoveNeedsUnlock(
+    entry: String,
+    current: Set<String>,
+    strictModeEnabled: Boolean
+): Boolean = ContentFilterBlocklistWeakening.requiresUnlock(
+    current = current,
+    next = current - entry,
+    strictModeEnabled = strictModeEnabled
+)
 
 /**
  * "Blocked words & sites": the user's own additions to the content filter. Shown whenever the

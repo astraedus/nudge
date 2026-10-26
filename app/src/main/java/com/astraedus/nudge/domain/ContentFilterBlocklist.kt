@@ -16,11 +16,13 @@ package com.astraedus.nudge.domain
  *
  * ## What can take it back
  *
- * [ContentFilterAllowlist] excuses this list too: a search on an allowed host skips the user block
- * list entirely, and a blocked word whose only occurrences sit inside an allowed phrase is excused.
- * This is the one place the allow list reaches beyond strict keyword matching: without it, a user
- * word that is too broad would have no correction path. The two HARD layers stay out of reach, so
- * the allow list still cannot switch off the curated domains or [ContentFilterMatcher.DEFAULT_KEYWORDS].
+ * [ContentFilterAllowlist] excuses this list too, narrowly: a site entry cancels a BLOCK of that
+ * site, and a blocked word is excused only when its occurrence sits inside an allowed phrase or
+ * inside the allowed host itself. It deliberately does not switch the word layer off for an allowed
+ * host: allowing `google.com` must not make a `crypto` block inert in every Google search (one free
+ * entry would otherwise buy unlimited, invisible scope, and removing it is gated — #105 review). The
+ * two HARD layers stay out of reach, so the allow list still cannot switch off the curated domains
+ * or [ContentFilterMatcher.DEFAULT_KEYWORDS].
  *
  * ## Cost
  *

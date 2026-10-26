@@ -338,7 +338,11 @@ fun SettingsScreen(
                         val remove: () -> Unit = {
                             coroutineScope.launch { preferences.removeContentFilterBlocklistEntry(entry) }
                         }
-                        if (strictModeEnabled) requestUnlock(BLOCKLIST_UNLOCK_PROMPT, remove) else remove()
+                        if (blocklistRemoveNeedsUnlock(entry, contentFilterBlocklist, strictModeEnabled)) {
+                            requestUnlock(BLOCKLIST_UNLOCK_PROMPT, remove)
+                        } else {
+                            remove()
+                        }
                     }
                 )
             }

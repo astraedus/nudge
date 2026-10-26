@@ -1,5 +1,7 @@
 package com.astraedus.nudge.domain
 
+import java.text.Normalizer
+
 /**
  * Canonicalisation shared by the content filter's two user-owned lists: "Allowed words & sites"
  * ([ContentFilterAllowlist]) and "Blocked words & sites" ([ContentFilterBlocklist]).
@@ -21,11 +23,16 @@ object ContentFilterUserList {
     private val WHITESPACE = Regex("""\s+""")
     private val DOMAIN_CHARS = Regex("""[a-z0-9.-]+""")
     private val HAS_SCHEME = Regex("""^[a-z][a-z0-9+.-]*://""")
+    private val ZERO_WIDTH = Regex("""\p{Cf}+""")
 
     /**
      * Canonical form of one user-typed entry, or null when it cannot be an entry.
      *
-     * - Lowercased, trimmed, internal whitespace collapsed to one space.
+     * - Unicode NFC, zero-width format characters stripped, lowercased, trimmed, internal
+     *   whitespace collapsed to one space. So a `café` typed as NFD is the same entry as one typed
+     *   as NFC, and a pasted zero-width space cannot make a block that never matches.
+     * - A leading `*.` is dropped: people write wildcards (`*.stake.com`), and a literal `*` would
+     *   otherwise land in the word list and match nothing.
      * - A single token that parses as a host (or a pasted URL) becomes that host, with the scheme,
      *   path, port and a leading `www.`/`m.` stripped: "https://www.Shop.com/x" -> "shop.com". That
      *   is the same normalisation [WebDomainMatcher] applies to the URL bar, so an entry and the
@@ -34,7 +41,10 @@ object ContentFilterUserList {
      * - Rejected: blank, longer than [MAX_ENTRY_LENGTH], or carrying no letter or digit.
      */
     fun normalize(raw: String): String? {
-        val collapsed = raw.trim().lowercase().replace(WHITESPACE, " ")
+        val collapsed = Normalizer.normalize(
+            raw.replace(ZERO_WIDTH, "").trim().lowercase(),
+            Normalizer.Form.NFC
+        ).replace(WHITESPACE, " ").removePrefix("*.")
         if (collapsed.isEmpty()) return null
         val canonical = asDomain(collapsed) ?: collapsed
         if (canonical.length > MAX_ENTRY_LENGTH) return null
@@ -44,10 +54,11 @@ object ContentFilterUserList {
 
     /**
      * Canonicalises a whole list the way storage and import need it: normalised, de-duplicated,
-     * capped at [MAX_ENTRIES] (first ones win), sorted so the stored and exported forms are stable.
+     * sorted, then capped at [MAX_ENTRIES]. Sorting BEFORE the cap makes which entries survive a
+     * full list deterministic; `raw` is often a `Set` whose iteration order is not.
      */
     fun canonicalize(raw: Collection<String>): List<String> =
-        raw.mapNotNullTo(LinkedHashSet()) { normalize(it) }.take(MAX_ENTRIES).sorted()
+        raw.mapNotNullTo(LinkedHashSet()) { normalize(it) }.sorted().take(MAX_ENTRIES)
 
     /** True when [entry] (already normalised) names a site rather than a word. */
     fun isDomainEntry(entry: String): Boolean =

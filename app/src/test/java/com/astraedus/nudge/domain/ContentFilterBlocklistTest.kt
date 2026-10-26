@@ -69,6 +69,29 @@ class ContentFilterBlocklistTest {
         )
     }
 
+    /**
+     * #105 review's P0. One allow-SITE entry used to switch the whole word layer off on that host:
+     * allowing google.com to quiet strict-keyword noise silently made a "crypto" block inert in
+     * every Google search, and removing the entry again is gated. A site entry cancels a BLOCK of
+     * that site; it does not excuse words in its queries or paths.
+     */
+    @Test
+    fun `allowing a site does not switch off a blocked word in its searches`() {
+        assertTrue(
+            blocked(
+                "https://www.google.com/search?q=crypto+bet",
+                "crypto",
+                allow = listOf("google.com")
+            )
+        )
+    }
+
+    @Test
+    fun `allowing a site cancels a block of that site`() {
+        assertTrue(blocked("https://stake.com/casino", "stake.com"))
+        assertFalse(blocked("https://stake.com/casino", "stake.com", allow = listOf("stake.com")))
+    }
+
     @Test
     fun `the allow list phrase excuses a hit inside it`() {
         assertFalse(

@@ -33,7 +33,8 @@ package com.astraedus.nudge.domain
  * leave removals free.
  *
  * An entry that looks like a site ("cnc-shop.com", or a pasted URL) is ALSO a domain: searches on
- * that host or any subdomain of it skip the layers this list reaches entirely.
+ * that host or any subdomain of it skip the strict layer, and a block of that site is cancelled. It
+ * does not excuse the user's own words in that host's queries or paths (#105 review).
  *
  * Canonicalisation is [ContentFilterUserList]'s, shared with [ContentFilterBlocklist].
  */

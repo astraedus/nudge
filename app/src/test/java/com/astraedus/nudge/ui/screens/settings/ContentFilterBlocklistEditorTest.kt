@@ -2,13 +2,29 @@ package com.astraedus.nudge.ui.screens.settings
 
 import com.astraedus.nudge.domain.ContentFilterUserList
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * The block list editor's one decision ([blocklistSubmit]). Adding a block is strengthening, so it
- * never raises the challenge; the gated direction is removal, which the host screen owns.
+ * The block list editor's decisions: [blocklistSubmit] (adding is strengthening, so never gated) and
+ * [blocklistRemoveNeedsUnlock] (removal weakens, so Strict Mode gates it).
  */
 class ContentFilterBlocklistEditorTest {
+
+    @Test
+    fun `removing a block needs the unlock under strict mode, and only then`() {
+        val current = setOf("crypto", "stake.com")
+        assertTrue(blocklistRemoveNeedsUnlock("crypto", current, strictModeEnabled = true))
+        assertFalse(blocklistRemoveNeedsUnlock("crypto", current, strictModeEnabled = false))
+    }
+
+    @Test
+    fun `a removal that loses nothing is never gated`() {
+        assertFalse(
+            blocklistRemoveNeedsUnlock("absent", setOf("crypto"), strictModeEnabled = true)
+        )
+    }
 
     @Test
     fun `a new entry is stored in canonical form with no challenge`() {
