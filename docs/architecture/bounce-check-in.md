@@ -130,9 +130,10 @@ export settings set is pinned by `ImportedSettingsWriteContractTest`).
   count as leaving; window expiry disarms and leaves nothing behind; the window edge; the sliding
   window; a backwards clock; cooldown suppresses then resets; `reset`; the bounded set; config
   validation; the copy. Sites: three distinct sites in one browser fire on the third, two do not;
-  the same site re-blocked is one wall; `www.`/`m.` spellings are one site; Home-and-back to the same
-  site is a wall but not a new site; site and app counts never add up; a mixed streak still reads as
-  apps; the one shared cooldown; the site streak lapses with the window; the site copy.
+  the same site re-blocked is one wall (counterfactual: a second wall would fire); `www.`/`m.`
+  spellings are one site; an app wall right after a site wall in that browser is a new wall; site
+  and app counts never add up; a mixed streak still reads as apps; the one shared cooldown; the site
+  streak lapses with the window; the site set bound; the site copy.
 - `BounceCheckInTest` (L1): the owner's sequence through real `ForegroundSignal`s; the toggle-OFF path
   feeds nothing; default off; switch-off mid-streak drops it; only `AppWindow` counts; cooldown across
   the adapter; the master-toggle reset; the auto-kick reports its key; three blocked sites through

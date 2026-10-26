@@ -43,7 +43,8 @@ import com.astraedus.nudge.domain.web.WebSessionKey
  * A site wall follows the same rule one level down: the SAME site re-blocked while the user has not
  * left the browser is one wall, and a different site is always a new one. The browser is still the
  * package that decides whether the user "left": navigating from one blocked site to another is not
- * leaving Chrome.
+ * leaving Chrome. Identity is the site when there is one and the package otherwise, so an app-level
+ * block of the browser straight after a site block in it is a new wall too.
  *
  * ## What it costs
  *
@@ -94,7 +95,7 @@ class BounceDetector(
     private var streakStartedAtMs: Long? = null
     private var lastWallAtMs: Long = 0L
     private var lastWallPackage: String? = null
-    private var lastWallSite: String? = null
+    private var lastWallKey: String? = null
     private var leftSinceLastWall: Boolean = false
     private var walls: Int = 0
     private val apps = LinkedHashSet<String>()
@@ -107,7 +108,8 @@ class BounceDetector(
      * Nudge just stopped [packageName] (the app the user was in: for a website block, the browser).
      *
      * @param siteDomain the site the wall was about, for a website block. Null for an app wall.
-     *   Normalised through [WebSessionKey] so `www.instagram.com`, `m.instagram.com` and
+     *   A bare host as `WebDomainMatcher.extractDomain` / `WebSessionKey.domainOf` produce it; it
+     *   is normalised through [WebSessionKey] so `www.instagram.com`, `m.instagram.com` and
      *   `instagram.com` are one site, not three.
      * @return the alert to show, or null.
      */
@@ -116,18 +118,23 @@ class BounceDetector(
         lapseIfExpired(nowMs)
 
         val site = siteDomain?.let { WebSessionKey.forDomain(it) }
+        // A wall is identified by its SITE when there is one, otherwise by the app. So a site hop
+        // inside one browser is a new wall, and so is an app-level block of that same browser
+        // straight after a site block in it (the browser is then a different identity, not a
+        // re-launch of the site's overlay).
+        val key = site ?: packageName
         val started = streakStartedAtMs
         if (started == null) {
             streakStartedAtMs = nowMs
             walls = 1
-        } else if (isNewWall(packageName, site)) {
+        } else if (isNewWall(key)) {
             walls++
         }
         // Re-launches of the overlay for an app the user never left still SLIDE the window: the
         // wall is still in their face, and the streak should not lapse from under it.
         lastWallAtMs = nowMs
         lastWallPackage = packageName
-        lastWallSite = site
+        lastWallKey = key
         leftSinceLastWall = false
         record(packageName, site)
         return evaluate(nowMs)
@@ -166,13 +173,10 @@ class BounceDetector(
     }
 
     /**
-     * Is this wall a new confrontation? Same app, or same site, only counts once the user has been
-     * somewhere else in between (see the class docs).
+     * Is this wall a new confrontation? The same identity (site, or app) only counts once the user
+     * has been somewhere else in between (see the class docs).
      */
-    private fun isNewWall(packageName: String, site: String?): Boolean {
-        if (site != null) return site != lastWallSite || leftSinceLastWall
-        return packageName != lastWallPackage || leftSinceLastWall
-    }
+    private fun isNewWall(key: String): Boolean = key != lastWallKey || leftSinceLastWall
 
     private fun record(packageName: String, site: String?) {
         if (packageName !in excludedPackages && apps.size < config.maxTrackedApps) {
@@ -222,7 +226,7 @@ class BounceDetector(
         streakStartedAtMs = null
         lastWallAtMs = 0L
         lastWallPackage = null
-        lastWallSite = null
+        lastWallKey = null
         leftSinceLastWall = false
         walls = 0
         apps.clear()

@@ -298,19 +298,6 @@ class BounceDetectorTest {
     }
 
     @Test
-    fun `leaving the browser and coming back to the same site is a wall, not a new site`() {
-        val d = detector()
-        assertNull(d.onWall(chrome, now, "example.com"))
-        now += 1_000L
-        d.onWentHome(now)
-        now += 1_000L
-        assertNull("2 walls, 1 site", d.onWall(chrome, now, "example.com"))
-        now += 1_000L
-        assertNull(d.onWall(chrome, now, "example.org"))
-        assertTrue(d.isArmed)
-    }
-
-    @Test
     fun `site and app counts never add up`() {
         val d = detector()
         assertNull(d.onWall(instagram, now))
@@ -353,6 +340,47 @@ class BounceDetectorTest {
         now += window + 1
         assertNull("lapsed: the site is ignored", d.onWall(chrome, now, "example.org"))
         assertTrue("that is a fresh first wall", d.isArmed)
+    }
+
+    /**
+     * The counterfactual matters: with `minApps = 1` the SECOND wall fires, so if a re-launch of the
+     * same site counted as a wall this test would see an alert instead of nothing.
+     */
+    @Test
+    fun `a re-blocked site is one wall, not one per re-launch`() {
+        val d = BounceDetector(BounceDetector.Config(minApps = 1, minSites = 64))
+        assertNull(d.onWall(chrome, now, "example.com"))
+        repeat(5) {
+            now += 1_000L
+            assertNull("the same site again is the same wall", d.onWall(chrome, now, "example.com"))
+        }
+        d.onWentHome(now)
+        now += 1_000L
+        assertNotNull("left the browser and came back: a new wall", d.onWall(chrome, now, "example.com"))
+    }
+
+    /**
+     * Identity is the site when there is one. An app-level block of the browser straight after a
+     * site block in it is a different identity, so it counts, and with `minApps = 1` that fires.
+     */
+    @Test
+    fun `an app wall right after a site wall in the same browser is a new wall`() {
+        val d = BounceDetector(BounceDetector.Config(minApps = 1, minSites = 64))
+        assertNull(d.onWall(chrome, now, "example.com"))
+        now += 1_000L
+        assertNotNull("the browser itself was blocked: a second wall", d.onWall(chrome, now))
+    }
+
+    @Test
+    fun `the site set is bounded and the alert count never exceeds it`() {
+        val d = BounceDetector(BounceDetector.Config(minSites = 10, maxTrackedSites = 10))
+        var alert: BounceAlert? = null
+        repeat(100) { i ->
+            now += 1_000L
+            alert = d.onWall(chrome, now, "site$i.example") ?: alert
+        }
+        assertNotNull(alert)
+        assertEquals(10, alert!!.count)
     }
 
     // ── the window ──

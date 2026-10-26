@@ -82,6 +82,23 @@ class BounceCheckInWiringContractTest {
         )
     }
 
+    /**
+     * The site has to travel from the block DECISION to the overlay launch. Pinned here because the
+     * detector tests call `onWall` directly: dropping `webDomain` at either call site would revert
+     * #106 with every value test still green.
+     */
+    @Test
+    fun `the web block paths hand their site to the overlay launch`() {
+        assertTrue(
+            "a rule or content-filter web block must pass the domain it was decided on",
+            bodyOf("private suspend fun handleDecision(").contains("webDomain = web?.domain")
+        )
+        assertTrue(
+            "the web auto-kick cooldown overlay must pass its domain",
+            bodyOf("private fun enforceWebCooldown(").contains("webDomain = domain")
+        )
+    }
+
     /** A kick is a wall: the ONE executor is wired to report it. */
     @Test
     fun `the auto-kick executor is wired to the check-in`() {
@@ -89,8 +106,12 @@ class BounceCheckInWiringContractTest {
             .substringBefore("autoKickTimeHandler = AutoKickTimeHandler(")
         assertTrue(wiring.contains("onKicked ="))
         assertTrue(
+            "a web kick is reported as the browser the user was in",
+            wiring.contains("webSessionUsageProvider.browserPackage")
+        )
+        assertTrue(
             "a web kick must report its site too, not just the browser",
-            wiring.contains("bounceCheckIn.onWall(it, WebSessionKey.domainOf(key))")
+            wiring.contains("WebSessionKey.domainOf(key)")
         )
 
         val executor = stripComments(read("main/java/com/astraedus/nudge/service/AutoKickExecutor.kt"))
