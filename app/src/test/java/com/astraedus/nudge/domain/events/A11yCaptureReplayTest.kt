@@ -1,6 +1,8 @@
 package com.astraedus.nudge.domain.events
 
 import com.astraedus.nudge.domain.interaction.InteractionCounter
+import com.astraedus.nudge.domain.sitting.ShortTrips
+import com.astraedus.nudge.domain.sitting.SittingEndCause
 import com.astraedus.nudge.domain.sitting.SittingEvent
 import com.astraedus.nudge.domain.sitting.SittingTracker
 import com.astraedus.nudge.service.AwarenessOverlayWindow
@@ -321,6 +323,74 @@ class A11yCaptureReplayTest {
         assertTrue(
             "the pre-fix rule must revoke at least once on this capture (it revoked $revocations)",
             revocations > 0
+        )
+    }
+
+    // --- issue #110: a gesture app switch passes through the launcher ---------------------------
+
+    private val samsungLauncher = "com.sec.android.app.launcher"
+    private val telegram = "org.telegram.messenger"
+
+    private fun classifyOnSamsung(record: AccessibilityEventRecord) = classifier.classify(
+        record = record,
+        currentImePackage = "com.google.android.inputmethod.latin",
+        launcherPackages = setOf(samsungLauncher),
+        pipOnlyPackages = emptySet()
+    )
+
+    /**
+     * ISSUE [#110](https://github.com/astraedus/nudge/issues/110), replayed from the reporter's
+     * phone. Swiping the gesture bar to the previous app and straight back crosses a launcher
+     * window both ways; the user was away about two seconds. With "keep the pass on short trips"
+     * on, at its SHORTEST offered length, that must not end anything.
+     */
+    @Test
+    fun `with short trips on, a gesture swipe through the launcher and straight back never ends the sitting`() {
+        val tracker = SittingTracker()
+        tracker.configureShortTrips(ShortTrips.returnWindowMs(ShortTrips.OPTIONS_MINUTES.min()))
+        val ends = mutableListOf<SittingEvent.Ended>()
+        var launcherWindows = 0
+
+        A11yCapture.load("samsung-gesture-switch-revokes-grant").forEach { record ->
+            val signal = classifyOnSamsung(record)
+            if (signal is ForegroundSignal.Home) launcherWindows++
+            when (val event = tracker.onSignal(signal, record.eventTimeMs)) {
+                is SittingEvent.Ended -> ends += event
+                is SittingEvent.Started -> event.ended?.let { ends += it }
+                is SittingEvent.Unchanged -> Unit
+            }
+        }
+
+        assertEquals("the capture must cross the launcher on the way out and back", 2, launcherWindows)
+        assertEquals(
+            "nothing in this capture may end a sitting — the user came straight back; ended: $ends",
+            emptyList<SittingEvent.Ended>(),
+            ends
+        )
+        assertEquals(telegram, tracker.currentApp)
+    }
+
+    /**
+     * The counterfactual, and the default: with the setting OFF the shipped rule ("a launcher
+     * window ends the sitting at once") must reproduce the reported re-block on the same capture.
+     * Otherwise the capture does not contain the defect and the test above proves nothing — and
+     * if this ever passes with no ends, the default behaviour changed without anyone opting in.
+     */
+    @Test
+    fun `with short trips off, the shipped rule ends the sitting on this capture as WENT_HOME`() {
+        val tracker = SittingTracker()
+        val ends = mutableListOf<SittingEndCause>()
+        A11yCapture.load("samsung-gesture-switch-revokes-grant").forEach { record ->
+            when (val event = tracker.onSignal(classifyOnSamsung(record), record.eventTimeMs)) {
+                is SittingEvent.Ended -> ends += event.cause
+                is SittingEvent.Started -> event.ended?.let { ends += it.cause }
+                is SittingEvent.Unchanged -> Unit
+            }
+        }
+        assertEquals(
+            "the default must still revoke on the first launcher window: $ends",
+            SittingEndCause.WENT_HOME,
+            ends.firstOrNull()
         )
     }
 

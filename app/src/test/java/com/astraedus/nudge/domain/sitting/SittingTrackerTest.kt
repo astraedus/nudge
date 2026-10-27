@@ -2,6 +2,7 @@ package com.astraedus.nudge.domain.sitting
 
 import com.astraedus.nudge.domain.events.ForegroundSignal
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -163,6 +164,126 @@ class SittingTrackerTest {
             t.onSignal(ForegroundSignal.Home(launcher), 1_000)
         )
         assertNull(t.currentApp)
+    }
+
+    // --- opt-in: keep the pass on short trips (#110) -------------------------------------------
+
+    private fun shortTrips() = SittingTracker(returnWindowMs = window, homeIsAbsence = true)
+
+    /**
+     * ISSUE [#110](https://github.com/astraedus/nudge/issues/110), the reported case, smallest form.
+     * On gesture navigation "swipe to the previous app and straight back" crosses a launcher window
+     * both ways: Home → other app → Home → this app, inside two seconds.
+     */
+    @Test
+    fun `with short trips on, a swipe through the launcher and straight back keeps the sitting`() {
+        val t = shortTrips()
+        t.app(keep, 0)
+
+        assertEquals(SittingEvent.Unchanged, t.onSignal(ForegroundSignal.Home(launcher), 1_000))
+        assertEquals(SittingEvent.Unchanged, t.app("com.other.app", 1_800))
+        assertEquals(SittingEvent.Unchanged, t.onSignal(ForegroundSignal.Home(launcher), 2_200))
+        assertEquals(SittingEvent.Unchanged, t.app(keep, 3_000))
+
+        assertEquals(keep, t.currentApp)
+        assertNull("the return closes the away clock", t.awaySinceMs)
+    }
+
+    @Test
+    fun `with short trips on, going home and staying away past the window ends the sitting as WENT_HOME`() {
+        val t = shortTrips()
+        t.app(keep, 0)
+        assertEquals(SittingEvent.Unchanged, t.onSignal(ForegroundSignal.Home(launcher), 1_000))
+        assertEquals(1_000L, t.awaySinceMs)
+
+        assertEquals(
+            SittingEvent.Started(keep, SittingEvent.Ended(keep, SittingEndCause.WENT_HOME)),
+            t.app(keep, 1_000 + window)
+        )
+    }
+
+    @Test
+    fun `with short trips on, going home then using another app past the window ends the sitting`() {
+        val t = shortTrips()
+        t.app(keep, 0)
+        t.onSignal(ForegroundSignal.Home(launcher), 1_000)
+        t.app("com.other.app", 2_000)
+
+        assertEquals(
+            SittingEvent.Started("com.other.app", SittingEvent.Ended(keep, SittingEndCause.WENT_HOME)),
+            t.app("com.other.app", 1_000 + window)
+        )
+    }
+
+    /**
+     * First evidence wins, as for a screen-off: bouncing through the launcher again and again must
+     * not keep restarting the clock, or ping-ponging via Home would hold a pass forever.
+     */
+    @Test
+    fun `with short trips on, repeated trips through the launcher do not restart the away clock`() {
+        val t = shortTrips()
+        t.app(keep, 0)
+        t.onSignal(ForegroundSignal.Home(launcher), 1_000)
+        t.app("com.other.app", 2_000)
+        t.onSignal(ForegroundSignal.Home(launcher), 1_000 + window - 10)
+        assertEquals(1_000L, t.awaySinceMs)
+
+        val event = t.app(keep, 1_000 + window + 1)
+        assertTrue("the absence began at the FIRST launcher window", event is SittingEvent.Started)
+    }
+
+    /** A screen-off that came first owns the clock and the cause; the launcher renames nothing. */
+    @Test
+    fun `with short trips on, unlocking to the launcher keeps the screen-off clock`() {
+        val t = shortTrips()
+        t.app(keep, 0)
+        t.onScreenOff(1_000)
+
+        assertEquals(SittingEvent.Unchanged, t.onSignal(ForegroundSignal.Home(launcher), 2_000))
+        assertEquals(1_000L, t.awaySinceMs)
+        assertEquals(
+            SittingEvent.Started(keep, SittingEvent.Ended(keep, SittingEndCause.SCREEN_OFF)),
+            t.app(keep, 1_000 + window)
+        )
+    }
+
+    /** Switching the setting off restores the shipped rule exactly: Home ends the sitting at once. */
+    @Test
+    fun `turning short trips off restores the instant Home rule`() {
+        val t = SittingTracker()
+        t.configureShortTrips(3L * 60L * 1000L)
+        assertTrue(t.homeIsAbsence)
+        t.configureShortTrips(null)
+        assertFalse(t.homeIsAbsence)
+
+        t.app(keep, 0)
+        assertEquals(
+            SittingEvent.Ended(keep, SittingEndCause.WENT_HOME),
+            t.onSignal(ForegroundSignal.Home(launcher), 1_000)
+        )
+    }
+
+    /** The configured length is the one window: it governs an app switch too. */
+    @Test
+    fun `the short-trips length is the return window for every absence`() {
+        val t = SittingTracker()
+        val threeMinutes = 3L * 60L * 1000L
+        t.configureShortTrips(threeMinutes)
+        t.app(keep, 0)
+        t.app("com.other.app", 1_000)
+
+        assertEquals(
+            "past the shipped two minutes but inside the configured three: still the same sitting",
+            SittingEvent.Unchanged,
+            t.app(keep, 1_000 + SittingTracker.PASSTHROUGH_RETURN_WINDOW_MS + 1)
+        )
+        t.app("com.other.app", 200_000)
+        assertTrue(t.app("com.other.app", 200_000 + threeMinutes) is SittingEvent.Started)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun `a non-positive short-trips window is refused`() {
+        SittingTracker().configureShortTrips(0)
     }
 
     @Test

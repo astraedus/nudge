@@ -16,7 +16,13 @@ enum class LockedToggle {
     CONTENT_FILTER,
 
     /** The content filter's "Strict keyword matching" sub-toggle. */
-    CONTENT_FILTER_STRICT_KEYWORDS
+    CONTENT_FILTER_STRICT_KEYWORDS,
+
+    /**
+     * "Keep the pass on short trips" (#110). `enable` means turning it on or LENGTHENING it, which
+     * lets a completed delay survive more time away; see `domain/sitting/ShortTrips.isWeakening`.
+     */
+    SHORT_TRIPS
 }
 
 /**
@@ -29,6 +35,8 @@ enum class LockedToggle {
  *   every block overlay); turning it off is free.
  * - [LockedToggle.CONTENT_FILTER] and [LockedToggle.CONTENT_FILTER_STRICT_KEYWORDS]: turning the
  *   filter (or its strict keyword matching) OFF weakens; turning it on is free.
+ * - [LockedToggle.SHORT_TRIPS]: turning it on or lengthening it weakens (a completed delay then
+ *   survives longer away); shortening it or turning it off is free.
  *
  * The pass toggle is deliberately **not frozen** while Strict Mode is on (v1.10.0). Freezing it was
  * the old design and it also hid the pass from the overlays outright; now a user who opted into the
@@ -45,6 +53,7 @@ object SettingsWeakening {
         LockedToggle.STRICT_MODE,
         LockedToggle.CONTENT_FILTER,
         LockedToggle.CONTENT_FILTER_STRICT_KEYWORDS -> !enable
-        LockedToggle.EMERGENCY_PASS -> enable
+        LockedToggle.EMERGENCY_PASS,
+        LockedToggle.SHORT_TRIPS -> enable
     }
 }

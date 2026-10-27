@@ -159,6 +159,17 @@ class PassthroughManager @Inject constructor() {
         return event
     }
 
+    /**
+     * Apply the "keep the pass on short trips" setting (#110). Null = off, the shipped model. See
+     * [SittingTracker.configureShortTrips]; the same main-thread rule as every other sitting writer.
+     */
+    fun configureShortTrips(returnWindowMs: Long?) {
+        sitting.configureShortTrips(returnWindowMs)
+    }
+
+    /** Whether "keep the pass on short trips" is on, for logging. */
+    val shortTripsOn: Boolean get() = sitting.homeIsAbsence
+
     /** Drop the sitting AND the grant (global disable). */
     fun resetSitting() {
         sitting.reset()

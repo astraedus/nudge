@@ -76,6 +76,7 @@ import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.domain.lock.LockedToggle
 import com.astraedus.nudge.domain.lock.SettingsWeakening
 import com.astraedus.nudge.domain.lock.StrictModeChallenge
+import com.astraedus.nudge.domain.sitting.ShortTrips
 import com.astraedus.nudge.service.AccessibilityConnectionSignal
 import com.astraedus.nudge.service.ProtectionStatus
 import com.astraedus.nudge.ui.backup.BackupDialogs
@@ -122,6 +123,7 @@ fun SettingsScreen(
         initialValue = StrictModeChallenge.DEFAULT_LENGTH
     )
     val emergencyPassEnabled by preferences.emergencyPassEnabled.collectAsStateWithLifecycle(initialValue = true)
+    val shortTripMinutes by preferences.shortTripMinutes.collectAsStateWithLifecycle(initialValue = ShortTrips.OFF)
     val coroutineScope = rememberCoroutineScope()
     var versionTapCount by rememberSaveable { mutableIntStateOf(0) }
     var developerOptionsVisible by rememberSaveable { mutableStateOf(false) }
@@ -432,6 +434,22 @@ fun SettingsScreen(
                 modifier = Modifier.clickable { onEmergencyPassChange(!emergencyPassEnabled) }
             )
 
+            // Keeping a completed delay across a short trip away (#110). Turning it on or making
+            // it longer loosens protection, so under Strict Mode that direction takes the unlock
+            // challenge; shortening it or turning it off is always free.
+            ShortTripsRow(
+                minutes = shortTripMinutes,
+                strictModeEnabled = strictModeEnabled,
+                onChange = { target ->
+                    applyLockedToggle(
+                        LockedToggle.SHORT_TRIPS,
+                        enable = ShortTrips.isWeakening(shortTripMinutes, target)
+                    ) {
+                        coroutineScope.launch { preferences.setShortTripMinutes(target) }
+                    }
+                }
+            )
+
             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
             Text(
@@ -671,6 +689,7 @@ private fun unlockPrompt(toggle: LockedToggle): String = when (toggle) {
     LockedToggle.EMERGENCY_PASS -> "Turn on the daily 2-minute pass"
     LockedToggle.CONTENT_FILTER -> "Turn off website blocking"
     LockedToggle.CONTENT_FILTER_STRICT_KEYWORDS -> "Turn off strict keyword matching"
+    LockedToggle.SHORT_TRIPS -> "Keep the pass longer on short trips"
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
