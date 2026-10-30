@@ -4,6 +4,11 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+## [1.22.4] - 2026-10-30
+
+### Changed
+- Release builds are now shrunk and optimised by R8 (asked for in the F-Droid review), so the APK is smaller. Class names are kept (`-dontobfuscate`): Nudge recognises its own windows by class name, and readable stack traces matter more than obfuscation for an open-source app. Nothing changes in how Nudge works. (#93)
+
 ## [1.22.3] - 2026-10-24
 
 ### Changed
