@@ -10,7 +10,7 @@ enum class SittingEndCause {
     /**
      * The user pressed Home. The one unambiguous "I am leaving" gesture the platform gives us —
      * except on gesture navigation, where an app switch crosses the launcher too. With the opt-in
-     * "keep the pass on short trips" setting on, it ends the sitting only once the user stays away
+     * "keep the pass on short trips" option on the rule that granted the pass, it ends the sitting only once the user stays away
      * past the return window ([#110](https://github.com/astraedus/nudge/issues/110)).
      */
     WENT_HOME,
@@ -96,7 +96,7 @@ val SittingEvent.endedSitting: SittingEvent.Ended?
  *
  * | Cause | Ends on | Passthrough grant | Interaction count / time baseline |
  * |---|---|---|---|
- * | [SittingEndCause.WENT_HOME] | the gesture itself, at once (with the opt-in short-trips setting: the launcher having been in front for ≥[returnWindowMs] when the user comes back, #110) | revoked | **untouched** — a trip home must not refill a time budget |
+ * | [SittingEndCause.WENT_HOME] | the gesture itself, at once (when the granting rule has "keep the pass on short trips" on, [homeIsAbsence]: the launcher having been in front for ≥[returnWindowMs] when the user comes back, #110) | revoked | **untouched** — a trip home must not refill a time budget |
  * | [SittingEndCause.SCREEN_OFF] | the screen having been off for ≥[returnWindowMs] when the user comes back | revoked | reset on return |
  * | [SittingEndCause.ANOTHER_APP_HELD_FOREGROUND] | that app holding the foreground for ≥[returnWindowMs] | revoked | reset — this is the same ≥[returnWindowMs] "away long enough" rule [com.astraedus.nudge.service.InteractionTracker] already uses, so the two can no longer disagree about whether this is still the same sitting |
  *
@@ -160,12 +160,11 @@ val SittingEvent.endedSitting: SittingEvent.Ended?
  * against captured device event streams (`app/src/test/resources/a11y-captures/`).
  *
  * **Single-threaded by design, and every writer must stay on the MAIN thread.** There are exactly
- * four, and today all four are main: `onAccessibilityEvent` (an accessibility service is
+ * three, and today all three are main: `onAccessibilityEvent` (an accessibility service is
  * dispatched on the main thread), the `ACTION_SCREEN_OFF` receiver (registered with no Handler, so
- * it runs on main), `BlockOverlayActivity.onTimerComplete` via
+ * it runs on main), and `BlockOverlayActivity.onTimerComplete` via
  * [com.astraedus.nudge.service.PassthroughManager.grant] — the overlay is in the same process, with
- * no `android:process` in the manifest — and the short-trips preference collector via
- * [configureShortTrips], which hops to Main itself. Anything calling in from the service's IO scope must hop to
+ * no `android:process` in the manifest. Anything calling in from the service's IO scope must hop to
  * Main first, exactly as `onWebDomainForeground` already does for
  * [com.astraedus.nudge.service.InteractionTracker], whose plain maps have the same constraint.
  */
@@ -197,30 +196,23 @@ class SittingTracker(
      * granted app has that app as its task root — which would demote this window to a fallback for
      * API 26-28 rather than the mechanism. Recorded in `docs/BACKLOG.md`.
      */
-    returnWindowMs: Long = PASSTHROUGH_RETURN_WINDOW_MS,
-    /**
-     * The opt-in "keep the pass on short trips" setting ([#110](https://github.com/astraedus/nudge/issues/110)).
-     * False — the default, and the shipped behaviour — means a launcher window ends the sitting at
-     * once. True means it only starts the away clock, judged by [returnWindowMs] like every other
-     * absence. See [configureShortTrips].
-     */
-    homeIsAbsence: Boolean = false
+    private val returnWindowMs: Long = PASSTHROUGH_RETURN_WINDOW_MS
 ) {
 
-    /** See the constructor parameter. Changed only through [configureShortTrips]. */
-    private var returnWindowMs: Long = returnWindowMs
-
-    /** See the constructor parameter. Changed only through [configureShortTrips]. */
-    var homeIsAbsence: Boolean = homeIsAbsence
+    /** The app whose sitting is currently alive, or null when there is none. */
+    var currentApp: String? = null
         private set
 
     /**
-     * Apply the user's "keep the pass on short trips" setting
-     * ([#110](https://github.com/astraedus/nudge/issues/110)). Null turns it off and restores the
-     * shipped model exactly: Home ends the sitting at once and the return window is
-     * [PASSTHROUGH_RETURN_WINDOW_MS].
+     * Whether the CURRENT sitting treats the home screen as an absence rather than a departure: the
+     * per-rule "keep the pass on short trips" option ([#110](https://github.com/astraedus/nudge/issues/110)),
+     * carried in by the grant that started or renewed this sitting ([onGrantEarned]).
      *
-     * ## Why this exists, and why it is opt-in
+     * False, the shipped behaviour, means a launcher window ends the sitting at once. True means it
+     * only starts the away clock, judged by [returnWindowMs] exactly like another app in front or a
+     * screen-off (#54): first evidence wins, and the length of the absence decides on return.
+     *
+     * ## Why this exists, and why it is opt-in, per rule
      *
      * On gesture navigation the launcher is not only the home screen: Recents and the quick-switch
      * swipe live in the launcher package too (`com.sec.android.app.launcher` on Samsung, Quickstep in
@@ -231,29 +223,19 @@ class SittingTracker(
      * app (hop out to grab a photo, hop back to send it) pays the delay all day.
      *
      * The event stream cannot tell that swipe from a deliberate press of Home followed by a fresh
-     * open from the icon, and for many users the second SHOULD cost a fresh delay — that is the
-     * whole point of a delay-to-open. So the default stays exactly as it was, and a user who prefers
-     * the other trade-off opts in. With it on, a launcher window is an ABSENCE, exactly as a
-     * screen-off has been since #54: it starts the away clock (first evidence wins, so it never
-     * restarts one already running), and the length of the absence decides on return.
+     * open from the icon, and for many apps the second SHOULD cost a fresh delay; that is the whole
+     * point of a delay-to-open. Which trade-off is right depends on the app, so it is the rule's
+     * choice, not a global one: on for a messenger, off for a feed.
      *
-     * @param returnWindowMs how long the user may be away — on the home screen, in another app, or
-     *   with the screen off — and come back without a fresh block. Applies to every absence while
-     *   the setting is on, so there is one window, not two. Must be positive.
+     * ## Why it belongs to the sitting, not to a package lookup
+     *
+     * Only a GRANT can turn it on, and every way a sitting ends or moves turns it off ([end],
+     * [reset], a sitting started by a window, a sitting renewed after too long away). So it can only
+     * ever soften the end of a sitting that holds a pass this rule granted; a sitting without a grant
+     * behaves exactly as it did before #110, byte for byte. [onObservationResumed] keeps it, for the
+     * same reason it keeps the sitting.
      */
-    fun configureShortTrips(returnWindowMs: Long?) {
-        if (returnWindowMs == null) {
-            this.returnWindowMs = PASSTHROUGH_RETURN_WINDOW_MS
-            homeIsAbsence = false
-        } else {
-            require(returnWindowMs > 0) { "returnWindowMs must be positive, was $returnWindowMs" }
-            this.returnWindowMs = returnWindowMs
-            homeIsAbsence = true
-        }
-    }
-
-    /** The app whose sitting is currently alive, or null when there is none. */
-    var currentApp: String? = null
+    var homeIsAbsence: Boolean = false
         private set
 
     /**
@@ -313,7 +295,8 @@ class SittingTracker(
      *
      * Deliberately takes no position on WHERE the user comes back to. If it is the same app,
      * [onAppWindow] closes the clock or ends the sitting on its length. If it is the launcher,
-     * [SittingEndCause.WENT_HOME] ends it outright, as it always did. If it is another app, that
+     * [SittingEndCause.WENT_HOME] ends it outright, as it always did (unless the sitting
+     * [homeIsAbsence], in which case the clock this started simply keeps running). If it is another app, that
      * app's own away clock is already running from the moment the screen went dark, which is when
      * the user genuinely stopped looking.
      *
@@ -380,15 +363,22 @@ class SittingTracker(
      * Called when a grant is earned. Without this, completing a delay for app B while the tracker
      * still believed the sitting belonged to app A would leave B's brand-new grant attached to A's
      * sitting, and the next transition would revoke it.
+     *
+     * @param keepPassOnShortTrips the deciding rule's "keep the pass on short trips" option (#110),
+     *   which becomes this sitting's [homeIsAbsence]. Set on BOTH branches: a grant earned again in
+     *   the same sitting carries the rule as it is NOW, so turning the option off takes effect from
+     *   the next pass rather than lingering on a sitting that started under the old value.
      */
-    fun onGrantEarned(packageName: String): SittingEvent {
+    fun onGrantEarned(packageName: String, keepPassOnShortTrips: Boolean = false): SittingEvent {
         if (currentApp == packageName) {
             awaySinceMs = null
+            homeIsAbsence = keepPassOnShortTrips
             return SittingEvent.Unchanged
         }
         val ended = currentApp?.let { SittingEvent.Ended(it, SittingEndCause.ANOTHER_APP_HELD_FOREGROUND) }
         currentApp = packageName
         awaySinceMs = null
+        homeIsAbsence = keepPassOnShortTrips
         return SittingEvent.Started(packageName, ended)
     }
 
@@ -396,6 +386,7 @@ class SittingTracker(
     fun reset() {
         currentApp = null
         awaySinceMs = null
+        homeIsAbsence = false
     }
 
     /**
@@ -425,6 +416,7 @@ class SittingTracker(
         if (current == null) {
             currentApp = packageName
             awaySinceMs = null
+            homeIsAbsence = false
             return SittingEvent.Started(packageName, null)
         }
 
@@ -444,6 +436,7 @@ class SittingTracker(
 
         currentApp = packageName
         awaySinceMs = null
+        homeIsAbsence = false
         return SittingEvent.Started(packageName, SittingEvent.Ended(current, cause))
     }
 
@@ -462,6 +455,8 @@ class SittingTracker(
         val cause = awayCause
         awaySinceMs = null
         if (awaySince != null && nowMs - awaySince >= returnWindowMs) {
+            // A fresh sitting holds no grant (the old one's is revoked), so it has nothing to keep.
+            homeIsAbsence = false
             return SittingEvent.Started(current, SittingEvent.Ended(current, cause))
         }
         return SittingEvent.Unchanged
@@ -483,7 +478,7 @@ class SittingTracker(
 
     /**
      * With [homeIsAbsence] on, the launcher starts the away clock instead of ending the sitting
-     * (#110). Same shape as [onScreenOff]: the user is not looking at their app right now, and
+     * (#110, per rule). Same shape as [onScreenOff]: the user is not looking at their app right now, and
      * [returnWindowMs] decides on their return whether that was a departure. Going home and staying
      * away past it still ends the sitting as [SittingEndCause.WENT_HOME].
      */
@@ -497,6 +492,7 @@ class SittingTracker(
         val current = currentApp ?: return SittingEvent.Unchanged
         currentApp = null
         awaySinceMs = null
+        homeIsAbsence = false
         return SittingEvent.Ended(current, cause)
     }
 

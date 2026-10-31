@@ -58,6 +58,10 @@ object RuleWeakening {
      *    never changes how much protection a rule enforces (do not add it later "by symmetry" with
      *    tabVanish; it belongs to a different axis entirely).
      *
+     *  - keepPassOnShortTrips false -> true (#110): a completed delay then survives a trip to the
+     *    home screen, so reopening from the icon within the return window skips the delay. It
+     *    removes friction, so turning it ON is weakening; turning it off never is.
+     *
      *  - `remindAfterMinutes` (#77) is deliberately NOT a dimension either: a usage reminder is a
      *    notification and enforces nothing, exactly like `showCounter`, `showTimeRemaining` and
      *    `grayscale`, none of which are dimensions. It is a SEPARATE field from the time kick
@@ -99,6 +103,12 @@ object RuleWeakening {
         // was there before. Turning it ON is never weakening (it only adds a cover), so this is a
         // one-directional check like `enabled` above, not a strength comparison.
         if (old.tabVanish && !new.tabVanish) return true
+
+        // Keep the pass on short trips (#110): turning it ON lets a pass already waited out
+        // survive a trip to the home screen, so the next open from the icon skips the delay it
+        // would have cost before. Less friction = weakening. Turning it off only restores the
+        // delay, so (like tabVanish, mirrored) this is a one-directional check.
+        if (!old.keepPassOnShortTrips && new.keepPassOnShortTrips) return true
 
         return false
     }

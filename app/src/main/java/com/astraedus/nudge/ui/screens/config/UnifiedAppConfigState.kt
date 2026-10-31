@@ -95,6 +95,11 @@ data class UnifiedAppConfigState(
      * this is the first thing Nudge does *inside* another app rather than around it.
      */
     val followingSteer: Boolean = false,
+    /**
+     * "Keep the pass on short trips" (#110), per app, opt-in. The user's CHOICE, kept even while the
+     * row is hidden; what is saved is [effectiveKeepPassOnShortTrips].
+     */
+    val keepPassOnShortTrips: Boolean = false,
 
     // UI state
     val isLoading: Boolean = true,
@@ -109,6 +114,23 @@ data class UnifiedAppConfigState(
      * opens freely and only the feature overrides (Shorts, Reels, …) and the daily limit apply.
      */
     val blocksWholeApp: Boolean get() = defaultMode != BlockMode.NONE
+
+    /**
+     * Whether the "keep the pass on short trips" row is offered: only when opening the app itself
+     * earns a pass, i.e. its mode spends a duration (Delay, Hold, Breathing). A hard block never
+     * grants a pass, so there is nothing to keep. Asked of [BlockMode.usesDuration], the same set
+     * the engine's timed-mode branch decides with, so the row and the engine cannot disagree.
+     */
+    val showKeepPassOnShortTrips: Boolean
+        get() = blocksWholeApp && defaultMode.usesDuration
+
+    /**
+     * What a save persists: the choice, but only where the row is offered. Switching the app to a
+     * hard block therefore saves it off (no hidden setting can survive on a rule that cannot use
+     * it), while the choice itself stays in this state for as long as the screen is open.
+     */
+    val effectiveKeepPassOnShortTrips: Boolean
+        get() = keepPassOnShortTrips && showKeepPassOnShortTrips
 
     /**
      * The mode the shared `delaySeconds` control is currently editing the duration OF: the app's own

@@ -73,27 +73,6 @@ class SettingsWeakeningTest {
         }
     }
 
-    // --- "Keep the pass on short trips" (#110): longer is weaker ---
-
-    @Test
-    fun `turning short trips on or longer under strict mode requires the unlock`() {
-        assertTrue(
-            SettingsWeakening.requiresUnlock(
-                LockedToggle.SHORT_TRIPS, enable = true, strictModeEnabled = true
-            )
-        )
-    }
-
-    @Test
-    fun `shortening short trips or turning them off under strict mode is free`() {
-        assertFalse(
-            "a shorter pass strengthens protection — never gate it",
-            SettingsWeakening.requiresUnlock(
-                LockedToggle.SHORT_TRIPS, enable = false, strictModeEnabled = true
-            )
-        )
-    }
-
     // --- Strict Mode OFF: nothing is ever gated ---
 
     @Test

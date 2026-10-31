@@ -134,7 +134,13 @@ data class ExportedRule(
      * See `BlockRule.followingSteer`. Defaults **false**: an experimental, opt-in capability that
      * a pre-feature backup could never have carried, so its absence must restore as off.
      */
-    val followingSteer: Boolean = false
+    val followingSteer: Boolean = false,
+    /**
+     * See `BlockRule.keepPassOnShortTrips` (#110). Defaults **false**: opt-in, and a backup
+     * written before it existed carries no key, so it must restore with the pass ending at Home
+     * exactly as it did on the device that wrote it.
+     */
+    val keepPassOnShortTrips: Boolean = false
 )
 
 data class ExportedGroup(

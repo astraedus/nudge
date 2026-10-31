@@ -234,12 +234,12 @@ class PassthroughManagerTest {
         assertTrue(manager.isGranted("com.app.b"))
     }
 
-    // --- "keep the pass on short trips" (#110) ---
+    // --- "keep the pass on short trips" (#110), per rule: the option rides the grant ---
 
     @Test
-    fun `with short trips on, home and straight back keeps the grant`() {
-        manager.configureShortTrips(3L * 60L * 1000L)
-        manager.grant("org.telegram.messenger")
+    fun `a grant with short trips keeps the pass across home and straight back`() {
+        manager.grant("org.telegram.messenger", keepPassOnShortTrips = true)
+        assertTrue(manager.keepsPassOnShortTrips)
 
         manager.onForegroundSignal(ForegroundSignal.Home("com.sec.android.app.launcher"), 1_000)
         assertTrue(manager.isGranted("org.telegram.messenger"))
@@ -249,22 +249,22 @@ class PassthroughManagerTest {
     }
 
     @Test
-    fun `with short trips on, home and back after the window revokes the grant`() {
-        val threeMinutes = 3L * 60L * 1000L
-        manager.configureShortTrips(threeMinutes)
-        manager.grant("org.telegram.messenger")
+    fun `a grant with short trips is revoked on a return past the window`() {
+        manager.grant("org.telegram.messenger", keepPassOnShortTrips = true)
 
         manager.onForegroundSignal(ForegroundSignal.Home("com.sec.android.app.launcher"), 1_000)
-        manager.onForegroundSignal(ForegroundSignal.AppWindow("org.telegram.messenger"), 1_000 + threeMinutes)
+        manager.onForegroundSignal(
+            ForegroundSignal.AppWindow("org.telegram.messenger"),
+            1_000 + SittingTracker.PASSTHROUGH_RETURN_WINDOW_MS
+        )
 
         assertFalse(manager.isGranted("org.telegram.messenger"))
     }
 
     @Test
-    fun `turning short trips off makes home revoke at once again`() {
-        manager.configureShortTrips(3L * 60L * 1000L)
-        manager.configureShortTrips(null)
+    fun `a grant without short trips is revoked at home at once, as shipped`() {
         manager.grant("org.telegram.messenger")
+        assertFalse(manager.keepsPassOnShortTrips)
 
         manager.onForegroundSignal(ForegroundSignal.Home("com.sec.android.app.launcher"), 1_000)
 

@@ -68,14 +68,16 @@ class UnifiedAppConfigViewModelTest {
         webDomains: String? = null,
         webBlockMode: String? = null,
         tabVanish: Boolean = true,
-        followingSteer: Boolean = false
+        followingSteer: Boolean = false,
+        keepPassOnShortTrips: Boolean = false
     ) = BlockRule(
         packageName = packageName,
         mode = mode,
         webDomains = webDomains,
         webBlockMode = webBlockMode,
         tabVanish = tabVanish,
-        followingSteer = followingSteer
+        followingSteer = followingSteer,
+        keepPassOnShortTrips = keepPassOnShortTrips
     )
 
     // ── setBlocksWholeApp / lastBlockingMode restore ──────────────────────
@@ -313,6 +315,82 @@ class UnifiedAppConfigViewModelTest {
                 rule.tabVanish
             )
         }
+    }
+
+    // ── Keep the pass on short trips (#110): per app, only for pass-granting modes ──
+
+    @Test
+    fun `loading a rule with keepPassOnShortTrips true loads it, and no rule loads it off`() = runTest {
+        assertTrue(viewModel(listOf(defaultRule(mode = "DELAY", keepPassOnShortTrips = true))).uiState.value.keepPassOnShortTrips)
+        assertFalse(viewModel().uiState.value.keepPassOnShortTrips)
+    }
+
+    @Test
+    fun `the short-trips row shows for Delay, Hold and Breathing, never Hard Block or an unblocked app`() = runTest {
+        val vm = viewModel()
+        for (mode in listOf(BlockMode.DELAY, BlockMode.HOLD, BlockMode.BREATHING)) {
+            vm.setDefaultMode(mode)
+            assertTrue("$mode grants a pass", vm.uiState.value.showKeepPassOnShortTrips)
+        }
+        vm.setDefaultMode(BlockMode.HARD_BLOCK)
+        assertFalse(vm.uiState.value.showKeepPassOnShortTrips)
+        vm.setBlocksWholeApp(false)
+        assertFalse(vm.uiState.value.showKeepPassOnShortTrips)
+    }
+
+    @Test
+    fun `save with short trips on writes it on every persisted rule, like tabVanish`() = runTest {
+        val capturedRules = mutableListOf<BlockRule>()
+        coEvery { blockRuleRepository.deleteDirectRulesForPackage(any()) } just Runs
+        coEvery { blockRuleRepository.addRule(capture(capturedRules)) } returns 1L
+
+        val vm = viewModel()
+        vm.setDefaultMode(BlockMode.DELAY)
+        vm.setKeepPassOnShortTrips(true)
+        vm.setFeatureOverride("REELS", FeatureOverride(mode = FeatureMode.BLOCK))
+        vm.setScheduledOverrideEnabled(true)
+        vm.setScheduledFeatureOverride("REELS", FeatureOverride(mode = FeatureMode.BLOCK))
+
+        vm.save()
+
+        assertTrue("expected 4+ persisted rules, got ${capturedRules.size}", capturedRules.size >= 4)
+        capturedRules.forEach { rule ->
+            assertTrue(
+                "rule (schedule=${rule.scheduleDays}, feature=${rule.inAppFeatures}) dropped keepPassOnShortTrips",
+                rule.keepPassOnShortTrips
+            )
+        }
+    }
+
+    @Test
+    fun `switching the app to Hard Block saves short trips off, a hidden option never persists`() = runTest {
+        val capturedRules = mutableListOf<BlockRule>()
+        coEvery { blockRuleRepository.deleteDirectRulesForPackage(any()) } just Runs
+        coEvery { blockRuleRepository.addRule(capture(capturedRules)) } returns 1L
+
+        val vm = viewModel()
+        vm.setDefaultMode(BlockMode.DELAY)
+        vm.setKeepPassOnShortTrips(true)
+        vm.setDefaultMode(BlockMode.HARD_BLOCK)
+
+        vm.save()
+
+        assertTrue(capturedRules.isNotEmpty())
+        capturedRules.forEach { assertFalse(it.keepPassOnShortTrips) }
+    }
+
+    @Test
+    fun `short trips is off by default on a fresh save`() = runTest {
+        val capturedRules = mutableListOf<BlockRule>()
+        coEvery { blockRuleRepository.deleteDirectRulesForPackage(any()) } just Runs
+        coEvery { blockRuleRepository.addRule(capture(capturedRules)) } returns 1L
+
+        val vm = viewModel()
+        vm.setDefaultMode(BlockMode.DELAY)
+        vm.save()
+
+        assertTrue(capturedRules.isNotEmpty())
+        capturedRules.forEach { assertFalse(it.keepPassOnShortTrips) }
     }
 
     // ── Tab Vanish / Following steer: registry-driven visibility ───────────

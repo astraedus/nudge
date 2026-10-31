@@ -125,7 +125,8 @@ class RuleExporter @Inject constructor() {
                 remindAfterMinutes = rule.remindAfterMinutes,
                 webBlockMode = rule.webBlockMode,
                 tabVanish = rule.tabVanish,
-                followingSteer = rule.followingSteer
+                followingSteer = rule.followingSteer,
+                keepPassOnShortTrips = rule.keepPassOnShortTrips
             )
         }
 
@@ -295,6 +296,7 @@ class RuleExporter @Inject constructor() {
             obj.put("webBlockMode", rule.webBlockMode ?: JSONObject.NULL)
             obj.put("tabVanish", rule.tabVanish)
             obj.put("followingSteer", rule.followingSteer)
+            obj.put("keepPassOnShortTrips", rule.keepPassOnShortTrips)
             rulesArray.put(obj)
         }
         root.put("rules", rulesArray)
@@ -542,7 +544,9 @@ class RuleExporter @Inject constructor() {
             // KDoc on ExportedRule for why those are the correct restore values, not just the
             // entity's code-level defaults reused for convenience.
             tabVanish = obj.optBoolean("tabVanish", true),
-            followingSteer = obj.optBoolean("followingSteer", false)
+            followingSteer = obj.optBoolean("followingSteer", false),
+            // Absent (written before #110) = off: the pass ends at Home, as it did when exported.
+            keepPassOnShortTrips = obj.optBoolean("keepPassOnShortTrips", false)
         )
     }
 

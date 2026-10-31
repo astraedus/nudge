@@ -14,5 +14,7 @@ data class ActiveRule(
     /** See [com.astraedus.nudge.data.db.entity.BlockRule.tabVanish]. */
     val tabVanish: Boolean = true,
     /** See [com.astraedus.nudge.data.db.entity.BlockRule.followingSteer]. */
-    val followingSteer: Boolean = false
+    val followingSteer: Boolean = false,
+    /** See [com.astraedus.nudge.data.db.entity.BlockRule.keepPassOnShortTrips]. */
+    val keepPassOnShortTrips: Boolean = false
 )

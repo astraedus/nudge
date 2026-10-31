@@ -28,7 +28,7 @@ import com.astraedus.nudge.data.db.entity.UsageEvent
  * keeps passing forever after a bump nobody remembered to make twice. One constant, two readers, and
  * the compiler holds them together.
  */
-internal const val NUDGE_DB_VERSION = 12
+internal const val NUDGE_DB_VERSION = 13
 
 @Database(
     entities = [
@@ -185,6 +185,19 @@ abstract class NudgeDatabase : RoomDatabase() {
         val MIGRATION_11_12 = object : Migration(11, 12) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE block_rules ADD COLUMN remindAfterMinutes INTEGER DEFAULT NULL")
+            }
+        }
+
+        /**
+         * Adds "keep the pass on short trips" (issue #110), the per-rule column backing
+         * [com.astraedus.nudge.data.db.entity.BlockRule.keepPassOnShortTrips].
+         *
+         * 0 for every pre-migration rule: the option is opt-in, and upgrading must not change when
+         * anyone's pass ends. Same `NOT NULL DEFAULT` shape as `followingSteer` (10 -> 11).
+         */
+        val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE block_rules ADD COLUMN keepPassOnShortTrips INTEGER NOT NULL DEFAULT 0")
             }
         }
     }

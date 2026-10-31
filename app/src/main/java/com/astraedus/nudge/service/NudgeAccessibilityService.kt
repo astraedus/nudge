@@ -28,7 +28,6 @@ import com.astraedus.nudge.domain.interaction.SyntheticClickWindow
 import com.astraedus.nudge.domain.lock.StrictModeEscapeGuard
 import com.astraedus.nudge.domain.sitting.SittingEndCause
 import com.astraedus.nudge.domain.sitting.SittingEvent
-import com.astraedus.nudge.domain.sitting.ShortTrips
 import com.astraedus.nudge.domain.sitting.endedSitting
 import com.astraedus.nudge.domain.model.BlockDecision
 import com.astraedus.nudge.domain.model.BlockMode
@@ -969,9 +968,9 @@ class NudgeAccessibilityService : AccessibilityService() {
      * purpose (a tab-out-and-back must not refill a time budget), and that stays true — leaving the
      * app revokes permission to skip the delay, it does not end the session.
      *
-     * **Both passthrough axes are already gone by the time this runs** — unless the user turned on
-     * "keep the pass on short trips" (#110), in which case the launcher only started the sitting's
-     * away clock and the grant goes on return if they stayed away too long. `ForegroundSignal.Home` is
+     * **Both passthrough axes are already gone by the time this runs**, unless the rule that granted
+     * the pass has "keep the pass on short trips" on (#110): then the launcher only started the
+     * sitting's away clock, and the grant goes on return if they stayed away too long. `ForegroundSignal.Home` is
      * one of only two signals [com.astraedus.nudge.domain.sitting.SittingTracker] allows to end a
      * sitting, and the single `applyForegroundSignal` call at the top of [onAccessibilityEvent] revokes the
      * grant — app axis and web axis together — when it does. Clearing again here would be the "a
@@ -981,7 +980,8 @@ class NudgeAccessibilityService : AccessibilityService() {
      */
     private fun onWentHome(packageName: String) {
         entryPoint.nudgeLogger().d(
-            "home screen in front package=$packageName shortTrips=${entryPoint.passthroughManager().shortTripsOn}"
+            "home screen in front package=$packageName " +
+                "keepPassOnShortTrips=${entryPoint.passthroughManager().keepsPassOnShortTrips}"
         )
         endWebSession("went_home")
     }
@@ -1213,18 +1213,6 @@ class NudgeAccessibilityService : AccessibilityService() {
             entryPoint.nudgePreferences().bounceCheckInEnabled.collect { enabled ->
                 bounceCheckIn.setEnabled(enabled)
                 entryPoint.nudgeLogger().i("bounce check-in enabled=$enabled")
-            }
-        }
-
-        // "Keep the pass on short trips" (#110). Applied on Main: the sitting model has exactly
-        // three writers and every one of them must stay on the main thread (see SittingTracker).
-        serviceScope.launch {
-            entryPoint.nudgePreferences().shortTripMinutes.collect { minutes ->
-                withContext(Dispatchers.Main) {
-                    entryPoint.passthroughManager()
-                        .configureShortTrips(ShortTrips.returnWindowMs(minutes))
-                }
-                entryPoint.nudgeLogger().i("short trips minutes=$minutes")
             }
         }
 
@@ -2972,6 +2960,10 @@ class NudgeAccessibilityService : AccessibilityService() {
                     putExtra(BlockOverlayActivity.EXTRA_FEATURE_KEY, featureKey)
                     putExtra(BlockOverlayActivity.EXTRA_RULE_NAME, decision.ruleName)
                     putExtra(BlockOverlayActivity.EXTRA_NUKE, decision.nuke)
+                    putExtra(
+                        BlockOverlayActivity.EXTRA_KEEP_PASS_ON_SHORT_TRIPS,
+                        decision.keepPassOnShortTrips
+                    )
                     web?.let {
                         putExtra(BlockOverlayActivity.EXTRA_PASSTHROUGH_PACKAGE, it.browserPackage)
                         putExtra(BlockOverlayActivity.EXTRA_WEB_DOMAIN, it.domain)

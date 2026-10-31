@@ -14,7 +14,6 @@ import com.astraedus.nudge.data.export.ExportedSettings
 import com.astraedus.nudge.domain.ContentFilterAllowlist
 import com.astraedus.nudge.domain.nuke.NukeKeyKind
 import com.astraedus.nudge.domain.nuke.NukeState
-import com.astraedus.nudge.domain.sitting.ShortTrips
 import com.astraedus.nudge.service.GlobalEnabledProvider
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
@@ -47,7 +46,6 @@ class NudgePreferences @Inject constructor(
         val EMERGENCY_PASS_ENABLED = booleanPreferencesKey("emergency_pass_enabled")
         val EMERGENCY_PASS_USAGE = stringPreferencesKey("emergency_pass_usage")
         val BOUNCE_CHECK_IN_ENABLED = booleanPreferencesKey("bounce_check_in_enabled")
-        val SHORT_TRIP_MINUTES = intPreferencesKey("short_trip_minutes")
         val PIP_ESCAPE_PROMPTED = stringPreferencesKey("pip_escape_prompted")
         val PROTECTION_DEGRADED = booleanPreferencesKey("protection_degraded")
         val PROTECTION_ALERT_SHOWN_AT = longPreferencesKey("protection_alert_shown_at")
@@ -263,22 +261,6 @@ class NudgePreferences @Inject constructor(
 
     suspend fun setBounceCheckInEnabled(enabled: Boolean) {
         context.dataStore.edit { prefs -> prefs[Keys.BOUNCE_CHECK_IN_ENABLED] = enabled }
-    }
-
-    /**
-     * "Keep the pass on short trips" ([#110](https://github.com/astraedus/nudge/issues/110)), in
-     * minutes; [ShortTrips.OFF] (the default) keeps the shipped behaviour. See [ShortTrips].
-     *
-     * `distinctUntilChanged` for the same reason as [isGlobalEnabled]: the accessibility service
-     * collects this. Device-local and not carried by a backup, like [bounceCheckInEnabled]: the
-     * export format's settings set is pinned by `ImportedSettingsWriteContractTest`.
-     */
-    val shortTripMinutes: Flow<Int> = context.dataStore.data
-        .map { prefs -> prefs[Keys.SHORT_TRIP_MINUTES] ?: ShortTrips.OFF }
-        .distinctUntilChanged()
-
-    suspend fun setShortTripMinutes(minutes: Int) {
-        context.dataStore.edit { prefs -> prefs[Keys.SHORT_TRIP_MINUTES] = minutes }
     }
 
     /**

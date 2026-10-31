@@ -24,7 +24,8 @@ class RuleWeakeningTest {
         webBlockMode: String? = null,
         tabVanish: Boolean = true,
         followingSteer: Boolean = false,
-        remindAfterMinutes: Int? = null
+        remindAfterMinutes: Int? = null,
+        keepPassOnShortTrips: Boolean = false
     ) = BlockRule(
         packageName = "com.example",
         mode = mode,
@@ -38,7 +39,8 @@ class RuleWeakeningTest {
         webBlockMode = webBlockMode,
         tabVanish = tabVanish,
         followingSteer = followingSteer,
-        remindAfterMinutes = remindAfterMinutes
+        remindAfterMinutes = remindAfterMinutes,
+        keepPassOnShortTrips = keepPassOnShortTrips
     )
 
     // ── delay ──
@@ -551,5 +553,38 @@ class RuleWeakeningTest {
         val after = rule(autoKickAfterMinutes = 40, remindAfterMinutes = null)
 
         assertTrue(RuleWeakening.isWeakening(before, after))
+    }
+
+    // keepPassOnShortTrips (#110): turning it ON lets a waited-out pass survive a trip home, i.e.
+    // removes friction, so it is a one-directional weakening axis (the mirror of tabVanish).
+
+    @Test
+    fun `turning keepPassOnShortTrips on is weakening`() {
+        assertTrue(
+            RuleWeakening.isWeakening(rule(keepPassOnShortTrips = false), rule(keepPassOnShortTrips = true))
+        )
+    }
+
+    @Test
+    fun `turning keepPassOnShortTrips off is not weakening`() {
+        assertFalse(
+            RuleWeakening.isWeakening(rule(keepPassOnShortTrips = true), rule(keepPassOnShortTrips = false))
+        )
+    }
+
+    @Test
+    fun `leaving keepPassOnShortTrips unchanged is not weakening`() {
+        assertFalse(RuleWeakening.isWeakening(rule(keepPassOnShortTrips = true), rule(keepPassOnShortTrips = true)))
+        assertFalse(RuleWeakening.isWeakening(rule(keepPassOnShortTrips = false), rule(keepPassOnShortTrips = false)))
+    }
+
+    @Test
+    fun `turning keepPassOnShortTrips on is weakening even while strengthening the delay`() {
+        assertTrue(
+            RuleWeakening.isWeakening(
+                rule(delaySeconds = 15, keepPassOnShortTrips = false),
+                rule(delaySeconds = 60, keepPassOnShortTrips = true)
+            )
+        )
     }
 }

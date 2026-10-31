@@ -93,11 +93,20 @@ class PassthroughManager @Inject constructor() {
      * Record a completed block. Moves the sitting to [packageName] first: finishing a delay is
      * unambiguous evidence of where the user is, and a grant left attached to the PREVIOUS app's
      * sitting would be revoked by the very next transition.
+     *
+     * @param keepPassOnShortTrips the rule that decided this block has "keep the pass on short
+     *   trips" on (#110): a trip to the home screen then starts the sitting's away clock instead of
+     *   ending it. See [SittingTracker.homeIsAbsence]. False is the shipped behaviour.
      */
-    fun grant(packageName: String, featureKey: String? = null, webDomain: String? = null) {
+    fun grant(
+        packageName: String,
+        featureKey: String? = null,
+        webDomain: String? = null,
+        keepPassOnShortTrips: Boolean = false
+    ) {
         // The sitting moves FIRST, and its transition is announced like any other, so a grant that
         // relocates the user from app A to app B resets A's counter state instead of leaking it.
-        val event = sitting.onGrantEarned(packageName)
+        val event = sitting.onGrantEarned(packageName, keepPassOnShortTrips)
         lastPackage = packageName
         lastFeature = featureKey
         lastDomain = webDomain
@@ -160,15 +169,10 @@ class PassthroughManager @Inject constructor() {
     }
 
     /**
-     * Apply the "keep the pass on short trips" setting (#110). Null = off, the shipped model. See
-     * [SittingTracker.configureShortTrips]; the same main-thread rule as every other sitting writer.
+     * Whether the current sitting keeps its pass across a trip to the home screen: the deciding
+     * rule's "keep the pass on short trips" option (#110), handed in by [grant]. For logging.
      */
-    fun configureShortTrips(returnWindowMs: Long?) {
-        sitting.configureShortTrips(returnWindowMs)
-    }
-
-    /** Whether "keep the pass on short trips" is on, for logging. */
-    val shortTripsOn: Boolean get() = sitting.homeIsAbsence
+    val keepsPassOnShortTrips: Boolean get() = sitting.homeIsAbsence
 
     /** Drop the sitting AND the grant (global disable). */
     fun resetSitting() {
