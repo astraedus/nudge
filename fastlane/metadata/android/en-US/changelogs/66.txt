@@ -1,0 +1,5 @@
+• New per-app option: keep the pass on short trips. A quick trip to the home screen no longer makes you wait again for that app. Off by default.
+• New: Blocked words & sites. Add your own words and sites for the content filter to always block.
+• The check-in now counts blocked websites, not just apps.
+• Backups now include the check-in setting.
+• The Grayscale setup guide now shows the right command.
