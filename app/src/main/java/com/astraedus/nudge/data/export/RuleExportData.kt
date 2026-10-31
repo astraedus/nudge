@@ -34,7 +34,7 @@ data class NudgeExport(
  * EVERY field is nullable and every field is optional in the JSON, and that is the whole
  * forward/backward-compatibility mechanism at this level: a key that is absent means "this file
  * does not carry that setting", and the importing device simply keeps its own value. So a backup
- * written by a future Nudge that adds a tenth setting still restores its other nine here, and a
+ * written by a future Nudge that adds a twelfth setting still restores its other eleven here, and a
  * backup written by this build still restores on that future one.
  *
  * ## What is deliberately NOT here

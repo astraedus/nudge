@@ -233,8 +233,8 @@ class SettingsExportTest {
     }
 
     /**
-     * Forward compatibility at the KEY level: a backup from a future Nudge that adds a tenth
-     * setting must still restore the nine this build knows, without being penalised for the one it
+     * Forward compatibility at the KEY level: a backup from a future Nudge that adds a twelfth
+     * setting must still restore the eleven this build knows, without being penalised for the one it
      * does not.
      */
     @Test
