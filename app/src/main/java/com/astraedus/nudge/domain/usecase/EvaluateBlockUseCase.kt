@@ -5,6 +5,7 @@ import com.astraedus.nudge.data.repository.BlockRuleRepository
 import com.astraedus.nudge.data.repository.ContentFilter
 import com.astraedus.nudge.data.repository.UsageRepository
 import com.astraedus.nudge.domain.ContentFilterAllowlist
+import com.astraedus.nudge.domain.ContentFilterBlocklist
 import com.astraedus.nudge.domain.WebDomainMatcher
 import com.astraedus.nudge.domain.engine.BlockEngine
 import com.astraedus.nudge.domain.engine.RuleEvaluator
@@ -209,14 +210,16 @@ class EvaluateBlockUseCase @Inject constructor(
             return WebDomainBlockResult(BlockDecision.Allow, null)
         }
         val strict = preferences.contentFilterStrictKeywords.first()
-        // The user's exceptions only ever excuse a strict-layer hit, so they are not even read
-        // when strict matching is off.
-        val allowlist = if (strict) {
+        // The user's own blocks are live whenever the filter is on, independent of the strict
+        // toggle. Their exceptions are needed for the strict layer and for those blocks; with both
+        // absent there is nothing to read.
+        val userBlocklist = ContentFilterBlocklist(preferences.contentFilterBlocklist.first())
+        val allowlist = if (strict || !userBlocklist.isEmpty) {
             ContentFilterAllowlist(preferences.contentFilterAllowlist.first())
         } else {
             ContentFilterAllowlist.EMPTY
         }
-        if (!contentFilter.isBlocked(urlBarText, strict, allowlist)) {
+        if (!contentFilter.isBlocked(urlBarText, strict, allowlist, userBlocklist)) {
             return WebDomainBlockResult(BlockDecision.Allow, null)
         }
 

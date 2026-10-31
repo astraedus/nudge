@@ -1,6 +1,7 @@
 package com.astraedus.nudge.domain.lock
 
 import com.astraedus.nudge.domain.ContentFilterAllowlist
+import com.astraedus.nudge.domain.ContentFilterUserList
 
 /**
  * Pure policy for the content filter's "Allowed words & sites" list (issue #78).
@@ -25,9 +26,9 @@ object ContentFilterAllowlistWeakening {
      * (which would be dropped on write anyway) never counts as one.
      */
     fun isWeakening(current: Collection<String>, next: Collection<String>): Boolean {
-        val before = current.mapNotNullTo(HashSet()) { ContentFilterAllowlist.normalize(it) }
+        val before = current.mapNotNullTo(HashSet()) { ContentFilterUserList.normalize(it) }
         return next.any { raw ->
-            val entry = ContentFilterAllowlist.normalize(raw)
+            val entry = ContentFilterUserList.normalize(raw)
             entry != null && entry !in before
         }
     }

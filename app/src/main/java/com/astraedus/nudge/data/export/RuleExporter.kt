@@ -5,6 +5,7 @@ import com.astraedus.nudge.data.db.entity.AppGroupMember
 import com.astraedus.nudge.data.db.entity.BlockRule
 import com.astraedus.nudge.data.db.entity.UsageEvent
 import com.astraedus.nudge.domain.ContentFilterAllowlist
+import com.astraedus.nudge.domain.ContentFilterUserList
 import com.astraedus.nudge.domain.lock.StrictModeChallenge
 import com.astraedus.nudge.domain.model.BlockMode
 import org.json.JSONArray
@@ -327,6 +328,7 @@ class RuleExporter @Inject constructor() {
         settings.contentFilterMode?.let { put("contentFilterMode", it) }
         settings.contentFilterStrictKeywords?.let { put("contentFilterStrictKeywords", it) }
         settings.contentFilterAllowlist?.let { put("contentFilterAllowlist", JSONArray(it)) }
+        settings.contentFilterBlocklist?.let { put("contentFilterBlocklist", JSONArray(it)) }
         settings.strictModeEnabled?.let { put("strictModeEnabled", it) }
         settings.strictModeChallengeLength?.let { put("strictModeChallengeLength", it) }
         settings.emergencyPassEnabled?.let { put("emergencyPassEnabled", it) }
@@ -468,7 +470,9 @@ class RuleExporter @Inject constructor() {
             contentFilterStrictKeywords =
                 obj.setting("contentFilterStrictKeywords", onSkip) { booleanValue(it) },
             contentFilterAllowlist =
-                obj.setting("contentFilterAllowlist", onSkip) { allowlistValue(it, onSkip) },
+                obj.setting("contentFilterAllowlist", onSkip) { entryListValue(it, onSkip) },
+            contentFilterBlocklist =
+                obj.setting("contentFilterBlocklist", onSkip) { entryListValue(it, onSkip) },
             strictModeEnabled = obj.setting("strictModeEnabled", onSkip) { booleanValue(it) },
             strictModeChallengeLength = obj.setting("strictModeChallengeLength", onSkip) { key ->
                 intValue(key).also { length ->
@@ -635,28 +639,29 @@ class RuleExporter @Inject constructor() {
         (opt(key) as? Number)?.toInt() ?: throw JSONException("is not a number")
 
     /**
-     * The allowlist, isolated per ENTRY as well as per key: one unreadable word must not cost the
-     * user the rest of their exceptions. Each entry goes through the same
-     * [ContentFilterAllowlist.normalize] the Settings screen uses, so a hand-edited file cannot store
-     * a form the app itself would refuse, and the [ContentFilterAllowlist.MAX_ENTRIES] cap holds.
+     * A user-owned word/site list, isolated per ENTRY as well as per key: one unreadable word must
+     * not cost the user the rest of their entries. Both the allow list and the block list come
+     * through here. Each entry goes through the same [ContentFilterUserList.normalize] the Settings
+     * screen uses, so a hand-edited file cannot store a form the app itself would refuse, and the
+     * [ContentFilterUserList.MAX_ENTRIES] cap holds.
      */
-    private fun JSONObject.allowlistValue(key: String, onSkip: (String) -> Unit): List<String> {
+    private fun JSONObject.entryListValue(key: String, onSkip: (String) -> Unit): List<String> {
         val array = opt(key) as? JSONArray ?: throw JSONException("is not a list")
         val accepted = mutableListOf<String>()
         for (i in 0 until array.length()) {
             val raw = array.opt(i) as? String
             when {
                 raw == null -> onSkip("Setting \"$key\": entry ${i + 1} is not text")
-                ContentFilterAllowlist.normalize(raw) == null ->
+                ContentFilterUserList.normalize(raw) == null ->
                     onSkip("Setting \"$key\": entry ${i + 1} is not a word or site")
                 else -> accepted.add(raw)
             }
         }
-        val canonical = ContentFilterAllowlist.canonicalize(accepted)
-        val distinct = accepted.mapNotNullTo(HashSet()) { ContentFilterAllowlist.normalize(it) }.size
+        val canonical = ContentFilterUserList.canonicalize(accepted)
+        val distinct = accepted.mapNotNullTo(HashSet()) { ContentFilterUserList.normalize(it) }.size
         if (distinct > canonical.size) {
             onSkip(
-                "Setting \"$key\": only the first ${ContentFilterAllowlist.MAX_ENTRIES} " +
+                "Setting \"$key\": only the first ${ContentFilterUserList.MAX_ENTRIES} " +
                     "entries were kept"
             )
         }

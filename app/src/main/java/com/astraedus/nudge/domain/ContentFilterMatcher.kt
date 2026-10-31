@@ -323,21 +323,69 @@ object ContentFilterMatcher {
     }
 
     /**
-     * The whole content-filter verdict for one URL-bar string: the curated domain list, OR a
-     * high-signal keyword substring, OR (only when [strictKeywords]) an ambiguous keyword as a whole
-     * word in the search query that [allowlist] does not excuse.
+     * True if the user's own "Blocked words & sites" catches [urlBarText].
      *
-     * The allowlist is threaded into the strict layer ONLY. The first two layers are deliberately
-     * out of its reach; see [ContentFilterAllowlist] for why.
+     * A word or phrase is a case-insensitive raw substring of the whole URL bar text, the same rule
+     * [matchesKeyword] applies: a user word may be short or ambiguous ("sex", "crypto"), so a
+     * whole-word rule would miss the compound the user meant. A site entry covers its host and
+     * subdomains.
+     *
+     * [allowlist] is the correction path, and it is the ONE place that list reaches beyond strict
+     * keyword matching: a page on an allowed host skips this layer entirely (paths and searches
+     * included), and a blocked word whose every occurrence sits inside an allowed phrase is excused.
+     * Without that, a user word that is too broad would have no fix from inside the app — blocking
+     * `sex` and allowing `sussex.ac.uk` has to make that university usable, including its
+     * sex-education pages.
+     *
+     * That reach is bounded in two ways. It never touches the curated domain list or
+     * [DEFAULT_KEYWORDS], so the built-in protection still applies on an allowed host. And ADDING an
+     * allow entry is itself a weakening change, gated by Strict Mode
+     * ([com.astraedus.nudge.domain.lock.ContentFilterAllowlistWeakening]), so widening this layer is
+     * a deliberate, challenged act rather than a free one.
+     */
+    fun matchesUserBlocklist(
+        urlBarText: String,
+        blocklist: ContentFilterBlocklist,
+        allowlist: ContentFilterAllowlist = ContentFilterAllowlist.EMPTY
+    ): Boolean {
+        if (blocklist.isEmpty) return false
+        val trimmed = urlBarText.trim()
+        if (trimmed.isBlank()) return false
+        val lower = trimmed.lowercase()
+        if (INTERNAL_SCHEME_PREFIXES.any { lower.startsWith(it) }) return false
+        if (allowlist.coversHost(trimmed)) return false
+
+        val host = WebDomainMatcher.extractDomain(trimmed)
+        if (host != null && ContentFilterUserList.hostMatches(host, blocklist.domains)) return true
+
+        for (pattern in blocklist.wordPatterns) {
+            for (hit in pattern.findAll(lower)) {
+                if (!allowlist.excuses(lower, hit.range)) return true
+            }
+        }
+        return false
+    }
+
+    /**
+     * The whole content-filter verdict for one URL-bar string: the curated domain list, OR a
+     * high-signal keyword substring, OR the user's own blocked words and sites, OR (only when
+     * [strictKeywords]) an ambiguous keyword as a whole word in the search query that [allowlist]
+     * does not excuse.
+     *
+     * The allowlist reaches the user block list (it is the user's own correction path) and the
+     * strict layer. It never reaches the curated domains or [DEFAULT_KEYWORDS]; see
+     * [ContentFilterAllowlist] for why.
      */
     fun isBlocked(
         urlBarText: String,
         blocklist: Set<String>,
         strictKeywords: Boolean,
-        allowlist: ContentFilterAllowlist
+        allowlist: ContentFilterAllowlist,
+        userBlocklist: ContentFilterBlocklist = ContentFilterBlocklist.EMPTY
     ): Boolean =
         matchesDomain(urlBarText, blocklist) ||
             matchesKeyword(urlBarText, DEFAULT_KEYWORDS) ||
+            matchesUserBlocklist(urlBarText, userBlocklist, allowlist) ||
             (strictKeywords && matchesQueryKeyword(urlBarText, AMBIGUOUS_QUERY_KEYWORDS, allowlist))
 
     private val WEB_SCHEME_PREFIXES = listOf("http://", "https://")

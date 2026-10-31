@@ -117,6 +117,7 @@ fun SettingsScreen(
     val contentFilterEnabled by preferences.contentFilterEnabled.collectAsStateWithLifecycle(initialValue = false)
     val contentFilterStrictKeywords by preferences.contentFilterStrictKeywords.collectAsStateWithLifecycle(initialValue = false)
     val contentFilterAllowlist by preferences.contentFilterAllowlist.collectAsStateWithLifecycle(initialValue = emptySet())
+    val contentFilterBlocklist by preferences.contentFilterBlocklist.collectAsStateWithLifecycle(initialValue = emptySet())
     val strictModeEnabled by preferences.isStrictModeEnabled.collectAsStateWithLifecycle(initialValue = false)
     val strictModeLength by preferences.strictModeChallengeLength.collectAsStateWithLifecycle(
         initialValue = StrictModeChallenge.DEFAULT_LENGTH
@@ -323,9 +324,35 @@ fun SettingsScreen(
                 modifier = Modifier.clickable { onStrictKeywordsChange(!contentFilterStrictKeywords) }
             )
 
-            // The exceptions only ever relax strict keyword matching, so the editor is only shown
-            // while that is in force. Entries persist while it is hidden.
-            if (contentFilterEnabled && contentFilterStrictKeywords) {
+            // The user's own blocks apply whenever the filter is on, so this editor is not tied to
+            // the strict-keyword sub-toggle. Adding is strengthening: no challenge.
+            if (contentFilterEnabled) {
+                ContentFilterBlocklistEditor(
+                    entries = contentFilterBlocklist,
+                    strictModeEnabled = strictModeEnabled,
+                    onAdd = { entry, _ ->
+                        coroutineScope.launch { preferences.addContentFilterBlocklistEntry(entry) }
+                    },
+                    // Removing a block lets more through, so Strict Mode gates it.
+                    onRemove = { entry ->
+                        val remove: () -> Unit = {
+                            coroutineScope.launch { preferences.removeContentFilterBlocklistEntry(entry) }
+                        }
+                        if (blocklistRemoveNeedsUnlock(entry, contentFilterBlocklist, strictModeEnabled)) {
+                            requestUnlock(BLOCKLIST_UNLOCK_PROMPT, remove)
+                        } else {
+                            remove()
+                        }
+                    }
+                )
+            }
+
+            // The exceptions only ever relax the layers a user can over-extend (strict keyword
+            // matching and their own block list), so the editor is only shown while at least one of
+            // those is in force. Entries persist while it is hidden.
+            if (contentFilterEnabled &&
+                (contentFilterStrictKeywords || contentFilterBlocklist.isNotEmpty())
+            ) {
                 ContentFilterAllowlistEditor(
                     entries = contentFilterAllowlist,
                     strictModeEnabled = strictModeEnabled,

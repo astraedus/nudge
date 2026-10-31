@@ -34,7 +34,7 @@ data class NudgeExport(
  * EVERY field is nullable and every field is optional in the JSON, and that is the whole
  * forward/backward-compatibility mechanism at this level: a key that is absent means "this file
  * does not carry that setting", and the importing device simply keeps its own value. So a backup
- * written by a future Nudge that adds a twelfth setting still restores its other eleven here, and a
+ * written by a future Nudge that adds a thirteenth setting still restores its other twelve here, and a
  * backup written by this build still restores on that future one.
  *
  * ## What is deliberately NOT here
@@ -68,6 +68,12 @@ data class ExportedSettings(
      * means the file does not carry it. Adding entries on import is weakening (Strict Mode gated).
      */
     val contentFilterAllowlist: List<String>? = null,
+    /**
+     * "Blocked words & sites": the user's own additions to the content filter, canonical and
+     * sorted. An EMPTY list is a real value ("no extra blocks") and replaces the device's list; null
+     * means the file does not carry it. REMOVING entries on import is weakening (Strict Mode gated).
+     */
+    val contentFilterBlocklist: List<String>? = null,
     /** Strict Mode ("commitment lock") master switch. */
     val strictModeEnabled: Boolean? = null,
     /** Strict Mode difficulty: characters the unlock challenge asks the user to type. */
@@ -94,6 +100,7 @@ data class ExportedSettings(
             contentFilterMode == null &&
             contentFilterStrictKeywords == null &&
             contentFilterAllowlist == null &&
+            contentFilterBlocklist == null &&
             strictModeEnabled == null &&
             strictModeChallengeLength == null &&
             emergencyPassEnabled == null &&

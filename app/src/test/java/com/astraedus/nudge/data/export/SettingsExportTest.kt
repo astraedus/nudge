@@ -46,6 +46,7 @@ class SettingsExportTest {
         contentFilterMode = "DELAY",
         contentFilterStrictKeywords = true,
         contentFilterAllowlist = listOf("bbc news", "cnc", "cnc-shop.com"),
+        contentFilterBlocklist = listOf("crypto", "stake.com"),
         strictModeEnabled = true,
         strictModeChallengeLength = StrictModeChallenge.LENGTH_HARD,
         emergencyPassEnabled = false,
@@ -233,8 +234,8 @@ class SettingsExportTest {
     }
 
     /**
-     * Forward compatibility at the KEY level: a backup from a future Nudge that adds a twelfth
-     * setting must still restore the eleven this build knows, without being penalised for the one it
+     * Forward compatibility at the KEY level: a backup from a future Nudge that adds a thirteenth
+     * setting must still restore the twelve this build knows, without being penalised for the one it
      * does not.
      */
     @Test
