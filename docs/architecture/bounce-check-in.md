@@ -109,8 +109,9 @@ asks for `POST_NOTIFICATIONS` there and then. While it is ON and notifications c
 on the row opens Nudge's notification settings; the state is re-read on resume. Off never mentions
 notifications. The copy decision is the pure `bounceCheckInRowCopy` (`BounceCheckInRowCopyTest`).
 
-The preference is device-local and NOT carried by a backup (it is a per-phone convenience, and the
-export settings set is pinned by `ImportedSettingsWriteContractTest`).
+The preference is carried by a backup with the other settings. It is not a protection setting, so an
+import that turns it on or off needs no Strict Mode challenge. It changes what Nudge says, never what
+it blocks. The export set is pinned by `ImportedSettingsWriteContractTest`.
 
 ## Tests
 
