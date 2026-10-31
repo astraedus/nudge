@@ -251,9 +251,9 @@ class NudgePreferences @Inject constructor(
      * `distinctUntilChanged` for the same reason as [isGlobalEnabled]: the accessibility service
      * collects this, and DataStore re-emits on every write to any key.
      *
-     * Device-local and not carried by a backup, like the other per-phone conveniences: it is not a
-     * protection setting, and the export format's settings set is pinned by
-     * `ImportedSettingsWriteContractTest`.
+     * Carried by a backup with the other settings. It is not a protection setting, so importing it
+     * is not weakening and needs no gate; a restore that turns it on simply restores the nudge the
+     * user had already opted into.
      */
     val bounceCheckInEnabled: Flow<Boolean> = context.dataStore.data
         .map { prefs -> prefs[Keys.BOUNCE_CHECK_IN_ENABLED] ?: false }
@@ -438,8 +438,8 @@ class NudgePreferences @Inject constructor(
      * Read through the public Flows above rather than off one raw `Preferences` snapshot, on
      * purpose: those Flows are where each setting's DEFAULT lives, and a second hand-written copy
      * of "`emergencyPassEnabled` defaults to true" here would eventually disagree with them —
-     * exporting a value the app never actually used. Nine cached reads on a user-initiated,
-     * already-off-main export is a trade worth making for that.
+     * exporting a value the app never actually used. The cached reads on a user-initiated,
+     * already-off-main export are a trade worth making for that.
      */
     suspend fun exportableSettings(): ExportedSettings = ExportedSettings(
         contentFilterEnabled = contentFilterEnabled.first(),
@@ -449,6 +449,7 @@ class NudgePreferences @Inject constructor(
         strictModeEnabled = isStrictModeEnabled.first(),
         strictModeChallengeLength = strictModeChallengeLength.first(),
         emergencyPassEnabled = emergencyPassEnabled.first(),
+        bounceCheckInEnabled = bounceCheckInEnabled.first(),
         customDelayTitles = customDelayTitles.first(),
         customDelaySubtitles = customDelaySubtitles.first(),
         customHardBlockMessages = customHardBlockMessages.first()
@@ -484,6 +485,7 @@ class NudgePreferences @Inject constructor(
                 prefs[Keys.STRICT_MODE_CHALLENGE_LENGTH] = it
             }
             settings.emergencyPassEnabled?.let { prefs[Keys.EMERGENCY_PASS_ENABLED] = it }
+            settings.bounceCheckInEnabled?.let { prefs[Keys.BOUNCE_CHECK_IN_ENABLED] = it }
             settings.customDelayTitles?.let { prefs[Keys.CUSTOM_DELAY_TITLES] = it }
             settings.customDelaySubtitles?.let { prefs[Keys.CUSTOM_DELAY_SUBTITLES] = it }
             settings.customHardBlockMessages?.let { prefs[Keys.CUSTOM_HARD_BLOCK_MESSAGES] = it }

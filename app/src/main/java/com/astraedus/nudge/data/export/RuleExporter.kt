@@ -328,6 +328,7 @@ class RuleExporter @Inject constructor() {
         settings.strictModeEnabled?.let { put("strictModeEnabled", it) }
         settings.strictModeChallengeLength?.let { put("strictModeChallengeLength", it) }
         settings.emergencyPassEnabled?.let { put("emergencyPassEnabled", it) }
+        settings.bounceCheckInEnabled?.let { put("bounceCheckInEnabled", it) }
         settings.customDelayTitles?.let { put("customDelayTitles", it) }
         settings.customDelaySubtitles?.let { put("customDelaySubtitles", it) }
         settings.customHardBlockMessages?.let { put("customHardBlockMessages", it) }
@@ -479,6 +480,7 @@ class RuleExporter @Inject constructor() {
                 }
             },
             emergencyPassEnabled = obj.setting("emergencyPassEnabled", onSkip) { booleanValue(it) },
+            bounceCheckInEnabled = obj.setting("bounceCheckInEnabled", onSkip) { booleanValue(it) },
             customDelayTitles = obj.setting("customDelayTitles", onSkip) { stringValue(it) },
             customDelaySubtitles = obj.setting("customDelaySubtitles", onSkip) { stringValue(it) },
             customHardBlockMessages =

@@ -12,7 +12,7 @@ import javax.inject.Singleton
  *
  * Requires WRITE_SECURE_SETTINGS, which can only be granted via ADB:
  * ```
- * adb shell pm grant com.astraedus.nudge android.permission.WRITE_SECURE_SETTINGS
+ * adb shell pm grant dev.astraedus.nudge android.permission.WRITE_SECURE_SETTINGS
  * ```
  *
  * Uses the `accessibility_display_daltonizer` system setting:
