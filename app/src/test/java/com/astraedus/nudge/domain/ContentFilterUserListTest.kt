@@ -1,6 +1,8 @@
 package com.astraedus.nudge.domain
 
+import com.astraedus.nudge.domain.lock.ContentFilterBlocklistWeakening
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Test
 
@@ -44,5 +46,25 @@ class ContentFilterUserListTest {
         assertEquals(ContentFilterUserList.MAX_ENTRIES, kept.size)
         assertEquals("input order must not decide which entries survive", kept, ContentFilterUserList.canonicalize(entries.shuffled()))
         assertEquals(kept.sorted(), kept)
+    }
+
+    @Test
+    fun `adding an entry stores it canonical and sorted`() {
+        assertEquals(listOf("bet", "crypto"), ContentFilterUserList.withEntry(setOf("crypto"), "  BET "))
+        assertEquals(listOf("crypto"), ContentFilterUserList.withEntry(setOf("crypto"), "CRYPTO"))
+        assertEquals(listOf("crypto"), ContentFilterUserList.withEntry(setOf("crypto"), "!!!"))
+    }
+
+    /**
+     * Sort-before-cap makes [ContentFilterUserList.canonicalize] deterministic, but on the ADD path it
+     * would let a new entry that sorts first push an existing one off the end. On the block list that
+     * is a removal with no Strict Mode challenge, so a full list must refuse the newcomer instead.
+     */
+    @Test
+    fun `adding to a full list never evicts an existing entry`() {
+        val full = (1..ContentFilterUserList.MAX_ENTRIES).map { "word%03d".format(it) }.toSet()
+        val after = ContentFilterUserList.withEntry(full, "aaa")
+        assertEquals(full.sorted(), after)
+        assertFalse(ContentFilterBlocklistWeakening.isWeakening(full, after))
     }
 }

@@ -66,22 +66,14 @@ internal data class UserListCopy(
     val title: String,
     val icon: ImageVector,
     val subtitle: String,
-    val prompt: String,
-    val empty: String,
-    val invalid: String,
-    val duplicate: String,
-    val full: String
+    val empty: String
 )
 
 private val ALLOWLIST_COPY = UserListCopy(
     title = ALLOWLIST_TITLE,
     icon = Icons.Outlined.TaskAlt,
     subtitle = ALLOWLIST_SUBTITLE,
-    prompt = ALLOWLIST_UNLOCK_PROMPT,
-    empty = ALLOWLIST_EMPTY,
-    invalid = ALLOWLIST_INVALID,
-    duplicate = ALLOWLIST_DUPLICATE,
-    full = ALLOWLIST_FULL
+    empty = ALLOWLIST_EMPTY
 )
 
 /**

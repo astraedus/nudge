@@ -23,11 +23,7 @@ private val BLOCKLIST_COPY = UserListCopy(
     title = BLOCKLIST_TITLE,
     icon = Icons.Outlined.Block,
     subtitle = BLOCKLIST_SUBTITLE,
-    prompt = BLOCKLIST_UNLOCK_PROMPT,
-    empty = BLOCKLIST_EMPTY,
-    invalid = BLOCKLIST_INVALID,
-    duplicate = BLOCKLIST_DUPLICATE,
-    full = BLOCKLIST_FULL
+    empty = BLOCKLIST_EMPTY
 )
 
 /**

@@ -160,7 +160,7 @@ class NudgePreferences @Inject constructor(
         context.dataStore.edit { prefs ->
             val current = prefs[Keys.CONTENT_FILTER_ALLOWLIST] ?: emptySet()
             prefs[Keys.CONTENT_FILTER_ALLOWLIST] =
-                ContentFilterUserList.canonicalize(current + raw).toSet()
+                ContentFilterUserList.withEntry(current, raw).toSet()
         }
     }
 
@@ -191,7 +191,7 @@ class NudgePreferences @Inject constructor(
         context.dataStore.edit { prefs ->
             val current = prefs[Keys.CONTENT_FILTER_BLOCKLIST] ?: emptySet()
             prefs[Keys.CONTENT_FILTER_BLOCKLIST] =
-                ContentFilterUserList.canonicalize(current + raw).toSet()
+                ContentFilterUserList.withEntry(current, raw).toSet()
         }
     }
 

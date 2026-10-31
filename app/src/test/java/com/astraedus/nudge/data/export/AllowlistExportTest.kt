@@ -2,8 +2,10 @@ package com.astraedus.nudge.data.export
 
 import com.astraedus.nudge.domain.ContentFilterAllowlist
 import com.astraedus.nudge.domain.ContentFilterUserList
+import com.astraedus.nudge.domain.lock.ImportedSettingsWeakening
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -132,4 +134,38 @@ class AllowlistExportTest {
         assertEquals(1, result.invalidSettingsCount)
     }
 
+    /** A backup from a build older than the block list: the device keeps its blocks, no challenge. */
+    @Test
+    fun `a file without the block list leaves the device's blocks alone`() {
+        val incoming = exporter.importRules(
+            fileWithSettings(""""contentFilterStrictKeywords": true""")
+        ).settings
+        assertNull(incoming?.contentFilterBlocklist)
+        assertFalse(
+            ImportedSettingsWeakening.isWeakening(
+                current = ExportedSettings(contentFilterBlocklist = listOf("crypto")),
+                incoming = incoming!!
+            )
+        )
+    }
+
+    /**
+     * The importer's cap runs BEFORE the Strict Mode check sees the list. A file holding every block
+     * on the device plus one more that sorts first would, once capped, drop the device's last block:
+     * that must still read as weakening.
+     */
+    @Test
+    fun `a file whose cap drops one of the device's blocks is weakening`() {
+        val device = (1..ContentFilterUserList.MAX_ENTRIES).map { "word%03d".format(it) }
+        val body = (listOf("aaa") + device).joinToString(",") { "\"$it\"" }
+        val incoming = exporter.importRules(
+            fileWithSettings(""""contentFilterBlocklist": [$body]""")
+        ).settings!!
+        assertTrue(
+            ImportedSettingsWeakening.isWeakening(
+                current = ExportedSettings(contentFilterBlocklist = device),
+                incoming = incoming
+            )
+        )
+    }
 }

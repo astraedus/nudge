@@ -60,6 +60,19 @@ object ContentFilterUserList {
     fun canonicalize(raw: Collection<String>): List<String> =
         raw.mapNotNullTo(LinkedHashSet()) { normalize(it) }.sorted().take(MAX_ENTRIES)
 
+    /**
+     * [current] with one user-typed entry added, canonical. A full list keeps every entry it has and
+     * drops the NEW one. [canonicalize] alone would not: it sorts before the cap, so a new entry that
+     * sorts first would evict an existing one, and on the block list that eviction is a removal that
+     * never went through the Strict Mode challenge.
+     */
+    fun withEntry(current: Collection<String>, raw: String): List<String> {
+        val existing = canonicalize(current)
+        val entry = normalize(raw) ?: return existing
+        if (entry in existing || existing.size >= MAX_ENTRIES) return existing
+        return (existing + entry).sorted()
+    }
+
     /** True when [entry] (already normalised) names a site rather than a word. */
     fun isDomainEntry(entry: String): Boolean =
         ' ' !in entry && '.' in entry && DOMAIN_CHARS.matches(entry) &&
