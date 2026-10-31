@@ -1,0 +1,1 @@
+• Smaller, faster app: the code is now optimised (R8). Nothing changes in how Nudge works.

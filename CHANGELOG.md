@@ -10,6 +10,11 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
   sites inside one browser used to count as one wall in one app, so the check-in could not fire at
   any threshold. The app rule (2 walls + 4 apps) is unchanged. (#106)
 
+## [1.22.4] - 2026-10-30
+
+### Changed
+- Release builds are now shrunk and optimised by R8 (asked for in the F-Droid review), so the APK is smaller. Class names are kept (`-dontobfuscate`): Nudge recognises its own windows by class name, and readable stack traces matter more than obfuscation for an open-source app. Nothing changes in how Nudge works. (#93)
+
 ## [1.22.3] - 2026-10-24
 
 ### Changed
