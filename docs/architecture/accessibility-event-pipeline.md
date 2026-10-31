@@ -220,7 +220,7 @@ sitting ends for three reasons and no others.
 
 | Cause | Ends on | Passthrough grant | Interaction count / time baseline |
 |---|---|---|---|
-| `WENT_HOME` | the gesture itself, at once | revoked | **untouched** — a trip home must not refill a time budget |
+| `WENT_HOME` | the gesture itself, at once (when the rule that granted the pass has "keep the pass on short trips" on: the launcher in front for ≥ the return window when the user comes back, #110) | revoked | **untouched** — a trip home must not refill a time budget |
 | `SCREEN_OFF` | the screen having been off for ≥ the return window when the user comes back | revoked | reset on return |
 | `ANOTHER_APP_HELD_FOREGROUND` | that app holding the foreground for ≥ the return window | revoked | reset once `InteractionTracker.SESSION_EXPIRY_MS` also passes |
 
@@ -232,6 +232,30 @@ user farming a fresh budget; the return window asks *"did the user leave?"* and 
 skip a delay, where generous is a bypass. At five minutes a four-minute excursion keeps the pass, and
 ping-ponging under the window keeps it alive indefinitely. Two minutes is long enough to browse a
 gallery, short enough that using another app costs a fresh delay.
+
+**Per-rule opt-in: a launcher window as an ABSENCE (issue [#110](https://github.com/astraedus/nudge/issues/110)).**
+On gesture navigation Recents and the quick-switch swipe live in the launcher package
+(`com.sec.android.app.launcher` on Samsung, Quickstep in `nexuslauncher` on Pixel), so "swipe to the
+previous app and straight back" crosses a launcher window both ways. Device-captured on a Galaxy S24
+Ultra (`samsung-gesture-switch-revokes-grant.jsonl`): the default rule revoked the grant at the first
+launcher window and Telegram re-blocked after two seconds away. The stream cannot tell that swipe
+from a deliberate Home press followed by a fresh open from the icon, and which of the two matters
+depends on the APP (a messenger you hop out of to grab a photo, versus a feed you meant to leave), so
+it is a per-rule choice, off by default: **Keep the pass on short trips** in the app's rule editor,
+offered only for the modes that grant a pass (Delay, Hold, Breathing; `BlockMode.usesDuration`).
+
+How it flows, and why it cannot leak: `BlockRule.keepPassOnShortTrips` (DB 12->13) is read off the
+rule that DECIDED the block, like `tabVanish`, and only the timed-mode branch of `BlockEngine` sets
+`BlockDecision.Block.keepPassOnShortTrips`. The service puts it on the overlay intent, and
+`BlockOverlayActivity`'s grant hands it to `PassthroughManager.grant`, which hands it to
+`SittingTracker.onGrantEarned`, where it becomes the SITTING's `homeIsAbsence`. With it on, a launcher
+window starts the away clock instead of ending the sitting (first evidence wins, exactly like a
+screen-off since #54), and the shared 2-minute return window decides on return: back in time keeps
+the pass, staying away past it ends the sitting as `WENT_HOME`. Every way a sitting ends or moves
+(`end`, `reset`, a sitting started by a window, a sitting renewed after too long away, a grant for
+another app) clears the flag, so a sitting that holds no such grant behaves exactly as before #110.
+No length picker: one window for every absence. Turning it on is a Strict Mode weakening
+(`RuleWeakening`); it travels in exports, and an older export imports it off.
 
 **`WENT_HOME` can arrive by two event types, and only one of them is a window change
 ([#58](https://github.com/astraedus/nudge/issues/58)).** `EventClassifier.classify` still restricts

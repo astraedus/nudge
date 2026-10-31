@@ -41,7 +41,8 @@ class RuleEvaluator @Inject constructor() {
                 grayscale = rule.grayscale,
                 ruleName = buildRuleName(rule),
                 tabVanish = rule.tabVanish,
-                followingSteer = rule.followingSteer
+                followingSteer = rule.followingSteer,
+                keepPassOnShortTrips = rule.keepPassOnShortTrips
             )
         }
     }

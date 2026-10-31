@@ -129,4 +129,25 @@ class RuleEvaluatorTest {
         assertTrue(result[0].tabVanish)
         assertFalse(result[0].followingSteer)
     }
+
+    @Test
+    fun `keepPassOnShortTrips survives the entity-to-ActiveRule mapping and defaults off`() {
+        val rules = listOf(
+            BlockRuleData(
+                id = 1, packageName = "com.instagram.android", groupId = null,
+                mode = BlockMode.DELAY, delaySeconds = 15,
+                dailyLimitMinutes = null, enabled = true,
+                keepPassOnShortTrips = true
+            ),
+            BlockRuleData(
+                id = 2, packageName = "com.instagram.android", groupId = null,
+                mode = BlockMode.DELAY, delaySeconds = 15,
+                dailyLimitMinutes = null, enabled = true
+            )
+        )
+        val result = evaluator.resolveRulesForPackage("com.instagram.android", rules, emptyList())
+        assertEquals(2, result.size)
+        assertTrue(result.single { it.keepPassOnShortTrips }.keepPassOnShortTrips)
+        assertEquals(1, result.count { !it.keepPassOnShortTrips })
+    }
 }

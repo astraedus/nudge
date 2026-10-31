@@ -86,6 +86,9 @@ data class RuleEditorUiState(
     // never mentioned it.
     val tabVanish: Boolean = true,
     val followingSteer: Boolean = false,
+    // Same reasoning (#110): carried, never edited here, so a save from this screen cannot
+    // silently switch off "keep the pass on short trips".
+    val keepPassOnShortTrips: Boolean = false,
     // All rules for this package (for summary display)
     val allRulesForPackage: List<RuleSummary> = emptyList()
 )
@@ -174,7 +177,8 @@ class RuleEditorViewModel @Inject constructor(
                     webDomains = existing.webDomains,
                     webBlockMode = existing.webBlockMode,
                     tabVanish = existing.tabVanish,
-                    followingSteer = existing.followingSteer
+                    followingSteer = existing.followingSteer,
+                    keepPassOnShortTrips = existing.keepPassOnShortTrips
                 )
             }
         }
@@ -399,7 +403,7 @@ class RuleEditorViewModel @Inject constructor(
          *    screen silently wiped an app's web blocking (or, for `webBlockMode`, downgraded a
          *    website-only block to one that enforces nothing).
          *  - `remindAfterMinutes` (#77) is saved from its own switch, independent of auto-kick;
-         *  - `tabVanish` and `followingSteer` are carried through for exactly the same reason,
+         *  - `tabVanish`, `followingSteer` and `keepPassOnShortTrips` are carried through for exactly the same reason,
          *    and were added to this list the day they were introduced rather than the day a user
          *    reported the tab cover turning itself back on.
          */
@@ -455,6 +459,7 @@ class RuleEditorViewModel @Inject constructor(
                 webBlockMode = state.webBlockMode,
                 tabVanish = state.tabVanish,
                 followingSteer = state.followingSteer,
+                keepPassOnShortTrips = state.keepPassOnShortTrips,
                 autoKickAfterMinutes = if (state.autoKickEnabled) {
                     DurationInput.resolveMinutes(
                         state.autoKickAfterMinutesText,

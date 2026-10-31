@@ -4,6 +4,12 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+### Added
+- The "Bro. wtf." check-in now counts blocked websites, not just apps: three different blocked sites
+  in the same five-minute streak fire it, with the same 30-minute cooldown. Hopping between blocked
+  sites inside one browser used to count as one wall in one app, so the check-in could not fire at
+  any threshold. The app rule (2 walls + 4 apps) is unchanged. (#106)
+
 ## [1.22.4] - 2026-10-30
 
 ### Changed

@@ -75,5 +75,19 @@ data class BlockRule(
      * steer, never a block, so it is deliberately excluded from
      * [com.astraedus.nudge.domain.lock.RuleWeakening].
      */
-    val followingSteer: Boolean = false
+    val followingSteer: Boolean = false,
+    /**
+     * "Keep the pass on short trips" ([#110](https://github.com/astraedus/nudge/issues/110)),
+     * per-rule opt-in, **default false**. With it on, once the user has waited out this rule's
+     * delay (or hold, or breathing exercise), going to the home screen no longer revokes the pass
+     * at once: it starts the same 2-minute away clock another app or a screen-off already starts,
+     * so a gesture swipe through the launcher and straight back keeps the pass. Off is the
+     * shipped behaviour: Home ends the sitting and the next open costs a fresh wait.
+     *
+     * Read off the rule that DECIDED the block ([com.astraedus.nudge.domain.model.BlockDecision.Block.keepPassOnShortTrips]), the
+     * same way as [tabVanish], and handed to the grant, so it only ever affects a pass this rule
+     * granted. Turning it ON is a Strict-Mode weakening axis; see
+     * [com.astraedus.nudge.domain.lock.RuleWeakening].
+     */
+    val keepPassOnShortTrips: Boolean = false
 )

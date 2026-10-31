@@ -29,6 +29,7 @@ class RuleEditorRuleBuilderTest {
         webBlockMode: String? = null,
         tabVanish: Boolean = true,
         followingSteer: Boolean = false,
+        keepPassOnShortTrips: Boolean = false,
         reminderEnabled: Boolean = false,
         remindAfterMinutesText: String = "",
         originalRemindAfterMinutes: Int? = null
@@ -47,6 +48,7 @@ class RuleEditorRuleBuilderTest {
         webBlockMode = webBlockMode,
         tabVanish = tabVanish,
         followingSteer = followingSteer,
+        keepPassOnShortTrips = keepPassOnShortTrips,
         reminderEnabled = reminderEnabled,
         remindAfterMinutesText = remindAfterMinutesText,
         originalRemindAfterMinutes = originalRemindAfterMinutes
@@ -342,5 +344,12 @@ class RuleEditorRuleBuilderTest {
 
         assertNull(rule.autoKickAfterMinutes)
         assertEquals(20, rule.remindAfterMinutes)
+    }
+
+    /** This editor has no short-trips control (#110), so a save from it must carry the value. */
+    @Test
+    fun `keepPassOnShortTrips is carried through a save from this editor`() {
+        assertTrue(RuleEditorViewModel.buildRule(state(keepPassOnShortTrips = true)).keepPassOnShortTrips)
+        assertFalse(RuleEditorViewModel.buildRule(state()).keepPassOnShortTrips)
     }
 }

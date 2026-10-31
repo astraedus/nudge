@@ -106,7 +106,8 @@ class EvaluateBlockUseCase @Inject constructor(
                 grayscale = rule.grayscale,
                 webDomains = rule.webDomains,
                 tabVanish = rule.tabVanish,
-                followingSteer = rule.followingSteer
+                followingSteer = rule.followingSteer,
+                keepPassOnShortTrips = rule.keepPassOnShortTrips
             )
         }
 

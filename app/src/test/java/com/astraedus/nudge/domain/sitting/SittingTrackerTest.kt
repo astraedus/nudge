@@ -2,6 +2,7 @@ package com.astraedus.nudge.domain.sitting
 
 import com.astraedus.nudge.domain.events.ForegroundSignal
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -163,6 +164,175 @@ class SittingTrackerTest {
             t.onSignal(ForegroundSignal.Home(launcher), 1_000)
         )
         assertNull(t.currentApp)
+    }
+
+    // --- per-rule opt-in: keep the pass on short trips (#110) -----------------------------------
+
+    /**
+     * A sitting started by a grant whose deciding rule has "keep the pass on short trips" on. The
+     * option rides the GRANT ([SittingTracker.onGrantEarned]); there is no tracker-wide switch.
+     */
+    private fun shortTrips() = tracker().also { it.onGrantEarned(keep, keepPassOnShortTrips = true) }
+
+    /**
+     * ISSUE [#110](https://github.com/astraedus/nudge/issues/110), the reported case, smallest form.
+     * On gesture navigation "swipe to the previous app and straight back" crosses a launcher window
+     * both ways: Home → other app → Home → this app, inside two seconds.
+     */
+    @Test
+    fun `with short trips on, a swipe through the launcher and straight back keeps the sitting`() {
+        val t = shortTrips()
+        t.app(keep, 0)
+
+        assertEquals(SittingEvent.Unchanged, t.onSignal(ForegroundSignal.Home(launcher), 1_000))
+        assertEquals(SittingEvent.Unchanged, t.app("com.other.app", 1_800))
+        assertEquals(SittingEvent.Unchanged, t.onSignal(ForegroundSignal.Home(launcher), 2_200))
+        assertEquals(SittingEvent.Unchanged, t.app(keep, 3_000))
+
+        assertEquals(keep, t.currentApp)
+        assertNull("the return closes the away clock", t.awaySinceMs)
+    }
+
+    @Test
+    fun `with short trips on, going home and staying away past the window ends the sitting as WENT_HOME`() {
+        val t = shortTrips()
+        t.app(keep, 0)
+        assertEquals(SittingEvent.Unchanged, t.onSignal(ForegroundSignal.Home(launcher), 1_000))
+        assertEquals(1_000L, t.awaySinceMs)
+
+        assertEquals(
+            SittingEvent.Started(keep, SittingEvent.Ended(keep, SittingEndCause.WENT_HOME)),
+            t.app(keep, 1_000 + window)
+        )
+    }
+
+    @Test
+    fun `with short trips on, going home then using another app past the window ends the sitting`() {
+        val t = shortTrips()
+        t.app(keep, 0)
+        t.onSignal(ForegroundSignal.Home(launcher), 1_000)
+        t.app("com.other.app", 2_000)
+
+        assertEquals(
+            SittingEvent.Started("com.other.app", SittingEvent.Ended(keep, SittingEndCause.WENT_HOME)),
+            t.app("com.other.app", 1_000 + window)
+        )
+    }
+
+    /**
+     * First evidence wins, as for a screen-off: bouncing through the launcher again and again must
+     * not keep restarting the clock, or ping-ponging via Home would hold a pass forever.
+     */
+    @Test
+    fun `with short trips on, repeated trips through the launcher do not restart the away clock`() {
+        val t = shortTrips()
+        t.app(keep, 0)
+        t.onSignal(ForegroundSignal.Home(launcher), 1_000)
+        t.app("com.other.app", 2_000)
+        t.onSignal(ForegroundSignal.Home(launcher), 1_000 + window - 10)
+        assertEquals(1_000L, t.awaySinceMs)
+
+        val event = t.app(keep, 1_000 + window + 1)
+        assertTrue("the absence began at the FIRST launcher window", event is SittingEvent.Started)
+    }
+
+    /** A screen-off that came first owns the clock and the cause; the launcher renames nothing. */
+    @Test
+    fun `with short trips on, unlocking to the launcher keeps the screen-off clock`() {
+        val t = shortTrips()
+        t.app(keep, 0)
+        t.onScreenOff(1_000)
+
+        assertEquals(SittingEvent.Unchanged, t.onSignal(ForegroundSignal.Home(launcher), 2_000))
+        assertEquals(1_000L, t.awaySinceMs)
+        assertEquals(
+            SittingEvent.Started(keep, SittingEvent.Ended(keep, SittingEndCause.SCREEN_OFF)),
+            t.app(keep, 1_000 + window)
+        )
+    }
+
+    /** OFF is the shipped rule exactly: a grant without the option ends the sitting at Home, at once. */
+    @Test
+    fun `a grant without short trips still ends the sitting at Home at once`() {
+        val t = tracker()
+        t.onGrantEarned(keep)
+        assertFalse(t.homeIsAbsence)
+
+        assertEquals(
+            SittingEvent.Ended(keep, SittingEndCause.WENT_HOME),
+            t.onSignal(ForegroundSignal.Home(launcher), 1_000)
+        )
+    }
+
+    /** A sitting nobody paid for (started by a window, no grant) has nothing to keep. */
+    @Test
+    fun `a sitting started by a window never treats Home as an absence`() {
+        val t = tracker()
+        t.app(keep, 0)
+        assertFalse(t.homeIsAbsence)
+
+        assertEquals(
+            SittingEvent.Ended(keep, SittingEndCause.WENT_HOME),
+            t.onSignal(ForegroundSignal.Home(launcher), 1_000)
+        )
+    }
+
+    /**
+     * The option belongs to the sitting the grant started, never to the tracker: once that sitting
+     * ends (here, renewed after too long away, which revokes its grant), the next Home ends the new
+     * one at once.
+     */
+    @Test
+    fun `short trips does not outlive the sitting it was granted for`() {
+        val t = shortTrips()
+        t.onSignal(ForegroundSignal.Home(launcher), 1_000)
+        assertTrue(t.app(keep, 1_000 + window) is SittingEvent.Started)
+        assertFalse(t.homeIsAbsence)
+
+        assertEquals(
+            SittingEvent.Ended(keep, SittingEndCause.WENT_HOME),
+            t.onSignal(ForegroundSignal.Home(launcher), 1_000 + window + 10)
+        )
+    }
+
+    @Test
+    fun `a sitting that ends at once clears short trips`() {
+        val t = shortTrips()
+        t.reset()
+        assertFalse(t.homeIsAbsence)
+    }
+
+    /** A grant for a DIFFERENT app moves the sitting, and that app's rule decides, not the old one's. */
+    @Test
+    fun `a grant for another app without short trips turns it off`() {
+        val t = shortTrips()
+        t.onGrantEarned("org.telegram.messenger", keepPassOnShortTrips = false)
+        assertFalse(t.homeIsAbsence)
+
+        assertEquals(
+            SittingEvent.Ended("org.telegram.messenger", SittingEndCause.WENT_HOME),
+            t.onSignal(ForegroundSignal.Home(launcher), 1_000)
+        )
+    }
+
+    /** Re-earning the pass in the same sitting applies the rule as it is NOW. */
+    @Test
+    fun `a renewed grant in the same sitting takes the rule's current value`() {
+        val t = shortTrips()
+        assertEquals(SittingEvent.Unchanged, t.onGrantEarned(keep, keepPassOnShortTrips = false))
+        assertFalse(t.homeIsAbsence)
+
+        assertEquals(SittingEvent.Unchanged, t.onGrantEarned(keep, keepPassOnShortTrips = true))
+        assertTrue(t.homeIsAbsence)
+    }
+
+    /** A service rebind keeps the sitting (see onObservationResumed), so it keeps its option too. */
+    @Test
+    fun `a service rebind keeps short trips with the sitting`() {
+        val t = shortTrips()
+        t.onObservationResumed()
+        assertTrue(t.homeIsAbsence)
+        assertEquals(SittingEvent.Unchanged, t.onSignal(ForegroundSignal.Home(launcher), 1_000))
     }
 
     @Test

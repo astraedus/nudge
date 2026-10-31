@@ -1,0 +1,65 @@
+# a11y capture: samsung-gesture-switch-revokes-grant
+# device: Samsung Galaxy S24 Ultra (One UI), Android 17, gesture navigation. Captured 2026-10-27.
+# HOW: release v1.22.2 with Debug Logging on, `adb logcat` of the NudgeA11yTrace tag, cut to 13:55:13.7-13:55:18.0 (grant to re-block).
+#      Telegram under a 15s DELAY rule. The delay was waited out by hand, then the gesture bar was
+#      swiped to the previous app (Nudge's own MainActivity) and straight back to Telegram. Real
+#      touches on a real phone; no adb input.
+# EXPECTED (test oracle): with "keep the pass on short trips" ON, Telegram's sitting SURVIVES: the user
+#      was away about two seconds, and both launcher windows are the swipe passing through Recents.
+#      With it OFF (the default) the shipped rule still ends it as WENT_HOME at the first launcher window.
+# WHAT IT PROVES: v1.22.2 ended the sitting on the first launcher window and re-blocked on return:
+#        13:55:13.766  skip evaluation package=org.telegram.messenger reason=passthrough
+#        13:55:15.530  EV WINDOW_STATE_CHANGED com.sec.android.app.launcher.Launcher
+#        13:55:15.535  sitting ended package=org.telegram.messenger cause=WENT_HOME — passthrough revoked
+#        13:55:16.347  EV WINDOW_STATE_CHANGED dev.astraedus.nudge MainActivity
+#        13:55:16.701  EV WINDOW_STATE_CHANGED com.sec.android.app.launcher.Launcher
+#        13:55:17.526  handling block package=org.telegram.messenger mode=DELAY delaySeconds=15
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":773,"ts":18844939,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":64}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":773,"ts":18844939,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":0}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":773,"ts":18844947,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":64}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":773,"ts":18844947,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":0}
+{"t":"WINDOW_CONTENT_CHANGED","p":"org.telegram.messenger","c":"android.widget.FrameLayout","w":627,"ts":18844951,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"org.telegram.messenger","c":"android.widget.FrameLayout","w":627,"ts":18844989,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_STATE_CHANGED","p":"org.telegram.messenger","c":"org.telegram.ui.LaunchActivity","w":627,"ts":18844989,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":0}
+{"t":"WINDOW_CONTENT_CHANGED","p":"org.telegram.messenger","c":"android.widget.FrameLayout","w":627,"ts":18845264,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"org.telegram.messenger","c":"android.widget.FrameLayout","w":627,"ts":18845364,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"org.telegram.messenger","c":"androidx.recyclerview.widget.RecyclerView","w":627,"ts":18845464,"fi":2,"ti":9,"ci":-1,"n":2631,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1,"scr":true}
+{"t":"WINDOW_CONTENT_CHANGED","p":"org.telegram.messenger","c":"android.widget.FrameLayout","w":627,"ts":18845564,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"org.telegram.messenger","c":"android.widget.FrameLayout","w":627,"ts":18845670,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_STATE_CHANGED","p":"com.sec.android.app.launcher","c":"com.sec.android.app.launcher.Launcher","w":20,"ts":18846588,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":0}
+{"t":"WINDOW_STATE_CHANGED","p":"dev.astraedus.nudge","c":"com.astraedus.nudge.MainActivity","w":735,"ts":18847530,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":0}
+{"t":"WINDOW_STATE_CHANGED","p":"com.sec.android.app.launcher","c":"com.sec.android.app.launcher.Launcher","w":20,"ts":18847803,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":0}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.sec.android.app.launcher","c":"android.widget.FrameLayout","w":20,"ts":18847910,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"org.telegram.messenger","c":"android.widget.FrameLayout","w":627,"ts":18848692,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"org.telegram.messenger","c":"androidx.recyclerview.widget.RecyclerView","w":627,"ts":18848728,"fi":2,"ti":9,"ci":-1,"n":2631,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1,"scr":true}
+{"t":"WINDOW_STATE_CHANGED","p":"org.telegram.messenger","c":"org.telegram.ui.LaunchActivity","w":627,"ts":18848728,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":0}
+{"t":"WINDOW_CONTENT_CHANGED","p":"org.telegram.messenger","c":"androidx.recyclerview.widget.RecyclerView","w":627,"ts":18848852,"fi":2,"ti":9,"ci":-1,"n":2631,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1,"scr":true}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.widget.FrameLayout","w":775,"ts":18848871,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":775,"ts":18848875,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":775,"ts":18848875,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":775,"ts":18848875,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":775,"ts":18848875,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":775,"ts":18848875,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":775,"ts":18848875,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":775,"ts":18848875,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":775,"ts":18848875,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":775,"ts":18848875,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":775,"ts":18848875,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":775,"ts":18848875,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":775,"ts":18848875,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":775,"ts":18848876,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":0}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.ViewGroup","w":775,"ts":18848896,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_STATE_CHANGED","p":"dev.astraedus.nudge","c":"com.astraedus.nudge.ui.overlay.BlockOverlayActivity","w":775,"ts":18848896,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":0}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":775,"ts":18848900,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":0}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":775,"ts":18848976,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":775,"ts":18848976,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":775,"ts":18848976,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":775,"ts":18848976,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":775,"ts":18848976,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":775,"ts":18848976,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":775,"ts":18848976,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":775,"ts":18848976,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":775,"ts":18848976,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":775,"ts":18848976,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":775,"ts":18848976,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":775,"ts":18848976,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}

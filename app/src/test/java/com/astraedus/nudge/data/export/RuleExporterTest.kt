@@ -682,4 +682,48 @@ class RuleExporterTest {
         assertNull(result.rules[1].autoKickAfterMinutes)
         assertEquals(15, result.rules[1].remindAfterMinutes)
     }
+
+    @Test
+    fun `roundtrip preserves keepPassOnShortTrips=true`() {
+        val rules = listOf(
+            BlockRule(
+                id = 1,
+                packageName = "com.instagram.android",
+                mode = "DELAY",
+                enabled = true,
+                keepPassOnShortTrips = true
+            )
+        )
+
+        val json = exporter.exportRules(rules, emptyList(), emptyMap())
+        val result = exporter.importRules(json)
+
+        assertNull(result.error)
+        assertEquals(1, result.rules.size)
+        assertTrue(result.rules[0].keepPassOnShortTrips)
+    }
+
+    @Test
+    fun `import of an older export without the keepPassOnShortTrips key defaults it off`() {
+        val json = """
+        {
+          "version": 1,
+          "exportedAt": 1700000000000,
+          "rules": [{
+            "packageName": "com.instagram.android",
+            "groupName": null,
+            "mode": "DELAY",
+            "delaySeconds": 15,
+            "enabled": true
+          }],
+          "groups": []
+        }
+        """.trimIndent()
+
+        val result = exporter.importRules(json)
+
+        assertNull(result.error)
+        assertEquals(1, result.rules.size)
+        assertFalse(result.rules[0].keepPassOnShortTrips)
+    }
 }

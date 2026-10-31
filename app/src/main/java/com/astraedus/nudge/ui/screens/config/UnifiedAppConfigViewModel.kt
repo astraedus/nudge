@@ -179,6 +179,7 @@ class UnifiedAppConfigViewModel @Inject constructor(
                 // to the same defaults as a fresh BlockRule when there is no existing rule.
                 tabVanish = defaultAppRule?.tabVanish ?: true,
                 followingSteer = defaultAppRule?.followingSteer ?: false,
+                keepPassOnShortTrips = defaultAppRule?.keepPassOnShortTrips ?: false,
                 // UI state
                 isLoading = false,
                 isSaved = false,
@@ -249,7 +250,10 @@ class UnifiedAppConfigViewModel @Inject constructor(
             // performSave additionally copies it onto every other rule this view model
             // persists -- see the comment there.
             tabVanish = state.tabVanish,
-            followingSteer = state.followingSteer
+            followingSteer = state.followingSteer,
+            // Unlike followingSteer, also copied onto every other rule in performSave: the engine
+            // reads it off whichever rule DECIDED the block, exactly like tabVanish.
+            keepPassOnShortTrips = state.effectiveKeepPassOnShortTrips
         )
     }
 
@@ -303,7 +307,10 @@ class UnifiedAppConfigViewModel @Inject constructor(
                     // carry the same tabVanish value as every other rule for this package -- else
                     // whether the cover shows would depend on which rule happened to win, a coin
                     // flip from the user's point of view.
-                    tabVanish = state.tabVanish
+                    tabVanish = state.tabVanish,
+                    // Same reasoning (#110): the deciding rule's value is the one handed to the
+                    // grant, so it must not depend on which of this app's rules happened to win.
+                    keepPassOnShortTrips = state.effectiveKeepPassOnShortTrips
                 )
             )
         }
@@ -328,7 +335,8 @@ class UnifiedAppConfigViewModel @Inject constructor(
                     scheduleDays = scheduleDaysStr,
                     scheduleStartMinute = startMin,
                     scheduleEndMinute = endMin,
-                    tabVanish = state.tabVanish
+                    tabVanish = state.tabVanish,
+                    keepPassOnShortTrips = state.effectiveKeepPassOnShortTrips
                 )
             )
 
@@ -355,7 +363,8 @@ class UnifiedAppConfigViewModel @Inject constructor(
                         // Same reasoning as every other rule persisted here: tabVanish must be
                         // uniform across all of this package's rules, since the engine reads it
                         // off whichever rule decides the block.
-                        tabVanish = state.tabVanish
+                        tabVanish = state.tabVanish,
+                        keepPassOnShortTrips = state.effectiveKeepPassOnShortTrips
                     )
                 )
             }
@@ -584,5 +593,13 @@ class UnifiedAppConfigViewModel @Inject constructor(
 
     fun setFollowingSteer(enabled: Boolean) {
         _uiState.value = _uiState.value.copy(followingSteer = enabled)
+    }
+
+    /**
+     * "Keep the pass on short trips" (#110). Turning it ON under Strict Mode is a weakening
+     * ([com.astraedus.nudge.domain.lock.RuleWeakening]), gated at [save] like every other axis.
+     */
+    fun setKeepPassOnShortTrips(enabled: Boolean) {
+        _uiState.value = _uiState.value.copy(keepPassOnShortTrips = enabled)
     }
 }

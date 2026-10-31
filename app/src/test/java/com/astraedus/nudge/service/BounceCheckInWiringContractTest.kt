@@ -66,15 +66,36 @@ class BounceCheckInWiringContractTest {
     fun `an overlay launch reports a wall only after the gate allowed it`() {
         val body = bodyOf("private fun launchBlockOverlay(")
         val refusal = body.indexOf("decision != BlockLaunchGate.Decision.LAUNCH")
-        val wall = body.indexOf("bounceCheckIn.onWall(targetPackage)")
+        val wall = body.indexOf("bounceCheckIn.onWall(targetPackage, webDomain)")
         val start = body.indexOf("startActivity(overlayIntent)")
         assertTrue("the gate refusal must be present", refusal >= 0)
-        assertTrue("launchBlockOverlay must report the wall", wall >= 0)
+        assertTrue("launchBlockOverlay must report the wall, with its site", wall >= 0)
         assertTrue("the wall is reported after the refusal returns", wall > refusal)
         assertTrue("and before the activity starts, on the same path", wall < start)
         assertTrue(
             "exactly one wall report per launch",
             Regex("""bounceCheckIn\.onWall\(""").findAll(body).count() == 1
+        )
+        assertTrue(
+            "the site must reach the check-in, or three blocked sites are one browser wall",
+            body.contains("webDomain")
+        )
+    }
+
+    /**
+     * The site has to travel from the block DECISION to the overlay launch. Pinned here because the
+     * detector tests call `onWall` directly: dropping `webDomain` at either call site would revert
+     * #106 with every value test still green.
+     */
+    @Test
+    fun `the web block paths hand their site to the overlay launch`() {
+        assertTrue(
+            "a rule or content-filter web block must pass the domain it was decided on",
+            bodyOf("private suspend fun handleDecision(").contains("webDomain = web?.domain")
+        )
+        assertTrue(
+            "the web auto-kick cooldown overlay must pass its domain",
+            bodyOf("private fun enforceWebCooldown(").contains("webDomain = domain")
         )
     }
 
@@ -84,7 +105,14 @@ class BounceCheckInWiringContractTest {
         val wiring = code.substringAfter("autoKickExecutor = AutoKickExecutor(")
             .substringBefore("autoKickTimeHandler = AutoKickTimeHandler(")
         assertTrue(wiring.contains("onKicked ="))
-        assertTrue(wiring.contains("bounceCheckIn::onWall"))
+        assertTrue(
+            "a web kick is reported as the browser the user was in",
+            wiring.contains("webSessionUsageProvider.browserPackage")
+        )
+        assertTrue(
+            "a web kick must report its site too, not just the browser",
+            wiring.contains("WebSessionKey.domainOf(key)")
+        )
 
         val executor = stripComments(read("main/java/com/astraedus/nudge/service/AutoKickExecutor.kt"))
         val kick = executor.substringAfter("fun kick(")

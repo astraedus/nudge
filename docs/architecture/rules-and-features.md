@@ -15,6 +15,13 @@ Covers what a *rule* can express beyond a plain block: schedules, in-app feature
   block screen; a tap is a walk-away into that app. Set from the bubble (long-press to change/remove) or from
   Settings → Personalize → "Redirect app". Never an app with an enabled rule or on the Nuke list. Design, the
   picker's back-gesture safety and the stale-choice fallback: `block-overlay-lifecycle.md`, "The redirect app".
+- **Keep the pass on short trips (v1.23.0, issue [#110](https://github.com/astraedus/nudge/issues/110))**: a per-rule
+  switch, off by default, shown in the app's rule editor only for the modes that grant a pass (Delay, Hold,
+  Breathing; never Hard Block). On, a trip to the home screen or a gesture swipe through the launcher starts the
+  2-minute away clock instead of ending the pass, so coming straight back opens the app without a second wait.
+  `BlockRule.keepPassOnShortTrips` (DB 12->13), read off the rule that DECIDED the block like `tabVanish`, carried by
+  the grant into the sitting. Off is the shipped behaviour exactly. Mechanism, the device capture and why it is
+  per rule: `accessibility-event-pipeline.md`, "Per-rule opt-in: a launcher window as an ABSENCE".
 - **Rule editor UX** — info tooltips on all sections, block mode descriptions, per-app rules summary with enable/disable
 - **Settings** — version links to GitHub repo, source code & feedback link
 - **Tab Vanish (v1.18.0)** — while a rule covering a host app's feature resolves to a HARD block, Nudge draws a

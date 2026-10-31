@@ -202,6 +202,19 @@ class NudgeDatabaseMigrationTest {
     }
 
     @Test
+    fun `MIGRATION_12_13 adds keepPassOnShortTrips column, off for every existing rule`() {
+        val db = RecordingDatabase()
+
+        NudgeDatabase.MIGRATION_12_13.migrate(db.proxy)
+
+        // DEFAULT 0: an upgrade must not change when anyone's pass ends (#110 is opt-in).
+        assertEquals(
+            listOf("ALTER TABLE block_rules ADD COLUMN keepPassOnShortTrips INTEGER NOT NULL DEFAULT 0"),
+            db.sql
+        )
+    }
+
+    @Test
     fun `all migrations registered from version 1 to current`() {
         val allMigrations = listOf(
             NudgeDatabase.MIGRATION_1_2,
@@ -214,7 +227,8 @@ class NudgeDatabaseMigrationTest {
             NudgeDatabase.MIGRATION_8_9,
             NudgeDatabase.MIGRATION_9_10,
             NudgeDatabase.MIGRATION_10_11,
-            NudgeDatabase.MIGRATION_11_12
+            NudgeDatabase.MIGRATION_11_12,
+            NudgeDatabase.MIGRATION_12_13
         )
 
         // Read from production, not hand-typed: a hand-kept constant here is exactly the

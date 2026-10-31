@@ -538,6 +538,39 @@ fun UnifiedAppConfigScreen(
                 }
             }
 
+            // Keep the pass on short trips (#110), per app, opt-in. Only where opening the app
+            // earns a pass (Delay, Hold, Breathing): a hard block has nothing to keep. Label only,
+            // the details live behind the info button.
+            if (state.showKeepPassOnShortTrips) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        modifier = Modifier.weight(1f),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            "Keep the pass on short trips",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Medium
+                        )
+                        InfoButton(
+                            "Once you have waited, going to the home screen or switching apps for a " +
+                                "moment keeps your pass. Come back within 2 minutes and the app opens " +
+                                "straight away.\n\n" +
+                                "Off: going to the home screen ends the pass, and the next open waits again."
+                        )
+                    }
+                    Switch(
+                        checked = state.keepPassOnShortTrips,
+                        onCheckedChange = viewModel::setKeepPassOnShortTrips
+                    )
+                }
+            }
+
             // Auto-kick
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(

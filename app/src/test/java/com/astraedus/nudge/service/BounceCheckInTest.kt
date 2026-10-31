@@ -50,7 +50,7 @@ class BounceCheckInTest {
         val c = checkIn()
         bounce(c)
         assertEquals(1, posted.size)
-        assertEquals(4, posted.single().appCount)
+        assertEquals(4, posted.single().count)
         assertEquals(2, posted.single().minutes) // 80s from the first wall
     }
 
@@ -127,6 +127,20 @@ class BounceCheckInTest {
         c.reset()
         assertFalse(c.isTracking)
         assertTrue(c.enabled)
+    }
+
+    /** A blocked site is a wall, and the site travels with it. */
+    @Test
+    fun `three blocked sites in one browser post one check-in`() {
+        val c = checkIn()
+        val chrome = "com.android.chrome"
+        listOf("example.com", "example.org", "example.net").forEach { site ->
+            now += 20_000L
+            c.onWall(chrome, site)
+        }
+        assertEquals(1, posted.size)
+        assertEquals(3, posted.single().count)
+        assertEquals(BounceAlert.Unit.SITES, posted.single().unit)
     }
 
     /** A kick is a wall: the executor tells its owner which key it kicked. */

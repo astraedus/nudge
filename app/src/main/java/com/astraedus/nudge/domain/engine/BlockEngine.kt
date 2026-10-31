@@ -135,7 +135,8 @@ class BlockEngine @Inject constructor(
                     ruleName = rule.ruleName,
                     dailyTimeRemainingMs = dailyTimeRemainingMs,
                     dailyLimitMinutes = minDailyLimit,
-                    tabVanish = rule.tabVanish
+                    tabVanish = rule.tabVanish,
+                    keepPassOnShortTrips = rule.keepPassOnShortTrips
                 )
             }
         }
