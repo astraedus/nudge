@@ -458,9 +458,10 @@ class NudgeAccessibilityService : AccessibilityService() {
          * which is API 31 and this app's minSdk is 26: an unguarded call there is a
          * `NoSuchMethodError` on every Android 8-11 device, in the companion initialiser of the
          * accessibility service, i.e. blocking would simply never start. `lintDebug` is the only
-         * check in this repo that can see that, and it did. (Release builds do not minify, so shipped class names match what
-         * the tests see; if that ever changes, both sides of this comparison are obfuscated
-         * together, because both come from real classes.)
+         * check in this repo that can see that, and it did. (Release builds run R8 since 1.22.4 but with `-dontobfuscate`,
+         * so shipped class names match what the tests see. Obfuscation would NOT rename both
+         * sides together: manifest activities keep their names, BuildConfig would not. See
+         * `app/proguard-rules.pro`.)
          */
         internal val OWN_CLASS_NAMESPACE: String =
             BuildConfig::class.java.name.substringBeforeLast('.')
