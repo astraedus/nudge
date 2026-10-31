@@ -4,11 +4,23 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+## [1.23.0] - 2026-10-31
+
+Community release: thanks to @mrdivax, @danieltsam and @ErenDikkulah, who reported, argued for and built most of it.
+
 ### Added
+- **Keep the pass on short trips** (per app, off by default; Delay, Hold and Breathing rules). With it on for an app, a quick trip to the home screen or through the launcher no longer ends the pass: come back within 2 minutes and the app opens without waiting again. With it off, nothing changes. Turning it on is a Strict Mode weakening. Built by @mrdivax from his own device captures, made per-app at Anti's call. (#110, #111)
+- **Blocked words & sites** (Settings → Content Filter), the mirror of the allow list: your own words, phrases and sites the content filter always blocks. Adding one is free; removing one takes the Strict Mode challenge. Backed up with your settings. By @danieltsam. (#105)
 - The "Bro. wtf." check-in now counts blocked websites, not just apps: three different blocked sites
   in the same five-minute streak fire it, with the same 30-minute cooldown. Hopping between blocked
   sites inside one browser used to count as one wall in one app, so the check-in could not fire at
-  any threshold. The app rule (2 walls + 4 apps) is unchanged. (#106)
+  any threshold. The app rule (2 walls + 4 apps) is unchanged. By @danieltsam. (#106, #108)
+
+### Changed
+- Backups now carry the "Bro. wtf." check-in switch. By @danieltsam. (#115)
+
+### Fixed
+- The Grayscale setup guide showed the wrong package name in its ADB command, so the permission grant failed. It now shows the app's real package, `dev.astraedus.nudge`. Reported by @ErenDikkulah. (#114)
 
 ## [1.22.4] - 2026-10-30
 
