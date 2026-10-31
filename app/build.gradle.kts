@@ -24,8 +24,8 @@ android {
         applicationId = "dev.astraedus.nudge"
         minSdk = 26
         targetSdk = 36
-        versionCode = 64
-        versionName = "1.22.3"
+        versionCode = 65
+        versionName = "1.22.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -41,7 +41,14 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // R8 on (F-Droid review, MR 38398): shrink + optimise. Obfuscation is OFF in
+            // proguard-rules.pro (-dontobfuscate): see the WHY there. shrinkResources stays off,
+            // the smallest change that answers the review.
+            isMinifyEnabled = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
             signingConfig = signingConfigs.getByName("release")
         }
     }

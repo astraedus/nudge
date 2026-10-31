@@ -104,6 +104,8 @@ Keystore: `nudge-release.keystore` (PKCS12, alias `nudge`, 2048-bit RSA, 10000-d
 Config: `keystore.properties` (gitignored). CI uses GitHub secrets.
 **Always use `assembleRelease`** for distribution. Debug APKs use machine-specific keys and cause "App not installed" when users try to update from a different build.
 
+**R8 is ON for release since 1.22.4** (F-Droid review asked for it): `isMinifyEnabled = true` (APK 16.3 MB to 4.3 MB), `shrinkResources` off, and **`-dontobfuscate` on purpose** (`app/proguard-rules.pro`). Never remove that line: the "is this our own window" check reads the namespace off `BuildConfig`'s class name, manifest activities keep theirs, and renaming would bring #33 back. A debug build does not run R8, so any change that adds reflection (class names from strings, `Class.forName`, a serialization library) needs a release-APK device-QA run, plus a `-keep` rule only where something is actually reflected.
+
 ## Architecture
 
 Clean Architecture in a single module with package boundaries:
