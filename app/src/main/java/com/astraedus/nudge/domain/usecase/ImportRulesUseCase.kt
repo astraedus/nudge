@@ -177,7 +177,8 @@ class ImportRulesUseCase @Inject constructor(
                 remindAfterMinutes = exportedRule.remindAfterMinutes,
                 webBlockMode = exportedRule.webBlockMode,
                 tabVanish = exportedRule.tabVanish,
-                followingSteer = exportedRule.followingSteer
+                followingSteer = exportedRule.followingSteer,
+                keepPassOnShortTrips = exportedRule.keepPassOnShortTrips
             )
 
             repository.addRule(blockRule)

@@ -437,4 +437,59 @@ class BlockEngineTest {
         assertTrue(decision is BlockDecision.Block)
         assertFalse((decision as BlockDecision.Block).tabVanish)
     }
+
+    @Test
+    fun `timed-mode decisions carry that rule's keepPassOnShortTrips`() {
+        for (mode in listOf(BlockMode.DELAY, BlockMode.HOLD, BlockMode.BREATHING)) {
+            for (flag in listOf(true, false)) {
+                val rules = listOf(
+                    ActiveRule(
+                        mode = mode,
+                        delaySeconds = 15,
+                        dailyLimitMinutes = null,
+                        enabled = true,
+                        keepPassOnShortTrips = flag
+                    )
+                )
+                val decision = engine.evaluate("com.instagram.android", rules, 0L)
+                assertTrue(decision is BlockDecision.Block)
+                assertEquals("$mode flag=$flag", flag, (decision as BlockDecision.Block).keepPassOnShortTrips)
+            }
+        }
+    }
+
+    @Test
+    fun `unconditional HARD_BLOCK never carries keepPassOnShortTrips`() {
+        val rules = listOf(
+            ActiveRule(
+                mode = BlockMode.HARD_BLOCK,
+                delaySeconds = 0,
+                dailyLimitMinutes = null,
+                enabled = true,
+                keepPassOnShortTrips = true
+            )
+        )
+        val decision = engine.evaluate("com.instagram.android", rules, 0L)
+        assertTrue(decision is BlockDecision.Block)
+        assertFalse((decision as BlockDecision.Block).keepPassOnShortTrips)
+    }
+
+    @Test
+    fun `exhausted daily limit never carries keepPassOnShortTrips`() {
+        val rules = listOf(
+            ActiveRule(
+                mode = BlockMode.DELAY,
+                delaySeconds = 15,
+                dailyLimitMinutes = 30,
+                enabled = true,
+                keepPassOnShortTrips = true
+            )
+        )
+        val usageMs = 31L * 60L * 1000L
+        val decision = engine.evaluate("com.instagram.android", rules, usageMs)
+        assertTrue(decision is BlockDecision.Block)
+        val block = decision as BlockDecision.Block
+        assertEquals(BlockMode.HARD_BLOCK, block.mode)
+        assertFalse(block.keepPassOnShortTrips)
+    }
 }

@@ -234,6 +234,43 @@ class PassthroughManagerTest {
         assertTrue(manager.isGranted("com.app.b"))
     }
 
+    // --- "keep the pass on short trips" (#110), per rule: the option rides the grant ---
+
+    @Test
+    fun `a grant with short trips keeps the pass across home and straight back`() {
+        manager.grant("org.telegram.messenger", keepPassOnShortTrips = true)
+        assertTrue(manager.keepsPassOnShortTrips)
+
+        manager.onForegroundSignal(ForegroundSignal.Home("com.sec.android.app.launcher"), 1_000)
+        assertTrue(manager.isGranted("org.telegram.messenger"))
+
+        manager.onForegroundSignal(ForegroundSignal.AppWindow("org.telegram.messenger"), 3_000)
+        assertTrue(manager.shouldSkipForegroundEvaluation("org.telegram.messenger"))
+    }
+
+    @Test
+    fun `a grant with short trips is revoked on a return past the window`() {
+        manager.grant("org.telegram.messenger", keepPassOnShortTrips = true)
+
+        manager.onForegroundSignal(ForegroundSignal.Home("com.sec.android.app.launcher"), 1_000)
+        manager.onForegroundSignal(
+            ForegroundSignal.AppWindow("org.telegram.messenger"),
+            1_000 + SittingTracker.PASSTHROUGH_RETURN_WINDOW_MS
+        )
+
+        assertFalse(manager.isGranted("org.telegram.messenger"))
+    }
+
+    @Test
+    fun `a grant without short trips is revoked at home at once, as shipped`() {
+        manager.grant("org.telegram.messenger")
+        assertFalse(manager.keepsPassOnShortTrips)
+
+        manager.onForegroundSignal(ForegroundSignal.Home("com.sec.android.app.launcher"), 1_000)
+
+        assertFalse(manager.isGranted("org.telegram.messenger"))
+    }
+
     @Test
     fun `a revocation is announced too`() {
         val seen = mutableListOf<SittingEvent>()

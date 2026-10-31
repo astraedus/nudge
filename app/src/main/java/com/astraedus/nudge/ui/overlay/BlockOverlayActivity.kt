@@ -108,6 +108,14 @@ class BlockOverlayActivity : ComponentActivity() {
         const val EXTRA_NUKE = "nuke"
 
         /**
+         * The deciding rule's "keep the pass on short trips" option
+         * (`BlockDecision.Block.keepPassOnShortTrips`, #110), handed to the grant this block earns.
+         * Absent = false, the shipped behaviour: every launch site that is not a rule's decision
+         * (the auto-kick cooldown screens) leaves it out.
+         */
+        const val EXTRA_KEEP_PASS_ON_SHORT_TRIPS = "keep_pass_on_short_trips"
+
+        /**
          * `SystemClock.elapsedRealtime()` when THIS delivery was started by [relaunchFullscreen]
          * rather than by the service. Absent on every ordinary delivery. Read by
          * [OverlayWindowMode.decide] so a platform that keeps re-opening us windowed cannot loop.
@@ -154,7 +162,8 @@ class BlockOverlayActivity : ComponentActivity() {
                 OverlayLifecycle.Effect.GrantPassthrough -> passthroughManager.grant(
                     packageName = passthroughPackage(intent),
                     featureKey = intent.getStringExtra(EXTRA_FEATURE_KEY),
-                    webDomain = intent.getStringExtra(EXTRA_WEB_DOMAIN)
+                    webDomain = intent.getStringExtra(EXTRA_WEB_DOMAIN),
+                    keepPassOnShortTrips = intent.getBooleanExtra(EXTRA_KEEP_PASS_ON_SHORT_TRIPS, false)
                 )
 
                 is OverlayLifecycle.Effect.ScheduleFailSafeFinish ->

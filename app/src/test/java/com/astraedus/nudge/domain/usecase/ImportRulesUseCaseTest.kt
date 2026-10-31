@@ -282,7 +282,8 @@ class ImportRulesUseCaseTest {
             autoKickAfterMinutes = 25,
             remindAfterMinutes = 15,
             tabVanish = false,
-            followingSteer = true
+            followingSteer = true,
+            keepPassOnShortTrips = true
         )
         val json = RuleExporter().exportRules(listOf(original), emptyList(), emptyMap())
 
@@ -750,5 +751,23 @@ class ImportRulesUseCaseTest {
             customDelaySubtitles = "",
             customHardBlockMessages = ""
         )
+    }
+
+    @Test
+    fun `keepPassOnShortTrips true survives an import and defaults to false when absent`() = runTest {
+        import(
+            """
+            {"version": 1, "rules": [
+                {"packageName": "com.keep", "mode": "DELAY", "keepPassOnShortTrips": true},
+                {"packageName": "com.plain", "mode": "DELAY", "keepPassOnShortTrips": false},
+                {"packageName": "com.legacy", "mode": "DELAY"}
+            ]}
+            """.trimIndent()
+        )
+
+        val byPackage = addedRules.associateBy { it.packageName }
+        assertTrue(byPackage.getValue("com.keep").keepPassOnShortTrips)
+        assertFalse(byPackage.getValue("com.plain").keepPassOnShortTrips)
+        assertFalse(byPackage.getValue("com.legacy").keepPassOnShortTrips)
     }
 }

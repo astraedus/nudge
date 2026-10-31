@@ -21,6 +21,15 @@ sealed class BlockDecision {
          */
         val tabVanish: Boolean = false,
         /**
+         * Whether the pass this block grants, once waited out, survives a short trip to the home
+         * screen ([com.astraedus.nudge.data.db.entity.BlockRule.keepPassOnShortTrips], #110). Read
+         * off the deciding rule exactly like [tabVanish], and set ONLY by the timed-mode branch of
+         * [com.astraedus.nudge.domain.engine.BlockEngine]: a hard block or an exhausted time
+         * budget never grants a pass, so it has nothing to keep. Defaults false, the shipped
+         * behaviour, so a `Block` built anywhere else can never claim it.
+         */
+        val keepPassOnShortTrips: Boolean = false,
+        /**
          * This block is Nuke Mode's, not a rule's. The overlay renders it with NO daily 2-minute
          * pass and only "Go home" (the way out of Nuke is the key or the emergency code, not the
          * pass), and the launch fingerprint keeps it distinct from a rule's hard block so a pending

@@ -22,6 +22,10 @@ The export collected `getEnabledRules()`, so a rule the user had switched off �
 - **Duplicate detection does not consider `enabled`** (target + mode + schedule), so re-importing a backup onto a device that already has the rule does not flip its switch — a duplicate is a rule you already have, not an instruction about its state.
 - Pinned by `ExportRulesUseCaseTest` (the collection: `getEnabledRules` is deliberately left unstubbed, so reaching for it fails loudly) and two `ImportRulesUseCaseTest` cases (the off-backup-restore round trip through the real exporter, and an old file with no `enabled` key restoring switched ON).
 
+### `keepPassOnShortTrips` (issue #110)
+
+Each exported rule carries `keepPassOnShortTrips` (the per-rule "keep the pass on short trips" switch, DB 12->13). `parseRule` reads it with `optBoolean(..., false)`, so a backup written before 1.23.0 restores every rule with it OFF, which is the shipped behaviour; an absent key can never turn a softening on. Still envelope version 1. Like `tabVanish`, it is not consulted by duplicate detection and the import's Strict Mode gate does not single it out; `RuleWeakening` covers it on the rule editor. Pinned by `RuleExporterTest` (round trip, old file defaults off) and `ImportRulesUseCaseTest`.
+
 ### Saving a backup to the device (`ACTION_CREATE_DOCUMENT`)
 
 Export used to fire `ACTION_SEND` only, and **"save to device" is not an `ACTION_SEND` target on Android**: enumerated on the Pixel 3, the entire share sheet was Drive, Gmail, KDE Connect, Telegram, Bitwarden and Discord — every one of them sending the file to a cloud or another device. A zero-internet-permission privacy app could not put a backup in its own user's Downloads folder, and the file the share path writes lives in `cacheDir`, where the system may evict it.

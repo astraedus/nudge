@@ -1,10 +1,19 @@
 package com.astraedus.nudge.domain.events
 
+import com.astraedus.nudge.domain.engine.BlockEngine
+import com.astraedus.nudge.domain.engine.RuleEvaluator
+import com.astraedus.nudge.domain.engine.ScheduleEvaluator
 import com.astraedus.nudge.domain.interaction.InteractionCounter
+import com.astraedus.nudge.domain.model.BlockDecision
+import com.astraedus.nudge.domain.model.BlockMode
+import com.astraedus.nudge.domain.model.BlockRuleData
+import com.astraedus.nudge.domain.sitting.SittingEndCause
 import com.astraedus.nudge.domain.sitting.SittingEvent
 import com.astraedus.nudge.domain.sitting.SittingTracker
 import com.astraedus.nudge.service.AwarenessOverlayWindow
+import com.astraedus.nudge.service.PassthroughManager
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -321,6 +330,136 @@ class A11yCaptureReplayTest {
         assertTrue(
             "the pre-fix rule must revoke at least once on this capture (it revoked $revocations)",
             revocations > 0
+        )
+    }
+
+    // --- issue #110: a gesture app switch passes through the launcher ---------------------------
+
+    private val samsungLauncher = "com.sec.android.app.launcher"
+    private val telegram = "org.telegram.messenger"
+
+    private fun classifyOnSamsung(record: AccessibilityEventRecord) = classifier.classify(
+        record = record,
+        currentImePackage = "com.google.android.inputmethod.latin",
+        launcherPackages = setOf(samsungLauncher),
+        pipOnlyPackages = emptySet()
+    )
+
+    private val instagram = "com.instagram.android"
+
+    /**
+     * Replay the #110 capture against a sitting that starts with a grant (the user has just waited
+     * out the delay on our overlay), the way production does it: [grant] in
+     * `BlockOverlayActivity`, then one `onForegroundSignal` per event. [asPackage] rewrites the
+     * granted app's events, so ONE device capture can stand for any app.
+     */
+    private fun replayShortTripCapture(
+        grantedPackage: String,
+        keepPassOnShortTrips: Boolean,
+        asPackage: String = grantedPackage
+    ): Pair<SittingTracker, List<SittingEvent.Ended>> {
+        val tracker = SittingTracker()
+        tracker.onGrantEarned(grantedPackage, keepPassOnShortTrips)
+        val ends = mutableListOf<SittingEvent.Ended>()
+        A11yCapture.load("samsung-gesture-switch-revokes-grant").forEach { raw ->
+            val record = if (raw.packageName == telegram) raw.copy(packageName = asPackage) else raw
+            when (val event = tracker.onSignal(classifyOnSamsung(record), record.eventTimeMs)) {
+                is SittingEvent.Ended -> ends += event
+                is SittingEvent.Started -> event.ended?.let { ends += it }
+                is SittingEvent.Unchanged -> Unit
+            }
+        }
+        return tracker to ends
+    }
+
+    /**
+     * ISSUE [#110](https://github.com/astraedus/nudge/issues/110), replayed from the reporter's
+     * phone. Swiping the gesture bar to the previous app and straight back crosses a launcher
+     * window both ways; the user was away about two seconds. On a pass granted by a rule with
+     * "keep the pass on short trips" on, that must not end anything.
+     */
+    @Test
+    fun `with short trips on, a gesture swipe through the launcher and straight back never ends the sitting`() {
+        val launcherWindows = A11yCapture.load("samsung-gesture-switch-revokes-grant")
+            .count { classifyOnSamsung(it) is ForegroundSignal.Home }
+        assertEquals("the capture must cross the launcher on the way out and back", 2, launcherWindows)
+
+        val (tracker, ends) = replayShortTripCapture(telegram, keepPassOnShortTrips = true)
+
+        assertEquals(
+            "nothing in this capture may end a sitting: the user came straight back; ended: $ends",
+            emptyList<SittingEvent.Ended>(),
+            ends
+        )
+        assertEquals(telegram, tracker.currentApp)
+    }
+
+    /**
+     * The counterfactual, and the default: a pass granted WITHOUT the option must reproduce the
+     * reported re-block on the same capture. Otherwise the capture does not contain the defect and
+     * the test above proves nothing; and if this ever passes with no ends, the default behaviour
+     * changed without anyone opting in.
+     */
+    @Test
+    fun `with short trips off, the shipped rule ends the sitting on this capture as WENT_HOME`() {
+        val (_, ends) = replayShortTripCapture(telegram, keepPassOnShortTrips = false)
+        assertEquals(
+            "the default must still revoke on the first launcher window: $ends",
+            SittingEndCause.WENT_HOME,
+            ends.firstOrNull()?.cause
+        )
+    }
+
+    /**
+     * Per rule, end to end: Telegram's rule has "keep the pass on short trips" on, Instagram's has
+     * it off. Each rule goes through the real [RuleEvaluator] and [BlockEngine], the decision's
+     * flag is handed to the grant exactly as the overlay hands it ([PassthroughManager.grant]), and
+     * the SAME device capture is replayed for each. Telegram keeps its pass; Instagram loses it at
+     * the first launcher window. One option, two apps, two outcomes, which is what Anti asked for
+     * on #110 ("a setting/toggle on a per app basis").
+     */
+    @Test
+    fun `short trips is per rule - same capture, Telegram on keeps the pass, Instagram off loses it`() {
+        val rules = listOf(
+            BlockRuleData(
+                id = 1, packageName = telegram, groupId = null, mode = BlockMode.DELAY,
+                delaySeconds = 15, dailyLimitMinutes = null, enabled = true,
+                keepPassOnShortTrips = true
+            ),
+            BlockRuleData(
+                id = 2, packageName = instagram, groupId = null, mode = BlockMode.DELAY,
+                delaySeconds = 15, dailyLimitMinutes = null, enabled = true,
+                keepPassOnShortTrips = false
+            )
+        )
+        val evaluator = RuleEvaluator()
+        val engine = BlockEngine(ScheduleEvaluator())
+        fun decide(pkg: String) = engine.evaluate(
+            packageName = pkg,
+            activeRules = evaluator.resolveRulesForPackage(pkg, rules, emptyList()),
+            dailyUsageMs = 0L
+        ) as BlockDecision.Block
+
+        fun replayThroughGrant(pkg: String): PassthroughManager {
+            val manager = PassthroughManager()
+            manager.grant(pkg, keepPassOnShortTrips = decide(pkg).keepPassOnShortTrips)
+            A11yCapture.load("samsung-gesture-switch-revokes-grant").forEach { raw ->
+                val record = if (raw.packageName == telegram) raw.copy(packageName = pkg) else raw
+                manager.onForegroundSignal(classifyOnSamsung(record), record.eventTimeMs)
+            }
+            return manager
+        }
+
+        assertTrue(decide(telegram).keepPassOnShortTrips)
+        assertFalse(decide(instagram).keepPassOnShortTrips)
+
+        assertTrue(
+            "Telegram's rule keeps the pass across the gesture switch",
+            replayThroughGrant(telegram).isGranted(telegram)
+        )
+        assertFalse(
+            "Instagram's rule does not: the launcher window ends the sitting and the pass with it",
+            replayThroughGrant(instagram).isGranted(instagram)
         )
     }
 

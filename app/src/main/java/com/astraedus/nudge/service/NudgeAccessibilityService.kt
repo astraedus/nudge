@@ -970,7 +970,9 @@ class NudgeAccessibilityService : AccessibilityService() {
      * purpose (a tab-out-and-back must not refill a time budget), and that stays true — leaving the
      * app revokes permission to skip the delay, it does not end the session.
      *
-     * **Both passthrough axes are already gone by the time this runs.** `ForegroundSignal.Home` is
+     * **Both passthrough axes are already gone by the time this runs**, unless the rule that granted
+     * the pass has "keep the pass on short trips" on (#110): then the launcher only started the
+     * sitting's away clock, and the grant goes on return if they stayed away too long. `ForegroundSignal.Home` is
      * one of only two signals [com.astraedus.nudge.domain.sitting.SittingTracker] allows to end a
      * sitting, and the single `applyForegroundSignal` call at the top of [onAccessibilityEvent] revokes the
      * grant — app axis and web axis together — when it does. Clearing again here would be the "a
@@ -980,7 +982,8 @@ class NudgeAccessibilityService : AccessibilityService() {
      */
     private fun onWentHome(packageName: String) {
         entryPoint.nudgeLogger().d(
-            "sitting ended by home screen — passthrough revoked (both axes) package=$packageName"
+            "home screen in front package=$packageName " +
+                "keepPassOnShortTrips=${entryPoint.passthroughManager().keepsPassOnShortTrips}"
         )
         endWebSession("went_home")
     }
@@ -2965,6 +2968,10 @@ class NudgeAccessibilityService : AccessibilityService() {
                     putExtra(BlockOverlayActivity.EXTRA_FEATURE_KEY, featureKey)
                     putExtra(BlockOverlayActivity.EXTRA_RULE_NAME, decision.ruleName)
                     putExtra(BlockOverlayActivity.EXTRA_NUKE, decision.nuke)
+                    putExtra(
+                        BlockOverlayActivity.EXTRA_KEEP_PASS_ON_SHORT_TRIPS,
+                        decision.keepPassOnShortTrips
+                    )
                     web?.let {
                         putExtra(BlockOverlayActivity.EXTRA_PASSTHROUGH_PACKAGE, it.browserPackage)
                         putExtra(BlockOverlayActivity.EXTRA_WEB_DOMAIN, it.domain)
