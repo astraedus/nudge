@@ -75,6 +75,11 @@ data class ExportedSettings(
     /** "Daily 2-minute pass" escape-hatch master switch. */
     val emergencyPassEnabled: Boolean? = null,
     /**
+     * "Bro. wtf." bounce check-ins. Not a protection setting: turning it off does not unblock
+     * anything, so importing it is never weakening and needs no gate.
+     */
+    val bounceCheckInEnabled: Boolean? = null,
+    /**
      * User-edited overlay message pools, one message per line. An empty string is a REAL value
      * meaning "use the built-in defaults" (see `NudgeMessages.resolvePool`), not "absent" — a user
      * who cleared their custom messages gets that cleared state restored.
@@ -92,6 +97,7 @@ data class ExportedSettings(
             strictModeEnabled == null &&
             strictModeChallengeLength == null &&
             emergencyPassEnabled == null &&
+            bounceCheckInEnabled == null &&
             customDelayTitles == null &&
             customDelaySubtitles == null &&
             customHardBlockMessages == null

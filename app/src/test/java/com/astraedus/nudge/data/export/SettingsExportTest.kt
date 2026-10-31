@@ -49,6 +49,7 @@ class SettingsExportTest {
         strictModeEnabled = true,
         strictModeChallengeLength = StrictModeChallenge.LENGTH_HARD,
         emergencyPassEnabled = false,
+        bounceCheckInEnabled = true,
         customDelayTitles = "Pause.\nWait a moment.",
         customDelaySubtitles = "Is this what you wanted?",
         customHardBlockMessages = "Not today."
@@ -98,6 +99,7 @@ class SettingsExportTest {
         assertEquals(true, settings.getBoolean("contentFilterEnabled"))
         assertEquals("DELAY", settings.getString("contentFilterMode"))
         assertEquals(48, settings.getInt("strictModeChallengeLength"))
+        assertEquals(true, settings.getBoolean("bounceCheckInEnabled"))
         assertEquals("Not today.", settings.getString("customHardBlockMessages"))
         // The other payloads are untouched by its presence.
         assertEquals(1, json.getJSONArray("rules").length())
