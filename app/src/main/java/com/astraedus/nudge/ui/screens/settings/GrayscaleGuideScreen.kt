@@ -3,6 +3,7 @@ package com.astraedus.nudge.ui.screens.settings
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import com.astraedus.nudge.BuildConfig
 import com.astraedus.nudge.ui.hasGrayscalePermission
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -43,11 +44,20 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 
+/**
+ * The `adb` command the guide tells the user to run. Takes the applicationId (`dev.astraedus.nudge`),
+ * NOT the class namespace (`com.astraedus.nudge`): `pm grant` resolves a package, and the namespace
+ * is not one (#114).
+ */
+internal fun grayscaleAdbCommand(applicationId: String): String =
+    "adb shell pm grant $applicationId android.permission.WRITE_SECURE_SETTINGS"
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun GrayscaleGuideScreen(
     onNavigateBack: () -> Unit
 ) {
+    val grantCommand = grayscaleAdbCommand(BuildConfig.APPLICATION_ID)
     val context = LocalContext.current
     val permissionGranted by remember { mutableStateOf(hasGrayscalePermission(context)) }
     val snackbarHostState = remember { SnackbarHostState() }
@@ -115,7 +125,7 @@ fun GrayscaleGuideScreen(
                 NumberedStep(5, "Then run this command to grant the permission:")
 
                 AdbCommandCard(
-                    command = "adb shell pm grant com.astraedus.nudge android.permission.WRITE_SECURE_SETTINGS",
+                    command = grantCommand,
                     snackbarHostState = snackbarHostState,
                     scope = scope,
                     context = context
@@ -132,7 +142,7 @@ fun GrayscaleGuideScreen(
                 NumberedStep(4, "Run this command on your computer:")
 
                 AdbCommandCard(
-                    command = "adb shell pm grant com.astraedus.nudge android.permission.WRITE_SECURE_SETTINGS",
+                    command = grantCommand,
                     snackbarHostState = snackbarHostState,
                     scope = scope,
                     context = context
