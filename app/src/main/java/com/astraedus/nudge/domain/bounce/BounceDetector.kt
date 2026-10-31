@@ -1,5 +1,7 @@
 package com.astraedus.nudge.domain.bounce
 
+import com.astraedus.nudge.domain.web.WebSessionKey
+
 /**
  * The "Bro. wtf." bounce detector: notices a user hitting a Nudge wall, hopping through a handful of
  * other apps, and hitting a wall again, and says so ONCE.
@@ -12,7 +14,8 @@ package com.astraedus.nudge.domain.bounce
  *
  * - A **wall** is any time Nudge stops an app: a block overlay (every block mode, Nuke included,
  *   the auto-kick cooldown overlay, the daily-limit block) or an auto-kick. The service reports
- *   each one through [onWall].
+ *   each one through [onWall]. A blocked WEBSITE is a wall too, and it carries its own identity:
+ *   three different blocked sites inside one browser are three walls, not one browser wall (#106).
  * - The first wall **arms** a streak. While armed, every foreground switch to a real app is
  *   reported through [onAppOpened] and recorded as a distinct package. The walled app counts too:
  *   the user opened it, that is what the wall was in front of.
@@ -20,9 +23,12 @@ package com.astraedus.nudge.domain.bounce
  *   RECENT wall, so ongoing bouncing keeps being tracked rather than being cut off at a fixed
  *   deadline from the first one. When it lapses with no new wall, every piece of state is dropped.
  * - It **fires** when, inside the streak, the user has hit at least [Config.minWalls] walls AND
- *   opened at least [Config.minApps] distinct apps.
+ *   opened at least [Config.minApps] distinct apps, OR has been stopped on at least
+ *   [Config.minSites] distinct sites. The app rule keeps the numbers it was specified with; the
+ *   site rule is the same loop inside one browser, where "distinct apps" can never reach four.
  * - After firing it goes quiet for [Config.cooldownMs], feeding nothing and holding nothing, and the
- *   next wall after that starts a fresh streak.
+ *   next wall after that starts a fresh streak. The cooldown is shared by both rules: it is one
+ *   check-in, not one per counter.
  *
  * ## What counts as a SECOND wall
  *
@@ -34,6 +40,12 @@ package com.astraedus.nudge.domain.bounce
  * between: another app ([onAppOpened]) or the home screen ([onWentHome]). A wall for a different
  * package is always a new one.
  *
+ * A site wall follows the same rule one level down: the SAME site re-blocked while the user has not
+ * left the browser is one wall, and a different site is always a new one. The browser is still the
+ * package that decides whether the user "left": navigating from one blocked site to another is not
+ * leaving Chrome. Identity is the site when there is one and the package otherwise, so an app-level
+ * block of the browser straight after a site block in it is a new wall too.
+ *
  * ## What it costs
  *
  * Nothing at all until the first wall: [onAppOpened] and [onWentHome] return at the first line
@@ -42,7 +54,8 @@ package com.astraedus.nudge.domain.bounce
  * scheduled work, no wakelock and no I/O; time is whatever the caller passes in, which in
  * production is `SystemClock.elapsedRealtime()` read on the event that is already being handled.
  * State is in memory only, so a process death simply forgets a streak, which is the right
- * direction for a nudge.
+ * direction for a nudge. Blocked domains are held for the length of one streak and never persisted:
+ * this is a nudge counter, not browsing history.
  *
  * Pure Kotlin, no Android, and NOT thread-safe: the caller serialises access (see
  * `service/BounceCheckIn`).
@@ -60,15 +73,19 @@ class BounceDetector(
         val windowMs: Long = WINDOW_MS,
         val minWalls: Int = MIN_WALLS,
         val minApps: Int = MIN_APPS,
+        val minSites: Int = MIN_SITES,
         val cooldownMs: Long = COOLDOWN_MS,
-        val maxTrackedApps: Int = MAX_TRACKED_APPS
+        val maxTrackedApps: Int = MAX_TRACKED_APPS,
+        val maxTrackedSites: Int = MAX_TRACKED_SITES
     ) {
         init {
             require(windowMs > 0) { "windowMs must be positive" }
             require(minWalls >= 1) { "minWalls must be at least 1" }
             require(minApps >= 1) { "minApps must be at least 1" }
+            require(minSites >= 1) { "minSites must be at least 1" }
             require(cooldownMs >= 0) { "cooldownMs must not be negative" }
             require(maxTrackedApps >= minApps) { "maxTrackedApps must reach minApps" }
+            require(maxTrackedSites >= minSites) { "maxTrackedSites must reach minSites" }
         }
     }
 
@@ -78,9 +95,11 @@ class BounceDetector(
     private var streakStartedAtMs: Long? = null
     private var lastWallAtMs: Long = 0L
     private var lastWallPackage: String? = null
+    private var lastWallKey: String? = null
     private var leftSinceLastWall: Boolean = false
     private var walls: Int = 0
     private val apps = LinkedHashSet<String>()
+    private val sites = LinkedHashSet<String>()
 
     /** Firing is followed by a quiet period; null when not cooling down. */
     private var cooldownUntilMs: Long? = null
@@ -88,25 +107,36 @@ class BounceDetector(
     /**
      * Nudge just stopped [packageName] (the app the user was in: for a website block, the browser).
      *
+     * @param siteDomain the site the wall was about, for a website block. Null for an app wall.
+     *   A bare host as `WebDomainMatcher.extractDomain` / `WebSessionKey.domainOf` produce it; it
+     *   is normalised through [WebSessionKey] so `www.instagram.com`, `m.instagram.com` and
+     *   `instagram.com` are one site, not three.
      * @return the alert to show, or null.
      */
-    fun onWall(packageName: String, nowMs: Long): BounceAlert? {
+    fun onWall(packageName: String, nowMs: Long, siteDomain: String? = null): BounceAlert? {
         if (coolingDown(nowMs)) return null
         lapseIfExpired(nowMs)
 
+        val site = siteDomain?.let { WebSessionKey.forDomain(it) }
+        // A wall is identified by its SITE when there is one, otherwise by the app. So a site hop
+        // inside one browser is a new wall, and so is an app-level block of that same browser
+        // straight after a site block in it (the browser is then a different identity, not a
+        // re-launch of the site's overlay).
+        val key = site ?: packageName
         val started = streakStartedAtMs
         if (started == null) {
             streakStartedAtMs = nowMs
             walls = 1
-        } else if (packageName != lastWallPackage || leftSinceLastWall) {
+        } else if (isNewWall(key)) {
             walls++
         }
         // Re-launches of the overlay for an app the user never left still SLIDE the window: the
         // wall is still in their face, and the streak should not lapse from under it.
         lastWallAtMs = nowMs
         lastWallPackage = packageName
+        lastWallKey = key
         leftSinceLastWall = false
-        record(packageName)
+        record(packageName, site)
         return evaluate(nowMs)
     }
 
@@ -122,7 +152,7 @@ class BounceDetector(
         if (lapseIfExpired(nowMs)) return null
         if (packageName in excludedPackages) return null
         if (packageName != lastWallPackage) leftSinceLastWall = true
-        record(packageName)
+        record(packageName, site = null)
         return evaluate(nowMs)
     }
 
@@ -142,19 +172,31 @@ class BounceDetector(
         cooldownUntilMs = null
     }
 
-    private fun record(packageName: String) {
-        if (packageName in excludedPackages) return
-        if (apps.size >= config.maxTrackedApps) return
-        apps.add(packageName)
+    /**
+     * Is this wall a new confrontation? The same identity (site, or app) only counts once the user
+     * has been somewhere else in between (see the class docs).
+     */
+    private fun isNewWall(key: String): Boolean = key != lastWallKey || leftSinceLastWall
+
+    private fun record(packageName: String, site: String?) {
+        if (packageName !in excludedPackages && apps.size < config.maxTrackedApps) {
+            apps.add(packageName)
+        }
+        // A site is not an app: it is counted on its own rule, and only while it fits the bound.
+        if (site != null && sites.size < config.maxTrackedSites) sites.add(site)
     }
 
     private fun evaluate(nowMs: Long): BounceAlert? {
         val started = streakStartedAtMs ?: return null
-        if (walls < config.minWalls || apps.size < config.minApps) return null
-        val alert = BounceAlert(
-            appCount = apps.size,
-            minutes = BounceAlert.minutesFor(nowMs - started)
-        )
+        val minutes = BounceAlert.minutesFor(nowMs - started)
+        // The app rule first, so a streak that reaches both reads the way it always has.
+        val alert = when {
+            walls >= config.minWalls && apps.size >= config.minApps ->
+                BounceAlert(count = apps.size, minutes = minutes, unit = BounceAlert.Unit.APPS)
+            sites.size >= config.minSites ->
+                BounceAlert(count = sites.size, minutes = minutes, unit = BounceAlert.Unit.SITES)
+            else -> return null
+        }
         clearStreak()
         cooldownUntilMs = nowMs + config.cooldownMs
         return alert
@@ -184,9 +226,11 @@ class BounceDetector(
         streakStartedAtMs = null
         lastWallAtMs = 0L
         lastWallPackage = null
+        lastWallKey = null
         leftSinceLastWall = false
         walls = 0
         apps.clear()
+        sites.clear()
     }
 
     companion object {
@@ -199,11 +243,20 @@ class BounceDetector(
         /** Distinct real apps opened inside the streak, the walled ones included. */
         const val MIN_APPS: Int = 4
 
+        /**
+         * Distinct blocked sites inside the streak. One browser is one app, so the app rule can
+         * never fire on a user who stays inside it; three different sites is the same loop.
+         */
+        const val MIN_SITES: Int = 3
+
         /** After a check-in, no second one for this long. */
         const val COOLDOWN_MS: Long = 30 * 60_000L
 
         /** Bounds the set; nobody bounces through more than this in one streak, and N stays honest. */
         const val MAX_TRACKED_APPS: Int = 64
+
+        /** Bounds the site set for the same reason. */
+        const val MAX_TRACKED_SITES: Int = 64
 
         /**
          * Packages that are never an app the user OPENED, whatever window they put up.
@@ -232,20 +285,32 @@ class BounceDetector(
 }
 
 /**
- * What the check-in says: "You've bounced through [appCount] apps in [minutes] minutes."
+ * What the check-in says: "You've bounced through [count] apps in [minutes] minutes", or "sites"
+ * when the streak fired on the site rule.
  *
- * Both numbers are real: [appCount] is the distinct apps opened in the streak (the walled ones
- * included) and [minutes] is the time from the first wall to the moment it fired, rounded UP so a
- * 40-second bounce reads "1 minute" rather than "0 minutes".
+ * Both numbers are real: [count] is the distinct apps (or distinct blocked sites) opened in the
+ * streak (the walled ones included) and [minutes] is the time from the first wall to the moment it
+ * fired, rounded UP so a 40-second bounce reads "1 minute" rather than "0 minutes".
  */
-data class BounceAlert(val appCount: Int, val minutes: Int) {
+data class BounceAlert(
+    val count: Int,
+    val minutes: Int,
+    val unit: Unit = Unit.APPS
+) {
+
+    enum class Unit { APPS, SITES }
 
     val title: String get() = TITLE
 
     val body: String
         get() {
-            val unit = if (minutes == 1) "minute" else "minutes"
-            return "You've bounced through $appCount apps in $minutes $unit. Wanna take a break?"
+            val minutesUnit = if (minutes == 1) "minute" else "minutes"
+            val noun = when {
+                unit == Unit.SITES -> if (count == 1) "site" else "sites"
+                count == 1 -> "app"
+                else -> "apps"
+            }
+            return "You've bounced through $count $noun in $minutes $minutesUnit. Wanna take a break?"
         }
 
     companion object {

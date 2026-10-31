@@ -18,6 +18,7 @@ import com.astraedus.nudge.data.repository.UsageRepository
 import com.astraedus.nudge.domain.WebDomainMatcher
 import com.astraedus.nudge.domain.block.BlockLaunchGate
 import com.astraedus.nudge.domain.autokick.UseReminder
+import com.astraedus.nudge.domain.bounce.BounceAlert
 import com.astraedus.nudge.domain.bounce.BounceDetector
 import com.astraedus.nudge.domain.block.CooldownGate
 import com.astraedus.nudge.domain.events.A11yEventType
@@ -547,8 +548,9 @@ class NudgeAccessibilityService : AccessibilityService() {
             excludedPackages = BounceDetector.neverCountedPackages(BuildConfig.APPLICATION_ID)
         ),
         notify = { alert ->
+            val unit = if (alert.unit == BounceAlert.Unit.SITES) "sites" else "apps"
             entryPoint.nudgeLogger().i(
-                "bounce check-in posted apps=${alert.appCount} minutes=${alert.minutes}"
+                "bounce check-in posted $unit=${alert.count} minutes=${alert.minutes}"
             )
             BounceCheckInNotifier.notify(applicationContext, alert)
         },
@@ -1083,10 +1085,10 @@ class NudgeAccessibilityService : AccessibilityService() {
             counterCache = counterCache,
             logger = entryPoint.nudgeLogger(),
             // A kick is a wall too. A web kick is keyed by `web:<domain>`, not a package, so it is
-            // reported as the browser the user was actually in.
+            // reported as the browser the user was actually in, plus the site that was kicked.
             onKicked = { key ->
                 val app = if (WebSessionKey.isWebKey(key)) webSessionUsageProvider.browserPackage else key
-                app?.let(bounceCheckIn::onWall)
+                app?.let { bounceCheckIn.onWall(it, WebSessionKey.domainOf(key)) }
             },
             // Prefer the accessibility global action, exactly as EmergencyPassManager does: a HOME
             // intent is not always honoured from inside another app's task, and a kick that leaves
@@ -2130,7 +2132,8 @@ class NudgeAccessibilityService : AccessibilityService() {
                 attributedPackage = browserPackage,
                 blockMode = "DELAY",
                 webDomain = domain
-            )
+            ),
+            webDomain = domain
         ) {
             putExtra(BlockOverlayActivity.EXTRA_BLOCK_MODE, "DELAY")
             putExtra(BlockOverlayActivity.EXTRA_DELAY_SECONDS, remainingSeconds)
@@ -2827,6 +2830,8 @@ class NudgeAccessibilityService : AccessibilityService() {
      *   WHICH block this is, so the gate can tell a genuine duplicate from a stale pending overlay
      *   describing a block the rules no longer produce (issue #50). No default, for the same
      *   reason the parameters above have none -- every launch site must say what it is showing.
+     * @param webDomain the site this block is about, for a website block. Reported to the bounce
+     *   check-in so three different blocked sites count as three walls, not one browser (#106).
      * @param extras fills in the intent. Called only when the launch is going to happen.
      * @return false when the gate refused, in which case the caller must not record the block
      *   either, a `UsageEvent` for an overlay nobody saw is the stat inflation issue #19 measured.
@@ -2835,6 +2840,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         targetPackage: String,
         attributedPackage: String,
         decisionKey: String,
+        webDomain: String? = null,
         extras: Intent.() -> Unit
     ): Boolean {
         // A FLOATING target is stacked above any overlay we could launch (issue #71), so the
@@ -2891,9 +2897,10 @@ class NudgeAccessibilityService : AccessibilityService() {
         // (which never re-runs onCreate).
         markOverlayActive(attributedPackage)
         // A wall, for the bounce check-in: the app the user was actually IN (the browser, for a
-        // website block). Every overlay in this service passes through here exactly once per launch
-        // the gate allows, which is what makes this the one place to report it.
-        bounceCheckIn.onWall(targetPackage)
+        // website block) and, when it is a website, the site. Every overlay in this service passes
+        // through here exactly once per launch the gate allows, which is what makes this the one
+        // place to report it.
+        bounceCheckIn.onWall(targetPackage, webDomain)
         // ...and record that it is only STARTED, not yet on screen. Those are different facts and
         // conflating them is what produced two blocks for one app entry: see
         // [BlockLaunchGate.isGenuineBypass]. Keyed on the TARGET, because that is the package whose
@@ -2952,7 +2959,8 @@ class NudgeAccessibilityService : AccessibilityService() {
                         featureKey = featureKey,
                         webDomain = web?.domain,
                         dailyLimited = decision.dailyLimitMinutes != null
-                    )
+                    ),
+                    webDomain = web?.domain
                 ) {
                     putExtra(BlockOverlayActivity.EXTRA_BLOCK_MODE, decision.mode.name)
                     putExtra(BlockOverlayActivity.EXTRA_DELAY_SECONDS, decision.delaySeconds)

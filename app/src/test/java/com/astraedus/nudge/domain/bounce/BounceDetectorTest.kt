@@ -22,6 +22,7 @@ class BounceDetectorTest {
     private val cooldown = BounceDetector.COOLDOWN_MS
     private val minApps = BounceDetector.MIN_APPS
     private val minWalls = BounceDetector.MIN_WALLS
+    private val minSites = BounceDetector.MIN_SITES
 
     private var now = 1_000_000L
 
@@ -56,6 +57,7 @@ class BounceDetectorTest {
         assertEquals(5 * 60_000L, window)
         assertEquals(2, minWalls)
         assertEquals(4, minApps)
+        assertEquals(3, minSites)
         assertEquals(30 * 60_000L, cooldown)
     }
 
@@ -102,7 +104,7 @@ class BounceDetectorTest {
         val d = detector()
         val alert = bounceToThreshold(d, stepMs = 10_000L)
         assertNotNull(alert)
-        assertEquals(minApps, alert!!.appCount)
+        assertEquals(minApps, alert!!.count)
         // minApps steps of 10s = 40s from the first wall, rounded UP to a whole minute.
         assertEquals(1, alert.minutes)
         assertFalse("firing ends the streak", d.isArmed)
@@ -121,7 +123,7 @@ class BounceDetectorTest {
         now += 1_000L
         val alert = d.onAppOpened(app(3), now)
         assertNotNull("the 4th distinct app crosses the threshold", alert)
-        assertEquals(4, alert!!.appCount)
+        assertEquals(4, alert!!.count)
     }
 
     @Test
@@ -230,6 +232,157 @@ class BounceDetectorTest {
         assertTrue("com.android.systemui" in excluded)
     }
 
+    // ── blocked sites ──
+
+    private val chrome = "com.android.chrome"
+
+    /** Three different blocked sites in the one browser, returning whatever the LAST call did. */
+    private fun siteBounce(d: BounceDetector, stepMs: Long = 1_000L): BounceAlert? {
+        var alert: BounceAlert? = null
+        listOf("example.com", "example.org", "example.net").forEach { site ->
+            now += stepMs
+            alert = d.onWall(chrome, now, site)
+        }
+        return alert
+    }
+
+    @Test
+    fun `three different blocked sites in one browser fire on the third`() {
+        val d = detector()
+        assertNull(d.onWall(chrome, now, "example.com"))
+        now += 20_000L
+        assertNull(d.onWall(chrome, now, "example.org"))
+        now += 20_000L
+        val alert = d.onWall(chrome, now, "example.net")
+        assertNotNull("three distinct sites is the site threshold", alert)
+        assertEquals(3, alert!!.count)
+        assertEquals(BounceAlert.Unit.SITES, alert.unit)
+        assertEquals(1, alert.minutes)
+        assertFalse("firing ends the streak", d.isArmed)
+    }
+
+    @Test
+    fun `two different blocked sites do not fire`() {
+        val d = detector()
+        assertNull(d.onWall(chrome, now, "example.com"))
+        now += 1_000L
+        assertNull(d.onWall(chrome, now, "example.org"))
+        assertTrue("two sites, one app: under both thresholds", d.isArmed)
+    }
+
+    @Test
+    fun `the same site re-blocked is one site and one wall`() {
+        val d = detector()
+        assertNull(d.onWall(chrome, now, "example.com"))
+        // The overlay comes back for the same site while the user has not left the browser (#36).
+        repeat(5) {
+            now += 1_000L
+            assertNull(d.onWall(chrome, now, "example.com"))
+        }
+        now += 1_000L
+        assertNull("a second distinct site is two, not seven", d.onWall(chrome, now, "example.org"))
+        now += 1_000L
+        assertNull("the same second site again adds nothing", d.onWall(chrome, now, "example.org"))
+        assertTrue(d.isArmed)
+    }
+
+    @Test
+    fun `a site and its www host are one site`() {
+        val d = detector()
+        assertNull(d.onWall(chrome, now, "www.example.com"))
+        now += 1_000L
+        assertNull(d.onWall(chrome, now, "example.com"))
+        now += 1_000L
+        assertNull("two spellings of one site is one site", d.onWall(chrome, now, "m.example.com"))
+        assertTrue(d.isArmed)
+    }
+
+    @Test
+    fun `site and app counts never add up`() {
+        val d = detector()
+        assertNull(d.onWall(instagram, now))
+        now += 1_000L
+        assertNull(d.onWall(chrome, now, "example.com"))
+        now += 1_000L
+        assertNull(d.onWall(chrome, now, "example.org"))
+        // 3 walls, 2 apps (instagram, chrome), 2 sites: nothing fires.
+        assertTrue(d.isArmed)
+    }
+
+    @Test
+    fun `a mixed streak that reaches the app rule still reads as apps`() {
+        val d = detector()
+        assertNull(d.onWall(instagram, now))
+        now += 1_000L
+        assertNull(d.onWall(chrome, now, "example.com"))
+        now += 1_000L
+        assertNull(d.onAppOpened(app(1), now))
+        now += 1_000L
+        val alert = d.onAppOpened(app(2), now)
+        assertNotNull("4 distinct apps and 2 walls: the app rule fires", alert)
+        assertEquals(BounceAlert.Unit.APPS, alert!!.unit)
+        assertEquals(4, alert.count)
+    }
+
+    @Test
+    fun `the site rule shares the one cooldown`() {
+        val d = detector()
+        assertNotNull(siteBounce(d))
+        now += 1_000L
+        assertNull("one check-in, not one per counter", siteBounce(d))
+        assertFalse(d.isArmed)
+    }
+
+    @Test
+    fun `a site streak lapses with the window like an app streak`() {
+        val d = detector()
+        assertNull(d.onWall(chrome, now, "example.com"))
+        now += window + 1
+        assertNull("lapsed: the site is ignored", d.onWall(chrome, now, "example.org"))
+        assertTrue("that is a fresh first wall", d.isArmed)
+    }
+
+    /**
+     * The counterfactual matters: with `minApps = 1` the SECOND wall fires, so if a re-launch of the
+     * same site counted as a wall this test would see an alert instead of nothing.
+     */
+    @Test
+    fun `a re-blocked site is one wall, not one per re-launch`() {
+        val d = BounceDetector(BounceDetector.Config(minApps = 1, minSites = 64))
+        assertNull(d.onWall(chrome, now, "example.com"))
+        repeat(5) {
+            now += 1_000L
+            assertNull("the same site again is the same wall", d.onWall(chrome, now, "example.com"))
+        }
+        d.onWentHome(now)
+        now += 1_000L
+        assertNotNull("left the browser and came back: a new wall", d.onWall(chrome, now, "example.com"))
+    }
+
+    /**
+     * Identity is the site when there is one. An app-level block of the browser straight after a
+     * site block in it is a different identity, so it counts, and with `minApps = 1` that fires.
+     */
+    @Test
+    fun `an app wall right after a site wall in the same browser is a new wall`() {
+        val d = BounceDetector(BounceDetector.Config(minApps = 1, minSites = 64))
+        assertNull(d.onWall(chrome, now, "example.com"))
+        now += 1_000L
+        assertNotNull("the browser itself was blocked: a second wall", d.onWall(chrome, now))
+    }
+
+    @Test
+    fun `the site set is bounded and the alert count never exceeds it`() {
+        val d = BounceDetector(BounceDetector.Config(minSites = 10, maxTrackedSites = 10))
+        var alert: BounceAlert? = null
+        repeat(100) { i ->
+            now += 1_000L
+            alert = d.onWall(chrome, now, "site$i.example") ?: alert
+        }
+        assertNotNull(alert)
+        assertEquals(10, alert!!.count)
+    }
+
     // ── the window ──
 
     @Test
@@ -273,7 +426,7 @@ class BounceDetectorTest {
         now += 1_000L
         val alert = d.onAppOpened(app(3), now)
         assertNotNull(alert)
-        assertEquals(4, alert!!.appCount)
+        assertEquals(4, alert!!.count)
         assertEquals("measured from the first wall", 9, alert.minutes)
     }
 
@@ -304,7 +457,7 @@ class BounceDetectorTest {
         now = firedAt + cooldown
         val again = bounceToThreshold(d)
         assertNotNull("the cooldown has passed: a fresh streak may fire", again)
-        assertEquals(minApps, again!!.appCount)
+        assertEquals(minApps, again!!.count)
     }
 
     @Test
@@ -333,7 +486,7 @@ class BounceDetectorTest {
         d.onAppOpened(app(200), now)
         val alert = d.onWall(app(200), now)
         assertNotNull(alert)
-        assertEquals(5, alert!!.appCount)
+        assertEquals(5, alert!!.count)
     }
 
     @Test(expected = IllegalArgumentException::class)
@@ -341,11 +494,16 @@ class BounceDetectorTest {
         BounceDetector.Config(minApps = 10, maxTrackedApps = 5)
     }
 
+    @Test(expected = IllegalArgumentException::class)
+    fun `a site config that can never fire is rejected`() {
+        BounceDetector.Config(minSites = 10, maxTrackedSites = 5)
+    }
+
     // ── copy ──
 
     @Test
     fun `the copy carries the real numbers and the owner's title`() {
-        val alert = BounceAlert(appCount = 6, minutes = 4)
+        val alert = BounceAlert(count = 6, minutes = 4)
         assertEquals("Bro. wtf.", alert.title)
         assertEquals("You've bounced through 6 apps in 4 minutes. Wanna take a break?", alert.body)
     }
@@ -354,7 +512,19 @@ class BounceDetectorTest {
     fun `one minute is singular`() {
         assertEquals(
             "You've bounced through 4 apps in 1 minute. Wanna take a break?",
-            BounceAlert(appCount = 4, minutes = 1).body
+            BounceAlert(count = 4, minutes = 1).body
+        )
+    }
+
+    @Test
+    fun `the site copy says sites, and a single site is singular`() {
+        assertEquals(
+            "You've bounced through 3 sites in 2 minutes. Wanna take a break?",
+            BounceAlert(count = 3, minutes = 2, unit = BounceAlert.Unit.SITES).body
+        )
+        assertEquals(
+            "You've bounced through 1 site in 1 minute. Wanna take a break?",
+            BounceAlert(count = 1, minutes = 1, unit = BounceAlert.Unit.SITES).body
         )
     }
 

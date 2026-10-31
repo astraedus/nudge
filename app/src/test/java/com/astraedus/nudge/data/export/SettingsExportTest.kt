@@ -49,6 +49,7 @@ class SettingsExportTest {
         strictModeEnabled = true,
         strictModeChallengeLength = StrictModeChallenge.LENGTH_HARD,
         emergencyPassEnabled = false,
+        bounceCheckInEnabled = true,
         customDelayTitles = "Pause.\nWait a moment.",
         customDelaySubtitles = "Is this what you wanted?",
         customHardBlockMessages = "Not today."
@@ -98,6 +99,7 @@ class SettingsExportTest {
         assertEquals(true, settings.getBoolean("contentFilterEnabled"))
         assertEquals("DELAY", settings.getString("contentFilterMode"))
         assertEquals(48, settings.getInt("strictModeChallengeLength"))
+        assertEquals(true, settings.getBoolean("bounceCheckInEnabled"))
         assertEquals("Not today.", settings.getString("customHardBlockMessages"))
         // The other payloads are untouched by its presence.
         assertEquals(1, json.getJSONArray("rules").length())
@@ -231,8 +233,8 @@ class SettingsExportTest {
     }
 
     /**
-     * Forward compatibility at the KEY level: a backup from a future Nudge that adds a tenth
-     * setting must still restore the nine this build knows, without being penalised for the one it
+     * Forward compatibility at the KEY level: a backup from a future Nudge that adds a twelfth
+     * setting must still restore the eleven this build knows, without being penalised for the one it
      * does not.
      */
     @Test
