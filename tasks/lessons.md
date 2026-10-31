@@ -1468,3 +1468,22 @@ Two reports a week apart, a Samsung S24 Ultra (keyboard open, keyboard closed, r
 - **When window evidence says "focus is elsewhere", ask whose window holds focus.** Nudge's overlay
   is a window too. Any new rule over `WindowSnapshot` owes a test for the case where the focused
   window is ours.
+
+## Landing a queue of fork PRs with no PR CI (1.23.0, 2026-10-31)
+
+- **Gate a fork PR by mirroring its exact tree into this repo.** `release.yml` has no
+  `pull_request` trigger, so a contributor PR never runs CI. Push the PR head to `ci/pr-<n>` in
+  astraedus/nudge and `gh workflow run release.yml --ref ci/pr-<n>` (test + lintDebug + APK, no
+  release). Check that the run's `headSha` equals the PR head before trusting it, and delete the
+  mirror branch after the land.
+- **Every land moves main, so every later PR needs a merge-up and a fresh gate.** Merge main INTO
+  the contributor's branch (maintainer edits; never rebase or force-push their branch), so the
+  squash tree is the gated tree. Five PRs in a row cost one merge-up and one CI run each; budget
+  ~8 minutes per land and land in a fixed order. Two PRs that both append to the same export/settings
+  lists (#115, #105) conflict only in docs prose; the code auto-merges, so read the merged lists
+  anyway.
+- **Change "Fixes #N" to "Refs #N" before landing when the issue should close on the release.**
+  Squash-merging a PR with a closing keyword closes the issue before any user can get the fix.
+  Close it by hand with the release link once the tag ships.
+- **The squash keeps the contributor as the author** even when we pushed most of the commits (#111),
+  so adapting a PR on its own branch is how they keep the credit.
