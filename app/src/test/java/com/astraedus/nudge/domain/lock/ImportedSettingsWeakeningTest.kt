@@ -25,6 +25,7 @@ class ImportedSettingsWeakeningTest {
         strictModeEnabled: Boolean? = false,
         strictModeChallengeLength: Int? = 24,
         emergencyPassEnabled: Boolean? = true,
+        bounceCheckInEnabled: Boolean? = true,
         customDelayTitles: String? = "",
         customDelaySubtitles: String? = "",
         customHardBlockMessages: String? = ""
@@ -36,6 +37,7 @@ class ImportedSettingsWeakeningTest {
         strictModeEnabled = strictModeEnabled,
         strictModeChallengeLength = strictModeChallengeLength,
         emergencyPassEnabled = emergencyPassEnabled,
+        bounceCheckInEnabled = bounceCheckInEnabled,
         customDelayTitles = customDelayTitles,
         customDelaySubtitles = customDelaySubtitles,
         customHardBlockMessages = customHardBlockMessages
@@ -365,6 +367,22 @@ class ImportedSettingsWeakeningTest {
             ImportedSettingsWeakening.isWeakening(
                 device(contentFilterAllowlist = null),
                 device(contentFilterAllowlist = listOf("cnc"))
+            )
+        )
+    }
+
+    // ── bounceCheckInEnabled ──
+
+    /**
+     * The check-in is not a protection setting: turning it off changes what the app SAYS, never
+     * what it blocks. Carrying it in a backup must therefore not create a Strict Mode gate.
+     */
+    @Test
+    fun `turning the bounce check-in off is not weakening`() {
+        assertFalse(
+            ImportedSettingsWeakening.isWeakening(
+                device(bounceCheckInEnabled = true),
+                device(bounceCheckInEnabled = false)
             )
         )
     }
