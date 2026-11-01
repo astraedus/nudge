@@ -8,7 +8,10 @@ import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.data.repository.BlockRuleRepository
 import com.astraedus.nudge.data.repository.InstalledAppsRepository
 import com.astraedus.nudge.domain.lock.ChallengeState
+import com.astraedus.nudge.domain.engine.CoverageFacts
 import com.astraedus.nudge.domain.lock.RuleWeakening
+import com.astraedus.nudge.domain.packages.EssentialPackages
+import com.astraedus.nudge.domain.packages.PackageFacts
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.domain.model.FeatureMode
 import com.astraedus.nudge.ui.components.DurationInput
@@ -20,6 +23,8 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -30,6 +35,8 @@ class UnifiedAppConfigViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
     private val blockRuleRepository: BlockRuleRepository,
     private val installedAppsRepository: InstalledAppsRepository,
+    private val essentialPackages: EssentialPackages,
+    private val packageFacts: PackageFacts,
     nudgePreferences: NudgePreferences
 ) : ViewModel() {
 
@@ -53,6 +60,29 @@ class UnifiedAppConfigViewModel @Inject constructor(
         blockRuleRepository.getAllRules()
     ) { groups, members, rules -> coveringGroups(packageName, groups, members, rules) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /**
+     * The All apps rules that cover this app right now, for "Also covered by" next to the groups
+     * (spec 3.7). Coverage is [com.astraedus.nudge.domain.engine.RuleCoverage]'s, fed this app's two
+     * device facts once. The flow body, not the property initialiser, touches the repositories, so
+     * nothing is read until the section is collected.
+     */
+    val coveredByAllApps: StateFlow<List<CoveringAllApps>> = flow {
+        val labels = installedAppsRepository.getInstalledApps().associate { it.packageName to it.appName }
+        val facts = CoverageFacts(
+            essential = packageName in essentialPackages.current(),
+            launchable = packageFacts.factsFor(packageName).launchable
+        )
+        emitAll(
+            combine(
+                blockRuleRepository.getAllGroups(),
+                blockRuleRepository.getAllGroupMembers(),
+                blockRuleRepository.getAllRules()
+            ) { groups, members, rules ->
+                coveringAllApps(packageName, groups, members, rules, labels, facts)
+            }
+        )
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     /**
      * Snapshot of the existing default app rule at load time, used to decide whether a save

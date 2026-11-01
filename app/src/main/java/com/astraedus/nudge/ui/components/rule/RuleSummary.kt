@@ -1,6 +1,8 @@
 package com.astraedus.nudge.ui.components.rule
 
 import com.astraedus.nudge.data.db.entity.BlockRule
+import com.astraedus.nudge.domain.model.BlockRuleData
+import com.astraedus.nudge.domain.model.ExceptCsv
 
 /**
  * The one way a rule is put into words on a list: "Delay 15s Mon–Fri 9:00–17:00 · 30min limit".
@@ -92,6 +94,33 @@ object RuleSummary {
         1, 2 -> "$ALL_APPS except ${allowedNames.joinToString(", ")}"
         else -> "$ALL_APPS except ${allowedNames.take(2).joinToString(", ")} +${allowedNames.size - 2}"
     }
+
+    /**
+     * [allAppsTitle] for a rule row: its allowed groups that still exist ([groupNames], by id, in
+     * the order the rule lists them), then its allowed apps that are installed ([appLabels], by
+     * package). One place resolves the names, so Manage Apps, App config, the group editor and the
+     * Home card cannot name one rule two ways.
+     */
+    fun allAppsTitle(
+        rule: BlockRule,
+        groupNames: Map<Long, String>,
+        appLabels: Map<String, String>
+    ): String = allAppsTitle(
+        ExceptCsv.groupIds(rule.exceptGroupIds).mapNotNull { groupNames[it] } +
+            ExceptCsv.packages(rule.exceptPackages).mapNotNull { appLabels[it] }
+    )
+
+    /** [allAppsTitle] for the domain form of a rule, whose allowed groups are already named. */
+    fun allAppsTitle(rule: BlockRuleData, appLabels: Map<String, String>): String = allAppsTitle(
+        rule.exceptGroupNames + rule.exceptPackages.mapNotNull { appLabels[it] }
+    )
+
+    /**
+     * An All apps rule's one summary line: its mode and schedule in the words every rule uses
+     * ("Hard Block Mon–Fri 9:00–17:00", "Delay 15s"; "All the time" is left out). An All apps
+     * rule has no daily limit and no in-app features (spec 3.4), so nothing else can appear.
+     */
+    fun allAppsSummaryText(rule: BlockRule): String = buildSummaryText(listOf(rule))
 
     /**
      * "Until 8:42 AM" / "Until 17:00": the end of the window a scheduled block is in (spec 3.8, 3.9).

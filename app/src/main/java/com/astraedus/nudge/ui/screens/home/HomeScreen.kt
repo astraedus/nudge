@@ -62,11 +62,13 @@ fun HomeScreen(
     onNavigateToWillpower: () -> Unit = {},
     onNavigateToInterventions: () -> Unit = {},
     onNavigateToAppDetail: (String) -> Unit = {},
-    onNavigateToNuke: () -> Unit = {}
+    onNavigateToNuke: () -> Unit = {},
+    onOpenAllAppsRule: (Long) -> Unit = {}
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val challenge by viewModel.challenge.collectAsStateWithLifecycle()
     val nukeSummary by viewModel.nukeSummary.collectAsStateWithLifecycle()
+    val lockCard by viewModel.lockCard.collectAsStateWithLifecycle()
     val nukeUnlock by viewModel.nukeUnlock.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
@@ -154,6 +156,10 @@ fun HomeScreen(
                 summary = nukeSummary,
                 onClick = onNavigateToNuke
             )
+
+            lockCard?.let { card ->
+                LockCardTile(card = card, onClick = { onOpenAllAppsRule(card.ruleId) })
+            }
 
             WeekAtAGlanceCard(
                 charts = state.charts,

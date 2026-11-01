@@ -6,6 +6,7 @@ import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.data.repository.BlockRuleRepository
 import com.astraedus.nudge.data.repository.InstalledAppsRepository
 import com.astraedus.nudge.domain.lock.StrictModeChallenge
+import com.astraedus.nudge.ui.components.rule.AllAppsRuleItem
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -184,5 +185,44 @@ class AppListViewModelStrictModeTest {
                     it.delaySeconds == 15 && it.enabled
             })
         }
+    }
+
+    // -- All apps rows (spec PR 4): off is a weakening, like a group row ---------------------
+
+    private val allAppsRule = BlockRule(id = 8, allApps = true, mode = "HARD_BLOCK", enabled = true)
+
+    private fun allAppsRow(rule: BlockRule) =
+        AllAppsRuleItem(rule.id, "All apps", "Hard Block", rule.enabled, rule)
+
+    @Test
+    fun `strict on - switching an All apps rule off waits for the challenge`() = runTest {
+        val vm = viewModel(strictOn = true)
+
+        vm.toggleAllApps(allAppsRow(allAppsRule))
+
+        assertNotNull(vm.challenge.value)
+        coVerify(exactly = 0) { repository.saveAllAppsRule(any()) }
+        vm.verifyChallenge(vm.challenge.value!!.target)
+        coVerify(exactly = 1) { repository.saveAllAppsRule(allAppsRule.copy(enabled = false)) }
+    }
+
+    @Test
+    fun `strict off - switching an All apps rule off writes immediately`() = runTest {
+        val vm = viewModel(strictOn = false)
+
+        vm.toggleAllApps(allAppsRow(allAppsRule))
+
+        assertNull(vm.challenge.value)
+        coVerify(exactly = 1) { repository.saveAllAppsRule(allAppsRule.copy(enabled = false)) }
+    }
+
+    @Test
+    fun `switching an All apps rule back on is never gated`() = runTest {
+        val vm = viewModel(strictOn = true)
+
+        vm.toggleAllApps(allAppsRow(allAppsRule.copy(enabled = false)))
+
+        assertNull(vm.challenge.value)
+        coVerify(exactly = 1) { repository.saveAllAppsRule(allAppsRule) }
     }
 }

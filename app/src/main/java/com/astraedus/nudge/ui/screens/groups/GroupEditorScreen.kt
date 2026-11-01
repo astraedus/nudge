@@ -19,6 +19,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.AlertDialog
@@ -44,6 +45,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.astraedus.nudge.domain.model.BlockMode
@@ -52,6 +54,8 @@ import com.astraedus.nudge.ui.components.AppPicker
 import com.astraedus.nudge.ui.components.StrictModeChallengeHost
 import com.astraedus.nudge.ui.components.TonalIcon
 import com.astraedus.nudge.ui.components.blockModeDescription
+import com.astraedus.nudge.ui.components.rule.AllAppsIcon
+import com.astraedus.nudge.ui.components.rule.AllAppsRuleItem
 import com.astraedus.nudge.ui.components.rule.BlockModeSegmentedRow
 import com.astraedus.nudge.ui.components.rule.DailyLimitChips
 import com.astraedus.nudge.ui.components.rule.DaysAndTimesFields
@@ -60,15 +64,19 @@ import com.astraedus.nudge.ui.components.rule.WaitTimeChips
 /**
  * The group editor (spec 3.3), laid out in the user's question order: which apps, then what happens
  * to them. "Block these apps" heads How and When; with it off they fold away and the group is just a
- * named set. Category chips (PR 4) and "Allowed during" (PR 4) are not here yet.
+ * named set. "Allowed during" lists the All apps rules that let the group through. Category chips
+ * (PR 6) are not here yet.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun GroupEditorScreen(
     viewModel: GroupEditorViewModel,
-    onNavigateBack: () -> Unit
+    onNavigateBack: () -> Unit,
+    /** Opens an All apps rule that lists this group as allowed, from "Allowed during". */
+    onOpenAllAppsRule: (Long) -> Unit = {}
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val allowedDuring by viewModel.allowedDuring.collectAsStateWithLifecycle()
     val challenge by viewModel.challenge.collectAsStateWithLifecycle()
 
     LaunchedEffect(state.isFinished) {
@@ -190,6 +198,10 @@ fun GroupEditorScreen(
                 )
             }
 
+            if (allowedDuring.isNotEmpty()) {
+                AllowedDuringSection(rules = allowedDuring, onOpen = onOpenAllAppsRule)
+            }
+
             if (state.groupId != null) {
                 Spacer(Modifier.height(32.dp))
                 OutlinedButton(
@@ -298,6 +310,30 @@ private fun SubsectionTitle(text: String) {
         fontWeight = FontWeight.Medium,
         color = MaterialTheme.colorScheme.onSurfaceVariant
     )
+}
+
+/**
+ * "Allowed during" (spec 3.3): the All apps rules that let this group through. Each row opens that
+ * rule, so the one place a group's two uses meet shows that adding an app here lets it through.
+ */
+@Composable
+private fun AllowedDuringSection(rules: List<AllAppsRuleItem>, onOpen: (Long) -> Unit) {
+    Spacer(Modifier.height(16.dp))
+    SectionTitle("Allowed during")
+    rules.forEach { rule ->
+        ListItem(
+            headlineContent = { Text(rule.title, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+            leadingContent = { TonalIcon(AllAppsIcon) },
+            trailingContent = {
+                Icon(
+                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            },
+            modifier = Modifier.clickable(role = Role.Button) { onOpen(rule.ruleId) }
+        )
+    }
 }
 
 /** "+ Add apps": a list row whose 40dp icon slot lines up with the app icons above it. */

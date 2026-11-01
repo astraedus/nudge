@@ -57,7 +57,9 @@ import com.astraedus.nudge.ui.components.DurationInput
 import com.astraedus.nudge.ui.components.MinutesField
 import com.astraedus.nudge.ui.components.StrictModeChallengeHost
 import com.astraedus.nudge.ui.components.UsageReminderSection
+import androidx.compose.ui.graphics.vector.ImageVector
 import com.astraedus.nudge.ui.components.TonalIcon
+import com.astraedus.nudge.ui.components.rule.AllAppsIcon
 import com.astraedus.nudge.ui.components.rule.BlockModeSegmentedRow
 import com.astraedus.nudge.ui.components.rule.DailyLimitChips
 import com.astraedus.nudge.ui.components.rule.InfoButton
@@ -72,10 +74,13 @@ fun UnifiedAppConfigScreen(
     viewModel: UnifiedAppConfigViewModel,
     onNavigateBack: () -> Unit,
     /** Opens a group that covers this app, from "Also covered by". */
-    onOpenGroup: (Long) -> Unit
+    onOpenGroup: (Long) -> Unit,
+    /** Opens an All apps rule that covers this app, from "Also covered by". */
+    onOpenAllAppsRule: (Long) -> Unit = {}
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val coveredBy by viewModel.coveredBy.collectAsStateWithLifecycle()
+    val coveredByAllApps by viewModel.coveredByAllApps.collectAsStateWithLifecycle()
     val challenge by viewModel.challenge.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
@@ -138,8 +143,13 @@ fun UnifiedAppConfigScreen(
                 )
             }
 
-            if (coveredBy.isNotEmpty()) {
-                AlsoCoveredBy(groups = coveredBy, onOpenGroup = onOpenGroup)
+            if (coveredBy.isNotEmpty() || coveredByAllApps.isNotEmpty()) {
+                AlsoCoveredBy(
+                    groups = coveredBy,
+                    allApps = coveredByAllApps,
+                    onOpenGroup = onOpenGroup,
+                    onOpenAllAppsRule = onOpenAllAppsRule
+                )
             }
 
             HorizontalDivider()
@@ -908,7 +918,12 @@ private fun featureModeLabel(mode: FeatureMode): String = when (mode) {
  * its own switch is off?" answers itself. Read-only; each row opens that group.
  */
 @Composable
-private fun AlsoCoveredBy(groups: List<CoveringGroup>, onOpenGroup: (Long) -> Unit) {
+private fun AlsoCoveredBy(
+    groups: List<CoveringGroup>,
+    allApps: List<CoveringAllApps>,
+    onOpenGroup: (Long) -> Unit,
+    onOpenAllAppsRule: (Long) -> Unit
+) {
     Column {
         Text(
             "Also covered by",
@@ -917,28 +932,36 @@ private fun AlsoCoveredBy(groups: List<CoveringGroup>, onOpenGroup: (Long) -> Un
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         groups.forEach { group ->
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 56.dp)
-                    .clickable(role = Role.Button) { onOpenGroup(group.groupId) },
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                // The same 40dp tonal folder a group row has on Manage Apps: one look per group.
-                TonalIcon(Icons.Default.Folder)
-                Text(
-                    group.label,
-                    style = MaterialTheme.typography.bodyLarge,
-                    modifier = Modifier.weight(1f)
-                )
-                Icon(
-                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
+            // The same 40dp tonal folder a group row has on Manage Apps: one look per group.
+            CoveringRow(Icons.Default.Folder, group.label) { onOpenGroup(group.groupId) }
         }
+        allApps.forEach { rule ->
+            CoveringRow(AllAppsIcon, rule.label) { onOpenAllAppsRule(rule.ruleId) }
+        }
+    }
+}
+
+@Composable
+private fun CoveringRow(icon: ImageVector, label: String, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 56.dp)
+            .clickable(role = Role.Button, onClick = onClick),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        TonalIcon(icon)
+        Text(
+            label,
+            style = MaterialTheme.typography.bodyLarge,
+            modifier = Modifier.weight(1f)
+        )
+        Icon(
+            Icons.AutoMirrored.Filled.KeyboardArrowRight,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
 

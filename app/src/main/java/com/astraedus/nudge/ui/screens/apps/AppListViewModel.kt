@@ -12,6 +12,7 @@ import com.astraedus.nudge.data.repository.InstalledAppsRepository
 import com.astraedus.nudge.data.repository.InstalledAppsRepository.AppInfo
 import com.astraedus.nudge.domain.lock.ChallengeState
 import com.astraedus.nudge.domain.model.BlockMode
+import com.astraedus.nudge.ui.components.rule.AllAppsRuleItem
 import com.astraedus.nudge.ui.lock.StrictModeGate
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -202,6 +203,24 @@ class AppListViewModel @Inject constructor(
                     blockRuleRepository.updateRule(rule.copy(enabled = false))
                 }
                 else -> blockRuleRepository.updateRule(rule.copy(enabled = true))
+            }
+        }
+    }
+
+    /**
+     * An All apps row's switch. Off is a weakening, gated like a group's (spec 5.6); on re-enables
+     * the rule. Written through [BlockRuleRepository.saveAllAppsRule], which keeps the one-target
+     * invariant.
+     */
+    fun toggleAllApps(item: AllAppsRuleItem) {
+        viewModelScope.launch {
+            val rule = item.rule
+            if (item.enabled) {
+                strictModeGate.run(prompt = "Turn off blocking for these apps") {
+                    blockRuleRepository.saveAllAppsRule(rule.copy(enabled = false))
+                }
+            } else {
+                blockRuleRepository.saveAllAppsRule(rule.copy(enabled = true))
             }
         }
     }

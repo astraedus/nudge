@@ -12,13 +12,20 @@ import com.astraedus.nudge.di.IoDispatcher
 import com.astraedus.nudge.domain.lock.ChallengeState
 import com.astraedus.nudge.domain.lock.GroupUsage
 import com.astraedus.nudge.service.EssentialApps
+import com.astraedus.nudge.ui.components.rule.AllAppsRuleItem
+import com.astraedus.nudge.ui.components.rule.allAppsRulesAllowingGroup
 import com.astraedus.nudge.ui.lock.StrictModeGate
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -93,6 +100,21 @@ class GroupEditorViewModel @Inject constructor(
 
     private val strictModeGate = StrictModeGate(nudgePreferences)
     val challenge: StateFlow<ChallengeState?> = strictModeGate.challenge
+
+    /**
+     * The All apps rules, on or off, that list this group as allowed: "Allowed during" (spec 3.3).
+     * Live, so a rule edited from here is current on the way back. A new group is in none. The flow
+     * body, not the initialiser, reads the repositories, so nothing is read until it is collected.
+     */
+    val allowedDuring: StateFlow<List<AllAppsRuleItem>> = flow {
+        val id = requestedId ?: return@flow
+        val labels = installedAppsRepository.getInstalledApps().associate { it.packageName to it.appName }
+        emitAll(
+            combine(repository.getAllRules(), repository.getAllGroups()) { rules, groups ->
+                allAppsRulesAllowingGroup(id, rules, groups, labels)
+            }
+        )
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     /** The saved state at load time: what a save is compared against. Null for a new group. */
     private var savedMembers: Set<String>? = null

@@ -9,6 +9,8 @@ import com.astraedus.nudge.data.repository.BlockRuleRepository
 import com.astraedus.nudge.data.repository.InstalledAppsRepository
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.domain.model.FeatureMode
+import com.astraedus.nudge.domain.packages.FakeEssentialPackages
+import com.astraedus.nudge.domain.packages.FakePackageFacts
 import io.mockk.Runs
 import io.mockk.coEvery
 import io.mockk.every
@@ -63,6 +65,8 @@ class UnifiedAppConfigViewModelTest {
             SavedStateHandle(mapOf("packageName" to packageName)),
             blockRuleRepository,
             installedAppsRepository,
+            FakeEssentialPackages(),
+            FakePackageFacts(),
             nudgePreferences
         )
     }
