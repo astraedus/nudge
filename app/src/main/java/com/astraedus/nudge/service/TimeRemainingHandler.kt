@@ -22,7 +22,7 @@ class TimeRemainingHandler(
     private val preferences: GlobalEnabledProvider,
     private val counterCache: CounterCacheRefresher,
     private val passthroughManager: PassthroughManager,
-    private val logger: NudgeLog,
+    logger: NudgeLog,
     private val serviceScope: CoroutineScope,
     /**
      * Show the daily-limit hard block for (package, limit minutes).
@@ -35,6 +35,8 @@ class TimeRemainingHandler(
      */
     private val onTimeLimitExceeded: (String, Int) -> Unit = { _, _ -> }
 ) : TimeRemainingHandlerApi {
+
+    private val logger: NudgeLog = logger.tagged("TimeRemainingHandler")
     private var lastUpdateMs: Long = 0L
     private val updateIntervalMs = 30_000L
 

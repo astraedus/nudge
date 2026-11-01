@@ -10,6 +10,7 @@ import android.view.View
 import android.view.WindowManager
 import androidx.annotation.VisibleForTesting
 import com.astraedus.nudge.domain.events.ForegroundSignal
+import com.astraedus.nudge.domain.logging.NudgeLog
 import com.astraedus.nudge.domain.surfaces.TabCoverEffect
 import com.astraedus.nudge.domain.surfaces.TabCoverPlacement
 import com.astraedus.nudge.domain.surfaces.TabCoverPresence
@@ -65,8 +66,10 @@ class TabCoverOverlayManager @Inject constructor(
     // because every overlay manager in this package takes it and Hilt provides it either way.
     @Suppress("UNUSED_PARAMETER")
     @ApplicationContext appContext: Context,
-    private val logger: NudgeLogger
+    logger: NudgeLogger
 ) : TabCoverOverlayManagerApi {
+
+    private val logger: NudgeLog = logger.tagged("TabCoverOverlay")
 
     private var overlayView: AwarenessOverlayWindow.Container? = null
     private var windowManager: WindowManager? = null

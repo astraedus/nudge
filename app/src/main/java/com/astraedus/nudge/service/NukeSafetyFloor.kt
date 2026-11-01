@@ -32,8 +32,10 @@ import javax.inject.Singleton
 @Singleton
 class NukeSafetyFloor @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val logger: NudgeLog
+    logger: NudgeLog
 ) {
+
+    private val logger: NudgeLog = logger.tagged("NukeSafetyFloor")
     @Volatile private var cached: Set<String>? = null
     @Volatile private var cachedAt: Long = 0L
 

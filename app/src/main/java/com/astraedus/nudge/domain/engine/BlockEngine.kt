@@ -8,8 +8,10 @@ import javax.inject.Inject
 
 class BlockEngine @Inject constructor(
     private val scheduleEvaluator: ScheduleEvaluator,
-    private val logger: NudgeLog = NudgeLog.NoOp
+    logger: NudgeLog = NudgeLog.NoOp
 ) {
+
+    private val logger: NudgeLog = logger.tagged("BlockEngine")
 
     /**
      * Evaluate whether a package should be blocked based on active rules and daily usage.

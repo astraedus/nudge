@@ -43,11 +43,13 @@ class InteractionHandler(
     private val inAppDetector: InAppDetectorApi,
     private val timeRemainingHandler: TimeRemainingHandlerApi,
     private val counterCache: CounterCacheRefresher,
-    private val logger: NudgeLog,
+    logger: NudgeLog,
     private val autoKickExecutor: AutoKickExecutor,
     private val counter: InteractionCounter = InteractionCounter(),
     private val clock: () -> Long = System::currentTimeMillis
 ) {
+
+    private val logger: NudgeLog = logger.tagged("InteractionHandler")
     /**
      * Feed one click or scroll event.
      *

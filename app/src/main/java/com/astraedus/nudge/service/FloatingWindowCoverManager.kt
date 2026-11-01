@@ -12,6 +12,7 @@ import android.view.WindowManager
 import android.widget.LinearLayout
 import androidx.annotation.VisibleForTesting
 import com.astraedus.nudge.domain.windows.FloatingCoverEffect
+import com.astraedus.nudge.domain.logging.NudgeLog
 import com.astraedus.nudge.domain.windows.WindowBounds
 import com.astraedus.nudge.util.NudgeLogger
 
@@ -37,9 +38,11 @@ import com.astraedus.nudge.util.NudgeLogger
  * It counts nothing. A touch the cover eats is not a confrontation, exactly as for the tab cover.
  */
 class FloatingWindowCoverManager(
-    private val logger: NudgeLogger,
+    logger: NudgeLogger,
     private val onCloseRequested: () -> Unit
 ) {
+
+    private val logger: NudgeLog = logger.tagged("FloatingWindowCover")
 
     @Volatile private var serviceContext: Context? = null
     private var windowManager: WindowManager? = null

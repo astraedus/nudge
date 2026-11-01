@@ -10,6 +10,7 @@ import android.view.WindowManager
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.astraedus.nudge.util.NudgeLogger
+import com.astraedus.nudge.domain.logging.NudgeLog
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -17,8 +18,10 @@ import javax.inject.Singleton
 @Singleton
 class CounterOverlayManager @Inject constructor(
     @ApplicationContext private val appContext: Context,
-    private val logger: NudgeLogger
+    logger: NudgeLogger
 ) : CounterOverlayManagerApi {
+
+    private val logger: NudgeLog = logger.tagged("CounterOverlay")
     private var overlayView: View? = null
     private var windowManager: WindowManager? = null
     private var counterText: TextView? = null
