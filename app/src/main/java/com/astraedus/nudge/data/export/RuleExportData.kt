@@ -10,6 +10,14 @@ data class NudgeExport(
     val rules: List<ExportedRule>,
     val groups: List<ExportedGroup> = emptyList(),
     /**
+     * Rules an older Nudge would MISREAD if they sat in [rules]: today, every All apps rule (spec
+     * 5.8). Same [ExportedRule] shape, with [ExportedRule.allApps] and the except lists filled in.
+     * An older importer reads the envelope by known key only, so it skips this array and these
+     * rules, where in [rules] it would have imported each one as a rule with no target. Written
+     * only when non-empty, so a file without All apps rules is byte-for-byte what it was before.
+     */
+    val extendedRules: List<ExportedRule> = emptyList(),
+    /**
      * Usage history -- one entry per `usage_events` row. OPTIONAL, and deliberately added at
      * envelope version 1 rather than as a version 2: every shipped version of the importer reads
      * the envelope by KNOWN KEY ONLY (`version`, `rules`, `groups`), so an older Nudge simply
@@ -153,7 +161,21 @@ data class ExportedRule(
      * written before it existed carries no key, so it must restore with the pass ending at Home
      * exactly as it did on the device that wrote it.
      */
-    val keepPassOnShortTrips: Boolean = false
+    val keepPassOnShortTrips: Boolean = false,
+    /**
+     * An All apps rule (spec 3.4). Only ever true for an entry of `extendedRules`: in `rules` the
+     * key is not read, so a hand-edited `"allApps": true` there can not turn an app rule into a
+     * lock on every app.
+     */
+    val allApps: Boolean = false,
+    /** An All apps rule's allowed apps, in the order the user added them. Empty otherwise. */
+    val exceptPackages: List<String> = emptyList(),
+    /**
+     * An All apps rule's allowed groups, by NAME: group ids do not survive a move to another phone.
+     * Resolved against the groups after they are imported; a name with no group is dropped, which
+     * only makes the rule stricter.
+     */
+    val exceptGroups: List<String> = emptyList()
 )
 
 data class ExportedGroup(
