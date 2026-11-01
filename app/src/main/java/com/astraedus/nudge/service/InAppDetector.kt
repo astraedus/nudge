@@ -2,6 +2,7 @@ package com.astraedus.nudge.service
 
 import android.view.accessibility.AccessibilityNodeInfo
 import com.astraedus.nudge.BuildConfig
+import com.astraedus.nudge.domain.logging.NudgeLog
 import com.astraedus.nudge.util.NudgeLogger
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -15,8 +16,10 @@ import javax.inject.Singleton
  */
 @Singleton
 class InAppDetector @Inject constructor(
-    private val logger: NudgeLogger
+    logger: NudgeLogger
 ) : InAppDetectorApi {
+
+    private val logger: NudgeLog = logger.tagged("InAppDetector")
 
     /**
      * Signatures of surfaces already reported by [dumpViewIdsForDiagnosis], so each unrecognised

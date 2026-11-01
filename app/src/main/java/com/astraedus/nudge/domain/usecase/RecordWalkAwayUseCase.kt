@@ -44,8 +44,10 @@ import javax.inject.Singleton
 @Singleton
 class RecordWalkAwayUseCase @Inject constructor(
     private val usageRepository: UsageRepository,
-    private val logger: NudgeLog
+    logger: NudgeLog
 ) {
+
+    private val logger: NudgeLog = logger.tagged("RecordWalkAway")
 
     private val scope = CoroutineScope(
         SupervisorJob() + Dispatchers.IO + CoroutineExceptionHandler { _, throwable ->

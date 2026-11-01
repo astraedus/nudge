@@ -23,10 +23,12 @@ class AutoKickExecutor(
     private val interactionTracker: InteractionTracker,
     private val counterOverlayManager: CounterOverlayManagerApi,
     private val counterCache: CounterCacheRefresher,
-    private val logger: NudgeLog,
+    logger: NudgeLog,
     private val onKicked: (String) -> Unit = {},
     private val goHome: () -> Unit
 ) {
+
+    private val logger: NudgeLog = logger.tagged("AutoKickExecutor")
 
     /**
      * Sends the user home and starts the cooldown for [packageName].

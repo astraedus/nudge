@@ -45,7 +45,8 @@ class BlockOverlayActivity : ComponentActivity() {
     @Inject lateinit var nudgePreferences: NudgePreferences
     @Inject lateinit var emergencyPassManager: EmergencyPassManager
     @Inject lateinit var recordWalkAway: RecordWalkAwayUseCase
-    @Inject lateinit var nudgeLogger: NudgeLog
+    @Inject lateinit var rootLogger: NudgeLog
+    private val nudgeLogger: NudgeLog by lazy { rootLogger.tagged("BlockOverlay") }
     @Inject lateinit var blockLaunchGuard: BlockLaunchGuard
     @Inject lateinit var redirectAppRepository: RedirectAppRepository
     @Inject lateinit var webBlockEscape: WebBlockEscape

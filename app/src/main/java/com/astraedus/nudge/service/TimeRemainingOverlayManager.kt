@@ -10,6 +10,7 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.TextView
 import com.astraedus.nudge.util.NudgeLogger
+import com.astraedus.nudge.domain.logging.NudgeLog
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -17,8 +18,10 @@ import javax.inject.Singleton
 @Singleton
 class TimeRemainingOverlayManager @Inject constructor(
     @ApplicationContext private val appContext: Context,
-    private val logger: NudgeLogger
+    logger: NudgeLogger
 ) : TimeRemainingOverlayManagerApi {
+
+    private val logger: NudgeLog = logger.tagged("TimeRemainingOverlay")
     private var overlayView: View? = null
     private var windowManager: WindowManager? = null
     private var timeText: TextView? = null

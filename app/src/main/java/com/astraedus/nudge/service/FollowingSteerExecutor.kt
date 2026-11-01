@@ -2,6 +2,7 @@ package com.astraedus.nudge.service
 
 import android.view.accessibility.AccessibilityNodeInfo
 import com.astraedus.nudge.domain.surfaces.NodeLocator
+import com.astraedus.nudge.domain.logging.NudgeLog
 import com.astraedus.nudge.domain.surfaces.PlatformSurfaces
 import com.astraedus.nudge.domain.surfaces.SteerAction
 import com.astraedus.nudge.domain.surfaces.SteerRecipe
@@ -43,8 +44,10 @@ import javax.inject.Singleton
  */
 @Singleton
 class FollowingSteerExecutor @Inject constructor(
-    private val logger: NudgeLogger
+    logger: NudgeLogger
 ) {
+
+    private val logger: NudgeLog = logger.tagged("FollowingSteer")
 
     /**
      * One tree read, reduced to the facts [PlatformSurfaces.classify] needs.

@@ -39,10 +39,12 @@ import kotlinx.coroutines.launch
 class ForegroundClock(
     private val scope: CoroutineScope,
     private val tickIntervalMs: Long,
-    private val logger: NudgeLog,
+    logger: NudgeLog,
     /** Name used in logs, so the app clock and the web clock are tellable apart in logcat. */
     private val label: String
 ) {
+
+    private val logger: NudgeLog = logger.tagged("ForegroundClock")
 
     /** The package (or `web:` key) currently being clocked, or null when the clock is stopped. */
     @Volatile

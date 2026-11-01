@@ -4,6 +4,9 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+### Fixed
+- Release builds logged every debug line under a merged class name (`ResultKt`, `TuplesKt`), so a logcat filter by class found nothing. Each logging class now carries a fixed tag (`NudgeA11yService`, `NudgeMonitor`, `BlockOverlay`, `TabCoverOverlay`, `BlockEngine`, ...); `Nudge` is the fallback and `NudgeA11yTrace` / `ProtectionWatchdog` are unchanged. (#120)
+
 ## [1.23.0] - 2026-10-31
 
 Community release: thanks to @mrdivax, @danieltsam and @ErenDikkulah, who reported, argued for and built most of it.

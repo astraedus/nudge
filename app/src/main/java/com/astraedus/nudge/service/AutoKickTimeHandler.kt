@@ -27,8 +27,10 @@ class AutoKickTimeHandler(
     private val counterCache: CounterCacheRefresher,
     private val interactionTracker: InteractionTracker,
     private val usageProvider: UsageProvider,
-    private val logger: NudgeLog
+    logger: NudgeLog
 ) {
+
+    private val logger: NudgeLog = logger.tagged("AutoKickTimeHandler")
 
     /** What one pass of the session clock asks the caller to do. */
     sealed interface Verdict {

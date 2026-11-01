@@ -58,6 +58,7 @@ import com.astraedus.nudge.domain.windows.WindowKind
 import com.astraedus.nudge.domain.windows.WindowSnapshot
 import com.astraedus.nudge.util.CrashSafeScope
 import com.astraedus.nudge.util.InputMethods
+import com.astraedus.nudge.domain.logging.NudgeLog
 import com.astraedus.nudge.util.NudgeLogger
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
@@ -111,7 +112,7 @@ class NudgeAccessibilityService : AccessibilityService() {
     private val serviceScope = CrashSafeScope.create(
         name = "nudge-accessibility-service",
         dispatcher = Dispatchers.IO,
-        logger = { entryPoint.nudgeLogger() }
+        logger = { log }
     )
 
     private val entryPoint by lazy {
@@ -120,6 +121,9 @@ class NudgeAccessibilityService : AccessibilityService() {
             NudgeAccessibilityEntryPoint::class.java
         )
     }
+
+    /** This service's own lines, under a literal tag: never derived from the class (#120). */
+    private val log: NudgeLog by lazy { entryPoint.nudgeLogger().tagged("NudgeA11yService") }
 
     private var lastPackage: String? = null
     private var lastEvalTime: Long = 0L
@@ -549,7 +553,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         ),
         notify = { alert ->
             val unit = if (alert.unit == BounceAlert.Unit.SITES) "sites" else "apps"
-            entryPoint.nudgeLogger().i(
+            log.i(
                 "bounce check-in posted $unit=${alert.count} minutes=${alert.minutes}"
             )
             BounceCheckInNotifier.notify(applicationContext, alert)
@@ -642,7 +646,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         FloatingWindowCoverManager(
             logger = entryPoint.nudgeLogger(),
             onCloseRequested = {
-                entryPoint.nudgeLogger().i("floating cover close requested, pressing BACK")
+                log.i("floating cover close requested, pressing BACK")
                 performGlobalAction(GLOBAL_ACTION_BACK)
             }
         )
@@ -789,7 +793,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         val description = WindowSnapshotReader.describe(snapshot)
         if (description != lastWindowDescription) {
             lastWindowDescription = description
-            entryPoint.nudgeLogger().d("windows changed $description")
+            log.d("windows changed $description")
         }
         refreshPipOnlyPackages(snapshot)
         maintainFloatingCover(snapshot)
@@ -837,7 +841,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         // the overlay instead, BACK would read as a walk-away.
         FloatingWindowCover.backTarget(snapshot, targetPackage, floatingCover.backPressedWindows())?.let { id ->
             floatingCover.noteBackPressed(id)
-            entryPoint.nudgeLogger().i("floating window blocked, pressing BACK once package=$targetPackage window=$id")
+            log.i("floating window blocked, pressing BACK once package=$targetPackage window=$id")
             performGlobalAction(GLOBAL_ACTION_BACK)
         }
         floatingCover.apply(FloatingCoverEffect.Show(targetPackage, bounds))
@@ -877,7 +881,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         if (next == pipOnlyPackagesCached) return
 
         pipOnlyPackagesCached = next
-        entryPoint.nudgeLogger().i("picture-in-picture windows changed pipOnly=$next")
+        log.i("picture-in-picture windows changed pipOnly=$next")
         next.forEach { maybeExplainPipEscape(it) }
     }
 
@@ -891,13 +895,13 @@ class NudgeAccessibilityService : AccessibilityService() {
      */
     private fun maybeExplainPipEscape(packageName: String) {
         if (!hasBlockedThisSession(packageName)) {
-            entryPoint.nudgeLogger().d(
+            log.d(
                 "pip escape not explained package=$packageName reason=never_blocked_this_session"
             )
             return
         }
         if (packageName in pipEscapePromptedCached) {
-            entryPoint.nudgeLogger().d(
+            log.d(
                 "pip escape not explained package=$packageName reason=already_explained"
             )
             return
@@ -910,7 +914,7 @@ class NudgeAccessibilityService : AccessibilityService() {
             entryPoint.nudgePreferences().recordPipEscapePrompted(packageName)
         }
 
-        entryPoint.nudgeLogger().i(
+        log.i(
             "picture-in-picture escape detected package=$packageName — explaining once"
         )
 
@@ -954,10 +958,10 @@ class NudgeAccessibilityService : AccessibilityService() {
             .queryIntentActivities(homeIntent, PackageManager.MATCH_DEFAULT_ONLY)
             .mapTo(candidates) { it.activityInfo?.packageName }
         sanitizeLauncherPackages(candidates, applicationContext.packageName).also {
-            entryPoint.nudgeLogger().d("launcher packages resolved packages=$it")
+            log.d("launcher packages resolved packages=$it")
         }
     } catch (e: Exception) {
-        entryPoint.nudgeLogger().w("failed to resolve launcher packages", e)
+        log.w("failed to resolve launcher packages", e)
         emptySet()
     }
 
@@ -981,7 +985,7 @@ class NudgeAccessibilityService : AccessibilityService() {
      * across Home until v1.15.2. What remains is the web CLOCK, which is not a grant.
      */
     private fun onWentHome(packageName: String) {
-        entryPoint.nudgeLogger().d(
+        log.d(
             "home screen in front package=$packageName " +
                 "keepPassOnShortTrips=${entryPoint.passthroughManager().keepsPassOnShortTrips}"
         )
@@ -1004,7 +1008,7 @@ class NudgeAccessibilityService : AccessibilityService() {
             try {
                 inputMethodPackagesCached = IME_PACKAGES + InputMethods.enabledPackages(applicationContext)
             } catch (e: Exception) {
-                entryPoint.nudgeLogger().w("failed to read enabled input methods", e)
+                log.w("failed to read enabled input methods", e)
             }
         }
     }
@@ -1069,7 +1073,7 @@ class NudgeAccessibilityService : AccessibilityService() {
                 // deliberately NOT the engine's `reason=time_budget_exceeded` wording: the two are
                 // different TRIGGERS for the same decision (a foreground event vs a clock tick) and
                 // a shared substring would make a grep for either match both.
-                entryPoint.nudgeLogger().i(
+                log.i(
                     "block package=$limitedPackage reason=daily_limit_reached " +
                         "limitMinutes=$dailyLimitMinutes source=foreground_clock"
                 )
@@ -1147,7 +1151,7 @@ class NudgeAccessibilityService : AccessibilityService() {
             autoKickExecutor = autoKickExecutor
         )
 
-        entryPoint.nudgeLogger().i("accessibility service connected")
+        log.i("accessibility service connected")
 
         // Track the active keyboard so its window events are recognised as transient (issue #5),
         // and keep it fresh if the user switches keyboards.
@@ -1170,7 +1174,7 @@ class NudgeAccessibilityService : AccessibilityService() {
                 imeSettingObserver
             )
         } catch (e: Exception) {
-            entryPoint.nudgeLogger().w("failed to observe default IME setting", e)
+            log.w("failed to observe default IME setting", e)
         }
 
         // Backlog F5: a completed delay must not survive a locked phone. Registered here rather
@@ -1181,7 +1185,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         } catch (e: Exception) {
             // A failed registration degrades to the OLD behaviour (a grant survives screen-off) —
             // never to a false revoke. Same failure direction as an unresolvable launcher set.
-            entryPoint.nudgeLogger().w("failed to register screen-off receiver", e)
+            log.w("failed to register screen-off receiver", e)
         }
 
         // Keep Strict Mode state cached so the hot accessibility-event path can read it without
@@ -1214,7 +1218,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         serviceScope.launch {
             entryPoint.nudgePreferences().bounceCheckInEnabled.collect { enabled ->
                 bounceCheckIn.setEnabled(enabled)
-                entryPoint.nudgeLogger().i("bounce check-in enabled=$enabled")
+                log.i("bounce check-in enabled=$enabled")
             }
         }
 
@@ -1232,7 +1236,7 @@ class NudgeAccessibilityService : AccessibilityService() {
                 val newlyNuked = enforced - nukedPackagesCached
                 nukedPackagesCached = enforced
                 nukeActiveCached = state.active
-                entryPoint.nudgeLogger().i(
+                log.i(
                     "nuke state active=${state.active} enforced=${enforced.size} " +
                         "newlyNuked=${newlyNuked.size}"
                 )
@@ -1252,7 +1256,7 @@ class NudgeAccessibilityService : AccessibilityService() {
 
         serviceScope.launch {
             counterCache.forceRefresh { loadCounterCacheEntries() }
-            entryPoint.nudgeLogger().d("counter cache eagerly populated packages=${counterCache.snapshot().size}")
+            log.d("counter cache eagerly populated packages=${counterCache.snapshot().size}")
             // AND RESTART THE CLOCK FOR WHATEVER THE USER IS ALREADY SITTING IN.
             //
             // A rebind destroys this service instance, which cancels `serviceScope` and with it the
@@ -1294,12 +1298,12 @@ class NudgeAccessibilityService : AccessibilityService() {
         val front = try {
             rootInActiveWindow?.packageName?.toString()
         } catch (e: Exception) {
-            entryPoint.nudgeLogger().w("could not read the active window after rebind", e)
+            log.w("could not read the active window after rebind", e)
             null
         }
         if (front.isNullOrBlank() || front == packageName) return
         if (counterCache.getEntry(front)?.needsForegroundTimeTick != true) return
-        entryPoint.nudgeLogger().i("foreground clock restarted after rebind package=$front")
+        log.i("foreground clock restarted after rebind package=$front")
         updateForegroundTimeTicker(front)
     }
 
@@ -1318,7 +1322,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         if (!globalEnabledCached) return
         val front = activeWindowPackageOrNull() ?: return
         if (front == packageName || front !in newlyNuked) return
-        entryPoint.nudgeLogger().i("nuke started over the app in front package=$front")
+        log.i("nuke started over the app in front package=$front")
         lastEvalTime = 0L
         evaluateForegroundPackage(front)
     }
@@ -1441,11 +1445,11 @@ class NudgeAccessibilityService : AccessibilityService() {
                 windowSnapshot?.isFloating(signal.packageName) == true
             if (entryPoint.blockLaunchGuard().isGenuineBypass(record.type, signal, floating)) {
                 markOverlayInactive()
-                entryPoint.nudgeLogger().i(
+                log.i(
                     "block overlay bypassed by foreground switch, re-evaluating package=$packageName"
                 )
             } else if (floating && record.type == A11yEventType.WINDOW_STATE_CHANGED) {
-                entryPoint.nudgeLogger().i(
+                log.i(
                     "floating window over a live block overlay, not a bypass package=$packageName"
                 )
             } else {
@@ -1483,7 +1487,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         // Ignore the event entirely: don't clear overlays, don't clear passthrough, don't move
         // lastPackage — the real app underneath hasn't changed.
         if (signal is ForegroundSignal.Transient) {
-            entryPoint.nudgeLogger().d("ignoring transient non-app window package=$packageName")
+            log.d("ignoring transient non-app window package=$packageName")
             return
         }
 
@@ -1556,7 +1560,7 @@ class NudgeAccessibilityService : AccessibilityService() {
                 // once more. It never replays the dropped decision: by now that decision is as old
                 // as issue #50's stale overlay.
                 if (entryPoint.blockLaunchGuard().redeemDeferredLaunch(record.type, signal)) {
-                    entryPoint.nudgeLogger().i(
+                    log.i(
                         "re-evaluating a dropped block target=$packageName reason=foreground_settled"
                     )
                     lastEvalTime = 0L
@@ -1575,7 +1579,7 @@ class NudgeAccessibilityService : AccessibilityService() {
                 val ours = record.type == A11yEventType.VIEW_CLICKED &&
                     syntheticClicks.shouldSuppress(android.os.SystemClock.elapsedRealtime())
                 if (ours) {
-                    entryPoint.nudgeLogger().d("interaction ignored reason=our_own_click")
+                    log.d("interaction ignored reason=our_own_click")
                 } else {
                     // THE SITTING FIRST, exactly as every other path into this service does it.
                     // A touch inside the app the user is sitting in is the one piece of evidence
@@ -1659,7 +1663,7 @@ class NudgeAccessibilityService : AccessibilityService() {
             is SittingEvent.Unchanged -> return
             is SittingEvent.Ended -> Unit
             is SittingEvent.Started ->
-                entryPoint.nudgeLogger().i("sitting started package=${event.packageName}")
+                log.i("sitting started package=${event.packageName}")
         }
         // ONE unwrapping of "which sitting ended in this event", shared with `PassthroughManager`'s
         // revocation — a departure reaches us as an outright `Ended` (Home) or as a `Started`
@@ -1695,7 +1699,7 @@ class NudgeAccessibilityService : AccessibilityService() {
      *    each. #54 changes only which of them a screen-off belongs to.
      */
     private fun onSittingEnded(ended: SittingEvent.Ended) {
-        entryPoint.nudgeLogger().i(
+        log.i(
             "sitting ended package=${ended.packageName} cause=${ended.cause} — passthrough revoked"
         )
         if (ended.cause == SittingEndCause.SCREEN_OFF) {
@@ -1757,7 +1761,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         if (!shouldGuard) return
 
         lastStrictGuardLaunchTime = now
-        entryPoint.nudgeLogger().i("strict mode: guarding settings escape screen package=$packageName")
+        log.i("strict mode: guarding settings escape screen package=$packageName")
 
         val intent = Intent(applicationContext, StrictModeGuardActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
@@ -1821,7 +1825,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         // At expiry the manager kicks home and the next foreground event re-blocks normally as a
         // backstop.
         if (entryPoint.emergencyPassManager().isPassActive(packageName)) {
-            entryPoint.nudgeLogger().d("skip evaluation package=$packageName reason=emergency_pass")
+            log.d("skip evaluation package=$packageName reason=emergency_pass")
             if (counterCache.isCounterEnabled(packageName) && !interactionHandler.isCounterVisible()) {
                 interactionHandler.onAppChanged(packageName)
             }
@@ -1841,7 +1845,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         // a limit would have left the armed cooldown enforcing. Same question, narrower evidence.
         val autoKickConfigured = counterCache.getEntry(packageName)?.configuresAutoKick == true
         if (CooldownGate.isStale(autoKickConfigured, tracker.isInCooldown(packageName))) {
-            entryPoint.nudgeLogger().i(
+            log.i(
                 "stale auto-kick cooldown dropped package=$packageName reason=no_auto_kick_configured"
             )
             tracker.clearCooldown(packageName)
@@ -1849,7 +1853,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         if (CooldownGate.shouldEnforce(autoKickConfigured, tracker.isInCooldown(packageName))) {
             val remainingMs = tracker.getCooldownRemainingMs(packageName)
             val remainingSeconds = ((remainingMs + 999) / 1000).toInt().coerceAtLeast(1)
-            entryPoint.nudgeLogger().i(
+            log.i(
                 "cooldown enforced package=$packageName remaining=${remainingSeconds}s"
             )
             launchBlockOverlay(
@@ -1876,7 +1880,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         timeRemainingHandler.showIfNeeded(packageName)
 
         if (passthrough.shouldSkipForegroundEvaluation(packageName)) {
-            entryPoint.nudgeLogger().d("skip evaluation package=$packageName reason=passthrough")
+            log.d("skip evaluation package=$packageName reason=passthrough")
             // Ensure counter is visible post-delay (onAppChanged may not re-fire)
             if (counterCache.isCounterEnabled(packageName) && !interactionHandler.isCounterVisible()) {
                 interactionHandler.onAppChanged(packageName)
@@ -1960,7 +1964,7 @@ class NudgeAccessibilityService : AccessibilityService() {
             return
         }
 
-        entryPoint.nudgeLogger().i("foreground evaluation package=$packageName")
+        log.i("foreground evaluation package=$packageName")
         lastPackage = packageName
         lastEvalTime = now
 
@@ -1974,7 +1978,7 @@ class NudgeAccessibilityService : AccessibilityService() {
                 evaluateWebDomain(packageName)
             } else {
                 val decision = entryPoint.evaluateBlockUseCase().invoke(packageName)
-                entryPoint.nudgeLogger().d("whole-app decision package=$packageName decision=$decision")
+                log.d("whole-app decision package=$packageName decision=$decision")
                 handleDecision(decision, packageName)
             }
         }
@@ -1987,7 +1991,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         val urlBarText = entryPoint.webDomainDetector().detectUrl(rootNode, browserPackage)
 
         if (urlBarText.isNullOrBlank()) {
-            entryPoint.nudgeLogger().d("web domain: no URL detected in browser")
+            log.d("web domain: no URL detected in browser")
             return
         }
 
@@ -2001,7 +2005,7 @@ class NudgeAccessibilityService : AccessibilityService() {
             // user who had not gone anywhere. Same call the issue-#7 fallback makes for a null
             // active window.
             WebDomainGate.Action.UNREADABLE -> {
-                entryPoint.nudgeLogger().d("web domain: url=$urlBarText yields no domain — ignoring")
+                log.d("web domain: url=$urlBarText yields no domain — ignoring")
                 return
             }
 
@@ -2011,7 +2015,7 @@ class NudgeAccessibilityService : AccessibilityService() {
             // blocked website tracked nothing at all once you were on it.
             WebDomainGate.Action.PASSTHROUGH -> {
                 onWebDomainForeground(browserPackage, extractedDomain)
-                entryPoint.nudgeLogger().d(
+                log.d(
                     "web domain: passthrough for already-blocked domain=$extractedDomain"
                 )
                 return
@@ -2026,14 +2030,14 @@ class NudgeAccessibilityService : AccessibilityService() {
         // the overlay grants it. Checked here for the same reason evaluateForegroundPackage checks
         // it: without this, taking the escape hatch on a website re-blocked on the next event.
         if (entryPoint.emergencyPassManager().isPassActive(browserPackage)) {
-            entryPoint.nudgeLogger().d("web domain: skip evaluation reason=emergency_pass")
+            log.d("web domain: skip evaluation reason=emergency_pass")
             return
         }
 
         if (enforceWebCooldown(browserPackage, extractedDomain)) return
 
         val result = entryPoint.evaluateBlockUseCase().evaluateWebDomain(urlBarText)
-        entryPoint.nudgeLogger().d("web domain: url=$urlBarText decision=${result.decision}")
+        log.d("web domain: url=$urlBarText decision=${result.decision}")
 
         when (result.decision) {
             is BlockDecision.Block -> {
@@ -2110,7 +2114,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         // another clock-driven reason (per-domain daily budgets are an open backlog item).
         val autoKickConfigured = counterCache.getEntry(key)?.configuresAutoKick == true
         if (CooldownGate.isStale(autoKickConfigured, tracker.isInCooldown(key))) {
-            entryPoint.nudgeLogger().i(
+            log.i(
                 "stale web auto-kick cooldown dropped domain=$domain reason=no_auto_kick_configured"
             )
             tracker.clearCooldown(key)
@@ -2119,7 +2123,7 @@ class NudgeAccessibilityService : AccessibilityService() {
 
         val remainingMs = tracker.getCooldownRemainingMs(key)
         val remainingSeconds = ((remainingMs + 999) / 1000).toInt().coerceAtLeast(1)
-        entryPoint.nudgeLogger().i(
+        log.i(
             "web cooldown enforced domain=$domain remaining=${remainingSeconds}s"
         )
         launchBlockOverlay(
@@ -2240,7 +2244,7 @@ class NudgeAccessibilityService : AccessibilityService() {
             interactionHandler.hideCounter()
             timeRemainingHandler.hide()
         } catch (e: Exception) {
-            entryPoint.nudgeLogger().w("overlay clear failed package=$packageName", e)
+            log.w("overlay clear failed package=$packageName", e)
         }
     }
 
@@ -2270,7 +2274,7 @@ class NudgeAccessibilityService : AccessibilityService() {
             // window may still be there; the next touch on it re-evaluates and re-covers it.
             floatingCover.hide()
         } catch (e: Exception) {
-            entryPoint.nudgeLogger().w("overlay hide-all failed", e)
+            log.w("overlay hide-all failed", e)
         }
     }
 
@@ -2306,7 +2310,7 @@ class NudgeAccessibilityService : AccessibilityService() {
      * on its own long before any of these callers fire.
      */
     private fun resetHostAppActuation(reason: String) {
-        entryPoint.nudgeLogger().d("host-app actuation reset reason=$reason")
+        log.d("host-app actuation reset reason=$reason")
         followingSteer.reset()
         syntheticClicks.reset()
     }
@@ -2669,7 +2673,7 @@ class NudgeAccessibilityService : AccessibilityService() {
             // action: the same fail-toward-doing-nothing this whole feature is built on.
             val stillOpen = findMenuRoot(recipe) != null
             if (!stillOpen) {
-                entryPoint.nudgeLogger().i(
+                log.i(
                     "following steer gave up, menu already gone package=$packageName"
                 )
                 return
@@ -2677,10 +2681,10 @@ class NudgeAccessibilityService : AccessibilityService() {
             val dismissed = try {
                 performGlobalAction(GLOBAL_ACTION_BACK)
             } catch (e: Exception) {
-                entryPoint.nudgeLogger().w("following steer menu dismiss failed", e)
+                log.w("following steer menu dismiss failed", e)
                 false
             }
-            entryPoint.nudgeLogger().i(
+            log.i(
                 "following steer gave up and closed the menu dismissed=$dismissed package=$packageName"
             )
             return
@@ -2689,7 +2693,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         val root = knownMenuRoot
             ?: try { rootInActiveWindow } catch (_: Exception) { null }
         if (root == null) {
-            entryPoint.nudgeLogger().d("following steer skipped action=$action reason=no_root")
+            log.d("following steer skipped action=$action reason=no_root")
             return
         }
 
@@ -2706,7 +2710,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         // flood. `performed=false` is the interesting half: the node was absent and the steer
         // silently did nothing, which is the designed failure and otherwise looks identical to
         // never having run.
-        entryPoint.nudgeLogger().i(
+        log.i(
             "following steer action=$action performed=$performed package=$packageName"
         )
     }
@@ -2785,7 +2789,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         // because the app, not the launcher, owns the active window while it is in front.
         if (activeWindowPackageOrNull() != packageName) return
 
-        entryPoint.nudgeLogger().i(
+        log.i(
             "foreground switch detected from content change package=$packageName signal=$signal"
         )
         // THE SITTING MUST BE UPDATED HERE TOO. This is the service's SECOND entry point into
@@ -2850,7 +2854,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         if (coverIfFloating(targetPackage) && isOverlayActive) {
             // The overlay is already on screen underneath. Relaunching it would only re-deliver it
             // (the visible "refresh" in the report) and claim a confrontation nobody walked into.
-            entryPoint.nudgeLogger().i(
+            log.i(
                 "block overlay launch skipped target=$targetPackage attributed=$attributedPackage " +
                     "reason=floating_window_covered_overlay_already_up"
             )
@@ -2869,7 +2873,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         // what the gate said and what it believed was in front, so the NEXT field report carries
         // its own mechanism instead of costing a device session to find.
         guard.onLaunchAttempt(targetPackage, decision)?.let { storm ->
-            entryPoint.nudgeLogger().w(
+            log.w(
                 "block overlay launch storm target=${storm.targetPackage} " +
                     "attempts=${storm.launches} withinMs=${storm.windowMs} " +
                     "decisions=${storm.decisions.joinToString("/")} ${guard.stateDescription()}"
@@ -2880,7 +2884,7 @@ class NudgeAccessibilityService : AccessibilityService() {
             // Logged unconditionally and with BOTH the target and what is actually in front,
             // because "the block was dropped" and "the block never happened" are indistinguishable
             // from a device otherwise, the ambiguity that cost the v1.12.0 release cycle.
-            entryPoint.nudgeLogger().i(
+            log.i(
                 "block overlay launch dropped target=$targetPackage " +
                     "attributed=$attributedPackage reason=${decision.name} " +
                     "foreground=${guard.foregroundPackage}"
@@ -2927,7 +2931,7 @@ class NudgeAccessibilityService : AccessibilityService() {
     ) {
         when (decision) {
             is BlockDecision.Block -> {
-                entryPoint.nudgeLogger().i(
+                log.i(
                     "handling block package=$packageName mode=${decision.mode} " +
                         "delaySeconds=${decision.delaySeconds} grayscale=${decision.grayscale}"
                 )
@@ -3012,7 +3016,7 @@ class NudgeAccessibilityService : AccessibilityService() {
                     )
                 )
                 if (!counted) {
-                    entryPoint.nudgeLogger().i(
+                    log.i(
                         "block shown but NOT counted package=$packageName " +
                             "reason=already_counted_this_arrival feature=$featureKey " +
                             "domain=${web?.domain}"
@@ -3069,7 +3073,7 @@ class NudgeAccessibilityService : AccessibilityService() {
     private suspend fun enforceExhaustedBudget(packageName: String) {
         val decision = entryPoint.evaluateBlockUseCase().invoke(packageName)
         if (decision !is BlockDecision.Block || decision.mode != BlockMode.HARD_BLOCK) {
-            entryPoint.nudgeLogger().i(
+            log.i(
                 "daily limit NOT enforced package=$packageName " +
                     "reason=rules_disagree decision=$decision"
             )
@@ -3097,7 +3101,7 @@ class NudgeAccessibilityService : AccessibilityService() {
                 timeRemainingHandler.hide()
             }
         } catch (e: Exception) {
-            entryPoint.nudgeLogger().w("awareness overlay hide failed package=$packageName", e)
+            log.w("awareness overlay hide failed package=$packageName", e)
         }
     }
 
@@ -3189,7 +3193,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         serviceScope.launch {
             val refreshed = counterCache.refreshIfNeeded(now) { loadCounterCacheEntries() }
             if (refreshed) {
-                entryPoint.nudgeLogger().d("counter cache refreshed packages=${counterCache.snapshot().size}")
+                log.d("counter cache refreshed packages=${counterCache.snapshot().size}")
             }
         }
     }
@@ -3239,7 +3243,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         val teardown = ServiceTeardown { step, error ->
             // runCatching: `entryPoint` is a lazy Hilt lookup, and a logger that throws while
             // reporting a teardown failure must not become the crash it was reporting.
-            runCatching { entryPoint.nudgeLogger().e("teardown step failed step=$step", error) }
+            runCatching { log.e("teardown step failed step=$step", error) }
         }
         teardown.step("clear_instance") { if (instance === this) instance = null }
         // The other direction: blocking has just stopped, and a screen sitting on a green tick

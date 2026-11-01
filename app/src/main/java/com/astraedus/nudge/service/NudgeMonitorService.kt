@@ -17,6 +17,7 @@ import com.astraedus.nudge.domain.health.ServiceHealth
 import com.astraedus.nudge.domain.health.ServiceHealthCopy
 import com.astraedus.nudge.domain.health.StatusNotificationGate
 import com.astraedus.nudge.domain.health.notificationCopy
+import com.astraedus.nudge.domain.logging.NudgeLog
 import com.astraedus.nudge.util.NudgeLogger
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
@@ -203,6 +204,9 @@ class NudgeMonitorService : Service() {
         }
     }
 
+    /** This service's own lines, under a literal tag: never derived from the class (#120). */
+    private val log: NudgeLog by lazy { entryPoint.monitorLogger().tagged("NudgeMonitor") }
+
     private val entryPoint: MonitorEntryPoint by lazy {
         EntryPointAccessors.fromApplication(applicationContext, MonitorEntryPoint::class.java)
     }
@@ -275,17 +279,17 @@ class NudgeMonitorService : Service() {
         if (pollJobStarted) return
         pollJobStarted = true
         serviceScope.launch {
-            entryPoint.monitorLogger().i("monitor health poll started")
+            log.i("monitor health poll started")
             while (isActive) {
                 try {
                     if (!publishHealth()) return@launch
                     awaitStateChangeOrTimeout()
                 } catch (e: Exception) {
-                    entryPoint.monitorLogger().w("monitor health tick failed", e)
+                    log.w("monitor health tick failed", e)
                     delay(HEALTH_POLL_INTERVAL_MS)
                 }
             }
-            entryPoint.monitorLogger().i("monitor health poll ended reason=scope_cancelled")
+            log.i("monitor health poll ended reason=scope_cancelled")
         }
     }
 
@@ -337,7 +341,7 @@ class NudgeMonitorService : Service() {
 
         val previouslyDegraded = lastPublishedHealth?.isDegraded == true
         if (health != lastPublishedHealth) {
-            entryPoint.monitorLogger().i(
+            log.i(
                 "monitor health $lastPublishedHealth -> $health " +
                     "(enabled=$globalEnabled granted=$permissionGranted " +
                     "connected=$serviceConnected)"

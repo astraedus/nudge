@@ -172,6 +172,13 @@ logging, and imports `.maestro/fixtures/rules.json` — Nudge's own UI, where no
 - **Debug logging is a DataStore preference, wiped by `pm clear`.** On a release build
   `NudgeLogger` emits nothing without it (`BuildConfig.DEBUG || the preference`), and the log
   oracle goes silent. The setup flow re-arms it through Settings → Version ×7 → Debug Logging.
+- **Log tags are literals, never inferred (#120).** R8 merges classes, so a tag read off the call
+  stack came out as `ResultKt` / `TuplesKt` on release. Every logging class takes
+  `logger.tagged("<Name>")` once (`NudgeA11yService`, `NudgeMonitor`, `BlockOverlay`,
+  `TabCoverOverlay`, `CounterOverlay`, `BlockEngine`, ...); `Nudge` is the fixed fallback; the
+  fixed-tag lines `NudgeA11yTrace` (`scripts/a11y-capture.sh`) and `ProtectionWatchdog` keep their
+  own. Filter a release log with `adb logcat -s NudgeA11yService:* BlockOverlay:*`. A new logging
+  class adds its own `tagged()` literal; `NudgeLoggerTagTest` pins the mechanism.
 - **A daily limit is enforced on RE-ENTRY, not mid-session** — unless the rule also has a
   time-based auto-kick or the time-remaining overlay. The 30-second foreground clock that would
   otherwise notice a budget running out while you sit in the app is gated on
