@@ -3,6 +3,7 @@ package com.astraedus.nudge.service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.provider.AlarmClock
 import android.provider.Settings
 import android.provider.Telephony
@@ -23,15 +24,16 @@ import kotlinx.coroutines.withContext
 /**
  * The apps no block may ever cover: the one essentials list (spec section 5.4).
  *
- * Today Nuke reads it; group and "All apps" rules will read the same set, and the "Always allowed"
- * sheet will render it, so what the user is told and what the engine skips cannot differ. It holds
+ * Nuke, group rules and "All apps" rules read it, and the "Always allowed" sheet renders it, so what
+ * the user is told and what the engine skips cannot differ. It holds
  * the static floor ([NukePolicy.STATIC_FLOOR] and the package sets the accessibility service already
  * treats as system surfaces) plus what THIS phone uses, one labelled [EssentialSource] each: the
  * launcher(s), the default dialer, the keyboards, the default SMS app, the clock, emergency and
  * personal-safety apps, every enabled accessibility service, and every installed autofill service.
  *
  * Camera, Maps, the browser and banking apps are deliberately NOT on the list (owner decision, spec
- * sections 5.4 and 8): the user can allow any of them in seconds.
+ * sections 5.4 and 8): the user can allow any of them in seconds. A browser that a device source
+ * names anyway (Firefox ships an autofill service) is taken back off ([resolve]).
  *
  * Resolved from PackageManager, TelecomManager, InputMethodManager, Telephony and Settings, which are binder
  * calls, so [packages] must be called OFF the main thread. The answer is cached for [REFRESH_MS]: a
@@ -44,12 +46,18 @@ import kotlinx.coroutines.withContext
 @Singleton
 class EssentialApps internal constructor(
     private val sources: List<EssentialSource>,
-    logger: NudgeLog
+    logger: NudgeLog,
+    /**
+     * The browsers on this phone. NEVER essential, whichever source names one ([resolve]). No
+     * default: the autofill source names Firefox on a stock phone (it ships an autofill service),
+     * and a browser on this list is the website escape groups and All apps exist to close.
+     */
+    private val browsers: EssentialSource
 ) : EssentialPackages {
 
     @Inject
     constructor(@ApplicationContext context: Context, logger: NudgeLog) :
-        this(sources = deviceSources(context), logger = logger)
+        this(sources = deviceSources(context), logger = logger, browsers = deviceBrowsers(context))
 
     private val logger: NudgeLog = logger.tagged("EssentialApps")
     @Volatile private var cached: Set<String>? = null
@@ -83,18 +91,33 @@ class EssentialApps internal constructor(
         cached = null
     }
 
+    /**
+     * The static floor, plus every device source's answer minus the browsers.
+     *
+     * Browsers are removed from what the SOURCES say, never from the static floor (no browser is on
+     * it). A browser reaches a source by accident, not because it is one of the things this list
+     * protects: Firefox declares an autofill service, so "installed autofill services" named it, and
+     * an All apps rule then never covered Firefox (open Firefox, go to youtube.com) and Nuke could
+     * not nuke it. The owner decision (spec 5.4) is that the browser is not essential. If the device
+     * query for browsers fails, the browsers Nudge reads URLs from ([KNOWN_BROWSERS]) are still
+     * removed.
+     */
     private fun resolve(): Set<String> {
+        val notEssential = KNOWN_BROWSERS + resolveOrEmpty(browsers)
         val all = STATIC_ESSENTIALS.toMutableSet()
         for (source in sources) {
-            all += try {
-                source.resolve()
-            } catch (e: Exception) {
-                logger.w("essential apps: could not resolve ${source.label}", e)
-                emptySet()
-            }
+            all += resolveOrEmpty(source) - notEssential
         }
         return all.filterTo(mutableSetOf()) { it.isNotBlank() }
     }
+
+    private fun resolveOrEmpty(source: EssentialSource): Set<String> =
+        try {
+            source.resolve()
+        } catch (e: Exception) {
+            logger.w("essential apps: could not resolve ${source.label}", e)
+            emptySet()
+        }
 
     companion object {
         private const val REFRESH_MS = 5 * 60_000L
@@ -172,6 +195,21 @@ class EssentialApps internal constructor(
                 }
             )
         }
+
+        /** The browsers Nudge reads website addresses from: never essential, even with no device query. */
+        val KNOWN_BROWSERS: Set<String> = WebDomainDetector.BROWSER_URL_BAR_IDS.keys
+
+        /**
+         * Every app that opens an ordinary web link: what Android itself counts as a browser. A
+         * generic https address, so only apps that take ANY site match (an app that opens only its
+         * own domain's links does not). Sees every package (QUERY_ALL_PACKAGES).
+         */
+        internal fun deviceBrowsers(context: Context): EssentialSource =
+            EssentialSource("browsers") {
+                val web = Intent(Intent.ACTION_VIEW, Uri.parse("https://example.com"))
+                    .addCategory(Intent.CATEGORY_BROWSABLE)
+                activityPackages(context.packageManager, web, PackageManager.MATCH_ALL)
+            }
 
         private fun activityPackages(pm: PackageManager, intent: Intent, flags: Int): Set<String> =
             pm.queryIntentActivities(intent, flags)

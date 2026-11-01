@@ -7,10 +7,21 @@ import com.astraedus.nudge.domain.logging.NudgeLog
 import java.util.Calendar
 import javax.inject.Inject
 
-class BlockEngine @Inject constructor(
+class BlockEngine internal constructor(
     private val scheduleEvaluator: ScheduleEvaluator,
-    logger: NudgeLog = NudgeLog.NoOp
+    logger: NudgeLog,
+    /**
+     * The wall clock, read ONCE per evaluation: the schedule filter and [BlockDecision.Block.until]
+     * see the same moment, so a block decided at 08:59:59.9 cannot carry the "until" of a window
+     * the next millisecond says is over. A parameter for the tests only (Hilt uses the secondary
+     * constructor, which reads the real clock).
+     */
+    private val clock: () -> Calendar
 ) {
+
+    @Inject
+    constructor(scheduleEvaluator: ScheduleEvaluator, logger: NudgeLog = NudgeLog.NoOp) :
+        this(scheduleEvaluator, logger, { Calendar.getInstance() })
 
     private val logger: NudgeLog = logger.tagged("BlockEngine")
 
@@ -57,9 +68,10 @@ class BlockEngine @Inject constructor(
                 "includeWholeAppRulesForFeature=$includeWholeAppRulesForFeature"
         )
 
+        val now = clock()
         val applicableRules = activeRules
             .filter { it.enabled }
-            .filter { scheduleEvaluator.isActiveNow(it) }
+            .filter { scheduleEvaluator.isActiveAt(it, now) }
             .filter { rule ->
                 if (detectedFeature != null) {
                     // In-app detection active: match rules that target this feature
@@ -101,7 +113,7 @@ class BlockEngine @Inject constructor(
                 dailyLimitMinutes = minDailyLimit,
                 tabVanish = unconditionalHardBlockRule.tabVanish,
                 feature = featureDecidedBy(unconditionalHardBlockRule, detectedFeature),
-                until = untilOf(unconditionalHardBlockRule),
+                until = untilOf(unconditionalHardBlockRule, now),
                 allApps = unconditionalHardBlockRule.allApps
             )
         }
@@ -122,7 +134,7 @@ class BlockEngine @Inject constructor(
                 dailyLimitMinutes = minDailyLimit,
                 tabVanish = timeBudgetRule.tabVanish,
                 feature = featureDecidedBy(timeBudgetRule, detectedFeature),
-                until = untilOf(timeBudgetRule),
+                until = budgetUntilOf(timeBudgetRule, now),
                 allApps = timeBudgetRule.allApps
             )
         }
@@ -147,7 +159,7 @@ class BlockEngine @Inject constructor(
                     tabVanish = rule.tabVanish,
                     keepPassOnShortTrips = rule.keepPassOnShortTrips,
                     feature = featureDecidedBy(rule, detectedFeature),
-                    until = untilOf(rule),
+                    until = untilOf(rule, now),
                     allApps = rule.allApps
                 )
             }
@@ -175,8 +187,27 @@ class BlockEngine @Inject constructor(
      * (spec 3.9), or null for a rule that is on all the time. Read off the deciding rule only, like
      * `tabVanish`.
      */
-    private fun untilOf(rule: ActiveRule): Long? =
-        scheduleEvaluator.windowEndAt(rule, Calendar.getInstance())
+    private fun untilOf(rule: ActiveRule, now: Calendar): Long? =
+        scheduleEvaluator.windowEndAt(rule, now)
+
+    /**
+     * [untilOf] for a block decided by a spent daily limit. The budget is spent against TODAY's
+     * usage (`TimeTracker.startOfToday`), so the block also ends at the next local midnight, when
+     * usage starts again from zero: an overnight 22:00-06:00 rule whose limit ran out at 23:30 opens
+     * at 00:00, and saying "Until 6:00 AM" would be a promise the engine does not keep. Null when the
+     * rule is on all the time, as for every other block: the screen's daily-limit line covers that.
+     */
+    private fun budgetUntilOf(rule: ActiveRule, now: Calendar): Long? {
+        val windowEnd = untilOf(rule, now) ?: return null
+        val midnight = (now.clone() as Calendar).apply {
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+            add(Calendar.DAY_OF_MONTH, 1)
+        }.timeInMillis
+        return minOf(windowEnd, midnight)
+    }
 
     companion object {
         /** What the overlay's rule footer and the logs call a Nuke block. */
