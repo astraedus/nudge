@@ -83,6 +83,73 @@ class ManageAppsSectionsTest {
         assertTrue(s.otherApps.none { it.hasRule })
     }
 
+    // ── Apps a blocking group covers say so ───────────────────────────────
+
+    /**
+     * Orchestrator review (PR 3): TikTok and Reddit sat in "Other apps" with no line and the switch
+     * off, reading as unblocked while Social blocked them. They stay there (the switch still means
+     * "a rule of its own"), with the group on the second line.
+     */
+    @Test
+    fun `an app covered by one blocking group says In Social`() {
+        val s = sections(listOf(social), typicalMembers, typicalRules)
+
+        val byName = s.otherApps.associateBy { it.appInfo.appName }
+        assertEquals("In Social", byName.getValue("TikTok").coveredBy)
+        assertEquals("In Social", byName.getValue("Reddit").supportingText)
+        assertFalse(byName.getValue("TikTok").isOn)
+        assertFalse(byName.getValue("TikTok").hasRule)
+        // Not in a group: no line at all.
+        assertEquals(null, byName.getValue("Calculator").supportingText)
+    }
+
+    @Test
+    fun `a group whose rule is off covers nothing, so no line`() {
+        val rules = typicalRules.map { if (it.groupId == 1L) it.copy(enabled = false) else it }
+        val s = sections(listOf(social), typicalMembers, rules)
+
+        assertTrue(s.otherApps.all { it.supportingText == null })
+    }
+
+    @Test
+    fun `two blocking groups are named, three are counted, disabled ones are not counted`() {
+        val work = AppGroup(id = 2, name = "Work")
+        val reading = AppGroup(id = 3, name = "Reading")
+        val evening = AppGroup(id = 4, name = "Evening")
+        val members = typicalMembers + listOf(
+            AppGroupMember(2, "com.tiktok"),
+            AppGroupMember(3, "com.reddit"), AppGroupMember(2, "com.reddit"),
+            AppGroupMember(4, "com.reddit"), AppGroupMember(4, "com.tiktok")
+        )
+        val rules = typicalRules + listOf(
+            BlockRule(id = 20, groupId = 2, mode = "HARD_BLOCK"),
+            BlockRule(id = 21, groupId = 3, mode = "HARD_BLOCK"),
+            BlockRule(id = 22, groupId = 4, mode = "HARD_BLOCK", enabled = false)
+        )
+        val s = sections(listOf(social, work, reading, evening), members, rules)
+
+        val byName = s.otherApps.associateBy { it.appInfo.appName }
+        // TikTok: Social + Work blocking, Evening off.
+        assertEquals("In Social, Work", byName.getValue("TikTok").coveredBy)
+        // Reddit: Reading + Social + Work blocking, Evening off.
+        assertEquals("In 3 groups", byName.getValue("Reddit").coveredBy)
+    }
+
+    @Test
+    fun `search results keep the covered-by line`() {
+        val s = sections(listOf(social), typicalMembers, typicalRules, query = "tik")
+        assertEquals(listOf("TikTok"), s.names(s.otherApps))
+        assertEquals("In Social", s.otherApps.single().supportingText)
+    }
+
+    @Test
+    fun `an app's own rule is its line, even when a group also covers it`() {
+        val rules = typicalRules + BlockRule(id = 9, packageName = "com.tiktok", mode = "HARD_BLOCK")
+        val tiktok = sections(listOf(social), typicalMembers, rules).appsWithRules.single { it.appInfo.appName == "TikTok" }
+        assertEquals("Hard Block", tiktok.supportingText)
+        assertEquals(null, tiktok.coveredBy)
+    }
+
     @Test
     fun `a group alone already makes the rest Other apps`() {
         assertEquals("Other apps", sections(groups = listOf(social)).otherAppsTitle)
@@ -117,7 +184,7 @@ class ManageAppsSectionsTest {
         assertEquals("Not blocked", s.groups.last().summary)
         assertEquals((1..8).map { "App $it" }, s.names(s.appsWithRules))
         assertEquals(
-            "Delay 15s · Hard Block · Sat, Sun · Reels: Hard Block",
+            "Delay 15s · Hard Block Sat, Sun · Reels: Hard Block",
             s.appsWithRules.first().summary
         )
         // App 1's plain rule is off, but its other two are on: the row is on (Active Rules' "any").

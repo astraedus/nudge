@@ -6,6 +6,7 @@ import com.astraedus.nudge.data.db.entity.AppGroupMember
 import com.astraedus.nudge.data.db.entity.BlockRule
 import com.astraedus.nudge.data.repository.InstalledAppsRepository.AppInfo
 import com.astraedus.nudge.ui.components.rule.RuleSummary
+import com.astraedus.nudge.ui.screens.config.blockingGroupsOf
 import com.astraedus.nudge.ui.screens.groups.ownGroupRule
 
 /** One group on Manage Apps: "Social · 9 apps", its rule in one line, and its switch. */
@@ -26,13 +27,19 @@ data class GroupRow(
  * [summary] is its own rules in one line ("Delay 15s · 30min limit"), null for an app with none.
  * [isOn] is what its switch shows: at least one of its own rules is on (Active Rules' meaning,
  * spec 3.2), not whether a group also covers it.
+ * [coveredBy] is the second line of an app with no rule of its own that a blocking group covers
+ * ("In Social"), so it does not read as unblocked while the group blocks it. Null otherwise.
  */
 @Immutable
 data class AppRow(
     val appInfo: AppInfo,
     val summary: String?,
-    val isOn: Boolean
+    val isOn: Boolean,
+    val coveredBy: String? = null
 ) {
+    /** The row's second line: its own rules, else the groups that block it, else nothing. */
+    val supportingText: String? get() = summary ?: coveredBy
+
     val hasRule: Boolean get() = summary != null
     val packageName: String get() = appInfo.packageName
 }
@@ -71,7 +78,10 @@ data class ManageAppsSections(
  * - **Apps with rules:** every package with a direct rule (on or off), sorted by name. A package
  *   that is not in [installed] (uninstalled, or no launcher entry) still has its rule, so it is
  *   listed under its name from [extraApps], or skipped until that lookup lands.
- * - **Other apps:** the rest of [installed], in the order given.
+ * - **Other apps:** the rest of [installed], in the order given. One that a blocking group covers
+ *   says so on its second line ("In Social", "In Social, Work", "In 3 groups"; groups whose rule is
+ *   off do not count), from [blockingGroupsOf], the same answer App config's "Also covered by"
+ *   gives. Its switch still means "give this app a rule of its own".
  * - The other apps' heading is "Apps" until the user has a group or an app rule (first run), so a
  *   new user is not shown "Other" than nothing.
  * - [keepInPlace]: apps switched on from this screen during this visit. They keep their place in
@@ -101,8 +111,14 @@ fun buildManageAppsSections(
     val installedByPackage = installed.associateBy { it.packageName }
 
     fun row(info: AppInfo): AppRow {
-        val pkgRules = rulesByPackage[info.packageName]
-            ?: return AppRow(appInfo = info, summary = null, isOn = false)
+        val pkgRules = rulesByPackage[info.packageName] ?: return AppRow(
+            appInfo = info,
+            summary = null,
+            isOn = false,
+            coveredBy = RuleSummary.coveredByText(
+                blockingGroupsOf(info.packageName, groups, members, rules).map { (group, _) -> group.name }
+            )
+        )
         return AppRow(
             appInfo = info,
             summary = RuleSummary.buildSummaryText(pkgRules),

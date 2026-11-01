@@ -3,7 +3,7 @@ package com.astraedus.nudge.ui.components.rule
 import com.astraedus.nudge.data.db.entity.BlockRule
 
 /**
- * The one way a rule is put into words on a list: "Delay 15s · 30min limit · Mon–Fri 9:00–17:00".
+ * The one way a rule is put into words on a list: "Delay 15s Mon–Fri 9:00–17:00 · 30min limit".
  *
  * Manage Apps (app rows and group rows) and App config's "Also covered by" all read their summary
  * lines from here, so one rule never reads two ways on two screens (spec 3.2, "one format
@@ -16,16 +16,22 @@ object RuleSummary {
     /**
      * Every rule row of ONE target (an app's direct rules, or a group's own rule) as one line.
      *
-     * Each rule reads as its mode, its daily limit and its schedule. An app's rules are ordered the
-     * way App config lays them out: the always-on app rule, then scheduled app rules, then the
-     * per-feature rules ("Reels: Hard Block").
+     * Each rule reads as its mode, then its daily limit. A rule's schedule belongs to that rule, so
+     * it follows the rule's mode with a plain space ("Hard Block Sat, Sun"); " · " only ever
+     * separates one rule, or a limit, from the next. Joined by the separator instead, an app with
+     * two rules read as two modes and a stray schedule ("Delay 30s · Hard Block · Sat, Sun",
+     * orchestrator review of PR 3). An app's rules are ordered the way App config lays them out:
+     * the always-on app rule, then scheduled app rules, then the per-feature rules
+     * ("Reels: Hard Block").
      *
      * Examples:
      *   "Hard Block"
      *   "Delay 15s · 30min limit"
      *   "Delay 15s · Reels: Hard Block"
-     *   "Breathing 30s · Mon–Fri 9:00–17:00"
+     *   "Hard Block Mon–Fri 9:00–17:00"
+     *   "Delay 30s · Hard Block Sat, Sun" (an always-on rule and a weekend rule)
      *   "30min limit" (a NONE rule that only caps the day)
+     *   "30min limit Sat, Sun" (the same, at weekends: the schedule follows the limit)
      */
     fun buildSummaryText(rules: List<BlockRule>): String {
         val (featureRules, appRules) = rules.partition { !it.inAppFeatures.isNullOrBlank() }
@@ -38,19 +44,34 @@ object RuleSummary {
                 ?.filter { it.isNotEmpty() }
                 ?.joinToString("/") { it.lowercase().replaceFirstChar { c -> c.uppercase() } }
             val mode = formatMode(rule.mode, rule.delaySeconds)
-            listOfNotNull(
+            val pieces = listOfNotNull(
                 // A NONE rule with a limit is only a limit: "30min limit", not "Not blocked · 30min limit".
                 when {
                     features != null -> "$features: $mode"
                     rule.mode == NONE && rule.dailyLimitMinutes != null -> null
                     else -> mode
                 },
-                rule.dailyLimitMinutes?.let { "${it}min limit" },
-                scheduleText(rule)
+                rule.dailyLimitMinutes?.let { "${it}min limit" }
             )
+            // The schedule joins the rule's first piece (its mode, or its limit when that is all it
+            // is) with a space, so it can never read as a rule of its own.
+            val schedule = scheduleText(rule) ?: return@flatMap pieces
+            listOf("${pieces.first()} $schedule") + pieces.drop(1)
         }
 
         return if (parts.isEmpty()) "Configured" else parts.joinToString(SEPARATOR)
+    }
+
+    /**
+     * The second line of an app that has no rule of its own but is in a group that is blocking:
+     * "In Social", "In Social, Work", "In 3 groups". Null when no such group (the app is not
+     * blocked, and the line must not suggest it is). [groupNames] are the covering groups in the
+     * order they should read.
+     */
+    fun coveredByText(groupNames: List<String>): String? = when (groupNames.size) {
+        0 -> null
+        1, 2 -> "In ${groupNames.joinToString(", ")}"
+        else -> "In ${groupNames.size} groups"
     }
 
     /** A group row's title on Manage Apps: "Social · 9 apps", "Work · 1 app". */

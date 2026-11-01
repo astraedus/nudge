@@ -27,7 +27,10 @@ Base: main after PR 2 (#145, groups you can reach and build).
 - **Switch semantics** (spec 3.2, today's Active Rules): an app row is on when ANY of its direct rules
   is on; off is Strict Mode gated ("Turn off blocking for this app"), on re-enables every direct rule,
   and a row with no rule creates Delay 15s. That row stays in place for the visit (`keepInPlace`), so the
-  next app never slides under the finger (device QA finding). Group rows keep PR 2's gate. This also fixes the old
+  next app never slides under the finger (device QA finding).
+- **Review round (orchestrator)**: a rule's schedule follows its own mode with a space (`Delay 30s ·
+  Hard Block Sat, Sun`); an "other" app covered by a blocking group reads `In Social` /
+  `In Social, Work` / `In 3 groups` via `blockingGroupsOf`, the resolver `coveringGroups` now uses. Group rows keep PR 2's gate. This also fixes the old
   `associateBy` that read only the last rule of a package.
 - **Home tile** "Active Apps" opens Manage Apps. Its count = packages the engine resolves at least one
   enabled rule for: the union of direct rule packages and enabled group members, deduped, built with

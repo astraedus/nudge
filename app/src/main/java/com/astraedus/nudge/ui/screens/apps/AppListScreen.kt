@@ -119,7 +119,7 @@ fun AppListScreen(
                             AppListItem(
                                 appName = app.appInfo.appName,
                                 icon = app.appInfo.icon,
-                                supportingText = app.summary,
+                                supportingText = app.supportingText,
                                 modifier = Modifier.clickable { onNavigateToAppConfig(app.packageName) },
                                 trailingContent = {
                                     Switch(

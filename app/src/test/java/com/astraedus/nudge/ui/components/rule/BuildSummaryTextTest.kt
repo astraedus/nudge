@@ -5,6 +5,7 @@ import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.ui.screens.groups.GroupRuleForm
 import com.astraedus.nudge.ui.screens.groups.toRule
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -13,6 +14,11 @@ import org.junit.Test
  * Contract change in groups PR 3: a schedule used to read as the bare word "Scheduled"; it now reads
  * as WHEN ("Mon–Fri 9:00–17:00"), and a rule that is active all the time adds nothing. The
  * schedule cases below were updated to that, not dropped.
+ *
+ * Second contract change, same PR (orchestrator review): a rule's schedule follows ITS mode with a
+ * plain space ("Hard Block Sat, Sun"), and " · " only separates rules and limits. Joined by " · ",
+ * Firefox's two rules read "Delay 30s · Hard Block · Sat, Sun": two modes and a schedule that
+ * belongs to neither, as far as a reader could tell.
  */
 class BuildSummaryTextTest {
 
@@ -55,7 +61,7 @@ class BuildSummaryTextTest {
         val result = RuleSummary.buildSummaryText(
             listOf(rule(mode = "BREATHING", delaySeconds = 30, scheduleDays = "1,2,3,4,5"))
         )
-        assertEquals("Breathing 30s · Mon–Fri", result)
+        assertEquals("Breathing 30s Mon–Fri", result)
     }
 
     @Test
@@ -92,7 +98,7 @@ class BuildSummaryTextTest {
         val result = RuleSummary.buildSummaryText(
             listOf(rule(mode = "DELAY", delaySeconds = 15, dailyLimitMinutes = 60, scheduleDays = "1,2,3"))
         )
-        assertEquals("Delay 15s · 60min limit · Mon–Wed", result)
+        assertEquals("Delay 15s Mon–Wed · 60min limit", result)
     }
 
     @Test
@@ -125,7 +131,7 @@ class BuildSummaryTextTest {
                 )
             )
         )
-        assertEquals("Hard Block · Mon–Fri 9:00–17:00", result)
+        assertEquals("Hard Block Mon–Fri 9:00–17:00", result)
     }
 
     @Test
@@ -136,9 +142,58 @@ class BuildSummaryTextTest {
             rule(mode = "DELAY", delaySeconds = 15, dailyLimitMinutes = 30)
         )
         assertEquals(
-            "Delay 15s · 30min limit · Hard Block · Sat, Sun · Reels: Hard Block",
+            "Delay 15s · 30min limit · Hard Block Sat, Sun · Reels: Hard Block",
             RuleSummary.buildSummaryText(rules)
         )
+    }
+
+    @Test
+    fun `two rules - each schedule stays with its own mode`() {
+        // Firefox in the heavy fixture: Delay 30s all the time, and a Hard Block at weekends.
+        val rules = listOf(
+            rule(mode = "HARD_BLOCK", scheduleDays = "6,7"),
+            rule(mode = "DELAY", delaySeconds = 30)
+        )
+        assertEquals("Delay 30s · Hard Block Sat, Sun", RuleSummary.buildSummaryText(rules))
+    }
+
+    @Test
+    fun `a schedule never stands alone between separators`() {
+        val samples = listOf(
+            listOf(rule(mode = "HARD_BLOCK", scheduleDays = "6,7"), rule(mode = "DELAY", delaySeconds = 30)),
+            listOf(rule(mode = "NONE", dailyLimitMinutes = 30, scheduleDays = "6,7")),
+            listOf(rule(mode = "DELAY", dailyLimitMinutes = 60, scheduleDays = "1,2,3,4,5", scheduleStartMinute = 540, scheduleEndMinute = 1020)),
+            listOf(rule(mode = "HARD_BLOCK", inAppFeatures = "REELS", scheduleDays = "6,7"))
+        )
+        for (rules in samples) {
+            val pieces = RuleSummary.buildSummaryText(rules).split(" · ")
+            val schedules = rules.mapNotNull { RuleSummary.scheduleText(it) }.toSet()
+            assertTrue("a piece is only a schedule in $pieces", pieces.none { it in schedules })
+        }
+    }
+
+    @Test
+    fun `a scheduled limit reads as the limit, then when`() {
+        assertEquals(
+            "30min limit Sat, Sun",
+            RuleSummary.buildSummaryText(listOf(rule(mode = "NONE", dailyLimitMinutes = 30, scheduleDays = "6,7")))
+        )
+    }
+
+    @Test
+    fun `a scheduled feature rule keeps its schedule`() {
+        assertEquals(
+            "Reels: Hard Block Sat, Sun",
+            RuleSummary.buildSummaryText(listOf(rule(mode = "HARD_BLOCK", inAppFeatures = "REELS", scheduleDays = "6,7")))
+        )
+    }
+
+    @Test
+    fun `covered by - one group, two groups, then a count`() {
+        assertEquals(null, RuleSummary.coveredByText(emptyList()))
+        assertEquals("In Social", RuleSummary.coveredByText(listOf("Social")))
+        assertEquals("In Social, Work", RuleSummary.coveredByText(listOf("Social", "Work")))
+        assertEquals("In 3 groups", RuleSummary.coveredByText(listOf("Reading", "Social", "Work")))
     }
 
     @Test
@@ -188,7 +243,7 @@ class BuildSummaryTextTest {
         ).toRule(null).copy(groupId = 4L)
 
         assertEquals(
-            "Delay 15s · 30min limit · Mon–Fri 9:00–17:00",
+            "Delay 15s Mon–Fri 9:00–17:00 · 30min limit",
             RuleSummary.groupSummaryText(saved)
         )
     }
