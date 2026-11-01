@@ -148,7 +148,7 @@ class BackupViewModel @Inject constructor(
                 _uiState.value = _uiState.value.copy(importOutcome = outcome)
             }
             if (importRulesUseCase.weakensProtection(preview.result)) {
-                strictModeGate.run(prompt = "Import settings that reduce protection", action = write)
+                strictModeGate.run(prompt = "Import a backup that reduces protection", action = write)
             } else {
                 write()
             }

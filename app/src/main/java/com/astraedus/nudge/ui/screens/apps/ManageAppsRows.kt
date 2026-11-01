@@ -11,8 +11,8 @@ package com.astraedus.nudge.ui.screens.apps
  * inserted ABOVE that anchor, i.e. above the viewport, and the user opened Manage Apps to a list
  * with no Groups section at all (device QA, groups PR 2, seen 4 times from Home and after a save).
  *
- * So everything above the app lists (the Groups heading, the group rows, "Block several apps", and
- * "All apps" when PR 4 adds it) is a single [Top] row that is ALWAYS first and always [TOP_KEY].
+ * So everything above the app lists ("All apps", the Groups heading, the group rows, "Block several
+ * apps") is a single [Top] row that is ALWAYS first and always [TOP_KEY].
  * Late groups grow that row in place instead of being inserted before the anchor. Groups are few,
  * so laying them out non-lazily inside one row costs nothing. [ManageAppsRowsTest] pins the
  * invariant for every state the list can be in.
@@ -22,7 +22,7 @@ package com.astraedus.nudge.ui.screens.apps
 sealed interface ManageAppsRow {
     val key: String
 
-    /** "All apps" (PR 4), the Groups heading and rows, "Block several apps": each when relevant. */
+    /** "All apps", the Groups heading and rows, "Block several apps": each when relevant. */
     data object Top : ManageAppsRow {
         override val key = TOP_KEY
     }

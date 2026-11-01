@@ -10,14 +10,20 @@ import com.astraedus.nudge.domain.ContentFilterAllowlist
 import com.astraedus.nudge.domain.ContentFilterBlocklist
 import com.astraedus.nudge.domain.WebDomainMatcher
 import com.astraedus.nudge.domain.engine.BlockEngine
+import com.astraedus.nudge.domain.engine.CoverageFacts
+import com.astraedus.nudge.domain.engine.RuleCoverage
 import com.astraedus.nudge.domain.engine.RuleEvaluator
 import com.astraedus.nudge.domain.engine.ScheduleEvaluator
 import com.astraedus.nudge.domain.engine.WholeAppCoverage
 import com.astraedus.nudge.domain.model.ActiveRule
 import com.astraedus.nudge.domain.model.BlockDecision
 import com.astraedus.nudge.domain.model.BlockMode
+import com.astraedus.nudge.domain.model.BlockRuleData
+import com.astraedus.nudge.domain.model.GroupMembership
 import com.astraedus.nudge.domain.model.WebBlockMode
 import com.astraedus.nudge.domain.nuke.NukeEnforcement
+import com.astraedus.nudge.domain.packages.EssentialPackages
+import com.astraedus.nudge.domain.packages.PackageFacts
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
@@ -40,7 +46,14 @@ class EvaluateBlockUseCase @Inject constructor(
      * Nuke Mode. No default, on purpose: every construction site has to say what Nuke is, because a
      * defaulted "never nuked" here is the silent no-op that would let every nuked app open.
      */
-    private val nukeEnforcement: NukeEnforcement
+    private val nukeEnforcement: NukeEnforcement,
+    /**
+     * The one essentials list (spec 5.4): what group and All apps rules may never cover. No default:
+     * a defaulted empty list would let an All apps rule block the phone app.
+     */
+    private val essentialPackages: EssentialPackages,
+    /** Launchable or not, per package: what an All apps rule covers (spec 4.1). Cached per package. */
+    private val packageFacts: PackageFacts
 ) {
 
     /**
@@ -56,7 +69,9 @@ class EvaluateBlockUseCase @Inject constructor(
         scheduleEvaluator: ScheduleEvaluator,
         preferences: NudgePreferences,
         contentFilter: ContentFilter,
-        nukeEnforcement: NukeEnforcement
+        nukeEnforcement: NukeEnforcement,
+        essentialPackages: EssentialPackages,
+        packageFacts: PackageFacts
     ) : this(
         ruleSnapshots = RepositoryRuleSnapshots(blockRuleRepository),
         usageRepository = usageRepository,
@@ -65,7 +80,9 @@ class EvaluateBlockUseCase @Inject constructor(
         scheduleEvaluator = scheduleEvaluator,
         preferences = preferences,
         contentFilter = contentFilter,
-        nukeEnforcement = nukeEnforcement
+        nukeEnforcement = nukeEnforcement,
+        essentialPackages = essentialPackages,
+        packageFacts = packageFacts
     )
 
     /**
@@ -114,7 +131,8 @@ class EvaluateBlockUseCase @Inject constructor(
     }
 
     /**
-     * Is [packageName] covered right now by a whole-app GROUP rule ([WholeAppCoverage], spec 5.5)?
+     * Is [packageName] covered right now by a whole-app GROUP or ALL APPS rule ([WholeAppCoverage],
+     * spec 5.5)?
      * The question that decides whether a BROWSER is evaluated as an app before its websites.
      *
      * Reads [ruleSnapshots] like every evaluation does, so it fails CLOSED exactly as they do: before
@@ -125,10 +143,12 @@ class EvaluateBlockUseCase @Inject constructor(
      */
     suspend fun isCoveredWhole(packageName: String, now: Calendar = Calendar.getInstance()): Boolean {
         val snapshot = ruleSnapshots.current()
+        val facts = coverageFacts(packageName, snapshot.ruleData, snapshot.memberships)
         return WholeAppCoverage.coversNow(
             packageName = packageName,
             rules = snapshot.ruleData,
-            memberships = snapshot.memberships
+            memberships = snapshot.memberships,
+            facts = facts
         ) { rule -> scheduleEvaluator.isActiveAt(rule, now) }
     }
 
@@ -150,7 +170,28 @@ class EvaluateBlockUseCase @Inject constructor(
         } else {
             snapshot.ruleData
         }
-        return ruleEvaluator.resolveRulesForPackage(packageName, rules, snapshot.memberships)
+        val facts = coverageFacts(packageName, rules, snapshot.memberships)
+        return ruleEvaluator.resolveRulesForPackage(packageName, rules, snapshot.memberships, facts)
+    }
+
+    /**
+     * The device facts coverage of [packageName] needs, read only when a rule can consult them
+     * ([RuleCoverage.factsNeeded]): a package with only its own rules reads neither. Both reads are
+     * in-memory caches once warm (the essentials list for 5 minutes, launchability per package until
+     * an install broadcast), so this adds no database or binder call per event.
+     *
+     * A fact that is not needed is reported as false; no rule in [rules] reads it.
+     */
+    private suspend fun coverageFacts(
+        packageName: String,
+        rules: List<BlockRuleData>,
+        memberships: List<GroupMembership>
+    ): CoverageFacts {
+        val needed = RuleCoverage.factsNeeded(rules, RuleCoverage.groupIdsOf(packageName, memberships))
+        return CoverageFacts(
+            essential = needed.essential && packageName in essentialPackages.current(),
+            launchable = needed.launchable && packageFacts.factsFor(packageName).launchable
+        )
     }
 
     /**

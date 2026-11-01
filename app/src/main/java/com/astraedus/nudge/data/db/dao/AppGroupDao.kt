@@ -10,6 +10,7 @@ import androidx.room.Update
 import com.astraedus.nudge.data.db.entity.AppGroup
 import com.astraedus.nudge.data.db.entity.AppGroupMember
 import com.astraedus.nudge.data.db.entity.BlockRule
+import com.astraedus.nudge.domain.model.ExceptCsv
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -20,6 +21,17 @@ internal data class MembershipChanges(val toAdd: Set<String>, val toRemove: Set<
 
 internal fun membershipChanges(old: Set<String>, new: Set<String>): MembershipChanges =
     MembershipChanges(toAdd = new - old, toRemove = old - new)
+
+/**
+ * The `exceptGroupIds` rewrites that remove [groupId] from every rule in [rules] that lists it as
+ * allowed: rule id -> the new CSV (null once the list is empty). Rules that do not list it are left
+ * out, so nothing else is written. Pure so the CSV arithmetic is unit-testable without a database.
+ */
+internal fun exceptGroupIdsWithout(groupId: Long, rules: List<BlockRule>): Map<Long, String?> =
+    rules.mapNotNull { rule ->
+        val ids = ExceptCsv.groupIds(rule.exceptGroupIds)
+        if (groupId in ids) rule.id to ExceptCsv.ofGroupIds(ids - groupId) else null
+    }.toMap()
 
 /**
  * An abstract class (not an interface) so the multi-table group writes can be `@Transaction`
@@ -84,6 +96,13 @@ abstract class AppGroupDao {
     @Query("DELETE FROM block_rules WHERE groupId = :groupId")
     abstract suspend fun deleteRulesOfGroup(groupId: Long)
 
+    /** Every rule that lists at least one allowed group (All apps rules, spec 3.4). */
+    @Query("SELECT * FROM block_rules WHERE exceptGroupIds IS NOT NULL")
+    abstract suspend fun getRulesWithExceptGroups(): List<BlockRule>
+
+    @Query("UPDATE block_rules SET exceptGroupIds = :exceptGroupIds WHERE id = :ruleId")
+    abstract suspend fun setExceptGroupIds(ruleId: Long, exceptGroupIds: String?)
+
     @Insert
     abstract suspend fun insertGroupRule(rule: BlockRule): Long
 
@@ -120,11 +139,18 @@ abstract class AppGroupDao {
         return id
     }
 
-    /** Deletes the group, its member rows and every rule targeting it, in one transaction. */
+    /**
+     * Deletes the group, its member rows and every rule targeting it, and takes its id off every
+     * All apps rule's allowed groups, in one transaction. A stale id would allow nothing (the
+     * engine fails strict), but left behind it is a dangling reference every reader of the list
+     * (editor, block screen, Strict Mode, export) would have to know to ignore.
+     */
     @Transaction
     open suspend fun deleteGroupAndRules(groupId: Long) {
         deleteRulesOfGroup(groupId)
         deleteMembersOfGroup(groupId)
         deleteGroupById(groupId)
+        exceptGroupIdsWithout(groupId, getRulesWithExceptGroups())
+            .forEach { (ruleId, csv) -> setExceptGroupIds(ruleId, csv) }
     }
 }

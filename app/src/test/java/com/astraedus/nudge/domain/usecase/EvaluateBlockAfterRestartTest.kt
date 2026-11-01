@@ -18,6 +18,8 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import com.astraedus.nudge.domain.packages.FakeEssentialPackages
+import com.astraedus.nudge.domain.packages.FakePackageFacts
 
 /**
  * What Nudge is allowed to do to an app **no rule targets**, including in the window right after the
@@ -59,7 +61,9 @@ class EvaluateBlockAfterRestartTest {
             scheduleEvaluator = ScheduleEvaluator(),
             preferences = preferences,
             contentFilter = contentFilter,
-            nukeEnforcement = NukeEnforcement.NEVER
+            nukeEnforcement = NukeEnforcement.NEVER,
+            essentialPackages = FakeEssentialPackages(),
+            packageFacts = FakePackageFacts()
         )
     }
 

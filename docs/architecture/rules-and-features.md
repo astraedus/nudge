@@ -193,7 +193,7 @@ lists for one job, with switches that meant different things; Active Rules is de
 
 | Piece | Where | What it owns |
 |---|---|---|
-| Sections | `buildManageAppsSections` (pure, `ui/screens/apps/ManageAppsSections.kt`) | In order, each only when non-empty: Groups, the "Block several apps" row (hidden while searching), "Apps with rules" (apps with a DIRECT rule, `packageName != null && groupId == null`, by name), then the rest under "Other apps", or under "Apps" on a phone with no groups and no app rules. Search (trimmed, case-insensitive) filters every section: groups by name, apps by name or package. The heading is decided by what exists, not by what the search left, so it does not flip mid-search. "No apps or groups match" shows only when `nothingMatches` (no group and no app), not when the app sections alone are empty: the groups live inside the top row. A group's rule never lands on an app row: a group member with no rule of its own is an "other" app, whose second line names the groups that block it (`RuleSummary.coveredByText`: `In Social`, `In Social, Work`, `In 3 groups`), from `blockingGroupsOf` (`ui/screens/config/CoveringGroups.kt`), the same resolver as App config's "Also covered by": member, and the group's own rule is on. Its switch still means "give this app a rule of its own". **Seam for "All apps" (PR 4)**: it would be a row in the top section beside the groups; nothing is built for it yet. Pinned by `ManageAppsSectionsTest` (empty, typical, heavy, search by group, search by app). |
+| Sections | `buildManageAppsSections` (pure, `ui/screens/apps/ManageAppsSections.kt`) | In order, each only when non-empty: Groups, the "Block several apps" row (hidden while searching), "Apps with rules" (apps with a DIRECT rule, `packageName != null && groupId == null`, by name), then the rest under "Other apps", or under "Apps" on a phone with no groups and no app rules. Search (trimmed, case-insensitive) filters every section: groups by name, apps by name or package. The heading is decided by what exists, not by what the search left, so it does not flip mid-search. "No apps or groups match" shows only when `nothingMatches` (no group and no app), not when the app sections alone are empty: the groups live inside the top row. A group's rule never lands on an app row: a group member with no rule of its own is an "other" app, whose second line names the groups that block it (`RuleSummary.coveredByText`: `In Social`, `In Social, Work`, `In 3 groups`), from `blockingGroupsOf` (`ui/screens/config/CoveringGroups.kt`), the same resolver as App config's "Also covered by": member, and the group's own rule is on. Its switch still means "give this app a rule of its own". **"All apps" (PR 4)**: its rows sit in the same top row, above Groups; see "All apps in the screens" below. Pinned by `ManageAppsSectionsTest` (empty, typical, heavy, search by group, search by app). |
 | Rows | `manageAppsRows` (pure, `ManageAppsRows.kt`) | `Top` (key `"top"`, always first) + a header and the apps per section. Header keys contain no dot, so they can never equal a package name (`ManageAppsRowsTest`). |
 | Rules for apps not on the launcher | `AppListViewModel.extraApps` | A rule whose package the launcher list lacks (uninstalled, or launcher-less) is still listed, named by `resolveAppName`, so deleting Active Rules hides no rule the engine applies. |
 | One summary format | `ui/components/rule/RuleSummary` (pure) | `buildSummaryText`: per rule, mode (a `NONE` rule with a limit says only the limit), then `Nmin limit`; the rule's schedule text follows its FIRST piece with a plain space (`Hard Block Sat, Sun`, `30min limit Sat, Sun`), so ` · ` only ever separates rules and limits and a schedule can never read as a rule of its own (`Delay 30s · Hard Block Sat, Sun`, not `Delay 30s · Hard Block · Sat, Sun`); unscheduled app rules first, then scheduled, then feature rules (`Reels: Hard Block`), joined ` · `. `scheduleText`: day runs of 3+ compress (`Mon–Fri`), shorter sets list (`Sat, Sun`), times `9:00–17:00`, a time with no days reads `Every day 9:00–17:00`, and all the time adds nothing. A half-set window (start without end) is not a window, the same as `ScheduleEvaluator`. Used by app rows, group rows and "Also covered by" (`BuildSummaryTextTest`, `ScheduleTextTest`). |
@@ -201,4 +201,40 @@ lists for one job, with switches that meant different things; Active Rules is de
 | Home tile | `ActiveAppsCount.kt` + `domain/engine/CoveredApps` | "Active Apps" opens Manage Apps; the number is the apps an enabled rule covers, via the engine's resolver (see `stats-and-charts.md`). |
 
 Backup is reached from Settings only (`BackupEntryPointsContractTest`).
+
+## All apps in the screens (spec PR 4, sections 3.2, 3.3, 3.7, 3.8)
+
+An "All apps except" rule (`BlockRule.allApps`) is one more kind of row on the screens that already list groups.
+Every screen builds its row from ONE pure builder, `allAppsRuleItems` (`ui/components/rule/AllAppsRuleItems.kt`), so a
+rule never reads two ways: the title is `RuleSummary.allAppsTitle` (allowed groups first, then installed allowed apps;
+`All apps`, `All apps except Spotify`, `... except Work, Spotify +3`), the second line is `RuleSummary.allAppsSummaryText`
+(mode, then schedule, the same words as every rule).
+
+| Piece | Where | What it owns |
+|---|---|---|
+| Manage Apps "All apps" | `ManageAppsSections.allApps` + `AppListScreen` | Header "All apps" above "Groups", inside the one stable `ManageAppsRow.Top` row (PR 2's key-anchoring lesson: the section appearing must not re-key the list), only when an All apps rule exists. A row is an `Apps` icon in the 40dp `TonalIcon`, the title, the summary and a switch. Search filters by title. Off is a weakening: Strict Mode gated like a group row (`AppListViewModel.toggleAllApps`, "Turn off blocking for these apps"); on is free. A phone with an All apps rule is no longer "first run", so the app list is headed "Other apps". |
+| "Block several apps" sheet | `BlockSeveralSheet` (`BlockSeveralOption`) | Replaces the direct jump to a new group: a bottom sheet titled "Block several apps" with "A group of apps" (-> new group) and "All apps except a few" (-> new All apps rule, null id). Row targets are `BlockSeveralOption.open`, pure. `AppListScreen(onOpenAllAppsRule: (Long?) -> Unit)`. |
+| "Also covered by" | `coveringAllApps` (`CoveringGroups.kt`) + `UnifiedAppConfigViewModel.coveredByAllApps` | An All apps rule is listed on an app's config when `RuleCoverage.coveringRules` says it covers the app, with real `CoverageFacts` (essential, launchable) from `EssentialPackages` / `PackageFacts`: the one coverage answer, so an essential app, an allowed app, an app in an allowed group and a launcher-less app never show a rule that would not block them. A schedule is not applied (a weekend rule still covers the app). Group rows come first. |
+| "Allowed during" | `GroupEditorViewModel.allowedDuring` (`allAppsRulesAllowingGroup`) | On the group editor, after When and before Delete group, only when non-empty: the All apps rules (ON OR OFF) whose `exceptGroupIds` contains the group. A rule that is off still lists the group, for when it is on. A new group is in none. |
+| Home lock card | `ui/screens/home/LockCard.kt` + `HomeViewModel.lockCard` | See below. |
+
+### The Home lock card (spec 3.8)
+
+Under the Nuke card, in the same `surfaceVariant` card: `<title> are blocked`, then `Until 8:42 AM` (device 12/24h via
+`DateFormat.getTimeFormat`; omitted for a rule that is on all the time), and a chevron that opens the rule. Shown only
+while an enabled All apps rule is in its window right now.
+
+- `lockCardFor(rules, now, appLabels)` (pure) picks the rule: enabled, `RuleTarget.AllApps`, active at `now` per
+  `ScheduleEvaluator.isActiveAt`. Several active: the one that ends last (`windowEndAt`; no end = all the time = last);
+  ties go to the oldest rule so the card does not flip. The end comes from `ScheduleEvaluator.windowEndAt`, the same
+  walk the block screen's "Until" uses.
+- `HomeViewModel.lockCard` is its OWN flow (like `nukeSummary`), not a field of `uiState`. With no enabled scheduled All
+  apps rule (`lockCardNeedsClock`) it emits once per rule change and **never polls**. With one, it re-derives at the top
+  of every minute (`millisToNextMinute`, the schedule's resolution), so the card disappears in the minute the window ends.
+  Rules are read inside the flow body, so nothing is read until the card is collected.
+- Essentials are not part of the card's decision: it is about the RULE being on; an essential app is still never
+  covered (`RuleCoverage`).
+
+Pinned by `LockCardTest`, `AllAppsRuleItemsTest`, `ManageAppsAllAppsTest`, `CoveringAllAppsTest` and
+`AppListViewModelStrictModeTest` (All apps switch).
 

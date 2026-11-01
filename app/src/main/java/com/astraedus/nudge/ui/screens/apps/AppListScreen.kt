@@ -27,6 +27,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -34,10 +37,13 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.astraedus.nudge.ui.components.AppListItem
 import com.astraedus.nudge.ui.components.StrictModeChallengeHost
 import com.astraedus.nudge.ui.components.TonalIcon
+import com.astraedus.nudge.ui.components.rule.AllAppsIcon
+import com.astraedus.nudge.ui.components.rule.AllAppsRuleItem
+import com.astraedus.nudge.ui.screens.allapps.AllTheTimeConfirmDialog
 
 /**
- * Manage Apps, the one list of rules (spec 3.2): the user's groups (a group is one decision covering
- * many apps), "Block several apps" to make another, the apps that have rules of their own, then
+ * Manage Apps, the one list of rules (spec 3.2): the All apps rules, the user's groups (a group is
+ * one decision covering many apps), "Block several apps" (a sheet: a group or an All apps rule), the apps that have rules of their own, then
  * every other app. Each section shows only when it has rows; one search filters them all.
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -47,12 +53,16 @@ fun AppListScreen(
     onNavigateBack: () -> Unit,
     onNavigateToAppConfig: (String) -> Unit,
     /** Opens the group editor: an existing group's id, or null for a new one. */
-    onOpenGroup: (Long?) -> Unit
+    onOpenGroup: (Long?) -> Unit,
+    /** Opens the All apps editor: an existing rule's id, or null for a new one. */
+    onOpenAllAppsRule: (Long?) -> Unit = {}
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val challenge by viewModel.challenge.collectAsStateWithLifecycle()
+    val allAppsSwitchOn by viewModel.allAppsSwitchOn.collectAsStateWithLifecycle()
     val searching = state.searchQuery.isNotBlank()
     val listState = rememberLazyListState()
+    var showBlockSeveral by rememberSaveable { mutableStateOf(false) }
 
     // A group just saved in the editor: back to the top, where the groups are. The top row only
     // grows in place, but the user may have been part-way down it (or into the apps) when they left.
@@ -68,6 +78,25 @@ fun AppListScreen(
         onVerify = viewModel::verifyChallenge,
         onCancel = viewModel::cancelChallenge
     )
+
+    // The switch asks what the editor's Save asks before a Hard block, all-the-time rule goes on.
+    allAppsSwitchOn?.let { pending ->
+        AllTheTimeConfirmDialog(
+            blockedCount = pending.blockedCount,
+            onConfirm = viewModel::confirmAllAppsSwitchOn,
+            onDismiss = viewModel::dismissAllAppsSwitchOn
+        )
+    }
+
+    if (showBlockSeveral) {
+        BlockSeveralSheet(
+            onPick = { option ->
+                showBlockSeveral = false
+                option.open(onOpenGroup, onOpenAllAppsRule)
+            },
+            onDismiss = { showBlockSeveral = false }
+        )
+    }
 
     Scaffold(
         topBar = {
@@ -108,10 +137,14 @@ fun AppListScreen(
                 ) { row ->
                     when (row) {
                         ManageAppsRow.Top -> TopSection(
+                            allApps = state.sections.allApps,
                             groups = state.sections.groups,
                             showNewGroup = state.sections.showNewGroup,
+                            onToggleAllApps = viewModel::toggleAllApps,
+                            onOpenAllAppsRule = onOpenAllAppsRule,
                             onToggleGroup = viewModel::toggleGroup,
-                            onOpenGroup = onOpenGroup
+                            onOpenGroup = onOpenGroup,
+                            onBlockSeveral = { showBlockSeveral = true }
                         )
                         is ManageAppsRow.Header -> ListSubheader(row.title)
                         is ManageAppsRow.App -> {
@@ -147,16 +180,42 @@ fun AppListScreen(
 
 /**
  * Everything above the app list, as ONE list row (see [ManageAppsRow] for why it must be one): the
- * Groups heading and rows when there are any, then "Block several apps" unless a search is showing.
+ * All apps heading and rows, then the Groups heading and rows, each when there are any, then "Block
+ * several apps" unless a search is showing.
  */
 @Composable
 private fun TopSection(
+    allApps: List<AllAppsRuleItem>,
     groups: List<GroupRow>,
     showNewGroup: Boolean,
+    onToggleAllApps: (AllAppsRuleItem) -> Unit,
+    onOpenAllAppsRule: (Long?) -> Unit,
     onToggleGroup: (GroupRow) -> Unit,
-    onOpenGroup: (Long?) -> Unit
+    onOpenGroup: (Long?) -> Unit,
+    onBlockSeveral: () -> Unit
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
+        if (allApps.isNotEmpty()) ListSubheader("All apps")
+        allApps.forEach { rule ->
+            key(rule.ruleId) {
+                ListItem(
+                    headlineContent = {
+                        Text(rule.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    },
+                    supportingContent = {
+                        Text(rule.summary, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    },
+                    leadingContent = { TonalIcon(AllAppsIcon) },
+                    trailingContent = {
+                        Switch(
+                            checked = rule.enabled,
+                            onCheckedChange = { onToggleAllApps(rule) }
+                        )
+                    },
+                    modifier = Modifier.clickable { onOpenAllAppsRule(rule.ruleId) }
+                )
+            }
+        }
         if (groups.isNotEmpty()) ListSubheader("Groups")
         groups.forEach { group ->
             key(group.groupId) {
@@ -184,7 +243,7 @@ private fun TopSection(
                     Text("Block several apps", color = MaterialTheme.colorScheme.primary)
                 },
                 leadingContent = { TonalIcon(Icons.Default.Add, primary = true) },
-                modifier = Modifier.clickable { onOpenGroup(null) }
+                modifier = Modifier.clickable(onClick = onBlockSeveral)
             )
         }
     }

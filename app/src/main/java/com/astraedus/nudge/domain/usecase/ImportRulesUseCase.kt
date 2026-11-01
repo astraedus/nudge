@@ -3,6 +3,7 @@ package com.astraedus.nudge.domain.usecase
 import com.astraedus.nudge.data.db.entity.AppGroup
 import com.astraedus.nudge.data.db.entity.AppGroupMember
 import com.astraedus.nudge.data.db.entity.BlockRule
+import com.astraedus.nudge.data.export.ExportedGroup
 import com.astraedus.nudge.data.export.ExportedHistoryEvent
 import com.astraedus.nudge.data.export.ExportedRule
 import com.astraedus.nudge.data.export.HistoryMerge
@@ -11,7 +12,11 @@ import com.astraedus.nudge.data.export.RuleExporter
 import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.data.repository.BlockRuleRepository
 import com.astraedus.nudge.data.repository.UsageRepository
+import com.astraedus.nudge.domain.lock.GroupDefinition
+import com.astraedus.nudge.domain.lock.ImportedGroupsWeakening
 import com.astraedus.nudge.domain.lock.ImportedSettingsWeakening
+import com.astraedus.nudge.domain.model.ExceptCsv
+import com.astraedus.nudge.domain.model.RuleTarget
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.withContext
@@ -27,7 +32,10 @@ data class ImportOutcome(
     /** Rules already present in the DB (same target + mode + schedule), so not re-added. */
     val duplicateCount: Int,
     val groupsCreated: Int,
-    /** Entries in the file that could not be parsed and were skipped (see [ImportResult]). */
+    /**
+     * Entries in the file that could not be parsed and were skipped (see [ImportResult]), plus
+     * group rules whose group is neither in the file nor on this phone.
+     */
     val invalidCount: Int = 0,
     /** One human-readable reason per skipped entry, in file order. */
     val invalidReasons: List<String> = emptyList(),
@@ -63,7 +71,7 @@ class ImportRulesUseCase @Inject constructor(
 ) {
 
     /**
-     * Whether applying [result]'s settings would REDUCE this device's protection — the question the
+     * Whether applying [result]'s settings or groups would REDUCE this device's protection — the question the
      * caller must ask before writing anything, because an import that weakens protection has to
      * pass the Strict Mode unlock challenge exactly like every other weakening action.
      *
@@ -75,8 +83,31 @@ class ImportRulesUseCase @Inject constructor(
      * have changed a setting between seeing the dialog and confirming it.
      */
     suspend fun weakensProtection(result: ImportResult): Boolean {
+        if (groupMergeWeakens(result.groups)) return true
         val incoming = result.settings ?: return false
         return ImportedSettingsWeakening.isWeakening(preferences.exportableSettings(), incoming)
+    }
+
+    /**
+     * The group half of [weakensProtection]: merging the file's members into a group here that an
+     * enabled All apps rule allows takes those apps out of that rule ([ImportedGroupsWeakening]).
+     * Rules in the file never weaken (an import only adds rules), so they are not asked about.
+     *
+     * Only the groups the file names are read back, through the same [groupIdsByName] map
+     * [execute] merges into, so the gate judges exactly the groups the write would touch.
+     */
+    private suspend fun groupMergeWeakens(incoming: List<ExportedGroup>): Boolean {
+        if (incoming.isEmpty()) return false
+        val names = incoming.mapTo(HashSet()) { it.name }
+        val byName = groupIdsByName(repository.getAllGroups().firstOrNull() ?: emptyList())
+            .filterKeys { it in names }
+        if (byName.isEmpty()) return false
+        val existing = byName.mapValues { (_, id) ->
+            val members = repository.getGroupMembers(id).firstOrNull() ?: emptyList()
+            GroupDefinition(id, members.mapTo(HashSet()) { it.packageName })
+        }
+        val rules = repository.getAllRules().firstOrNull() ?: emptyList()
+        return ImportedGroupsWeakening.isWeakening(existing, incoming, rules)
     }
 
     /**
@@ -95,8 +126,11 @@ class ImportRulesUseCase @Inject constructor(
     /**
      * Imports rules from a validated ImportResult into the database.
      * - Creates groups that don't exist yet (by name).
-     * - Skips duplicate rules (same packageName + mode + schedule).
-     * - Assigns new IDs to all imported rules.
+     * - Skips duplicate rules (same target + mode + schedule).
+     * - Assigns new IDs to all imported rules. An All apps rule's allowed groups are matched by
+     *   name after the groups are merged; a name with no group is dropped (stricter, never wider).
+     * - Skips a group rule whose group is neither in the file nor here, counted as invalid: written
+     *   without its group it would target nothing.
      * - Applies the file's app settings, if it carries any, in ONE transaction.
      * - MERGES usage history, skipping events already present (see [HistoryMerge]).
      * - Carries forward the entries the parser had to skip, so the UI can report them.
@@ -120,7 +154,7 @@ class ImportRulesUseCase @Inject constructor(
 
         // Step 1: Resolve groups - find existing by name or create new ones
         val existingGroups = repository.getAllGroups().firstOrNull() ?: emptyList()
-        val groupNameToId = existingGroups.associateBy({ it.name }, { it.id }).toMutableMap()
+        val groupNameToId = groupIdsByName(existingGroups).toMutableMap()
         var groupsCreated = 0
 
         for (exportedGroup in result.groups) {
@@ -147,41 +181,23 @@ class ImportRulesUseCase @Inject constructor(
         // Step 3: Insert rules, skipping duplicates
         var imported = 0
         var duplicates = 0
+        val unplaced = mutableListOf<String>()
 
         for (exportedRule in result.rules) {
-            val groupId = exportedRule.groupName?.let { groupNameToId[it] }
+            val blockRule = toBlockRule(exportedRule, groupNameToId)
+            if (blockRule == null) {
+                unplaced += "Rule for group \"${exportedRule.groupName}\": no group by that name"
+                continue
+            }
 
-            if (isDuplicate(exportedRule, groupId, existingRules)) {
+            if (isDuplicate(blockRule, existingRules)) {
                 duplicates++
                 continue
             }
 
-            val blockRule = BlockRule(
-                packageName = exportedRule.packageName,
-                groupId = groupId,
-                mode = exportedRule.mode,
-                delaySeconds = exportedRule.delaySeconds,
-                dailyLimitMinutes = exportedRule.dailyLimitMinutes,
-                enabled = exportedRule.enabled,
-                scheduleDays = exportedRule.scheduleDays,
-                scheduleStartMinute = exportedRule.scheduleStartMinute,
-                scheduleEndMinute = exportedRule.scheduleEndMinute,
-                inAppFeatures = exportedRule.inAppFeatures,
-                grayscale = exportedRule.grayscale,
-                showCounter = exportedRule.showCounter,
-                autoKickAfter = exportedRule.autoKickAfter,
-                showTimeRemaining = exportedRule.showTimeRemaining,
-                autoKickCooldownSeconds = exportedRule.autoKickCooldownSeconds,
-                webDomains = exportedRule.webDomains,
-                autoKickAfterMinutes = exportedRule.autoKickAfterMinutes,
-                remindAfterMinutes = exportedRule.remindAfterMinutes,
-                webBlockMode = exportedRule.webBlockMode,
-                tabVanish = exportedRule.tabVanish,
-                followingSteer = exportedRule.followingSteer,
-                keepPassOnShortTrips = exportedRule.keepPassOnShortTrips
-            )
-
-            repository.addRule(blockRule)
+            // Adding is free under Strict Mode, an All apps rule included: a new rule only ever
+            // covers more. saveAllAppsRule stores it in its one normalised shape.
+            if (blockRule.allApps) repository.saveAllAppsRule(blockRule) else repository.addRule(blockRule)
             imported++
         }
 
@@ -207,8 +223,8 @@ class ImportRulesUseCase @Inject constructor(
             importedCount = imported,
             duplicateCount = duplicates,
             groupsCreated = groupsCreated,
-            invalidCount = result.invalidCount,
-            invalidReasons = result.invalidReasons,
+            invalidCount = result.invalidCount + unplaced.size,
+            invalidReasons = result.invalidReasons + unplaced,
             historyImportedCount = fresh.size,
             historyDuplicateCount = result.history.size - fresh.size,
             historyInvalidCount = result.invalidHistoryCount,
@@ -234,27 +250,70 @@ class ImportRulesUseCase @Inject constructor(
     }
 
     /**
-     * A rule is considered a duplicate if an existing rule has the same:
-     * - packageName (or groupId)
-     * - mode
-     * - scheduleDays + scheduleStartMinute + scheduleEndMinute
+     * The row [exported] is written as, with its group (or an All apps rule's allowed groups)
+     * resolved by name; null when a group rule's group is not in [groupNameToId].
      */
-    private fun isDuplicate(
-        exported: ExportedRule,
-        resolvedGroupId: Long?,
-        existingRules: List<BlockRule>
-    ): Boolean {
+    private fun toBlockRule(exported: ExportedRule, groupNameToId: Map<String, Long>): BlockRule? {
+        val groupId = exported.groupName?.let { groupNameToId[it] ?: return null }
+        return BlockRule(
+            packageName = exported.packageName,
+            groupId = groupId,
+            allApps = exported.allApps,
+            exceptPackages = ExceptCsv.ofPackages(exported.exceptPackages),
+            exceptGroupIds = ExceptCsv.ofGroupIds(exported.exceptGroups.mapNotNull { groupNameToId[it] }),
+            mode = exported.mode,
+            delaySeconds = exported.delaySeconds,
+            dailyLimitMinutes = exported.dailyLimitMinutes,
+            enabled = exported.enabled,
+            scheduleDays = exported.scheduleDays,
+            scheduleStartMinute = exported.scheduleStartMinute,
+            scheduleEndMinute = exported.scheduleEndMinute,
+            inAppFeatures = exported.inAppFeatures,
+            grayscale = exported.grayscale,
+            showCounter = exported.showCounter,
+            autoKickAfter = exported.autoKickAfter,
+            showTimeRemaining = exported.showTimeRemaining,
+            autoKickCooldownSeconds = exported.autoKickCooldownSeconds,
+            webDomains = exported.webDomains,
+            autoKickAfterMinutes = exported.autoKickAfterMinutes,
+            remindAfterMinutes = exported.remindAfterMinutes,
+            webBlockMode = exported.webBlockMode,
+            tabVanish = exported.tabVanish,
+            followingSteer = exported.followingSteer,
+            keepPassOnShortTrips = exported.keepPassOnShortTrips
+        )
+    }
+
+    /**
+     * A rule is a duplicate if an existing rule has the same target, mode and schedule. The target
+     * is compared as the engine reads it ([RuleTarget.of]): an All apps rule matches only an All
+     * apps rule with the same allowed apps and the same allowed groups, in any order.
+     */
+    private fun isDuplicate(candidate: BlockRule, existingRules: List<BlockRule>): Boolean {
+        val target = targetOf(candidate)
         return existingRules.any { existing ->
-            val sameTarget = when {
-                exported.packageName != null -> existing.packageName == exported.packageName
-                resolvedGroupId != null -> existing.groupId == resolvedGroupId
-                else -> false
-            }
-            sameTarget &&
-                existing.mode == exported.mode &&
-                existing.scheduleDays == exported.scheduleDays &&
-                existing.scheduleStartMinute == exported.scheduleStartMinute &&
-                existing.scheduleEndMinute == exported.scheduleEndMinute
+            targetOf(existing) == target &&
+                existing.mode == candidate.mode &&
+                existing.scheduleDays == candidate.scheduleDays &&
+                existing.scheduleStartMinute == candidate.scheduleStartMinute &&
+                existing.scheduleEndMinute == candidate.scheduleEndMinute
         }
+    }
+
+    private fun targetOf(rule: BlockRule): RuleTarget? = RuleTarget.of(
+        packageName = rule.packageName,
+        groupId = rule.groupId,
+        allApps = rule.allApps,
+        exceptPackages = ExceptCsv.packages(rule.exceptPackages),
+        exceptGroupIds = ExceptCsv.groupIds(rule.exceptGroupIds)
+    )
+
+    private companion object {
+        /**
+         * This device's groups by name, the one map both the Strict Mode gate and the merge use.
+         * Two groups sharing a name resolve to the later one, as they always have.
+         */
+        fun groupIdsByName(groups: List<AppGroup>): Map<String, Long> =
+            groups.associateBy({ it.name }, { it.id })
     }
 }

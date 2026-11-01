@@ -173,6 +173,12 @@ the start throws: the walk-away is already recorded and the overlay marked inact
 would strand the user on a spent block. The start is allowed by the background-activity-start rules because
 the overlay is the foreground activity and the user just touched it.
 
+### All apps blocks and the rule footer (groups spec 3.9)
+
+- **One footer.** `RuleFooter(ruleName, until)` is the only place the "Rule: ..." line is printed; the hard, delay, hold and breathing bodies all render it (Nuke has no rule line). Under it, "Until 8:42 AM" appears for ANY block carrying `EXTRA_UNTIL`, in the device 12/24h format.
+- **All apps (`EXTRA_ALL_APPS_*` extras present):** the rule line reads `RuleSummary.allAppsTitle(...)` ("All apps except Spotify, Maps": group names, then installed except-app labels). The redirect bubble is hidden; its slot holds `AllowedAppsRow` ("Open an allowed app", up to four installed + launchable icons from `EXTRA_ALL_APPS_ALLOWED_PACKAGES`, never the blocked package). A tap calls `navigateHome(redirectPackage = pkg)`, i.e. the redirect walk-away, so lifecycle, passthrough and stats are identical. No surviving icon = the row renders nothing. The daily pass is unchanged.
+- Pure choices live in `OverlayBlockInfo` (L1: `OverlayBlockInfoTest`); the wiring is pinned by `RuleFooterContractTest`.
+
 ### Never an app Nudge would block: the loop the policy exists to prevent
 
 `domain/redirect/RedirectAppPolicy` is pure and owns every decision; `RedirectAppRepository` only gathers

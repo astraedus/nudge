@@ -39,6 +39,7 @@ fun DelayContent(
     onComplete: () -> Unit,
     onCancel: () -> Unit,
     ruleName: String? = null,
+    untilText: String? = null,
     appLabel: String? = null,
     dailyTimeRemainingMs: Long? = null,
     dailyLimitMinutes: Int? = null,
@@ -180,15 +181,7 @@ fun DelayContent(
                 onUse = onUseEmergencyPass
             )
 
-            if (ruleName != null) {
-                Spacer(modifier = Modifier.height(24.dp))
-                Text(
-                    text = "Rule: $ruleName",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.outline.copy(alpha = 0.7f),
-                    textAlign = TextAlign.Center
-                )
-            }
+            RuleFooter(ruleName = ruleName, until = untilText)
         }
     }
 }

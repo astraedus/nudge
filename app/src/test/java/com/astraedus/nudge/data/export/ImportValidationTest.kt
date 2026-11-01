@@ -146,26 +146,33 @@ class ImportValidationTest {
         assertNull(rule.autoKickAfterMinutes)
     }
 
+    /**
+     * A rule that names neither an app nor a group used to import as a row with no target: it
+     * blocked nothing, could not be edited, and the repository now refuses to write one (spec 5.1).
+     * It is skipped with a reason instead, and so is one naming both. The app rule beside them is
+     * kept, so one bad entry still costs only itself.
+     */
     @Test
-    fun `null packageName and groupName are handled`() {
+    fun `a rule naming no target or two targets is skipped with a reason`() {
         val json = """
         {
             "version": 1,
             "exportedAt": 1000,
             "rules": [
-                {
-                    "packageName": null,
-                    "groupName": null,
-                    "mode": "BREATHING",
-                    "delaySeconds": 30
-                }
+                { "packageName": null, "groupName": null, "mode": "BREATHING", "delaySeconds": 30 },
+                { "packageName": "com.a", "groupName": "Social", "mode": "DELAY" },
+                { "packageName": "com.b", "groupName": null, "mode": "DELAY" }
             ]
         }
         """.trimIndent()
         val result = exporter.importRules(json)
         assertNull(result.error)
-        assertNull(result.rules[0].packageName)
-        assertNull(result.rules[0].groupName)
+        assertEquals(listOf("com.b"), result.rules.map { it.packageName })
+        assertEquals(2, result.invalidCount)
+        assertEquals(
+            listOf("Rule 1: Names no app and no group", "Rule 2: Names both an app and a group"),
+            result.invalidReasons
+        )
     }
 
     @Test

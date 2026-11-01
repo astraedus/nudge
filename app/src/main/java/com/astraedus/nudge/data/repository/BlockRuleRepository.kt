@@ -5,6 +5,8 @@ import com.astraedus.nudge.data.db.dao.BlockRuleDao
 import com.astraedus.nudge.data.db.entity.AppGroup
 import com.astraedus.nudge.data.db.entity.AppGroupMember
 import com.astraedus.nudge.data.db.entity.BlockRule
+import com.astraedus.nudge.domain.model.ExceptCsv
+import com.astraedus.nudge.domain.model.RuleTarget
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import javax.inject.Inject
@@ -34,9 +36,23 @@ class BlockRuleRepository @Inject constructor(
         }
     }
 
-    suspend fun addRule(rule: BlockRule): Long = blockRuleDao.insert(rule)
+    /**
+     * Insert one rule. Every write path checks the target invariant (exactly one of package, group,
+     * All apps, spec 5.1) and throws on a row that targets two things or nothing: such a row would
+     * be read as its narrowest target by the engine, which hides the caller bug instead of fixing
+     * it. An All apps rule is written as [normalizedAllAppsRule], exactly as [saveAllAppsRule]
+     * writes it.
+     */
+    suspend fun addRule(rule: BlockRule): Long = blockRuleDao.insert(checkedRow(rule))
 
-    suspend fun updateRule(rule: BlockRule) = blockRuleDao.update(rule)
+    /**
+     * Update one rule, with the same check as [addRule], except for one row shape that already exists
+     * on phones: an app AND a group, which only an old hand-edited import could write. Throwing on
+     * that would crash the switch that flips it, so it is written back as the app rule the engine
+     * has always read it as ([legacyTwoTargetRepaired]); the behaviour does not change.
+     */
+    suspend fun updateRule(rule: BlockRule) =
+        blockRuleDao.update(checkedRow(legacyTwoTargetRepaired(rule)))
 
     suspend fun deleteRule(id: Long) = blockRuleDao.deleteById(id)
 
@@ -45,6 +61,35 @@ class BlockRuleRepository @Inject constructor(
 
     suspend fun setEnabledForPackage(packageName: String, enabled: Boolean) =
         blockRuleDao.setEnabledForPackage(packageName, enabled)
+
+    // --- All apps rules (spec 3.4) ---
+
+    /** Every All apps rule, on or off, oldest first. */
+    fun getAllAppsRules(): Flow<List<BlockRule>> = blockRuleDao.getAllAppsRules()
+
+    /** One rule by id, or null if it is gone (deleted from another screen, say). */
+    suspend fun getRule(id: Long): BlockRule? = blockRuleDao.getById(id)
+
+    /**
+     * Create (rule.id == 0L) or update one All apps rule; returns its id. The rule must be an All
+     * apps rule and nothing else: `allApps` set, no package, no group. Anything else is a caller
+     * bug and throws, rather than writing a row that targets two things.
+     *
+     * Written through [normalizedAllAppsRule], so the options an All apps rule never offers (spec
+     * 3.4) can not ride in on a copied row or a hand-edited backup.
+     */
+    suspend fun saveAllAppsRule(rule: BlockRule): Long {
+        require(rule.allApps && rule.packageName == null && rule.groupId == null) {
+            "saveAllAppsRule needs an All apps rule with no package and no group"
+        }
+        val row = normalizedAllAppsRule(rule)
+        return if (row.id == 0L) {
+            blockRuleDao.insert(row)
+        } else {
+            blockRuleDao.update(row)
+            row.id
+        }
+    }
 
     // --- Group operations ---
 
@@ -75,11 +120,58 @@ class BlockRuleRepository @Inject constructor(
         name: String,
         members: Set<String>,
         rule: BlockRule
-    ): Long = appGroupDao.saveGroupWithRule(groupId, name.trim(), members, rule)
+    ): Long {
+        // The DAO sets groupId and clears packageName, so the one way this row could target two
+        // things is the All apps flag.
+        require(!rule.allApps) { "saveGroup needs a group rule, not an All apps rule" }
+        return appGroupDao.saveGroupWithRule(groupId, name.trim(), members, rule)
+    }
 
     /** Delete the group, every member row and every rule that targets it, in one transaction. */
     suspend fun deleteGroupWithRules(groupId: Long) = appGroupDao.deleteGroupAndRules(groupId)
 
     suspend fun renameGroup(groupId: Long, name: String) =
         appGroupDao.renameGroup(groupId, name.trim())
+
+    private fun checkedRow(rule: BlockRule): BlockRule {
+        require(RuleTarget.isWellFormed(rule.packageName, rule.groupId, rule.allApps)) {
+            "A rule targets exactly one of an app, a group or all apps"
+        }
+        return if (rule.allApps) normalizedAllAppsRule(rule) else rule
+    }
 }
+
+/**
+ * A stored row with a package AND a group (and not All apps), rewritten as the app rule
+ * [RuleTarget.of] reads it as (the package wins). Every other row is returned unchanged.
+ */
+internal fun legacyTwoTargetRepaired(rule: BlockRule): BlockRule =
+    if (rule.packageName != null && rule.groupId != null && !rule.allApps) rule.copy(groupId = null) else rule
+
+/**
+ * The row an All apps rule is stored as. The editor offers mode, wait, days and times and the
+ * except lists, nothing else (spec 3.4), so every other option is forced off here, where every
+ * write path (editor, import, a copied row) passes:
+ *  - keep the pass on short trips: off. One pass would otherwise reopen every covered app.
+ *  - auto-kick, reminder, counter, time remaining, grayscale, web domains, in-app features,
+ *    Following steer: cleared. They are per-app tools with no meaning across all apps.
+ *  - daily limit: KEPT. It is not offered here, but one that arrives (an imported rule) only makes
+ *    the rule stricter (each covered app gets that many minutes a day), and the editor keeps it on
+ *    save, so the two layers agree.
+ * The except lists are rewritten in their one canonical form ([ExceptCsv]).
+ */
+internal fun normalizedAllAppsRule(rule: BlockRule): BlockRule = rule.copy(
+    keepPassOnShortTrips = false,
+    autoKickAfter = null,
+    autoKickAfterMinutes = null,
+    remindAfterMinutes = null,
+    showCounter = false,
+    showTimeRemaining = false,
+    grayscale = false,
+    webDomains = null,
+    webBlockMode = null,
+    inAppFeatures = null,
+    followingSteer = false,
+    exceptPackages = ExceptCsv.ofPackages(ExceptCsv.packages(rule.exceptPackages)),
+    exceptGroupIds = ExceptCsv.ofGroupIds(ExceptCsv.groupIds(rule.exceptGroupIds))
+)

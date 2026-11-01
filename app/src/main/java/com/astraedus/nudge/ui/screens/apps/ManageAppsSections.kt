@@ -5,7 +5,9 @@ import com.astraedus.nudge.data.db.entity.AppGroup
 import com.astraedus.nudge.data.db.entity.AppGroupMember
 import com.astraedus.nudge.data.db.entity.BlockRule
 import com.astraedus.nudge.data.repository.InstalledAppsRepository.AppInfo
+import com.astraedus.nudge.ui.components.rule.AllAppsRuleItem
 import com.astraedus.nudge.ui.components.rule.RuleSummary
+import com.astraedus.nudge.ui.components.rule.allAppsRuleItems
 import com.astraedus.nudge.ui.screens.config.blockingGroupsOf
 import com.astraedus.nudge.ui.screens.groups.ownGroupRule
 
@@ -47,11 +49,12 @@ data class AppRow(
 /**
  * Manage Apps' sections, in screen order (spec 3.2). Each section shows only when it has rows.
  *
- * "All apps" (PR 4) slots in as one more field here, rendered first inside the top row, above
- * [groups]; nothing below has to move for it.
+ * [allApps] is rendered first inside the top row, above [groups]; nothing below has to move for it.
  */
 @Immutable
 data class ManageAppsSections(
+    /** The "All apps" section (spec 3.2): one row per All apps rule, empty when there are none. */
+    val allApps: List<AllAppsRuleItem> = emptyList(),
     val groups: List<GroupRow> = emptyList(),
     /** The "Block several apps" row. Hidden while a search is showing (it matches nothing). */
     val showNewGroup: Boolean = true,
@@ -62,7 +65,7 @@ data class ManageAppsSections(
 ) {
     /** Nothing at all to show: no group and no app (a search that matched nothing). */
     val nothingMatches: Boolean
-        get() = groups.isEmpty() && appsWithRules.isEmpty() && otherApps.isEmpty()
+        get() = allApps.isEmpty() && groups.isEmpty() && appsWithRules.isEmpty() && otherApps.isEmpty()
 
     companion object {
         const val APPS_TITLE = "Apps"
@@ -74,6 +77,8 @@ data class ManageAppsSections(
 /**
  * Builds the sections from the tables (spec 3.2). Pure: everything it needs is passed in.
  *
+ * - **All apps:** the All apps rules in [rules], oldest first, titled from the allowed groups'
+ *   names and the allowed apps' labels in [installed]. A search keeps the rules whose TITLE matches.
  * - **Groups:** sorted by name; a search keeps the groups whose NAME matches.
  * - **Apps with rules:** every package with a direct rule (on or off), sorted by name. A package
  *   that is not in [installed] (uninstalled, or no launcher entry) still has its rule, so it is
@@ -138,8 +143,10 @@ fun buildManageAppsSections(
         .filter { !belowWithRules(it.packageName) && it.matches() }
         .map(::row)
 
-    val firstRun = groups.isEmpty() && rulesByPackage.keys.none(::belowWithRules)
+    val allAppsAll = allAppsRuleItems(rules, groups, installed.associate { it.packageName to it.appName })
+    val firstRun = allAppsAll.isEmpty() && groups.isEmpty() && rulesByPackage.keys.none(::belowWithRules)
     return ManageAppsSections(
+        allApps = allAppsAll.filter { needle.isEmpty() || it.title.contains(needle, ignoreCase = true) },
         groups = buildGroupRows(groups, members, rules, needle),
         showNewGroup = needle.isEmpty(),
         appsWithRules = appsWithRules,

@@ -2,6 +2,7 @@ package com.astraedus.nudge.data.repository
 
 import com.astraedus.nudge.data.db.dao.AppGroupDao
 import com.astraedus.nudge.data.db.dao.BlockRuleDao
+import com.astraedus.nudge.data.db.dao.exceptGroupIdsWithout
 import com.astraedus.nudge.data.db.dao.membershipChanges
 import com.astraedus.nudge.data.db.entity.AppGroup
 import com.astraedus.nudge.data.db.entity.AppGroupMember
@@ -11,6 +12,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
 import org.junit.Test
 
 /** In-memory [AppGroupDao]: the `open` transactional methods under test run for real on it. */
@@ -38,6 +40,10 @@ private class FakeGroupDao : AppGroupDao() {
     override suspend fun deleteMembersOfGroup(groupId: Long) { members.removeAll { it.first == groupId } }
     override suspend fun deleteGroupById(groupId: Long) { groups.remove(groupId) }
     override suspend fun deleteRulesOfGroup(groupId: Long) { rules.values.removeAll { it.groupId == groupId } }
+    override suspend fun getRulesWithExceptGroups() = rules.values.filter { it.exceptGroupIds != null }
+    override suspend fun setExceptGroupIds(ruleId: Long, exceptGroupIds: String?) {
+        rules[ruleId]?.let { rules[ruleId] = it.copy(exceptGroupIds = exceptGroupIds) }
+    }
     override suspend fun insertGroupRule(rule: BlockRule): Long {
         val id = nextId++; rules[id] = rule.copy(id = id); return id
     }
@@ -91,6 +97,59 @@ class GroupSaveTest {
         assertEquals(setOf(b), dao.groups.keys)
         assertEquals(listOf(b to "y"), dao.members.toList())
         assertEquals(listOf(b), dao.rules.values.map { it.groupId })
+    }
+
+    // -- an allowed group's id leaves every All apps rule with the group (L1 on the fake DAO) --
+
+    private fun allAppsRule(exceptGroupIds: String?) =
+        BlockRule(mode = "HARD_BLOCK", allApps = true, exceptGroupIds = exceptGroupIds)
+
+    private fun putRule(rule: BlockRule): Long {
+        val id = dao.nextId++
+        dao.rules[id] = rule.copy(id = id)
+        return id
+    }
+
+    @Test
+    fun `exceptGroupIdsWithout rewrites only the rules that list the group`() {
+        val rules = listOf(
+            allAppsRule("3,5,7").copy(id = 1),
+            allAppsRule("5").copy(id = 2),
+            allAppsRule("3").copy(id = 3),
+            allAppsRule(null).copy(id = 4),
+            allAppsRule("x,5,,").copy(id = 5)
+        )
+        assertEquals(
+            mapOf(1L to "3,7", 2L to null, 5L to null),
+            exceptGroupIdsWithout(5, rules)
+        )
+    }
+
+    @Test
+    fun `deleting a group takes its id off every All apps rule's allowed groups`() = runTest {
+        val gone = repo.saveGroup(null, "Work", setOf("w"), rule)
+        val kept = repo.saveGroup(null, "Music", setOf("m"), rule)
+        val both = putRule(allAppsRule("$gone,$kept"))
+        val onlyGone = putRule(allAppsRule("$gone"))
+        val onlyKept = putRule(allAppsRule("$kept"))
+
+        repo.deleteGroupWithRules(gone)
+
+        assertEquals("$kept", dao.rules.getValue(both).exceptGroupIds)
+        assertEquals(null, dao.rules.getValue(onlyGone).exceptGroupIds)
+        assertEquals("$kept", dao.rules.getValue(onlyKept).exceptGroupIds)
+        // The All apps rules themselves stay: deleting an allowed group never deletes the lock.
+        assertEquals(true, dao.rules.getValue(onlyGone).allApps)
+    }
+
+    @Test
+    fun `saving a group with an All apps rule throws instead of writing a two-target row`() {
+        assertThrows(IllegalArgumentException::class.java) {
+            kotlinx.coroutines.runBlocking {
+                repo.saveGroup(null, "A", emptySet(), BlockRule(mode = "DELAY", allApps = true))
+            }
+        }
+        assertEquals(emptyMap<Long, String>(), dao.groups)
     }
 
     @Test

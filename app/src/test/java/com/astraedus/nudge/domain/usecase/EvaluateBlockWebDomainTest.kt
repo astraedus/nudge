@@ -21,6 +21,8 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import com.astraedus.nudge.domain.packages.FakeEssentialPackages
+import com.astraedus.nudge.domain.packages.FakePackageFacts
 
 /**
  * Use-case level tests for [EvaluateBlockUseCase.evaluateWebDomain] (issue #21): a rule's web
@@ -60,7 +62,9 @@ class EvaluateBlockWebDomainTest {
             scheduleEvaluator = ScheduleEvaluator(),
             preferences = preferences,
             contentFilter = contentFilter,
-            nukeEnforcement = NukeEnforcement.NEVER
+            nukeEnforcement = NukeEnforcement.NEVER,
+            essentialPackages = FakeEssentialPackages(),
+            packageFacts = FakePackageFacts()
         )
     }
 

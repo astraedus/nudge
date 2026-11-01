@@ -18,6 +18,8 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import com.astraedus.nudge.domain.packages.FakeEssentialPackages
+import com.astraedus.nudge.domain.packages.FakePackageFacts
 
 /**
  * [EvaluateBlockUseCase.isFollowingSteerEnabled] — "does any rule that applies to this app right now
@@ -55,7 +57,9 @@ class FollowingSteerEnabledTest {
             scheduleEvaluator = ScheduleEvaluator(),
             preferences = mockk<NudgePreferences>(),
             contentFilter = mockk<ContentFilter>(),
-            nukeEnforcement = NukeEnforcement.NEVER
+            nukeEnforcement = NukeEnforcement.NEVER,
+            essentialPackages = FakeEssentialPackages(),
+            packageFacts = FakePackageFacts()
         )
     }
 

@@ -22,6 +22,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.astraedus.nudge.domain.packages.FakeEssentialPackages
+import com.astraedus.nudge.domain.packages.FakePackageFacts
 
 /**
  * L1 through the REAL use case: Nuke joins evaluation at the one entry every app-level caller uses,
@@ -48,7 +50,9 @@ class EvaluateBlockNukeTest {
         nukeEnforcement = NukeEnforcement { pkg ->
             asked += pkg
             NukePolicy.isNuked(pkg, state, emptySet())
-        }
+        },
+        essentialPackages = FakeEssentialPackages(),
+        packageFacts = FakePackageFacts()
     )
 
     private val on = NukeState(active = true, packages = setOf(nuked), keyHash = "k")

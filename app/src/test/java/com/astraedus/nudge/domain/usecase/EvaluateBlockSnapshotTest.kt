@@ -34,6 +34,8 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.IOException
+import com.astraedus.nudge.domain.packages.FakeEssentialPackages
+import com.astraedus.nudge.domain.packages.FakePackageFacts
 
 /**
  * L3: block evaluation through the production [RuleSnapshotSource] (spec section 5.7).
@@ -103,7 +105,9 @@ class EvaluateBlockSnapshotTest {
         scheduleEvaluator = ScheduleEvaluator(),
         preferences = preferences,
         contentFilter = mockk<ContentFilter>(),
-        nukeEnforcement = NukeEnforcement.NEVER
+        nukeEnforcement = NukeEnforcement.NEVER,
+        essentialPackages = FakeEssentialPackages(),
+        packageFacts = FakePackageFacts()
     )
 
     private fun TestScope.warmSource(): RuleSnapshotSource {

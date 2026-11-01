@@ -13,7 +13,7 @@ For the generic opt-in restricted-content blocklist, see `content-filter.md` ins
 
 - `domain/WebDomainMatcher.kt` — pure Kotlin (no Android deps). `extractDomain(urlBarText)` strips protocol/path/port, normalizes subdomains (www, m, mobile, l, lm). `matches(urlBarText, webDomains)` checks extracted domain against comma-separated rule domains.
 - `service/WebDomainDetector.kt` — `@Singleton`, two-strategy URL-bar read. Multi-browser: `BROWSER_URL_BAR_IDS` maps each package to ordered candidate view-id suffixes (Chrome/Brave/Edge/Kiwi `url_bar`+`omnibox_url_text`, Firefox/Fenix `ADDRESSBAR_URL_BOX`+`mozac_browser_toolbar_url_view`, Samsung Internet `location_bar_edit_text`, Opera `url_field`, DuckDuckGo `omnibarTextInput`). **Strategy 1 (fast path)**: `findAccessibilityNodeInfosByViewId()` over fully-qualified `pkg:id/suffix` ids (Chromium family, Samsung, Opera, DDG). **Strategy 2 (traversal fallback)**: when the fast path finds nothing, `findNodeByViewId()` does a bounded (≤600 nodes) DFS matching `node.viewIdResourceName` against the BARE suffixes — needed for modern Firefox, whose Compose toolbar exposes the URL bar as a bare testTag `ADDRESSBAR_URL_BOX` (no `pkg:id/` prefix) that `findAccessibilityNodeInfosByViewId` will NOT match at runtime, with the URL in `contentDescription` (not `text`). `readUrlRaw(node)` reads text→contentDescription; `cleanAddressBarText()` strips Firefox's localized "…. Search or enter address" hint by cutting at the first `\.\s` (locale-agnostic; URLs never contain period-space). `urlBarViewIdsFor`/`qualifiedUrlBarViewIdsFor`/`bareUrlBarViewIdsFor` are pure, unit-tested. `isBrowser(pkg)` checks map membership. Findings/rationale: `docs/firefox-webblock-findings.md`.
-- Integration in `NudgeAccessibilityService`: on `TYPE_WINDOW_STATE_CHANGED`/`TYPE_WINDOW_CONTENT_CHANGED` for browser packages, calls `evaluateBrowser()`, which first evaluates a browser a group covers as an app (see "Browsers in a group" below) and otherwise calls `evaluateWebDomain()`, which reads URL bar, extracts domain, queries `EvaluateBlockUseCase.evaluateWebDomain()`. `evaluateBrowser` is the only caller of `evaluateWebDomain` (pinned by `GroupBrowserWiringContractTest`).
+- Integration in `NudgeAccessibilityService`: on `TYPE_WINDOW_STATE_CHANGED`/`TYPE_WINDOW_CONTENT_CHANGED` for browser packages, calls `evaluateBrowser()`, which first evaluates a browser a group or All apps rule covers as an app (see "Browsers in a group" below) and otherwise calls `evaluateWebDomain()`, which reads URL bar, extracts domain, queries `EvaluateBlockUseCase.evaluateWebDomain()`. `evaluateBrowser` is the only caller of `evaluateWebDomain` (pinned by `GroupBrowserWiringContractTest`).
 - `EvaluateBlockUseCase.evaluateWebDomain()` finds all enabled rules with matching `webDomains`, resolves each one's WEB mode, converts to `ActiveRule` list, passes through `BlockEngine`.
 - **Web enforcement is independent of the app-level mode (fixes [#21](https://github.com/astraedus/nudge/issues/21))**. Web domains used to be evaluated with `BlockMode.valueOf(rule.mode)`, the APP-level mode, so a rule with `BlockMode.NONE` (whole-app blocking off, the state that makes Shorts-only blocking expressible) allowed every configured website too: a blocker silently blocking nothing, the worst failure class this app has. It was mitigated in the UI only, by disabling the "Block on web too" toggle in that state.
   - `BlockRule.webBlockMode` (nullable, DB v10) is the independent mode. **NULL = inherit the app-level mode**, which is exactly what every pre-v10 rule did, so existing behaviour is untouched wherever the app mode is a real blocking mode.
@@ -35,7 +35,8 @@ who put Chrome in a "Social" group with a Hard block got website rules only: the
 
 **The rule now: a browser a group covers is evaluated as an app first.** "Covers" means
 `WholeAppCoverage.coversNow` (pure, `domain/engine/`): some enabled GROUP rule whose group contains
-the browser, with no in-app features (a feature rule blocks a part of an app, never a whole one) and
+the browser, or ALL APPS rule that does not allow it (see "Browsers under an All apps rule"), with no
+in-app features (a feature rule blocks a part of an app, never a whole one) and
 inside its schedule right now. The mode is NOT checked: a NONE group rule still covers, and its app
 evaluation simply allows and hands over to the website path.
 
@@ -92,6 +93,29 @@ Tests: `WholeAppCoverageTest` (L1, every condition), `PassthroughWholeAxisTest` 
 `GroupBrowserCaptureReplayTest` (L2: `chrome-open-and-browse.jsonl` through the classifier and the
 routing; every Chrome evaluation blocks as an app, zero reach the website path, and the pre-fix
 routing never blocks), `GroupBrowserWiringContractTest` (the four sites).
+
+## Browsers under an All apps rule (spec 5.5, PR 4)
+
+An All apps rule covers a browser like any launchable app: it is in "Blocks N apps", and the same
+four sites route it through the same `WholeAppCoverage` / `isCoveredWhole` question, so a covered
+browser is evaluated as an app and blocked before any URL is read. `excludeDirectRules = true` keeps
+the All apps rule (it names no package). A browser on the rule's allowed list (or in one of its
+allowed groups) is not covered by it and goes to its website rules as always; the All apps rule has
+no websites of its own, so it adds nothing there. Allowing Chrome is the user's way to keep the web.
+
+Browsers are never essential (spec 5.4), so coverage never skips one as essential.
+`EssentialApps` takes every browser back off what its device sources return: Firefox declares an
+autofill service, so before this fix the autofill source made Firefox essential and no group, All
+apps rule or Nuke could cover it (found on the bench Pixel during PR 4).
+
+The service's synchronous check fails closed exactly as for groups: cold, it says "covered" for any
+browser; warm, it treats the browser as launchable and an unresolved essentials list as empty. Both
+only send the browser to the suspending `isCoveredWhole`, which reads the real facts.
+
+Tests: `AllAppsBrowserCaptureReplayTest` (L2: the same Chrome capture under an All apps rule; a
+covered Chrome blocks as an app on every evaluation, an allowed Chrome reaches the website path and
+its sites open, a Chrome with no launcher entry is not covered, and routing that ignores the All
+apps rule never blocks), `EssentialAppsTest` (L1: a browser named by any source is not essential).
 
 ## What happens AFTER the entry block, v1.15.2
 

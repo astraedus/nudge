@@ -19,6 +19,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import com.astraedus.nudge.domain.packages.FakeEssentialPackages
+import com.astraedus.nudge.domain.packages.FakePackageFacts
 
 /**
  * Regression tests for issue #14 ("daily timer/display not working").
@@ -59,7 +61,9 @@ class EvaluateBlockDailyLimitTest {
             scheduleEvaluator = ScheduleEvaluator(),
             preferences = preferences,
             contentFilter = contentFilter,
-            nukeEnforcement = NukeEnforcement.NEVER
+            nukeEnforcement = NukeEnforcement.NEVER,
+            essentialPackages = FakeEssentialPackages(),
+            packageFacts = FakePackageFacts()
         )
     }
 

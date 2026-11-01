@@ -14,6 +14,7 @@ import com.astraedus.nudge.data.repository.BlockRuleRepository
 import com.astraedus.nudge.data.repository.InstalledAppsRepository
 import com.astraedus.nudge.data.repository.ScreenTimeProvider
 import com.astraedus.nudge.data.repository.UsageRepository
+import com.astraedus.nudge.data.repository.toRuleData
 import com.astraedus.nudge.di.IoDispatcher
 import com.astraedus.nudge.domain.engine.TimeTracker
 import com.astraedus.nudge.domain.lock.ChallengeState
@@ -28,6 +29,7 @@ import com.astraedus.nudge.ui.screens.stats.InsightsCalculator
 import com.astraedus.nudge.ui.screens.stats.StatsViewModel.Companion.formatDayTotal
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.util.Calendar
 import javax.inject.Inject
 import kotlin.math.roundToInt
 import kotlinx.coroutines.CoroutineDispatcher
@@ -37,6 +39,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
@@ -136,6 +139,14 @@ class HomeViewModel @Inject constructor(
     val nukeGate = NukeGate(currentState = { nudgePreferences.nukeState.first() })
     val nukeUnlock: StateFlow<NukeUnlockState?> = nukeGate.unlock
 
+    /** The one essentials list, resolved off the main thread (it reads PackageManager and roles). */
+    private fun essentialsFlow() = flow { emit(essentialApps.packages()) }.flowOn(ioDispatcher)
+
+    /** The installed apps with a launcher entry: what an All apps rule can cover (spec 4.1). */
+    private fun launchableFlow() = flow {
+        emit(installedAppsRepository.getInstalledApps().map { it.packageName }.toSet())
+    }.flowOn(ioDispatcher)
+
     /**
      * The dashboard's Nuke card. Its OWN flow rather than a field on [uiState]: the card changes
      * when Nuke does, and folding it into the clock-driven combine would re-render the whole
@@ -147,10 +158,44 @@ class HomeViewModel @Inject constructor(
      */
     val nukeSummary: StateFlow<NukeSummary> = combine(
         nudgePreferences.nukeState,
-        flow { emit(essentialApps.packages()) }.flowOn(ioDispatcher)
+        essentialsFlow()
     ) { state, essentials -> NukeSummary.from(state, essentials) }
         .distinctUntilChanged()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), NukeSummary())
+
+    /**
+     * The lock card (spec 3.8): the All apps rule blocking right now, or null. Its OWN flow, like
+     * [nukeSummary], so it never rides the dashboard's clock-driven combine. The rules are read in
+     * the flow body, so nothing is read until the card is collected.
+     *
+     * A scheduled rule starts and ends on its own, so while one exists the card is re-derived at the
+     * top of every minute (the schedule's resolution) and disappears at the window end. With no
+     * enabled scheduled All apps rule there is no ticker at all: the card only changes when a rule
+     * does.
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val lockCard: StateFlow<LockCard?> = flow {
+        val labels = installedAppsRepository.getInstalledApps().associate { it.packageName to it.appName }
+        emitAll(
+            combine(blockRuleRepository.getAllRules(), blockRuleRepository.getAllGroups()) { rules, groups ->
+                val names = groups.associate { it.id to it.name }
+                rules.map { it.toRuleData(groupNames = names) } to labels
+            }
+        )
+    }.flatMapLatest { (rules, labels) ->
+        flow {
+            if (!lockCardNeedsClock(rules)) {
+                emit(lockCardFor(rules, Calendar.getInstance(), labels))
+                return@flow
+            }
+            while (true) {
+                val now = Calendar.getInstance()
+                emit(lockCardFor(rules, now, labels))
+                delay(millisToNextMinute(now.timeInMillis))
+            }
+        }
+    }.distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     /**
      * Start-of-today, re-derived on every poll tick rather than once at construction.
@@ -295,6 +340,8 @@ class HomeViewModel @Inject constructor(
             blockRuleRepository.getEnabledRules(),
             blockRuleRepository.getAllGroups(),
             blockRuleRepository.getAllGroupMembers(),
+            launchableFlow(),
+            essentialsFlow(),
             ::activeAppsCount
         ),
         countsFlow,

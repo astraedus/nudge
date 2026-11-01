@@ -7,6 +7,7 @@ import com.astraedus.nudge.data.repository.BlockRuleRepository
 import com.astraedus.nudge.data.repository.InstalledAppsRepository
 import com.astraedus.nudge.data.repository.InstalledAppsRepository.AppInfo
 import com.astraedus.nudge.domain.lock.StrictModeChallenge
+import com.astraedus.nudge.domain.packages.FakeEssentialPackages
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
@@ -59,7 +60,7 @@ class SwitchedOnStaysInPlaceTest {
         every { prefs.strictModeChallengeLength } returns flowOf(StrictModeChallenge.DEFAULT_LENGTH)
         val installed = mockk<InstalledAppsRepository>()
         coEvery { installed.getInstalledApps() } returns apps
-        return AppListViewModel(installed, repository, prefs)
+        return AppListViewModel(installed, repository, prefs, FakeEssentialPackages())
     }
 
     @Test

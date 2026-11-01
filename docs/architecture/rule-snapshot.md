@@ -1,8 +1,8 @@
 # Rule snapshot and package facts — what the engine reads, and how often
 
 Covers where block evaluation gets its rules from (`RuleSnapshotSource`), why a cold start reads the
-database directly instead of trusting an empty snapshot, and the `PackageFacts` port that group and
-"All apps" rules will read. The design is spec section 5.7 / 5.2
+database directly instead of trusting an empty snapshot, and the two device facts (essential,
+launchable) that group and "All apps" coverage read. The design is spec section 5.7 / 5.2
 (`docs/exec-plans/active/groups-categories-allowlist.md`); this doc is the shipped shape.
 **Read before touching `RuleSnapshot*`, `EvaluateBlockUseCase`'s rule reads, `AppGroupDao`'s Flow
 queries, `PackageFacts` / `AndroidPackageFacts`, or `di/EngineModule.kt`.**
@@ -17,7 +17,8 @@ queries, `PackageFacts` / `AndroidPackageFacts`, or `di/EngineModule.kt`.**
 | Per-call reader | `RepositoryRuleSnapshots` (same file) | Reads the tables now: rules, groups, then one query per group. The cold-start path, and what a hand-built `EvaluateBlockUseCase` (every existing use-case test) uses. |
 | Members query | `AppGroupDao.getAllMembers()` | One Flow over `app_group_members`, so a membership change re-emits without one query per group. |
 | Package facts port | `domain/packages/PackageFacts.kt` | `factsFor(pkg)` → `PackageFact(category, launchable)`, plus `invalidate` / `invalidateAll`. `PackageFactsCache` is the pure per-package cache. |
-| Package facts impl | `service/AndroidPackageFacts.kt` (bound in `di/EngineModule.kt`) | `PackageManager` reads on the IO dispatcher, cached per package, invalidated by a runtime `PACKAGE_ADDED/REPLACED/REMOVED/CHANGED` receiver. No consumer yet. |
+| Package facts impl | `service/AndroidPackageFacts.kt` (bound in `di/EngineModule.kt`) | `PackageManager` reads on the IO dispatcher, cached per package, invalidated by a runtime `PACKAGE_ADDED/REPLACED/REMOVED/CHANGED` receiver. Read by `EvaluateBlockUseCase` for All apps coverage. |
+| Essentials port | `domain/packages/EssentialPackages.kt`, impl `service/EssentialApps.kt` | `current()` (cached 5 minutes) and `cachedOrNull()`. The one essentials list, read by Nuke and by group and All apps coverage. |
 
 ## Why a snapshot
 
@@ -66,6 +67,20 @@ whole-app grant until the snapshot is warm. Nothing reads `snapshot.value` and f
 that can suspend must keep using `current()`. Details: `web-domain-blocking.md`, "Browsers in a
 group".
 
+## Device facts on the hot path (spec 4.1)
+
+Group and All apps coverage need two facts the rule tables do not hold: is the package essential,
+and does it have a launcher entry. `EvaluateBlockUseCase` asks `RuleCoverage.factsNeeded` first and
+reads only what a rule can consult: nothing for a package with only its own rules, the essentials
+list for a member of a group with a rule, both under an All apps rule. Both reads are in-memory once
+warm (the essentials list for 5 minutes, launchable per package until an install broadcast), so an
+All apps rule adds no database or binder call per event. A newly installed app is not in the cache
+yet, so its first evaluation reads it fresh: an All apps rule covers it on its first open.
+
+The service's synchronous check (above) cannot suspend, so it reads `EssentialApps.cachedOrNull()`
+(empty if never resolved) and treats a browser as launchable. Both mistakes only send the browser to
+the suspending evaluation, which reads the real facts.
+
 ## Group names
 
 `RuleSnapshot.of` maps each group rule with the name of its group (`BlockRuleData.groupName`,
@@ -90,3 +105,5 @@ broadcast invalidates it; any other failure is not cached, so the next read retr
 | L1 | `EvaluateBlock*Test`, `FollowingSteerEnabledTest` | unchanged by spec PR 1: they run on the per-call reader, which is the proof the decisions did not move |
 | L1 | `RuleEvaluatorGroupNameTest` | a group rule is named after its group in every mode, with qualifiers and feature prefix; "Group" for a missing name; direct rules unchanged; `RuleSnapshot.of` fills `groupName` |
 | L1 | `PackageFactsCacheTest`, `AndroidPackageFactsCategoryTest` | cache hit/miss/invalidate, a throwing resolve is not cached; every `CATEGORY_*` mapping, unknown → `UNDEFINED` |
+| L3 | `EvaluateBlockAllAppsTest` | with an All apps rule: zero table opens and zero per-group reads once warm (including `isCoveredWhole`); no device-fact read for a package with only its own rule; one read of each fact per All apps evaluation; a newly installed app covered on its first evaluation |
+| L1 | `RuleCoverageTest` | `factsNeeded` asks for nothing with app-only rules, and a fact it skips never changes any rule's coverage |
