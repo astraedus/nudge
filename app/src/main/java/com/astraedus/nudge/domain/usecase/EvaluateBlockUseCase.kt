@@ -75,11 +75,16 @@ class EvaluateBlockUseCase @Inject constructor(
      * @param includeWholeAppRulesForFeature Whether feature evaluation should also consider
      *   whole-app rules. This is disabled after a whole-app delay has completed so in-app rules
      *   can still fire without looping the whole-app gate.
+     * @param excludeDirectRules Resolve GROUP rules only, dropping rules that name [packageName]
+     *   directly. The service passes true when it evaluates a browser covered by a group as an app
+     *   (spec 5.5): a direct rule on a browser keeps its web-only meaning (spec follow-up F5), so it
+     *   must not take part in the browser's app-level decision.
      */
     suspend fun invoke(
         packageName: String,
         detectedFeature: String? = null,
-        includeWholeAppRulesForFeature: Boolean = true
+        includeWholeAppRulesForFeature: Boolean = true,
+        excludeDirectRules: Boolean = false
     ): BlockDecision {
         // NUKE FIRST, and before any rule or usage read: a nuked app's rules are irrelevant, so there
         // is no reason to pay for them. Every app-level caller comes through here (the foreground
@@ -94,7 +99,7 @@ class EvaluateBlockUseCase @Inject constructor(
             )
         }
 
-        val activeRules = resolveActiveRules(packageName)
+        val activeRules = resolveActiveRules(packageName, excludeDirectRules)
         val dailyUsageMs = dailyUsageMs(packageName, activeRules)
 
         return blockEngine.evaluate(
@@ -114,9 +119,17 @@ class EvaluateBlockUseCase @Inject constructor(
      * inline now happens once per table change, in `RuleSnapshot.of` (`BlockRule.toRuleData`), so
      * this is in-memory filtering over a handful of rules.
      */
-    private suspend fun resolveActiveRules(packageName: String): List<ActiveRule> {
+    private suspend fun resolveActiveRules(
+        packageName: String,
+        excludeDirectRules: Boolean = false
+    ): List<ActiveRule> {
         val snapshot = ruleSnapshots.current()
-        return ruleEvaluator.resolveRulesForPackage(packageName, snapshot.ruleData, snapshot.memberships)
+        val rules = if (excludeDirectRules) {
+            snapshot.ruleData.filter { it.packageName == null }
+        } else {
+            snapshot.ruleData
+        }
+        return ruleEvaluator.resolveRulesForPackage(packageName, rules, snapshot.memberships)
     }
 
     /**

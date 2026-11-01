@@ -1,6 +1,7 @@
 package com.astraedus.nudge.domain.engine
 
 import com.astraedus.nudge.domain.model.ActiveRule
+import com.astraedus.nudge.domain.model.BlockRuleData
 import java.util.Calendar
 import javax.inject.Inject
 
@@ -24,11 +25,26 @@ class ScheduleEvaluator @Inject constructor() {
     /**
      * Testable overload that accepts an explicit [Calendar] for the current moment.
      */
-    fun isActiveAt(rule: ActiveRule, now: Calendar): Boolean {
-        val days = rule.scheduleDays
-        val startMinute = rule.scheduleStartMinute
-        val endMinute = rule.scheduleEndMinute
+    fun isActiveAt(rule: ActiveRule, now: Calendar): Boolean =
+        isScheduledAt(rule.scheduleDays, rule.scheduleStartMinute, rule.scheduleEndMinute, now)
 
+    /**
+     * The same question for a rule that has not been resolved for a package yet. Used by
+     * [WholeAppCoverage], which must know whether a GROUP rule is in its schedule before any
+     * package-specific resolution happens. One schedule semantics, two input shapes.
+     */
+    fun isActiveNow(rule: BlockRuleData): Boolean = isActiveAt(rule, Calendar.getInstance())
+
+    /** Testable overload of [isActiveNow] for a [BlockRuleData]. */
+    fun isActiveAt(rule: BlockRuleData, now: Calendar): Boolean =
+        isScheduledAt(rule.scheduleDays, rule.scheduleStartMinute, rule.scheduleEndMinute, now)
+
+    private fun isScheduledAt(
+        days: List<Int>?,
+        startMinute: Int?,
+        endMinute: Int?,
+        now: Calendar
+    ): Boolean {
         // No schedule configured -- always active
         if (days == null && startMinute == null && endMinute == null) return true
 

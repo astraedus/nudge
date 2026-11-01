@@ -48,11 +48,17 @@ class RuleEvaluator @Inject constructor() {
     }
 
     /**
-     * Build a human-readable label describing what a rule does.
+     * Build a human-readable label describing what a rule does. The block overlay shows it as
+     * "Rule: <name>".
      * Examples: "Reels - Delay", "Hard Block (30 min/day)", "Shorts - Breathing (scheduled)",
      * "Daily limit (30 min/day)" for a NONE rule that only caps usage.
+     *
+     * A GROUP rule is named after its group instead of its mode: "Social", "Social (scheduled)",
+     * "Social (30 min/day)". The user made "Social"; an overlay over Instagram that says "Delay"
+     * reads as a rule on Instagram itself, which they never wrote. A group rule whose group name did
+     * not reach it (no group row) is [GROUP_FALLBACK_NAME], never a mode name, for the same reason.
      */
-    private fun buildRuleName(rule: BlockRuleData): String {
+    internal fun buildRuleName(rule: BlockRuleData): String {
         val parts = mutableListOf<String>()
 
         // Feature prefix (e.g. "Reels", "Reels, Shorts")
@@ -72,7 +78,11 @@ class RuleEvaluator @Inject constructor() {
             BlockMode.HOLD -> "Hold"
             BlockMode.BREATHING -> "Breathing"
         }
-        parts += modeName
+        parts += if (rule.groupId != null) {
+            rule.groupName?.takeIf { it.isNotBlank() } ?: GROUP_FALLBACK_NAME
+        } else {
+            modeName
+        }
 
         // Qualifiers
         val qualifiers = mutableListOf<String>()
@@ -89,5 +99,10 @@ class RuleEvaluator @Inject constructor() {
         } else {
             label
         }
+    }
+
+    companion object {
+        /** The label of a group rule whose group name is unknown. */
+        const val GROUP_FALLBACK_NAME = "Group"
     }
 }
