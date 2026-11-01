@@ -53,9 +53,13 @@ for the orchestrator to merge. Found and fixed after the first build:
   null before the first emission, so a grouped Chrome opened freely just after process start. Coverage
   now goes through `EvaluateBlockUseCase.isCoveredWhole`, which reads `RuleSnapshots.current()` (the
   direct-read fallback), and the service's synchronous check fails closed (`?: return true`).
-- **First group "vanished" on Manage Apps** (device QA): LazyColumn key anchoring kept "Block several
-  apps" at the top, so the new group was inserted above the viewport. A newly added group now scrolls
-  into view (`newlyAddedGroupId`).
+- **Groups hidden on entry to Manage Apps** (device QA, n=4, from Home and after a save): LazyColumn
+  key anchoring kept "Block several apps" as the first visible row, and the groups, arriving after the
+  first frame, were inserted above it and so above the viewport. Everything above the apps is now one
+  stable first row (`ManageAppsRow.Top`), the list waits for the first state with the groups, and a
+  newly saved group scrolls back to the top (`newlyAddedGroupId`).
+- **Unsaved edits dropped silently** when leaving the group editor: "Discard changes?" when the draft
+  differs from what the editor opened with (`GroupEditorState.isDirty`).
 - **"Hard Block" clipped off-centre** in the compact mode picker: one-word `blockModeShortLabel`.
 
 Known, pre-existing, out of scope (coordinator: leave it, name it in the PR): the mid-session budget
