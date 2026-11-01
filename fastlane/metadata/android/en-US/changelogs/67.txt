@@ -1,0 +1,3 @@
+• A finished wait now opens the app you waited for. On some phones it could drop you on the home screen and make you wait again.
+• The content filter no longer blocks places like Milford or words like XXXL that only contain a filtered word.
+• Debug logs from release builds now carry readable labels, which makes bug reports easier to read.
