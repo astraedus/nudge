@@ -98,7 +98,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         fun strictModeEscapeManager(): StrictModeEscapeManager
         fun emergencyPassManager(): EmergencyPassManager
         fun blockLaunchGuard(): BlockLaunchGuard
-        fun nukeSafetyFloor(): NukeSafetyFloor
+        fun essentialApps(): EssentialApps
     }
 
     /**
@@ -1350,7 +1350,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         serviceScope.launch {
             entryPoint.nudgePreferences().nukeState.collect { state ->
                 val enforced = if (state.active) {
-                    NukePolicy.enforceable(state.packages, entryPoint.nukeSafetyFloor().deviceFloor())
+                    NukePolicy.enforceable(state.packages, entryPoint.essentialApps().packages())
                 } else {
                     emptySet()
                 }

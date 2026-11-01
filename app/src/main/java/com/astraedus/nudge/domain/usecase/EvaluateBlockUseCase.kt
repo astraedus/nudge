@@ -3,6 +3,8 @@ package com.astraedus.nudge.domain.usecase
 import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.data.repository.BlockRuleRepository
 import com.astraedus.nudge.data.repository.ContentFilter
+import com.astraedus.nudge.data.repository.RepositoryRuleSnapshots
+import com.astraedus.nudge.data.repository.RuleSnapshots
 import com.astraedus.nudge.data.repository.UsageRepository
 import com.astraedus.nudge.domain.ContentFilterAllowlist
 import com.astraedus.nudge.domain.ContentFilterBlocklist
@@ -13,8 +15,6 @@ import com.astraedus.nudge.domain.engine.ScheduleEvaluator
 import com.astraedus.nudge.domain.model.ActiveRule
 import com.astraedus.nudge.domain.model.BlockDecision
 import com.astraedus.nudge.domain.model.BlockMode
-import com.astraedus.nudge.domain.model.BlockRuleData
-import com.astraedus.nudge.domain.model.GroupMembership
 import com.astraedus.nudge.domain.model.WebBlockMode
 import com.astraedus.nudge.domain.nuke.NukeEnforcement
 import kotlinx.coroutines.Dispatchers
@@ -23,7 +23,11 @@ import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 class EvaluateBlockUseCase @Inject constructor(
-    private val blockRuleRepository: BlockRuleRepository,
+    /**
+     * The rule tables. Production injects the `@Singleton` `RuleSnapshotSource`, so once it is warm
+     * an evaluation reads no database at all (spec 5.7); see that class for the cold start.
+     */
+    private val ruleSnapshots: RuleSnapshots,
     private val usageRepository: UsageRepository,
     private val blockEngine: BlockEngine,
     private val ruleEvaluator: RuleEvaluator,
@@ -36,6 +40,31 @@ class EvaluateBlockUseCase @Inject constructor(
      */
     private val nukeEnforcement: NukeEnforcement
 ) {
+
+    /**
+     * A use case that reads [blockRuleRepository] on every call, exactly as evaluation did before
+     * the snapshot. For hand-built instances (the use-case tests); it is not a no-op, only uncached:
+     * same rows, same mapping, same decisions, one query per table per evaluation.
+     */
+    constructor(
+        blockRuleRepository: BlockRuleRepository,
+        usageRepository: UsageRepository,
+        blockEngine: BlockEngine,
+        ruleEvaluator: RuleEvaluator,
+        scheduleEvaluator: ScheduleEvaluator,
+        preferences: NudgePreferences,
+        contentFilter: ContentFilter,
+        nukeEnforcement: NukeEnforcement
+    ) : this(
+        ruleSnapshots = RepositoryRuleSnapshots(blockRuleRepository),
+        usageRepository = usageRepository,
+        blockEngine = blockEngine,
+        ruleEvaluator = ruleEvaluator,
+        scheduleEvaluator = scheduleEvaluator,
+        preferences = preferences,
+        contentFilter = contentFilter,
+        nukeEnforcement = nukeEnforcement
+    )
 
     /**
      * Evaluate whether a package should be blocked right now.
@@ -81,45 +110,13 @@ class EvaluateBlockUseCase @Inject constructor(
      * Every rule that applies to [packageName] right now, as [ActiveRule]s, schedules NOT yet
      * applied (the engine applies those).
      *
-     * Extracted because a second caller appeared ([isFollowingSteerEnabled]) and this is the entire
-     * entity-to-domain mapping: a copy of it in that caller would be ~25 lines that silently stop
-     * agreeing the next time a column is added, which is exactly what happened to the four
-     * hand-written `when` blocks that `FeatureMode.toBlockMode` now replaces.
+     * Shared by [invoke] and [isFollowingSteerEnabled]. The entity-to-domain mapping it used to do
+     * inline now happens once per table change, in `RuleSnapshot.of` (`BlockRule.toRuleData`), so
+     * this is in-memory filtering over a handful of rules.
      */
     private suspend fun resolveActiveRules(packageName: String): List<ActiveRule> {
-        val allRules = blockRuleRepository.getEnabledRules().first()
-        val allGroups = blockRuleRepository.getAllGroups().first()
-
-        val ruleDataList = allRules.map { rule ->
-            BlockRuleData(
-                id = rule.id,
-                packageName = rule.packageName,
-                groupId = rule.groupId,
-                mode = try { BlockMode.valueOf(rule.mode) } catch (_: Exception) { BlockMode.HARD_BLOCK },
-                delaySeconds = rule.delaySeconds,
-                dailyLimitMinutes = rule.dailyLimitMinutes,
-                enabled = rule.enabled,
-                scheduleDays = rule.scheduleDays?.split(",")?.mapNotNull { it.trim().toIntOrNull() },
-                scheduleStartMinute = rule.scheduleStartMinute,
-                scheduleEndMinute = rule.scheduleEndMinute,
-                inAppFeatures = rule.inAppFeatures?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() },
-                grayscale = rule.grayscale,
-                webDomains = rule.webDomains,
-                tabVanish = rule.tabVanish,
-                followingSteer = rule.followingSteer,
-                keepPassOnShortTrips = rule.keepPassOnShortTrips
-            )
-        }
-
-        val memberships = mutableListOf<GroupMembership>()
-        for (group in allGroups) {
-            val members = blockRuleRepository.getGroupMembers(group.id).first()
-            for (member in members) {
-                memberships.add(GroupMembership(groupId = member.groupId, packageName = member.packageName))
-            }
-        }
-
-        return ruleEvaluator.resolveRulesForPackage(packageName, ruleDataList, memberships)
+        val snapshot = ruleSnapshots.current()
+        return ruleEvaluator.resolveRulesForPackage(packageName, snapshot.ruleData, snapshot.memberships)
     }
 
     /**
@@ -153,7 +150,7 @@ class EvaluateBlockUseCase @Inject constructor(
      * @return BlockDecision and the matching rule's associated packageName (for usage tracking)
      */
     suspend fun evaluateWebDomain(urlBarText: String): WebDomainBlockResult {
-        val allRules = blockRuleRepository.getEnabledRules().first()
+        val allRules = ruleSnapshots.enabledRules()
 
         // Find rules with webDomains that match the detected URL AND actually enforce something.
         val matchingRules = allRules.mapNotNull { rule ->

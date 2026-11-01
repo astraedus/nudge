@@ -19,6 +19,7 @@ import com.astraedus.nudge.domain.engine.TimeTracker
 import com.astraedus.nudge.domain.lock.ChallengeState
 import com.astraedus.nudge.domain.nuke.NukePolicy
 import com.astraedus.nudge.domain.nuke.NukeState
+import com.astraedus.nudge.service.EssentialApps
 import com.astraedus.nudge.ui.nuke.NukeGate
 import com.astraedus.nudge.ui.nuke.NukeUnlockState
 import com.astraedus.nudge.ui.lock.StrictModeGate
@@ -91,17 +92,17 @@ data class HomeUiState(
 data class NukeSummary(
     val active: Boolean = false,
     val hasKey: Boolean = false,
-    /** Listed apps with the static safety floor removed (the device floor is the Nuke screen's). */
+    /** Apps Nuke actually blocks: [NukePolicy.nukedCount], the same number the Nuke screen shows. */
     val appCount: Int = 0
 ) {
     /** Never set up at all: no key and no list. The card then invites setup instead of a state. */
     val needsSetup: Boolean get() = !hasKey && appCount == 0
 
     companion object {
-        fun from(state: NukeState) = NukeSummary(
+        fun from(state: NukeState, essentials: Set<String>) = NukeSummary(
             active = state.active,
             hasKey = state.hasKey,
-            appCount = NukePolicy.enforceable(state.packages, emptySet()).size
+            appCount = NukePolicy.nukedCount(state, essentials)
         )
     }
 }
@@ -118,6 +119,7 @@ class HomeViewModel @Inject constructor(
     private val homeChartsBuilder: HomeChartsBuilder,
     private val installedAppsRepository: InstalledAppsRepository,
     private val insightsCalculator: InsightsCalculator,
+    private val essentialApps: EssentialApps,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) : ViewModel() {
 
@@ -138,9 +140,15 @@ class HomeViewModel @Inject constructor(
      * The dashboard's Nuke card. Its OWN flow rather than a field on [uiState]: the card changes
      * when Nuke does, and folding it into the clock-driven combine would re-render the whole
      * dashboard state on every Nuke write and vice versa.
+     *
+     * Counted against the same [EssentialApps] set the Nuke screen uses, so an essential app still
+     * stored on the list (Messages, say, listed before it became essential) is left out of BOTH
+     * counts, never just one.
      */
-    val nukeSummary: StateFlow<NukeSummary> = nudgePreferences.nukeState
-        .map { NukeSummary.from(it) }
+    val nukeSummary: StateFlow<NukeSummary> = combine(
+        nudgePreferences.nukeState,
+        flow { emit(essentialApps.packages()) }.flowOn(ioDispatcher)
+    ) { state, essentials -> NukeSummary.from(state, essentials) }
         .distinctUntilChanged()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), NukeSummary())
 
