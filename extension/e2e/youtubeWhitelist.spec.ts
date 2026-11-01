@@ -147,17 +147,17 @@ test.describe('YouTube Hard Block with a channel whitelist', () => {
     ).toBeVisible();
   });
 
-  test('once the daily budget is spent, even an allowed channel is blocked', async ({
+  test('once the daily budget is spent, an allowed channel still plays and the rest is blocked', async ({
     context,
     extensionId,
     serviceWorker,
     setSettings,
     seedUsage,
   }) => {
-    // The documented ruling, and the one that is inverted if it is got wrong: a daily
-    // limit budgets HOW MUCH of the site, a channel list restricts WHAT. If the allow-rules
-    // survived an exhausted budget, "an hour of YouTube a day" would be unlimited for the
-    // channels the user likes and would only ever bite the content they asked for less of.
+    // Anti, 2026-11-01: "if I'm watching a video by someone I've whitelisted, I shouldn't get
+    // the daily limit reached block page." The whitelist survives the limit; the limit
+    // budgets everything else, so the home feed goes to the block page and a video from a
+    // channel off the list is held in-page with the limit's own words.
     const settings = baseSettings({
       rules: [
         platformRule(
@@ -173,8 +173,7 @@ test.describe('YouTube Hard Block with a channel whitelist', () => {
       ],
     });
 
-    // Under budget first: the allowed channel plays, so the block below is demonstrably
-    // the budget and not the rule being broken all along.
+    // Under budget first: the allowed channel plays.
     await seedUsage('youtube.com', 60);
     await setSettings(settings, { ms: { 'youtube.com': 60_000 } });
     const open = await context.newPage();
@@ -195,11 +194,21 @@ test.describe('YouTube Hard Block with a channel whitelist', () => {
       expectedRuleCount(settings, { ms: { 'youtube.com': 10 * 60 * 1_000 } }),
     );
 
-    const spent = await context.newPage();
-    await spent.goto(watchUrl('abc123', ALLOWED, 'Allowed Channel'));
+    const allowed = await context.newPage();
+    await allowed.goto(watchUrl('abc123', ALLOWED, 'Allowed Channel'));
+    await expectStaysOpen(allowed, /watch\?v=abc123/);
+    await expect(allowed.locator('#player')).toBeVisible();
 
-    await expect(spent).toHaveURL(/blocked\.html\?target=/);
-    await expect(spent.getByText('Daily limit reached')).toBeVisible();
+    const home = await context.newPage();
+    await home.goto('https://www.youtube.com/');
+    await expect(home).toHaveURL(/blocked\.html\?target=/);
+    await expect(home.getByText('Daily limit reached')).toBeVisible();
+
+    const other = await context.newPage();
+    await other.goto(watchUrl('def456', OTHER, 'Some Other Channel'));
+    await expect(other.getByText("You're out of YouTube for today")).toBeVisible({
+      timeout: 15_000,
+    });
   });
 });
 

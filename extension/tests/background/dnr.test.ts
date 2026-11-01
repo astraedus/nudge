@@ -362,11 +362,12 @@ describe('YouTube channel whitelist', () => {
     expect(rules.every((rule) => rule.action.type !== 'allow')).toBe(true);
   });
 
-  it('plays an allowed channel under budget and blocks it once the budget is spent', () => {
-    // A daily limit and a channel list answer DIFFERENT questions: the limit budgets HOW
-    // MUCH of the site, the list restricts WHAT. Left carved out, "1 hour of YouTube a day"
-    // would be UNLIMITED for every allowed channel and the limit would only ever bite the
-    // content the user already asked for less of — exactly inverted.
+  it('keeps an allowed channel open after the budget is spent, and blocks the rest', () => {
+    // Anti, 2026-11-01: "if I'm watching a video by someone I've whitelisted, I shouldn't get
+    // the daily limit reached block page." The whitelist names what is always worth it; the
+    // limit budgets everything ELSE, and the whitelisted channels' minutes are not counted
+    // against it (background/tracker.ts). Home, search and Shorts stay blocked; a watch page
+    // is carved and the in-page gate decides whose video it is.
     const limited = settings({
       rules: [
         siteRule({
@@ -385,15 +386,36 @@ describe('YouTube channel whitelist', () => {
     expect(resolve(underBudget, 'https://www.youtube.com/@veritasium')).toBe('untouched');
 
     const spent = compileRules(limited, usage({ 'youtube.com': 60 * 60_000 }), MIDDAY);
-    expect(resolve(spent, 'https://www.youtube.com/watch?v=abc')).toBe('block-page');
-    expect(resolve(spent, 'https://www.youtube.com/@veritasium')).toBe('block-page');
+    expect(resolve(spent, 'https://www.youtube.com/watch?v=abc')).toBe('allowed');
+    expect(resolve(spent, 'https://www.youtube.com/@veritasium')).toBe('allowed');
     expect(resolve(spent, 'https://www.youtube.com/')).toBe('block-page');
+    expect(resolve(spent, 'https://www.youtube.com/results?search_query=a')).toBe('block-page');
+    expect(resolve(spent, 'https://www.youtube.com/shorts/abc')).toBe('block-page');
+    expect(resolve(spent, 'https://www.youtube.com/@other')).toBe('block-page');
+  });
+
+  it('withdraws every carve-out after the budget for a BLACKLIST', () => {
+    // Only a whitelist survives the limit: a blacklist names what to keep OUT and has no
+    // channels to keep open.
+    const limited = settings({
+      rules: [
+        siteRule({
+          domain: 'youtube.com',
+          mode: 'ALLOW',
+          dailyLimitMinutes: 60,
+          features: featuresWith('youtube', {
+            youtube: { channelMode: 'BLACKLIST', channels: [veritasium] },
+          }),
+        }),
+      ],
+    });
+    const spent = compileRules(limited, usage({ 'youtube.com': 60 * 60_000 }), MIDDAY);
+    expect(resolve(spent, 'https://www.youtube.com/watch?v=abc')).toBe('block-page');
+    expect(resolve(spent, 'https://www.youtube.com/@other')).toBe('block-page');
   });
 
   it('still carves out an allowed channel when the site is blocked by MODE, not by a limit', () => {
-    // The negative of the case above: a spent budget is the only reason to withdraw the
-    // carve-out. "Block YouTube, except these channels" must keep working — it is the
-    // headline feature.
+    // "Block YouTube, except these channels" must keep working: it is the headline feature.
     const rules = compileRules(
       whitelisted([veritasium]),
       usage({ 'youtube.com': 60 * 60_000 }),

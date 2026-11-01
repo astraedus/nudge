@@ -17,12 +17,15 @@
  *  - CHANNEL (a non-empty effective whitelist): `/watch` and friends wholesale (each video
  *    is then gated per channel in the page, see `core/channels.decideWatchGate`), each
  *    listed channel's own pages, and `/playlist` (its rows are channel-filtered in the page).
+ *    Since 2026-11-01 an explicit WHITELIST also survives an exhausted daily limit, and time
+ *    on a whitelisted channel's video is not counted against it (`limitSparesWhitelist`).
  *  - VERIFY: legacy `/c/<name>` and `/user/<name>` channel URLs. Their name is NOT the
  *    channel's handle (`/c/kurzgesagt` is a 404 while `/user/Kurzgesagt` is the channel), so
  *    the URL alone cannot say whose page it is. They are opened at the network layer and the
  *    content script checks the page's own canonical channel id before letting it stay.
  */
 
+import { isChannelListed, type ChannelProbe } from './channels';
 import { extractDomain, hostMatchesRuleDomain, normalizeToBaseDomain } from './domainMatcher';
 import type { ChannelEntry, ChannelListMode, SiteRule, YoutubeFeatureSettings } from './settingsSchema';
 import { exactHostRegexFilter, escapeForRegex, gateRegexFilter, urlMatchesFilter } from './urlFilters';
@@ -177,6 +180,16 @@ export interface YoutubeRuleState {
 
 const NO_FILTERS: YoutubeAllowFilters = { channel: [], verify: [], creator: [] };
 
+/**
+ * Whether an exhausted daily limit leaves the channel list's carve-out standing.
+ *
+ * Only for a list the user set to WHITELIST themselves. See `youtubeAllowFilters` for why,
+ * and for why creator mode's implicit whitelist-of-one is excluded.
+ */
+export function limitSparesWhitelist(youtube: YoutubeFeatureSettings): boolean {
+  return youtube.channelMode === 'WHITELIST';
+}
+
 /** Studio plus the creator routes, for the rule on `domain`. */
 export function creatorFilters(domain: string): string[] {
   const base = normalizeToBaseDomain(domain);
@@ -193,13 +206,25 @@ export function creatorFilters(domain: string): string[] {
  * out of, and an allow-rule there would only outrank a gate redirect it has no business
  * outranking.
  *
- * A spent DAILY LIMIT drops the channel carve-out but keeps the creator one. A limit budgets
- * HOW MUCH of the site, a channel list restricts WHAT, so once the budget is spent there is
- * no allowance left for a whitelist to carve out of (otherwise "1 hour of YouTube a day"
- * would be unlimited for every allowed channel). Studio is different in kind: it is the
- * user's work, its time is not counted against the limit, and locking someone out of
- * managing their own channel because they watched an hour of videos is exactly the outcome
- * they turned creator mode on to prevent.
+ * A spent DAILY LIMIT keeps both carve-outs, as long as the list is an explicit WHITELIST
+ * (`limitSparesWhitelist`). The limit budgets everything ELSE on YouTube: the home feed,
+ * search, Shorts and every channel the user did not pick close, and the channels they did
+ * pick stay watchable (Anti's call, 2026-11-01: "if I'm watching a video by someone I've
+ * whitelisted, I shouldn't get the 'Daily limit reached' block page"). The old rule dropped
+ * the channel carve-out here, reasoning that a limit budgets HOW MUCH and a list restricts
+ * WHAT; in practice that meant a whitelist under a daily limit did nothing at all (under
+ * budget everything is open, over budget everything closed). Time on a whitelisted video is
+ * not counted either (`isWhitelistedVideoUrl`, read by the tracker), so the budget measures
+ * exactly the content the user asked for less of.
+ *
+ * Studio survives the limit for its own reason: it is the user's work, its time is not
+ * counted, and locking someone out of managing their channel because they watched an hour
+ * of videos is exactly the outcome they turned creator mode on to prevent.
+ *
+ * An IMPLICIT whitelist (creator mode's own channel standing in for a list that is OFF or a
+ * BLACKLIST, see `effectiveChannelLists`) does NOT survive the limit: the user never picked
+ * channels to keep, only said "except my channel" about a blocked site, and watching your
+ * own videos is still watching YouTube.
  */
 export function youtubeAllowFilters(
   domain: string,
@@ -212,7 +237,9 @@ export function youtubeAllowFilters(
   const creator = youtube.creatorMode ? creatorFilters(base) : [];
   const lists = effectiveChannelLists(youtube, state.siteApplies);
   const whitelistOpen =
-    lists.channelMode === 'WHITELIST' && lists.channels.length > 0 && !state.limitReached;
+    lists.channelMode === 'WHITELIST' &&
+    lists.channels.length > 0 &&
+    (!state.limitReached || limitSparesWhitelist(youtube));
 
   return {
     channel: whitelistOpen
@@ -284,4 +311,118 @@ export function isCreatorExemptUrl(rules: readonly SiteRule[], url: string): boo
     if (creatorFilters(rule.domain).some((filter) => urlMatchesFilter(url, filter))) return true;
   }
   return false;
+}
+
+/** A plausible video id. Real ones are 11 characters; the bound only keeps junk out of storage. */
+const VIDEO_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
+/**
+ * The video a watch page (`/watch?v=<id>` or `/live/<id>`) plays, or null for any other page.
+ *
+ * Deliberately narrower than the content script's `videoIdFromUrl`: a Short is NOT a watch
+ * page. Shorts sit behind their own gate, which stays closed after the limit, and their time
+ * is always counted.
+ */
+export function watchPageVideoId(url: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  if (parsed.pathname === '/watch' || parsed.pathname === '/watch/') {
+    const id = parsed.searchParams.get('v');
+    return id !== null && VIDEO_ID.test(id) ? id : null;
+  }
+  return /^\/live\/([A-Za-z0-9_-]{1,64})\/?$/.exec(parsed.pathname)?.[1] ?? null;
+}
+
+/**
+ * Who uploaded a video, as far as the worker has been TOLD: the YouTube content script
+ * reports a watch page's channel once its detection is confirmed (`VIDEO_CHANNEL`). Null
+ * when nobody has reported this video yet.
+ */
+export type ChannelForVideo = (videoId: string) => ChannelProbe | null;
+
+/** The enabled YouTube rules that cover `url`'s host, with their feature settings. */
+function youtubeRulesFor(
+  rules: readonly SiteRule[],
+  url: string,
+): { rule: SiteRule; youtube: YoutubeFeatureSettings }[] {
+  const host = extractDomain(url);
+  if (host === null) return [];
+  const covering: { rule: SiteRule; youtube: YoutubeFeatureSettings }[] = [];
+  for (const rule of rules) {
+    const youtube = rule.features?.youtube;
+    if (!rule.enabled || youtube === undefined) continue;
+    if (!hostMatchesRuleDomain(host, normalizeToBaseDomain(rule.domain))) continue;
+    covering.push({ rule, youtube });
+  }
+  return covering;
+}
+
+/**
+ * True when `url` is a watch page playing a video by a channel on an explicit WHITELIST.
+ *
+ * Read by the tracker (such time is not counted against the YouTube limit) and by a limit
+ * crossing (such a tab is not pushed to the block page). FAILS TOWARD COUNTING: a video whose
+ * channel has not been reported yet, or was reported with no identifier, is not exempt, so a
+ * detection that rots costs the user budget rather than silently making YouTube unlimited.
+ *
+ * The answer is re-derived from the CURRENT settings on every call, never cached: the report
+ * is a fact about the video ("uploaded by X"), and whether X is still on the list is a
+ * question about today's settings. Removing a channel takes effect on the next interval.
+ */
+export function isWhitelistedVideoUrl(
+  rules: readonly SiteRule[],
+  url: string,
+  channelForVideo: ChannelForVideo,
+): boolean {
+  const videoId = watchPageVideoId(url);
+  if (videoId === null) return false;
+  const covering = youtubeRulesFor(rules, url).filter(({ youtube }) =>
+    limitSparesWhitelist(youtube),
+  );
+  if (covering.length === 0) return false;
+  const probe = channelForVideo(videoId);
+  if (probe === null) return false;
+  return covering.some(({ youtube }) =>
+    isChannelListed(effectiveChannelLists(youtube, true).channels, probe),
+  );
+}
+
+/**
+ * Whether an open tab on `url` stays where it is when the YouTube daily limit is crossed.
+ *
+ * Exactly the pages DNR keeps open past a spent limit, minus anything the page itself would
+ * still have to decide:
+ *  - creator-mode pages (Studio and the routes into it);
+ *  - a watch page playing a whitelisted channel's video (`isWhitelistedVideoUrl`). A watch
+ *    page whose channel is unknown or not listed IS pushed to the block page, the fail-safe
+ *    direction: the in-page gate would only hold it there anyway;
+ *  - a whitelisted channel's own pages and playlists, which the content script filters.
+ * Legacy `/c/` and `/user/` pages are pushed, because only a fresh load can verify them.
+ */
+export function survivesLimitCrossing(
+  rules: readonly SiteRule[],
+  url: string,
+  channelForVideo: ChannelForVideo,
+): boolean {
+  if (isCreatorExemptUrl(rules, url)) return true;
+  if (isWatchPage(url)) return isWhitelistedVideoUrl(rules, url, channelForVideo);
+  return youtubeRulesFor(rules, url).some(({ rule, youtube }) =>
+    youtubeAllowFilters(rule.domain, youtube, { siteApplies: true, limitReached: true }).channel.some(
+      (filter) => urlMatchesFilter(url, filter),
+    ),
+  );
+}
+
+/** Any watch-shaped page, with or without a usable video id. */
+function isWatchPage(url: string): boolean {
+  try {
+    const { pathname } = new URL(url);
+    return pathname === '/watch' || pathname === '/watch/' || pathname.startsWith('/live/');
+  } catch {
+    return false;
+  }
 }

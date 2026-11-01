@@ -395,21 +395,28 @@ describe('in-SPA navigation is held to what a full load would allow (F4, F6, A13
     expect(leftFor).toEqual([]);
   });
 
-  it('closes the whitelist once the daily limit is spent: even a listed channel is refused', async () => {
-    // A limit budgets how MUCH YouTube; once it is spent there is nothing left to carve the
-    // listed channels out of, which is what the network layer does too (no allow rules).
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    await startOn(
-      '/@veritasium/videos',
-      channelPageHtml(LISTED_HANDLE),
-      blockedSiteConfig({ siteMode: 'ALLOW', siteLimitReached: true }),
-    );
+  it('keeps the whitelist open once the daily limit is spent (Anti, 2026-11-01)', async () => {
+    // The listed channels stay watchable past the limit, the same carve-out the network
+    // layer keeps; the limit budgets everything else. A video page is carved too, and the
+    // per-video gate decides whose it is.
+    const spent = blockedSiteConfig({ siteMode: 'ALLOW', siteLimitReached: true });
+    await startOn('/@veritasium/videos', channelPageHtml(LISTED_HANDLE), spent);
 
     spaHop(`/watch?v=${VIDEO}`);
     await settleConfig();
+    vi.advanceTimersByTime(1_000);
 
-    expect(leftFor).toEqual([`${ORIGIN}/watch?v=${VIDEO}`]);
-    warn.mockRestore();
+    expect(leftFor).toEqual([]);
+  });
+
+  it('still hands the home feed to the network layer once the daily limit is spent', async () => {
+    const spent = blockedSiteConfig({ siteMode: 'ALLOW', siteLimitReached: true });
+    await startOn('/@veritasium/videos', channelPageHtml(LISTED_HANDLE), spent);
+
+    spaHop('/');
+    await settleConfig();
+
+    expect(leftFor).toEqual([`${ORIGIN}/`]);
   });
 
   it('never reloads a FULL page load the network layer let through (that could loop)', async () => {

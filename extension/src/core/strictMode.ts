@@ -248,8 +248,15 @@ function isYoutubeFeatureWeakened(
     }
   }
   if (newYt.channelMode === 'WHITELIST') {
+    // Judged against what the OLD config actually allowed: a list that was off or a
+    // blacklist allowed none of its entries, so switching it INTO a whitelist adds every
+    // entry at once, the same as typing them in one by one (which this already gates). It
+    // matters more since 2026-11-01, when a whitelist's channels started staying open past
+    // the daily limit (`core/youtubeAccess.limitSparesWhitelist`). Turning on an EMPTY
+    // whitelist stays free.
+    const previouslyAllowed = oldYt.channelMode === 'WHITELIST' ? oldYt.channels : [];
     for (const entry of newYt.channels) {
-      if (!hasChannel(oldYt.channels, entry)) return true; // allowed something new
+      if (!hasChannel(previouslyAllowed, entry)) return true; // allowed something new
     }
   }
   return false;

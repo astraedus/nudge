@@ -6,6 +6,18 @@ independently-numbered products in one file invites the reader to match a `v1.17
 release against a `0.2.0` extension release and conclude something about both; the tag
 namespaces were already split for exactly that reason.
 
+## Unreleased
+
+### Changed
+
+- **Channels you allowed stay watchable after the daily YouTube limit.** With "Only these
+  channels" on, a video from one of your channels no longer hits the "Daily limit reached"
+  page, and the time you spend on it no longer uses up the limit. The limit now covers
+  everything else: the home feed, search, Shorts and other channels stay blocked once it is
+  spent, and a video from a channel off your list says your limit is used up until midnight.
+  Under Strict Mode, switching an existing channel list to "Only these channels" now needs
+  the unlock, because it allows every channel on it at once.
+
 ## 0.4.1 — 2026-10-23
 
 ### Added

@@ -32,7 +32,7 @@ import * as pass from '../core/emergencyPass';
 // the worker resolves the popup's copy while the dashboard renders its own from settings,
 // so a second string builder here would eventually describe the same rule two ways.
 import { featureSummary } from '../core/featureSummary';
-import { STUDIO_HOST_PREFIX } from '../core/youtubeAccess';
+import { STUDIO_HOST_PREFIX, watchPageVideoId } from '../core/youtubeAccess';
 import {
   DEFAULT_DELAY_SUBTITLES,
   DEFAULT_DELAY_TITLES,
@@ -75,6 +75,7 @@ import { allTimeTotals, lastNDayKeys, totalActiveSeconds } from '../core/stats';
 import * as strict from '../core/strictMode';
 import { surfaceKey } from '../core/surfaceKeys';
 import { handleItemViewed } from './itemCounter';
+import { recordVideoChannel } from './videoChannels';
 import type { ActiveRule, BlockDecision, SiteMode } from '../core/types';
 import { ensureScheduleAlarm } from './alarmsHub';
 import { applyRules } from './dnr';
@@ -612,6 +613,23 @@ async function setGrayscale(
  * tests/core/channels.test.ts. Keeping the gate also means the failure mode, if that ever
  * stopped being true, is a refused save — a no-op — rather than a hole in the lock.
  */
+/**
+ * Store which channel a watch page's video is by, for the tracker's whitelist exemption.
+ * Only the video id is derived here, from the URL the page reported: a URL that is not a
+ * watch page (a Short, a channel page) stores nothing, so it stays counted.
+ */
+async function handleVideoChannel(
+  url: string,
+  channelId: string | null,
+  handle: string | null,
+  now: Date,
+): Promise<{ ok: boolean; stored: boolean }> {
+  const videoId = watchPageVideoId(url);
+  if (videoId === null) return { ok: false, stored: false };
+  const stored = await recordVideoChannel(videoId, { channelId, handle }, now.getTime());
+  return { ok: true, stored };
+}
+
 async function handleChannelObserved(
   observation: ChannelObservation,
   now: Date,
@@ -742,6 +760,8 @@ export async function handleRequest(
         },
         now,
       );
+    case 'VIDEO_CHANNEL':
+      return handleVideoChannel(request.url, request.channelId, request.handle, now);
     case 'CLOSE_TAB':
       return closeSenderTab(sender);
     default:
