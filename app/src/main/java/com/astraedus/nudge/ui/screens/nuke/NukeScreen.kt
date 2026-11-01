@@ -157,7 +157,7 @@ fun NukeScreen(
 
             item {
                 Text(
-                    "Your launcher, phone, keyboard and Settings are never on this list.",
+                    "Your phone, messages, clock, launcher, keyboard and Settings are never on this list.",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

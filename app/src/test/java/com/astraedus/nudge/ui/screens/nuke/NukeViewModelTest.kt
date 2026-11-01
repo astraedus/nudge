@@ -6,7 +6,7 @@ import com.astraedus.nudge.data.repository.InstalledAppsRepository
 import com.astraedus.nudge.domain.nuke.NukeKey
 import com.astraedus.nudge.domain.nuke.NukeKeyKind
 import com.astraedus.nudge.domain.nuke.NukeState
-import com.astraedus.nudge.service.NukeSafetyFloor
+import com.astraedus.nudge.service.EssentialApps
 import com.astraedus.nudge.ui.nuke.NukeGate
 import io.mockk.coEvery
 import io.mockk.every
@@ -77,8 +77,8 @@ class NukeViewModelTest {
             InstalledAppsRepository.AppInfo("com.google.android.dialer", "Phone", null),
             InstalledAppsRepository.AppInfo("com.oem.home", "OEM Home", null)
         )
-        val floor: NukeSafetyFloor = mockk()
-        every { floor.deviceFloor(any()) } returns setOf("com.oem.home")
+        val floor: EssentialApps = mockk()
+        every { floor.packages(any()) } returns setOf("com.oem.home")
 
         vm = NukeViewModel(preferences, apps, floor, dispatcher)
     }

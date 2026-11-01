@@ -1,5 +1,6 @@
 package com.astraedus.nudge.domain.health
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -144,5 +145,23 @@ class EnabledAccessibilityServicesTest {
                 cls
             )
         )
+    }
+
+    @Test
+    fun `packages lists every enabled service's package, once, for the essentials list`() {
+        val raw = "com.google.android.marvin.talkback/com.google.android.marvin.talkback.TalkBackService:" +
+            "$pkg/.service.NudgeAccessibilityService: :com.example.reader/com.example.reader.Svc:" +
+            "com.example.reader/com.example.reader.Other:com.example.bare"
+        assertEquals(
+            setOf("com.google.android.marvin.talkback", pkg, "com.example.reader", "com.example.bare"),
+            EnabledAccessibilityServices.packages(raw)
+        )
+    }
+
+    @Test
+    fun `packages of a never-written or blank setting is empty`() {
+        assertEquals(emptySet<String>(), EnabledAccessibilityServices.packages(null))
+        assertEquals(emptySet<String>(), EnabledAccessibilityServices.packages(" "))
+        assertEquals(emptySet<String>(), EnabledAccessibilityServices.packages("::/x"))
     }
 }
