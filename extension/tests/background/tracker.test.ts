@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { accountAndSwitch, trackedGate } from '../../src/background/tracker';
+import { recordVideoChannel } from '../../src/background/videoChannels';
 import {
   loadDay,
   saveDay,
@@ -261,6 +262,75 @@ describe('creator mode: YouTube Studio is work, not watching', () => {
     await spend('https://www.youtube.com/watch?v=xyz', 2);
 
     expect(Object.keys(attention.navigatedTo).sort()).toEqual(['1', '2']);
+  });
+});
+
+describe("whitelisted channels: their videos don't spend the daily limit (Anti, 2026-11-01)", () => {
+  const VERITASIUM = { channelId: 'UCveritasium', handle: 'veritasium', displayName: 'V', addedAt: 0 };
+  const whitelistRule = (channelMode: 'WHITELIST' | 'BLACKLIST' = 'WHITELIST') =>
+    settings({
+      rules: [
+        siteRule({
+          domain: 'youtube.com',
+          mode: 'ALLOW',
+          dailyLimitMinutes: 10,
+          features: featuresWith('youtube', { youtube: { channelMode, channels: [VERITASIUM] } }),
+        }),
+      ],
+    });
+  const byVeritasium = { channelId: 'UCveritasium', handle: '@veritasium' };
+
+  it('a reported video by a whitelisted channel is not counted', async () => {
+    await seed(whitelistRule());
+    await recordVideoChannel('allowed1', byVeritasium, START);
+    await spend('https://www.youtube.com/watch?v=allowed1', 3);
+    expect((await usage('youtube.com'))?.activeSec ?? 0).toBe(0);
+  });
+
+  it('a video nobody reported IS counted (unknown channel fails toward the budget)', async () => {
+    await seed(whitelistRule());
+    await spend('https://www.youtube.com/watch?v=unknown1', 3);
+    expect((await usage('youtube.com'))?.activeSec).toBe(3 * 60);
+  });
+
+  it('a reported video by an unlisted channel IS counted', async () => {
+    await seed(whitelistRule());
+    await recordVideoChannel('other1', { channelId: 'UCother', handle: '@other' }, START);
+    await spend('https://www.youtube.com/watch?v=other1', 3);
+    expect((await usage('youtube.com'))?.activeSec).toBe(3 * 60);
+  });
+
+  it('a blacklist exempts nothing, even for a channel it names', async () => {
+    await seed(whitelistRule('BLACKLIST'));
+    await recordVideoChannel('allowed1', byVeritasium, START);
+    await spend('https://www.youtube.com/watch?v=allowed1', 3);
+    expect((await usage('youtube.com'))?.activeSec).toBe(3 * 60);
+  });
+
+  it('home and search are still counted with a whitelist', async () => {
+    await seed(whitelistRule());
+    await spend('https://www.youtube.com/', 1);
+    await spend('https://www.youtube.com/results?search_query=a', 1);
+    expect((await usage('youtube.com'))?.activeSec).toBe(2 * 60);
+  });
+
+  it("a spent limit leaves the whitelisted video's tab and channel page open, redirects the rest", async () => {
+    attention.tabs = [
+      { id: 1, url: 'https://www.youtube.com/watch?v=allowed1' },
+      { id: 2, url: 'https://www.youtube.com/watch?v=unknown1' },
+      { id: 3, url: 'https://www.youtube.com/@veritasium/videos' },
+      { id: 4, url: 'https://www.youtube.com/' },
+      { id: 5, url: 'https://www.youtube.com/shorts/abc' },
+    ];
+    await seed(whitelistRule());
+    await recordVideoChannel('allowed1', byVeritasium, START);
+    await saveDay(localDayKey(new Date(START)), {
+      'youtube.com': { ...emptyDayUsage(), activeSec: 9 * 60 },
+    });
+
+    await spend('https://www.youtube.com/watch?v=unknown1', 2);
+
+    expect(Object.keys(attention.navigatedTo).sort()).toEqual(['2', '4', '5']);
   });
 });
 

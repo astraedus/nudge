@@ -40,6 +40,7 @@ import {
   type WatchGateState,
 } from './channelFilter';
 import { createChannelObserver } from './channelObserver';
+import { createVideoChannelReporter } from './videoChannelReporter';
 import { channelKey, SETTLE_RECHECK_MS } from '../core/channelFreshness';
 import { isChannelListed, type WatchGateVerdict } from '../core/channels';
 import { BLOCK_PAGE_PATH, blockPageUrl } from '../core/blockPage';
@@ -323,10 +324,26 @@ function overlayHost(doc: Document): Element {
  * mistake at all. One generic "this channel is off your list" for all three would send
  * people to the wrong screen, and in the unknown case would accuse a channel that might
  * well be on their list.
+ *
+ * `limitReached`: the site default is holding the video because the daily YouTube limit is
+ * spent, not because YouTube is blocked outright. Since 2026-11-01 a whitelist's channels
+ * stay watchable past the limit, so a video still reaching this gate is one the limit is
+ * refusing, and the copy says so, and says when it ends.
  */
 export function channelGateCopy(
   verdict: Extract<WatchGateVerdict, { action: 'BLOCK' }>,
+  options: { limitReached?: boolean } = {},
 ): YoutubeGateCopy {
+  if (verdict.source === 'site-default' && options.limitReached === true) {
+    return {
+      title: "You're out of YouTube for today",
+      subtitle:
+        verdict.reason === 'unknown-channel'
+          ? "Your daily YouTube limit is used up, and Nudge couldn't identify this video's channel. It resets at midnight."
+          : 'Your daily YouTube limit is used up. Only the channels you picked stay open until midnight.',
+      ruleLabel: 'YouTube',
+    };
+  }
   if (verdict.source === 'site-default') {
     if (verdict.reason === 'unknown-channel') {
       return {
@@ -515,6 +532,7 @@ export function initYoutubeContentScript(
   const settleTimers: number[] = [];
   /** Reports confirmed channels to the worker; owns its own per-page-load dedupe. */
   const channelObserver = createChannelObserver();
+  const videoChannelReporter = createVideoChannelReporter();
   let lastUrl = doc.location?.href ?? '';
   let stopped = false;
   let warnedAboutMissedRedirect = false;
@@ -649,6 +667,9 @@ export function initYoutubeContentScript(
     // same CONFIRMED detection the interstitial is — never on a settling one. See
     // content/channelObserver.ts for why that rule lives there and not here.
     channelObserver.observe(doc, config, { url, previousKey: previousChannelKey, msSinceNav });
+    // Tells the worker whose video this is, so a whitelisted channel's minutes are not
+    // spent from the daily limit. Same CONFIRMED-only rule; see content/videoChannelReporter.ts.
+    videoChannelReporter.observe(doc, config, { url, previousKey: previousChannelKey, msSinceNav });
 
     if (enforcePageGate(url)) return;
 
@@ -720,7 +741,7 @@ export function initYoutubeContentScript(
         NUDGE_OVERLAY_ID,
         channelGate.mode,
         channelGate.delaySeconds,
-        channelGateCopy(channelGate),
+        channelGateCopy(channelGate, { limitReached: config.siteLimitReached }),
         {
           onComplete: () => {
             channelGateSatisfiedFor = gatedUrl;

@@ -148,11 +148,18 @@ unit-testable, exactly as the Android domain layer is.
    the one place both the DNR compiler and `decideWatchGate` read the lists from. Turning it
    ON (or changing `myChannel` while on) is a Strict-Mode weakening; OFF is free. A channel identifier containing anything outside `[A-Za-z0-9_.-]` is
    SKIPPED rather than interpolated, so a hand-edited settings blob cannot inject a pattern
-   that allows all of YouTube. **An EXHAUSTED daily limit compiles no allow-rules**: a limit
-   budgets how MUCH of the site, a channel list restricts WHAT, so once the budget is spent
-   there is no allowance left to carve out of — otherwise "1 hour of YouTube a day" would be
-   unlimited for allowed channels and the limit would only ever bite the content the user
-   asked for less of.
+   that allows all of YouTube. **An EXHAUSTED daily limit keeps an explicit WHITELIST open**
+   (Anti, 2026-11-01, reversing the earlier "no allow-rules after the limit" ruling): the
+   listed channels are always watchable, the limit budgets everything else (home, search,
+   Shorts, other channels stay blocked; their videos are held in-page with limit copy). Time
+   on a whitelisted channel's video is NOT counted (`limitSparesWhitelist`,
+   `isWhitelistedVideoUrl`): the content script reports "video V is by channel C" from a
+   CONFIRMED detection (`VIDEO_CHANNEL`, `content/videoChannelReporter.ts`), the worker keeps
+   it in `storage.session` (`background/videoChannels.ts`) and re-decides against the
+   current list; no report = counted. The limit-crossing redirect spares those tabs
+   (`survivesLimitCrossing`). Creator mode's IMPLICIT whitelist and BLACKLIST/OFF modes get
+   no such exemption. Strict Mode: switching an existing list INTO a whitelist is a
+   weakening (it allows every entry at once).
 1d. **The priority ladder**: site redirect 1 < gate redirect 2 < channel allow 3 < temp allow 4.
    Rung 4 above rung 2 is deliberate — a pause completed ON a gate surface must not bounce
    straight back into that gate's redirect. The cost is that a site-level grant also opens

@@ -7,6 +7,10 @@ import {
   WATCH_PATHS,
   effectiveChannelLists,
   isCreatorExemptUrl,
+  isWhitelistedVideoUrl,
+  limitSparesWhitelist,
+  survivesLimitCrossing,
+  watchPageVideoId,
   youtubeAllowFilters,
   youtubePageAccess,
   youtubeWhitelistPaths,
@@ -139,10 +143,28 @@ describe('youtubeAllowFilters: what the network layer lets through', () => {
     expect(filters.verify).toEqual([]);
   });
 
-  it('closes channel pages once the daily limit is spent', () => {
-    const filters = youtubeAllowFilters('youtube.com', whitelist, { siteApplies: true, limitReached: true });
-    expect(filters.channel).toEqual([]);
-    expect(filters.verify).toEqual([]);
+  it('keeps a whitelist open after the daily limit is spent (Anti, 2026-11-01)', () => {
+    const spent = youtubeAllowFilters('youtube.com', whitelist, { siteApplies: true, limitReached: true });
+    expect(spent.channel).toEqual(youtubeAllowFilters('youtube.com', whitelist, ON).channel);
+    expect(spent.channel.some((f) => f.includes('@veritasium'))).toBe(true);
+    expect(spent.verify.length).toBe(LEGACY_CHANNEL_PATHS.length);
+  });
+
+  it("does not keep creator mode's implicit whitelist open after the limit", () => {
+    // Only a list the user wrote as a whitelist earns the exemption. An OFF list with creator
+    // mode on compiles to a one-channel whitelist, but the limit still closes it; Studio and
+    // the upload routes stay open through the creator filters instead.
+    const youtube = yt({ channelMode: 'OFF', channels: [], creatorMode: true, myChannel: MINE });
+    const spent = youtubeAllowFilters('youtube.com', youtube, { siteApplies: true, limitReached: true });
+    expect(spent.channel).toEqual([]);
+    expect(spent.creator.length).toBe(CREATOR_PATHS.length + 1);
+  });
+
+  it('opens nothing after the limit for a blacklist', () => {
+    const blacklist = yt({ channelMode: 'BLACKLIST', channels: [VERITASIUM] });
+    const spent = youtubeAllowFilters('youtube.com', blacklist, { siteApplies: true, limitReached: true });
+    expect(spent.channel).toEqual([]);
+    expect(spent.verify).toEqual([]);
   });
 
   it('opens Studio and creator routes only with creator mode, even after the limit is spent', () => {
@@ -207,10 +229,16 @@ describe('youtubePageAccess: the verdict for a typed or clicked URL', () => {
     expect(youtubePageAccess({ ...base, youtube: off, url: 'https://www.youtube.com/upload' })).toBe('blocked');
   });
 
-  it('blocks channel pages after the daily limit but keeps the upload route open', () => {
+  it('keeps whitelisted channels and watch pages carved after the daily limit, the rest blocked', () => {
     const spent = { ...base, limitReached: true };
-    expect(youtubePageAccess({ ...spent, url: 'https://www.youtube.com/@veritasium' })).toBe('blocked');
-    expect(youtubePageAccess({ ...spent, url: 'https://www.youtube.com/upload' })).toBe('creator');
+    const access = (url: string) => youtubePageAccess({ ...spent, url });
+    expect(access('https://www.youtube.com/@veritasium')).toBe('carved');
+    expect(access('https://www.youtube.com/watch?v=x')).toBe('carved');
+    expect(access('https://www.youtube.com/upload')).toBe('creator');
+    expect(access('https://www.youtube.com/')).toBe('blocked');
+    expect(access('https://www.youtube.com/results?search_query=a')).toBe('blocked');
+    expect(access('https://www.youtube.com/shorts/abc')).toBe('blocked');
+    expect(access('https://www.youtube.com/@other')).toBe('blocked');
   });
 });
 
@@ -244,6 +272,134 @@ describe('isCreatorExemptUrl: time in Studio is not counted against the YouTube 
   it('does not exempt a studio.* host under a non-youtube rule', () => {
     const other = siteRule({ domain: 'example.com', features: null });
     expect(isCreatorExemptUrl([other], 'https://studio.example.com/')).toBe(false);
+  });
+});
+
+describe('limitSparesWhitelist: only a stored WHITELIST survives the limit', () => {
+  it.each([
+    ['WHITELIST', true],
+    ['BLACKLIST', false],
+    ['OFF', false],
+  ] as const)('%s -> %s', (channelMode, expected) => {
+    expect(limitSparesWhitelist(yt({ channelMode, channels: [VERITASIUM] }))).toBe(expected);
+  });
+});
+
+describe('watchPageVideoId: which URLs are a single watchable video', () => {
+  it.each([
+    ['https://www.youtube.com/watch?v=abcDEF_-123', 'abcDEF_-123'],
+    ['https://www.youtube.com/watch/?v=abc&t=10', 'abc'],
+    ['https://m.youtube.com/watch?v=abc', 'abc'],
+    ['https://www.youtube.com/live/abcDEF_-1', 'abcDEF_-1'],
+  ])('%s -> %s', (url, expected) => {
+    expect(watchPageVideoId(url)).toBe(expected);
+  });
+
+  it.each([
+    'https://www.youtube.com/shorts/abc',
+    'https://www.youtube.com/watch',
+    'https://www.youtube.com/watch?v=',
+    'https://www.youtube.com/watch?v=a%2Fb',
+    'https://www.youtube.com/watch?v=' + 'a'.repeat(65),
+    'https://www.youtube.com/@veritasium',
+    'https://www.youtube.com/',
+    'not a url',
+  ])('%s is not a watch page', (url) => {
+    expect(watchPageVideoId(url)).toBeNull();
+  });
+});
+
+describe("isWhitelistedVideoUrl: is this watch page a whitelisted channel's video", () => {
+  const whitelistRule = siteRule({
+    features: featuresWith('youtube', { youtube: { channelMode: 'WHITELIST', channels: [VERITASIUM] } }),
+  });
+  const byHandle = (id: string) => (id === 'v1' ? { channelId: null, handle: 'Veritasium' } : null);
+  const byId = (id: string) => (id === 'v1' ? { channelId: 'UCHnyfMqiRRG1u-2MsSQLbXA', handle: null } : null);
+  const byOther = (id: string) => (id === 'v1' ? { channelId: 'UCother', handle: 'other' } : null);
+  const V1 = 'https://www.youtube.com/watch?v=v1';
+
+  it('is true for a reported video by a listed channel, by handle or by id', () => {
+    expect(isWhitelistedVideoUrl([whitelistRule], V1, byHandle)).toBe(true);
+    expect(isWhitelistedVideoUrl([whitelistRule], V1, byId)).toBe(true);
+  });
+
+  it('is false for a video by an unlisted channel', () => {
+    expect(isWhitelistedVideoUrl([whitelistRule], V1, byOther)).toBe(false);
+  });
+
+  it('is false for a video nobody reported (an unknown channel is counted)', () => {
+    expect(isWhitelistedVideoUrl([whitelistRule], 'https://www.youtube.com/watch?v=v2', byId)).toBe(false);
+  });
+
+  it('re-decides against the current list: a removed channel is no longer exempt', () => {
+    const emptied = siteRule({
+      features: featuresWith('youtube', { youtube: { channelMode: 'WHITELIST', channels: [] } }),
+    });
+    expect(isWhitelistedVideoUrl([emptied], V1, byId)).toBe(false);
+  });
+
+  it('is false for a blacklist or an OFF list, even one naming the channel', () => {
+    for (const channelMode of ['BLACKLIST', 'OFF'] as const) {
+      const rule = siteRule({
+        features: featuresWith('youtube', { youtube: { channelMode, channels: [VERITASIUM] } }),
+      });
+      expect(isWhitelistedVideoUrl([rule], V1, byId)).toBe(false);
+    }
+  });
+
+  it('is false for a disabled rule, a Short, and a host the rule does not cover', () => {
+    expect(isWhitelistedVideoUrl([{ ...whitelistRule, enabled: false }], V1, byId)).toBe(false);
+    expect(isWhitelistedVideoUrl([whitelistRule], 'https://www.youtube.com/shorts/v1', byId)).toBe(false);
+    expect(isWhitelistedVideoUrl([whitelistRule], 'https://example.com/watch?v=v1', byId)).toBe(false);
+  });
+});
+
+describe('survivesLimitCrossing: which open tabs the limit-crossing redirect leaves alone', () => {
+  const rule = siteRule({
+    features: featuresWith('youtube', {
+      youtube: { channelMode: 'WHITELIST', channels: [VERITASIUM], creatorMode: true, myChannel: MINE },
+    }),
+  });
+  const lookup = (id: string) => (id === 'v1' ? { channelId: 'UCHnyfMqiRRG1u-2MsSQLbXA', handle: null } : null);
+
+  it.each([
+    'https://www.youtube.com/watch?v=v1',
+    'https://www.youtube.com/@veritasium/videos',
+    'https://www.youtube.com/channel/UCHnyfMqiRRG1u-2MsSQLbXA',
+    'https://studio.youtube.com/',
+    'https://www.youtube.com/upload',
+  ])('keeps %s', (url) => {
+    expect(survivesLimitCrossing([rule], url, lookup)).toBe(true);
+  });
+
+  it.each([
+    'https://www.youtube.com/watch?v=unreported',
+    'https://www.youtube.com/',
+    'https://www.youtube.com/results?search_query=a',
+    'https://www.youtube.com/shorts/v1',
+    'https://www.youtube.com/@other',
+  ])('redirects %s', (url) => {
+    expect(survivesLimitCrossing([rule], url, lookup)).toBe(false);
+  });
+
+  it("keeps my channel only when the stored list is a whitelist, not via creator mode's implicit one", () => {
+    // Stored WHITELIST + creator mode: my channel is folded into the whitelist, which survives.
+    expect(survivesLimitCrossing([rule], 'https://www.youtube.com/@mine', lookup)).toBe(true);
+    const implicitOnly = siteRule({
+      features: featuresWith('youtube', {
+        youtube: { channelMode: 'OFF', channels: [], creatorMode: true, myChannel: MINE },
+      }),
+    });
+    expect(survivesLimitCrossing([implicitOnly], 'https://www.youtube.com/@mine', lookup)).toBe(false);
+    expect(survivesLimitCrossing([implicitOnly], 'https://studio.youtube.com/', lookup)).toBe(true);
+  });
+
+  it('keeps only creator pages for a blacklist', () => {
+    const blacklist = siteRule({
+      features: featuresWith('youtube', { youtube: { channelMode: 'BLACKLIST', channels: [VERITASIUM] } }),
+    });
+    expect(survivesLimitCrossing([blacklist], 'https://www.youtube.com/watch?v=v1', lookup)).toBe(false);
+    expect(survivesLimitCrossing([blacklist], 'https://www.youtube.com/@veritasium', lookup)).toBe(false);
   });
 });
 

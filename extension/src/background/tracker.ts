@@ -37,7 +37,12 @@ import { localDayKey } from '../core/scheduleEvaluator';
 import { addActiveSeconds, recordBlocked, recordWalkedAway } from '../core/stats';
 import { crossesLimit, tightestGateMinutes, tightestLimit } from '../core/budgets';
 import { surfaceKey } from '../core/surfaceKeys';
-import { isCreatorExemptUrl } from '../core/youtubeAccess';
+import {
+  isCreatorExemptUrl,
+  isWhitelistedVideoUrl,
+  survivesLimitCrossing,
+  watchPageVideoId,
+} from '../core/youtubeAccess';
 import {
   loadSettings,
   loadTrackerState,
@@ -48,6 +53,7 @@ import {
 import { applyRules, redirectOpenTabs } from './dnr';
 import { revokeTempAllow } from './tempAllow';
 import { refreshBadge } from './badge';
+import { videoChannelLookup } from './videoChannels';
 
 /** Idle threshold handed to chrome.idle (seconds). */
 export const IDLE_DETECTION_SECONDS = 60;
@@ -140,6 +146,19 @@ export async function accountAndSwitch(
   // tab itself to the block page. Judged on the URL the interval was spent ON.
   if (state.url !== null && isCreatorExemptUrl(settings.rules, state.url)) return;
 
+  // A whitelisted channel's video is the same kind of exemption (Anti, 2026-11-01): the
+  // channels the user picked stay watchable past the daily limit, so the minutes spent on
+  // them must not be what spends it. The URL alone does not say whose video it is, so this
+  // asks what the content script reported for that video id (`background/videoChannels.ts`);
+  // nothing reported yet means it IS counted. The lookup is only read for a watch page.
+  if (
+    state.url !== null &&
+    watchPageVideoId(state.url) !== null &&
+    isWhitelistedVideoUrl(settings.rules, state.url, await videoChannelLookup())
+  ) {
+    return;
+  }
+
   const usageKey = usageKeyForHost(settings.rules, domain);
 
   const previousSiteMs = await todayUsageMs(usageKey, at);
@@ -227,9 +246,14 @@ async function enforceBudget(step: AccountingStep, now: Date): Promise<void> {
 
   if (siteCrossed) {
     // The site redirect already covers every tab on the domain, gate surfaces included.
-    // Creator-mode pages are the one exception: DNR keeps them open past a spent limit, so
-    // pushing them to the block page would only bounce the user out of Studio mid-edit.
-    await redirectOpenTabs(step.domain, (url) => !isCreatorExemptUrl(settings.rules, url));
+    // The exceptions are the pages DNR keeps open past a spent limit: creator-mode pages
+    // (pushing them would bounce the user out of Studio mid-edit) and a whitelist's channels,
+    // so a tab playing a video by a channel the user picked keeps playing.
+    const channelForVideo = await videoChannelLookup();
+    await redirectOpenTabs(
+      step.domain,
+      (url) => !survivesLimitCrossing(settings.rules, url, channelForVideo),
+    );
   } else {
     await redirectOpenTabs(
       step.domain,

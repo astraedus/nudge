@@ -214,6 +214,20 @@ export type Request =
       displayName: string | null;
     }
   /**
+   * "The video at `url` is by this channel", from a CONFIRMED watch-page detection.
+   *
+   * Exists for the tracker (Anti, 2026-11-01): time on a whitelisted channel's video is not
+   * counted against the YouTube daily limit, and a tab playing one is not redirected when the
+   * limit runs out. A watch URL does not say whose video it is, so the page reports the FACT
+   * and the worker stores it per video id (`background/videoChannels.ts`), re-deciding
+   * against the current list every time it asks. The page never says "allowed".
+   *
+   * Sent only while the stored list is in WHITELIST mode and only from a confirmed detection,
+   * for the same settle-window reason as `CHANNEL_OBSERVED`. No report means the video is
+   * counted, so a lost message fails toward the budget, never away from it.
+   */
+  | { type: 'VIDEO_CHANNEL'; url: string; channelId: string | null; handle: string | null }
+  /**
    * Close the tab the message came from.
    *
    * The one thing a content script cannot do for itself: `window.close()` only works on a
@@ -328,6 +342,8 @@ export interface ResponseMap {
   ITEM_VIEWED: { ok: boolean; counted: boolean };
   SET_GRAYSCALE: SaveResult;
   CHANNEL_OBSERVED: ChannelObservedResult;
+  /** `stored` is false for a URL that is not a watch page, or a report with no identifier. */
+  VIDEO_CHANNEL: { ok: boolean; stored: boolean };
   /** `ok: false` when the sender had no tab id (a non-tab context) or the close failed. */
   CLOSE_TAB: { ok: boolean };
 }

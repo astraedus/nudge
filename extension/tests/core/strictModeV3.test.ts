@@ -287,9 +287,23 @@ describe('weakening: the YouTube channel lists cut in OPPOSITE directions', () =
     expect(isWeakening(before, after)).toBe(true);
   });
 
-  it('turning a list off is weakening; turning one on is not', () => {
+  it('turning a list off is weakening; turning on an empty one is not', () => {
     expect(isWeakening(withChannels('BLACKLIST', ['a']), withChannels('OFF', ['a']))).toBe(true);
-    expect(isWeakening(withChannels('OFF', ['a']), withChannels('WHITELIST', ['a']))).toBe(false);
+    expect(isWeakening(withChannels('OFF', []), withChannels('WHITELIST', []))).toBe(false);
+    expect(isWeakening(withChannels('OFF', ['a']), withChannels('BLACKLIST', ['a']))).toBe(false);
+  });
+
+  it('switching an existing list INTO a whitelist allows its entries, so it is weakening', () => {
+    // A whitelist's channels stay open on a blocked site and, since 2026-11-01, past the
+    // daily limit. An OFF list or a blacklist allowed none of its entries, so the switch
+    // adds them all at once; typing them into a whitelist one by one is already gated.
+    expect(isWeakening(withChannels('OFF', ['a']), withChannels('WHITELIST', ['a']))).toBe(true);
+    expect(isWeakening(withChannels('BLACKLIST', ['a']), withChannels('WHITELIST', ['a']))).toBe(
+      true,
+    );
+    expect(isWeakening(withChannels('WHITELIST', ['a']), withChannels('WHITELIST', ['a']))).toBe(
+      false,
+    );
   });
 
   it('matches a channel by EITHER identifier, so re-saving an enriched entry is not weakening', () => {

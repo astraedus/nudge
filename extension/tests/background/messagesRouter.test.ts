@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { applyRules } from '../../src/background/dnr';
 import { handleRequest } from '../../src/background/messagesRouter';
+import { videoChannelLookup } from '../../src/background/videoChannels';
 import { featureSummary } from '../../src/core/featureSummary';
 import { loadDay, loadSettings, saveDay, saveSettings } from '../../src/background/storage';
 import { localDayKey } from '../../src/core/scheduleEvaluator';
@@ -463,6 +464,32 @@ describe('GET_BLOCK_CONTEXT', () => {
       expect(context.decision.mode).toBe('HARD_BLOCK');
       expect(context.decision.limitReached).toBe(true);
     }
+  });
+});
+
+describe('VIDEO_CHANNEL', () => {
+  it('stores the channel for a watch page video id', async () => {
+    const result = await ask<{ ok: boolean; stored: boolean }>({
+      type: 'VIDEO_CHANNEL',
+      url: 'https://www.youtube.com/watch?v=abc123',
+      channelId: 'UCx',
+      handle: '@x',
+    });
+    expect(result).toEqual({ ok: true, stored: true });
+    expect((await videoChannelLookup())('abc123')).toEqual({ channelId: 'UCx', handle: '@x' });
+  });
+
+  it('stores nothing for a Short or a garbage URL, and still answers', async () => {
+    for (const url of ['https://www.youtube.com/shorts/abc', 'not a url']) {
+      const result = await ask<{ ok: boolean; stored: boolean }>({
+        type: 'VIDEO_CHANNEL',
+        url,
+        channelId: 'UCx',
+        handle: null,
+      });
+      expect(result).toEqual({ ok: false, stored: false });
+    }
+    expect((await videoChannelLookup())('abc')).toBeNull();
   });
 });
 
