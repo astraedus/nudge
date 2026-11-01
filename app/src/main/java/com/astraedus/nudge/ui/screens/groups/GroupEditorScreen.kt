@@ -1,5 +1,6 @@
 package com.astraedus.nudge.ui.screens.groups
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -90,6 +91,23 @@ fun GroupEditorScreen(
         )
     }
 
+    // Back and the top bar's arrow both go through requestLeave: it asks only when something would be
+    // lost. The picker and the dialogs are their own windows, so Back reaches them first.
+    BackHandler(enabled = state.isDirty, onBack = viewModel::requestLeave)
+
+    if (state.showDiscardConfirmation) {
+        AlertDialog(
+            onDismissRequest = viewModel::keepEditing,
+            title = { Text("Discard changes?") },
+            confirmButton = {
+                TextButton(onClick = viewModel::discardChanges) { Text("Discard") }
+            },
+            dismissButton = {
+                TextButton(onClick = viewModel::keepEditing) { Text("Keep editing") }
+            }
+        )
+    }
+
     if (state.showDeleteConfirmation) {
         AlertDialog(
             onDismissRequest = viewModel::dismissDelete,
@@ -112,7 +130,7 @@ fun GroupEditorScreen(
             TopAppBar(
                 title = { Text(state.savedName.ifBlank { "New group" }) },
                 navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
+                    IconButton(onClick = viewModel::requestLeave) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },

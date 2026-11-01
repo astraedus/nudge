@@ -39,12 +39,36 @@ data class GroupEditorState(
     val pickerApps: List<InstalledAppsRepository.AppInfo> = emptyList(),
     val showPicker: Boolean = false,
     val showDeleteConfirmation: Boolean = false,
-    /** Saved or deleted: the screen pops. */
+    /** Leaving with unsaved edits: "Discard changes?". */
+    val showDiscardConfirmation: Boolean = false,
+    /**
+     * What the editor opened with (the saved group, or the blank new-group form), which is what
+     * "unsaved edits" are measured against. Null while loading.
+     */
+    val baseline: GroupDraft? = null,
+    /** Saved, deleted or discarded: the screen pops. */
     val isFinished: Boolean = false
 ) {
     val canSave: Boolean get() = !isLoading && name.isNotBlank() && members.isNotEmpty() && form.isComplete
     val memberPackages: Set<String> get() = members.mapTo(LinkedHashSet()) { it.packageName }
+
+    /** Everything a save would write, in the shape [baseline] is kept in. */
+    val draft: GroupDraft get() = GroupDraft(name.trim(), memberPackages, form)
+
+    /**
+     * Leaving now would lose something. Measured against what the editor opened with rather than
+     * "was anything touched", so changing a value and changing it back is not an edit, and a new
+     * group the user typed nothing into leaves without a question.
+     */
+    val isDirty: Boolean get() = baseline != null && !isFinished && draft != baseline
 }
+
+/** The editable content of a group: its name (trimmed, as saved), its apps, and its rule form. */
+data class GroupDraft(
+    val name: String,
+    val members: Set<String>,
+    val form: GroupRuleForm
+)
 
 /**
  * The group editor (spec 3.3): a group's apps, and how and when the group blocks them, saved as one
@@ -88,7 +112,13 @@ class GroupEditorViewModel @Inject constructor(
 
         val id = requestedId
         if (id == null) {
-            _state.update { it.copy(isLoading = false, pickerApps = pickerApps) }
+            _state.update {
+                it.copy(
+                    isLoading = false,
+                    pickerApps = pickerApps,
+                    baseline = GroupDraft(name = "", members = emptySet(), form = it.form)
+                )
+            }
             return
         }
         val group = repository.getAllGroups().first().firstOrNull { it.id == id }
@@ -108,7 +138,8 @@ class GroupEditorViewModel @Inject constructor(
                 name = group.name,
                 members = members.map { pkg -> byPackage[pkg] ?: placeholder(pkg) }.sortedByName(),
                 form = GroupRuleForm.from(rule),
-                pickerApps = pickerApps
+                pickerApps = pickerApps,
+                baseline = GroupDraft(group.name.trim(), members, GroupRuleForm.from(rule))
             )
         }
     }
@@ -159,6 +190,18 @@ class GroupEditorViewModel @Inject constructor(
             else write()
         }
     }
+
+    /**
+     * Back, or the top bar's arrow. Leaves straight away when nothing would be lost; otherwise asks
+     * first, because leaving the editor used to drop unsaved edits without a word (device QA, PR 2).
+     */
+    fun requestLeave() = _state.update {
+        if (it.isDirty) it.copy(showDiscardConfirmation = true) else it.copy(isFinished = true)
+    }
+
+    fun discardChanges() = _state.update { it.copy(showDiscardConfirmation = false, isFinished = true) }
+
+    fun keepEditing() = _state.update { it.copy(showDiscardConfirmation = false) }
 
     fun requestDelete() = _state.update { it.copy(showDeleteConfirmation = true) }
 
