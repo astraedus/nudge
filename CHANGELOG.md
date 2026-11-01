@@ -4,6 +4,10 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+## [1.23.1] - 2026-11-01
+
+Thanks to @Ewoc2026 and @Jyriwee for the Pixel 9a captures that pinned #119, and to @danieltsam for #117.
+
 ### Fixed
 - With Strict Mode on, the switch on the Manage Apps screen turned a block off without asking for the challenge. It now asks for the same typed code as Active Rules; turning a block on is still free.
 - Release builds logged every debug line under a merged class name (`ResultKt`, `TuplesKt`), so a logcat filter by class found nothing. Each logging class now carries a fixed tag (`NudgeA11yService`, `NudgeMonitor`, `BlockOverlay`, `TabCoverOverlay`, `BlockEngine`, ...); `Nudge` is the fallback and `NudgeA11yTrace` / `ProtectionWatchdog` are unchanged. (#120)
