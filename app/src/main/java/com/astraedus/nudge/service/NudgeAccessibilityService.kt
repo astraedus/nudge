@@ -570,12 +570,18 @@ class NudgeAccessibilityService : AccessibilityService() {
      * class owns the Android half (the timer, the receiver, the activity launch).
      */
     private val phoneNudgeHandler: Handler by lazy { Handler(Looper.getMainLooper()) }
-    private val phoneNudgeRunnable: Runnable by lazy { Runnable { phoneNudge.onTimerFired() } }
+    private val phoneNudgeRunnable: Runnable by lazy {
+        Runnable {
+            log.d("phone nudge timer fired")
+            phoneNudge.onTimerFired()
+        }
+    }
     private val phoneNudge: PhoneNudge by lazy {
         PhoneNudge(
             clock = { android.os.SystemClock.elapsedRealtime() },
             onPause = ::showPhoneNudgePause,
             schedule = { delayMs ->
+                log.d("phone nudge armed in ${delayMs}ms")
                 phoneNudgeHandler.removeCallbacks(phoneNudgeRunnable)
                 phoneNudgeHandler.postDelayed(phoneNudgeRunnable, delayMs)
             },
@@ -786,8 +792,17 @@ class NudgeAccessibilityService : AccessibilityService() {
         object : android.content.BroadcastReceiver() {
             override fun onReceive(context: android.content.Context?, intent: Intent?) {
                 when (intent?.action) {
-                    Intent.ACTION_SCREEN_ON -> phoneNudge.onScreenOn()
-                    Intent.ACTION_USER_PRESENT -> phoneNudge.onUnlocked()
+                    Intent.ACTION_SCREEN_ON -> {
+                        log.d("phone nudge screen on locked=${isDeviceLocked()}")
+                        phoneNudge.onScreenOn()
+                        // A phone with no keyguard (or one already dismissed) never sends
+                        // ACTION_USER_PRESENT; the screen coming on IS the unlock there.
+                        if (!isDeviceLocked()) phoneNudge.onUnlocked()
+                    }
+                    Intent.ACTION_USER_PRESENT -> {
+                        log.i("phone nudge unlock")
+                        phoneNudge.onUnlocked()
+                    }
                 }
             }
         }
@@ -1854,7 +1869,17 @@ class NudgeAccessibilityService : AccessibilityService() {
         // same reason as the other three, so no early return below can starve it. A no-op unless
         // the feature is on AND a wall has armed a streak.
         bounceCheckIn.onForegroundSignal(signal)
+
+        // The phone nudge's session normally starts on unlock, but a device with no keyguard never
+        // sends ACTION_USER_PRESENT, and a dead process misses the broadcast. The first real app
+        // window is the same evidence one step later. A no-op while a session is already running.
+        if (signal is ForegroundSignal.AppWindow) phoneNudge.onUnlocked()
     }
+
+    /** True while the lock screen is up. A locked screen is not "using the phone" (#123). */
+    private fun isDeviceLocked(): Boolean =
+        (getSystemService(android.content.Context.KEYGUARD_SERVICE) as android.app.KeyguardManager)
+            .isDeviceLocked
 
     /**
      * The clock the sitting's return window is measured on.
