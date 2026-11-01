@@ -25,7 +25,11 @@ Covers what a *rule* can express beyond a plain block: schedules, in-app feature
 - **Rule editor UX** — info tooltips on all sections, block mode descriptions, per-app rules summary with enable/disable.
   `UnifiedAppConfigScreen` is the only per-app editor (the old `RuleEditorScreen` was deleted). Its reusable, stateless
   pieces live in `ui/components/rule/`: `InfoButton`, `TimeSelector`, `BlockModeSegmentedRow` (+ `BLOCKING_MODES`),
-  `WaitTimeChips`, `ScheduleSection`. New editors (group, All apps) reuse them; `DeadRuleEditorContractTest` pins it.
+  `WaitTimeChips`, `ScheduleSection` (whose days-and-times half is `DaysAndTimesFields`), `DailyLimitChips`. The group
+  editor reuses them; `DeadRuleEditorContractTest` pins it.
+- **Groups (spec PR 2)**: a named set of apps blocked by ONE rule of its own (`BlockRule.groupId`, `packageName = null`,
+  no `inAppFeatures`; `ownGroupRule` in `ui/screens/groups/GroupForm.kt` is the one definition of "the group's rule",
+  shared by the editor, the Manage Apps switch and "Also covered by"). See "Groups" below.
 - **Settings** — version links to GitHub repo, source code & feedback link
 - **Tab Vanish (v1.18.0)** — while a rule covering a host app's feature resolves to a HARD block, Nudge draws a
   touchable cover exactly over that feature's bottom-nav tab, so the icon is not there and the tap does nothing.
@@ -162,3 +166,23 @@ holder.
 node and the Subscriptions tab are both stable enough; what is missing is a bench capture of the Shorts tab's
 bounds and the Subscriptions nav item, plus a decision on the Shorts shelf inside Subscriptions (it scrolls, so
 the cover trick does not apply there). TikTok is a third candidate, unmeasured.
+
+## Groups (spec PR 2)
+
+Spec: `docs/exec-plans/active/groups-categories-allowlist.md`, sections 3.3, 3.6, 3.7, 5.5, 5.6.
+
+| Piece | Where | What it owns |
+|---|---|---|
+| Editor | `ui/screens/groups/GroupEditorScreen` + `GroupEditorViewModel` (route `group_editor?groupId=`; none or <= 0 = new) | Name, apps, then "Block these apps" heading How (mode, wait, daily limit for each app) and When (All the time / Days and times). Off folds How and When away and saves the rule with `enabled = false`, so the values come back. No category chips and no "Allowed during" yet (PR 4). |
+| The form | `ui/screens/groups/GroupForm.kt` (pure) | `GroupRuleForm.from(rule)` / `toRule(existing)`: `toRule` COPIES the saved row, so fields the editor does not show (auto-kick, counter, reminder...) survive a save. `membersAfterPick` keeps members the picker could not show (essential, uninstalled): a member is only ever removed where the user can see it go. |
+| Save / delete | `BlockRuleRepository.saveGroup` / `deleteGroupWithRules` -> `AppGroupDao` `@Transaction`s | Group, member set and own rule in one write; delete removes rules, members, then the group. |
+| Picker | `ui/components/AppPicker` | Full-screen multi-select over installed apps minus the essentials (spec 5.4). |
+| Manage Apps | `AppListViewModel.buildGroupRows` (pure) + `AppListScreen` | "Groups" rows above the apps: `Social · 9 apps`, the rule's summary in the same words as an app's (`ActiveRulesViewModel.groupSummaryText`), and a switch. "Block several apps" opens a new group (hidden while searching). Search matches group names. |
+| "Also covered by" | `ui/screens/config/CoveringGroups.kt` (pure) + `UnifiedAppConfigViewModel.coveredBy` | On App config, under Enabled, only when a group containing the app has its own rule ON. Read-only; a row opens the group. |
+| Rule name on the block screen | `buildRuleName` | A group rule's block names the group. |
+| Browsers | engine (spec 5.5) | A browser covered by a group is evaluated as an app first; see `web-domain-blocking.md`. |
+
+Strict Mode for all of this is in `strict-mode.md`, "Groups". There is no migration: groups and `BlockRule.groupId` have
+existed since DB v1, the engine already honoured them, and only the UI was missing. The old `GroupScreen` (unreachable
+from any navigation) is deleted.
+

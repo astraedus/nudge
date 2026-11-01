@@ -4,6 +4,15 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+### Added
+- Groups you can build: "Block several apps" on Manage Apps makes a named group (say, Social) and blocks all its apps with one rule: one mode, one wait, an optional daily limit for each app, all the time or on chosen days and times. Groups show on Manage Apps as "Social · 9 apps" with what they do and a switch. Tap one to change its apps or how it blocks, or to delete it.
+- An app that is in a blocking group shows "Also covered by Social" on its own settings, so it is clear why it is still blocked when its own switch is off. Tap the line to open the group.
+- With Strict Mode on, removing an app from a blocking group, softening the group's block, turning it off or deleting it asks for the challenge. Adding apps or making the block stricter never does.
+- A browser in a group is now blocked as an app, on any site, just as a browser with its own rule is.
+
+### Removed
+- The old, unreachable groups screen.
+
 ### Changed
 - Nuke Mode now also never blocks your default messaging app, your clock and alarms, emergency and personal-safety apps, any accessibility service you have turned on (such as a screen reader), or your password manager's autofill. The Nuke screen says so: "Your phone, messages, clock, launcher, keyboard and Settings are never on this list." The dashboard's Nuke card now counts the same apps as the Nuke screen, so the two never disagree.
 - Block checks read your rules from memory instead of the database on every app switch; a rule edit still applies on the next app you open, with no restart.
