@@ -53,8 +53,17 @@ import type { BlockMode, SiteMode } from './types';
  * whitelist entry while creator mode is on). Purely additive, defaulting to off / null, so
  * nothing opens on upgrade. Same total-migration pattern as 3 -> 4: `coerceYoutubeFeatures`
  * reading a missing `creatorMode` as false and a missing `myChannel` as null IS the step.
+ *
+ * 5 -> 6 (v0.5): SUBSCRIPTIONS AS ALLOWED CHANNELS. `YoutubeFeatureSettings` gains
+ * `allowSubscriptions` ("also allow channels I'm subscribed to"), defaulting to off, so
+ * nothing opens on upgrade. It also gains `subscribedChannels`, which is NOT persisted in
+ * this blob at all: the synced list lives in `storage.local` (it can run to hundreds of
+ * entries, far past `storage.sync`'s 8 KB per-item quota, and it is re-derivable on each
+ * browser from that browser's own YouTube session). `background/storage.ts` fills it in on
+ * every load and empties it on every save; see `withSubscribedChannels`. Same total-migration
+ * pattern: `coerceYoutubeFeatures` reading a missing `allowSubscriptions` as false IS the step.
  */
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 
 /** Delay presets, seconds (Android parity). Custom range 1–300. */
 export const DELAY_PRESETS = [5, 15, 30, 60] as const;
@@ -142,6 +151,25 @@ export interface YoutubeFeatureSettings {
    * creator mode is off. Null when the user has not entered it.
    */
   myChannel: ChannelEntry | null;
+  /**
+   * "Also allow channels I'm subscribed to" (v0.5). While on AND `channelMode` is WHITELIST,
+   * every channel in `subscribedChannels` is one more allowed channel, through the same
+   * `effectiveChannelLists` path every typed entry takes. Turning it ON is a weakening
+   * (Commitment Lock); off is free. See `core/youtubeSubscriptions.ts`.
+   */
+  allowSubscriptions: boolean;
+  /**
+   * The user's YouTube subscriptions as last synced from their own signed-in session.
+   *
+   * RUNTIME-ONLY: never written to settings storage. It lives in `storage.local` under its
+   * own key, is filled in by `loadSettings` and emptied by `saveSettings`, and is written
+   * by exactly one thing, the subscription sync in the worker. Kept SEPARATE from
+   * `channels` so turning the toggle off removes every synced channel at once and the
+   * user's own typed list is never overwritten or merged into. A settings object coming
+   * back from a UI save has its copy REPLACED by the worker's (`handleSave`), so no page can
+   * slip channels in through this field.
+   */
+  subscribedChannels: ChannelEntry[];
 }
 
 /**
@@ -330,6 +358,8 @@ export function defaultYoutubeFeatureSettings(): YoutubeFeatureSettings {
     disableAutoplay: false,
     creatorMode: false,
     myChannel: null,
+    allowSubscriptions: false,
+    subscribedChannels: [],
   };
 }
 
@@ -560,7 +590,21 @@ function coerceYoutubeFeatures(value: unknown): YoutubeFeatureSettings {
     // turns it on, so a malformed value can never open Studio by accident.
     creatorMode: raw.creatorMode === true,
     myChannel: coerceChannel(raw.myChannel),
+    // v5 -> v6: absent means OFF, and only a literal `true` turns it on.
+    allowSubscriptions: raw.allowSubscriptions === true,
+    // Runtime-only (see the field's doc). Coerced like any list so an in-memory settings
+    // object survives `migrateSettings` intact; storage strips it before it is written.
+    subscribedChannels: coerceChannelList(raw.subscribedChannels),
   };
+}
+
+/** Normalize a stored channel list: drop malformed rows, merge duplicates. */
+function coerceChannelList(value: unknown): ChannelEntry[] {
+  return dedupeChannels(
+    Array.isArray(value)
+      ? value.map(coerceChannel).filter((c): c is ChannelEntry => c !== null)
+      : [],
+  );
 }
 
 /**
@@ -655,6 +699,10 @@ function mergeFeatures(base: SiteFeatures, incoming: SiteFeatures): SiteFeatures
       // whichever side has one (base first), never dropped.
       creatorMode: a.creatorMode && b.creatorMode,
       myChannel: a.myChannel ?? b.myChannel,
+      // Same reasoning as creator mode: allowing subscriptions OPENS channels, so it
+      // survives a merge only when both sides had it on.
+      allowSubscriptions: a.allowSubscriptions && b.allowSubscriptions,
+      subscribedChannels: dedupeChannels([...a.subscribedChannels, ...b.subscribedChannels]),
     };
   }
   return merged;
@@ -758,6 +806,8 @@ function legacyYoutubeAsFeatures(yt: Partial<LegacyYoutubeSettings>): SiteFeatur
     // v2 had no creator mode; a v2 user starts with it off and loses nothing.
     creatorMode: false,
     myChannel: null,
+    allowSubscriptions: false,
+    subscribedChannels: [],
   };
   return features;
 }
@@ -853,3 +903,27 @@ function structuredCloneSettings(settings: NudgeSettings): NudgeSettings {
 }
 
 export { structuredCloneSettings };
+
+/**
+ * The same settings with `channels` as every YouTube rule's `subscribedChannels`.
+ *
+ * The ONE way the runtime-only list is moved in or out of a settings object: storage
+ * hydrates with the synced list on load and strips with `[]` before writing, and the worker
+ * overwrites whatever a UI save carried with the list it holds. Pure; returns a new object.
+ */
+export function withSubscribedChannels(
+  settings: NudgeSettings,
+  channels: readonly ChannelEntry[],
+): NudgeSettings {
+  return {
+    ...settings,
+    rules: settings.rules.map((rule) => {
+      const youtube = rule.features?.youtube;
+      if (rule.features === null || youtube === undefined) return rule;
+      return {
+        ...rule,
+        features: { ...rule.features, youtube: { ...youtube, subscribedChannels: [...channels] } },
+      };
+    }),
+  };
+}

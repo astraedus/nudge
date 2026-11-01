@@ -100,22 +100,77 @@ export const CREATOR_PATHS: readonly string[] = [
 export const STUDIO_HOST_PREFIX = 'studio.';
 
 /**
+ * How many identifier characters one channel carve-out regex may alternate over.
+ *
+ * Chrome compiles each `regexFilter` under a small RE2 memory budget and rejects a rule
+ * that exceeds it (`isRegexSupported` -> `memoryLimitExceeded`). Measured live against
+ * this exact pattern shape (2026-11-01): about 72 identifier characters per alternation
+ * always compile, 80+ fail (six 12-char handles pass, eight fail; three 24-char channel
+ * ids pass, four fail). 60 leaves headroom.
+ *
+ * WHY PACK AT ALL. Chrome caps an extension at 1000 regex rules
+ * (`MAX_NUMBER_OF_REGEX_RULES`) and rejects the WHOLE `updateDynamicRules` call past it,
+ * which would leave stale rules installed for every site. One rule per identifier was fine
+ * for a hand-typed list of ten channels; it is 1000 rules for 500 synced subscriptions.
+ */
+export const CHANNEL_ALTERNATION_BUDGET = 60;
+
+/**
+ * Group identifiers so each group's characters stay within the budget. Sorted input, so
+ * the output is stable for the same set.
+ */
+function packIdentifiers(identifiers: readonly string[]): string[][] {
+  const groups: string[][] = [];
+  let current: string[] = [];
+  let used = 0;
+  for (const id of identifiers) {
+    if (current.length > 0 && used + id.length > CHANNEL_ALTERNATION_BUDGET) {
+      groups.push(current);
+      current = [];
+      used = 0;
+    }
+    current.push(id);
+    used += id.length;
+  }
+  if (current.length > 0) groups.push(current);
+  return groups;
+}
+
+function identifierPaths(prefix: string, identifiers: Iterable<string>): string[] {
+  const unique = [...new Set(identifiers)].sort();
+  return packIdentifiers(unique).map((group) => {
+    const escaped = group.map(escapeForRegex);
+    // One identifier keeps the plain form it has always had.
+    const body = escaped.length === 1 ? escaped[0] : `(?:${escaped.join('|')})`;
+    return `${prefix}${body}(?:/.*)?`;
+  });
+}
+
+/**
  * The network paths a YouTube whitelist must let through, for these channels.
  *
  * The channel's own pages are allowed outright so the user can actually navigate to what
  * they said they wanted: with the home feed, search and subscriptions all redirected, there
- * would otherwise be no route in at all.
+ * would otherwise be no route in at all. Several channels share one path when they fit
+ * the alternation budget (`CHANNEL_ALTERNATION_BUDGET`).
  */
 export function youtubeWhitelistPaths(channels: readonly ChannelEntry[]): string[] {
-  const paths = new Set<string>([...WATCH_PATHS, PLAYLIST_PATH]);
+  const handles: string[] = [];
+  const ids: string[] = [];
   for (const channel of channels) {
     if (channel.handle !== null && SAFE_CHANNEL_IDENTIFIER.test(channel.handle)) {
-      paths.add(`/@${escapeForRegex(channel.handle)}(?:/.*)?`);
+      handles.push(channel.handle);
     }
     if (channel.channelId !== null && SAFE_CHANNEL_IDENTIFIER.test(channel.channelId)) {
-      paths.add(`/channel/${escapeForRegex(channel.channelId)}(?:/.*)?`);
+      ids.push(channel.channelId);
     }
   }
+  const paths = new Set<string>([
+    ...WATCH_PATHS,
+    PLAYLIST_PATH,
+    ...identifierPaths('/@', handles),
+    ...identifierPaths('/channel/', ids),
+  ]);
   return [...paths].sort();
 }
 
@@ -140,7 +195,8 @@ export function ownChannels(youtube: YoutubeFeatureSettings | null): ChannelEntr
  * as every typed entry rather than a parallel "is this mine" check, so there is exactly one
  * answer to "may this video play":
  *
- *  - WHITELIST: the own channel joins the list.
+ *  - WHITELIST: the own channel joins the list, and so do the synced subscriptions while
+ *    "Also allow channels I'm subscribed to" is on (`core/youtubeSubscriptions.ts`).
  *  - The site is BLOCKED and the list is OFF or a BLACKLIST: the user said "block YouTube",
  *    and creator mode says "except my channel", which is a whitelist of one. A blacklist has
  *    nothing left to say while the whole site is blocked.
@@ -155,7 +211,10 @@ export function effectiveChannelLists(
   if (youtube === null) return { channelMode: 'OFF', channels: [] };
   const own = ownChannels(youtube);
   if (youtube.channelMode === 'WHITELIST') {
-    return { channelMode: 'WHITELIST', channels: [...youtube.channels, ...own] };
+    // Synced subscriptions are WHITELIST-only: "also allow channels I'm subscribed to"
+    // widens a whitelist and means nothing for a blacklist.
+    const subscribed = youtube.allowSubscriptions ? youtube.subscribedChannels : [];
+    return { channelMode: 'WHITELIST', channels: [...youtube.channels, ...own, ...subscribed] };
   }
   if (siteApplies && own.length > 0) return { channelMode: 'WHITELIST', channels: own };
   return { channelMode: youtube.channelMode, channels: [...youtube.channels] };

@@ -437,3 +437,48 @@ describe('weakening: identity', () => {
     expect(isWeakening(before, after)).toBe(false);
   });
 });
+
+describe('weakening: "also allow channels I\'m subscribed to" (schema v6)', () => {
+  const sub = { channelId: null, handle: 'kurzgesagt', displayName: '@kurzgesagt', addedAt: 0 };
+  const other = { channelId: null, handle: 'mrbeast', displayName: '@mrbeast', addedAt: 0 };
+  const yt = (youtube: Partial<YoutubeFeatureSettings>) =>
+    withRule({
+      mode: 'HARD_BLOCK',
+      features: featuresWith('youtube', {
+        youtube: { channelMode: 'WHITELIST', channels: [channel('veritasium')], ...youtube },
+      }),
+    });
+
+  it('turning it ON is weakening: every subscription becomes an allowed channel at once', () => {
+    expect(isWeakening(yt({ allowSubscriptions: false }), yt({ allowSubscriptions: true }))).toBe(true);
+  });
+
+  it('turning it OFF is free', () => {
+    expect(isWeakening(yt({ allowSubscriptions: true }), yt({ allowSubscriptions: false }))).toBe(false);
+  });
+
+  it('a later sync that changes the list is not judged (consent was to the set, not a snapshot)', () => {
+    expect(
+      isWeakening(
+        yt({ allowSubscriptions: true, subscribedChannels: [sub] }),
+        yt({ allowSubscriptions: true, subscribedChannels: [sub, other] }),
+      ),
+    ).toBe(false);
+  });
+
+  it('switching a blacklist that has the flag left on back INTO a whitelist is weakening', () => {
+    // The flag survives a mode change; what matters is whether subscriptions are in force.
+    const before = yt({ channelMode: 'BLACKLIST', channels: [], allowSubscriptions: true });
+    const after = yt({ channelMode: 'WHITELIST', channels: [], allowSubscriptions: true });
+    expect(isWeakening(before, after)).toBe(true);
+  });
+
+  it('flipping the flag while the list is a blacklist is free (it does nothing there)', () => {
+    expect(
+      isWeakening(
+        yt({ channelMode: 'BLACKLIST', allowSubscriptions: false }),
+        yt({ channelMode: 'BLACKLIST', allowSubscriptions: true }),
+      ),
+    ).toBe(false);
+  });
+});

@@ -10,7 +10,7 @@
  * byte-identical field list.
  */
 
-import { coerceRule, type NudgeSettings, type SiteRule } from '../core/settingsSchema';
+import { coerceRule, withSubscribedChannels, type NudgeSettings, type SiteRule } from '../core/settingsSchema';
 
 export const EXPORT_VERSION = 1;
 
@@ -49,10 +49,13 @@ function coerceImportedRule(value: unknown): SiteRule | null {
 
 /** Build the exportable envelope from current settings. */
 export function buildExport(settings: NudgeSettings): NudgeRuleExport {
+  // The synced YouTube subscriptions are a cache of what YouTube says, re-synced on demand,
+  // not a setting the user wrote: they stay out of the file like they stay out of sync.
+  const exportable = withSubscribedChannels(settings, []);
   return {
     version: EXPORT_VERSION,
     exportedAt: new Date().toISOString(),
-    rules: settings.rules.map((r) => ({
+    rules: exportable.rules.map((r) => ({
       ...r,
       schedule: r.schedule ? { ...r.schedule, days: r.schedule.days ? [...r.schedule.days] : null } : null,
     })),

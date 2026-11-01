@@ -106,6 +106,8 @@ function whitelistConfig(overrides: { grayscale?: boolean } = {}): SiteConfig {
       disableAutoplay: false,
       creatorMode: false,
       myChannel: null,
+      allowSubscriptions: false,
+      subscribedChannels: [],
     },
   };
 }

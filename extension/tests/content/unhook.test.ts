@@ -277,7 +277,7 @@ describe('applyAutoplayOff', () => {
     try {
       const clicked = applyAutoplayOff(
         root,
-        { enabled: true, youtube: { channelMode: 'OFF', channels: [], channelBlockMode: 'HARD_BLOCK', channelDelaySeconds: 0, disableAutoplay: true, creatorMode: false, myChannel: null } },
+        { enabled: true, youtube: { channelMode: 'OFF', channels: [], channelBlockMode: 'HARD_BLOCK', channelDelaySeconds: 0, disableAutoplay: true, creatorMode: false, myChannel: null, allowSubscriptions: false, subscribedChannels: [] } },
         { warn: () => {} },
       );
 
@@ -297,7 +297,7 @@ describe('applyAutoplayOff', () => {
     try {
       const clicked = applyAutoplayOff(
         root,
-        { enabled: true, youtube: { channelMode: 'OFF', channels: [], channelBlockMode: 'HARD_BLOCK', channelDelaySeconds: 0, disableAutoplay: true, creatorMode: false, myChannel: null } },
+        { enabled: true, youtube: { channelMode: 'OFF', channels: [], channelBlockMode: 'HARD_BLOCK', channelDelaySeconds: 0, disableAutoplay: true, creatorMode: false, myChannel: null, allowSubscriptions: false, subscribedChannels: [] } },
         { warn: () => {} },
       );
 
@@ -317,7 +317,7 @@ describe('applyAutoplayOff', () => {
     try {
       const clicked = applyAutoplayOff(
         root,
-        { enabled: true, youtube: { channelMode: 'OFF', channels: [], channelBlockMode: 'HARD_BLOCK', channelDelaySeconds: 0, disableAutoplay: false, creatorMode: false, myChannel: null } },
+        { enabled: true, youtube: { channelMode: 'OFF', channels: [], channelBlockMode: 'HARD_BLOCK', channelDelaySeconds: 0, disableAutoplay: false, creatorMode: false, myChannel: null, allowSubscriptions: false, subscribedChannels: [] } },
         { warn: () => {} },
       );
 
@@ -360,6 +360,8 @@ describe('applyAutoplayOff', () => {
         disableAutoplay: true,
         creatorMode: false,
         myChannel: null,
+        allowSubscriptions: false,
+        subscribedChannels: [],
       },
     };
     const first = applyAutoplayOff(root, config, { warn: () => {} });
@@ -384,6 +386,8 @@ describe('applyAutoplayOff', () => {
         disableAutoplay: true,
         creatorMode: false,
         myChannel: null,
+        allowSubscriptions: false,
+        subscribedChannels: [],
       },
     };
 

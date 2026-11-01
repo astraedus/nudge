@@ -2,7 +2,7 @@ import { ensureAlarms, ensureScheduleAlarm, handleAlarm } from '../background/al
 import { applyRules } from '../background/dnr';
 import { applyGrayscale } from '../background/grayscale';
 import { registerMessageRouter } from '../background/messagesRouter';
-import { loadSettings } from '../background/storage';
+import { loadSettings, YT_SUBSCRIPTIONS_KEY } from '../background/storage';
 import { IDLE_DETECTION_SECONDS, onActivityEvent } from '../background/tracker';
 
 /**
@@ -62,7 +62,10 @@ export default defineBackground(() => {
   // Settings can change from any surface (and from another synced device) — recompile.
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === 'session') return;
-    if (Object.keys(changes).some((key) => key === 'nudge:settings')) {
+    // The synced YouTube subscriptions are part of the enforced channel list (hydrated into
+    // settings by `loadSettings`), so a finished sync recompiles exactly like a save does.
+    const relevant = ['nudge:settings', YT_SUBSCRIPTIONS_KEY];
+    if (Object.keys(changes).some((key) => relevant.includes(key))) {
       void loadSettings().then(async (settings) => {
         await applyRules(settings);
         await applyGrayscale(settings);
