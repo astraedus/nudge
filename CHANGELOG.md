@@ -4,6 +4,9 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+### Fixed
+- Opening a Delay-blocked app that reopens straight onto Shorts or Reels no longer counts as two blocks. (#131)
+
 ## [1.23.1] - 2026-11-01
 
 Thanks to @Ewoc2026 and @Jyriwee for the Pixel 9a captures that pinned #119, and to @danieltsam for #117.

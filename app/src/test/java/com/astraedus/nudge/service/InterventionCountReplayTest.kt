@@ -1,12 +1,13 @@
 package com.astraedus.nudge.service
 
 import com.astraedus.nudge.domain.block.BlockLaunchGate
-import com.astraedus.nudge.domain.block.dailyLimitKey
 import com.astraedus.nudge.domain.block.delayKey
 import com.astraedus.nudge.domain.events.A11yEventType
 import com.astraedus.nudge.domain.events.AccessibilityEventRecord
 import com.astraedus.nudge.domain.events.EventClassifier
 import com.astraedus.nudge.domain.events.ForegroundSignal
+import com.astraedus.nudge.domain.model.BlockDecision
+import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.domain.sitting.SittingEndCause
 import com.astraedus.nudge.domain.sitting.SittingEvent
 import com.astraedus.nudge.domain.sitting.SittingTracker
@@ -96,8 +97,23 @@ class InterventionCountReplayTest {
          * showing -- otherwise a re-entry into an exhausted budget would be fingerprinted as a DELAY
          * and could look like a duplicate of the limit screen already in flight.
          */
-        val dailyLimited: Boolean = false
-    )
+        val dailyLimited: Boolean = false,
+        /** The deciding rule's mode: part of the block's identity, exactly as production keys it. */
+        val mode: BlockMode = BlockMode.DELAY
+    ) {
+        /**
+         * What the engine would have handed `handleDecision`, so the identity below comes from the
+         * SAME function production uses ([BlockLaunchGate.identityOf]). The harness used to spell
+         * its own fingerprint, which left out the feature and the domain production put in, and so
+         * could never see #131.
+         */
+        val decision = BlockDecision.Block(
+            mode = mode,
+            dailyLimitMinutes = if (dailyLimited) 1 else null,
+            feature = featureKey
+        )
+        val identity = BlockLaunchGate.identityOf(decision, attributed, webDomain)
+    }
 
     // ------------------------------------------------------------------------------- the harness
 
@@ -245,16 +261,10 @@ class InterventionCountReplayTest {
 
         /** `handleDecision`'s `BlockDecision.Block` branch: launch, then claim, then write. */
         fun handleBlockDecision(block: Block) {
-            val decisionKey =
-                if (block.dailyLimited) dailyLimitKey(block.attributed) else delayKey(block.target)
-            if (!launchBlockOverlay(block.target, decisionKey)) return
+            if (!launchBlockOverlay(block.target, block.identity.decisionKey)) return
             val counted = guard.claimConfrontation(
                 targetPackage = block.target,
-                key = BlockLaunchGate.confrontationKey(
-                    attributedPackage = block.attributed,
-                    featureKey = block.featureKey,
-                    webDomain = block.webDomain
-                )
+                key = block.identity.confrontationKey
             )
             if (counted) rows++
         }
@@ -388,7 +398,8 @@ class InterventionCountReplayTest {
         "daily limit HARD_BLOCK",
         target = blocked,
         attributed = blocked,
-        dailyLimited = true
+        dailyLimited = true,
+        mode = BlockMode.HARD_BLOCK
     )
 
     // ------------------------------------------- the budget that runs out while the user sits (v1.18.4)
@@ -905,8 +916,14 @@ class InterventionCountReplayTest {
     fun `a second block counts only when the user genuinely left and came back`() {
         val kinds = listOf(
             Block("a rule DELAY", target = blocked, attributed = blocked),
-            Block("a rule HARD_BLOCK", target = blocked, attributed = blocked),
-            Block("a daily-limit HARD_BLOCK", target = blocked, attributed = blocked),
+            Block("a rule HARD_BLOCK", target = blocked, attributed = blocked, mode = BlockMode.HARD_BLOCK),
+            Block(
+                "a daily-limit HARD_BLOCK",
+                target = blocked,
+                attributed = blocked,
+                dailyLimited = true,
+                mode = BlockMode.HARD_BLOCK
+            ),
             Block("a feature block", target = blocked, attributed = blocked, featureKey = "reels"),
             Block("a web block", target = blocked, attributed = blocked, webDomain = "instagram.com")
         )

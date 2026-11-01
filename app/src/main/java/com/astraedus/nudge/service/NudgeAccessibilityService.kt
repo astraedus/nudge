@@ -275,9 +275,6 @@ class NudgeAccessibilityService : AccessibilityService() {
          */
         private const val SWITCH_CHECK_DEBOUNCE_MS = 500L
 
-        /** The launch fingerprint's mode for a Nuke block. Distinct from every BlockMode name. */
-        private const val NUKE_FINGERPRINT_MODE = "NUKE"
-
         val SYSTEM_PACKAGES = setOf(
             "com.android.systemui",
             "com.android.launcher",
@@ -2607,7 +2604,10 @@ class NudgeAccessibilityService : AccessibilityService() {
                 detectedFeature = feature.key,
                 includeWholeAppRulesForFeature = !passthrough.shouldSkipForegroundEvaluation(packageName)
             )
-            handleDecision(decision, packageName, feature.key)
+            // No feature handed over (#131): the block is about the feature only when a FEATURE
+            // rule decided it, and the decision says so itself. A whole-app rule found here is the
+            // same block the foreground path is launching for this tap.
+            handleDecision(decision, packageName)
         }
     }
 
@@ -3050,6 +3050,8 @@ class NudgeAccessibilityService : AccessibilityService() {
      *   `UsageEvent`, the overlay's app label and the PiP session record. For a web block this is
      *   the rule's app (Instagram), not the browser, so a website block still shows up in that
      *   app's stats and the overlay still names the app the user recognises.
+     *   The in-app feature, when there is one, is read off [BlockDecision.Block.feature]: it is
+     *   the deciding rule's, never the calling path's (#131).
      * @param web set when the block happened on a website. Carries the browser (the app the user is
      *   actually in, and therefore what a passthrough grant or an emergency pass must apply to) and
      *   the domain (so the grant is scoped to the site, not the whole browser).
@@ -3057,14 +3059,18 @@ class NudgeAccessibilityService : AccessibilityService() {
     private suspend fun handleDecision(
         decision: BlockDecision,
         packageName: String,
-        featureKey: String? = null,
         web: WebBlockContext? = null
     ) {
         when (decision) {
             is BlockDecision.Block -> {
+                // Both keys from the decision alone (#131): the foreground path, the feature
+                // detector and the #58 deferred re-evaluation can all surface the SAME rule for one
+                // tap, and only a key they all agree on lets the gate see one block.
+                val identity = BlockLaunchGate.identityOf(decision, packageName, web?.domain)
                 log.i(
                     "handling block package=$packageName mode=${decision.mode} " +
-                        "delaySeconds=${decision.delaySeconds} grayscale=${decision.grayscale}"
+                        "delaySeconds=${decision.delaySeconds} grayscale=${decision.grayscale} " +
+                        "feature=${decision.feature}"
                 )
 
                 // THE GATE, AND IT IS AHEAD OF THE `UsageEvent` DELIBERATELY (issue #31).
@@ -3086,21 +3092,13 @@ class NudgeAccessibilityService : AccessibilityService() {
                     // decision from the daily-limit HARD_BLOCK to an ordinary DELAY, and until the
                     // gate could see that, the fresh launch was refused as a duplicate of the
                     // screen the user was trying to get past.
-                    decisionKey = BlockLaunchGate.decisionFingerprint(
-                        attributedPackage = packageName,
-                        // Nuke's hard block is its own block: a pending RULE hard block for the
-                        // same app must not swallow it as a duplicate (issue #50's shape).
-                        blockMode = if (decision.nuke) NUKE_FINGERPRINT_MODE else decision.mode.name,
-                        featureKey = featureKey,
-                        webDomain = web?.domain,
-                        dailyLimited = decision.dailyLimitMinutes != null
-                    ),
+                    decisionKey = identity.decisionKey,
                     webDomain = web?.domain
                 ) {
                     putExtra(BlockOverlayActivity.EXTRA_BLOCK_MODE, decision.mode.name)
                     putExtra(BlockOverlayActivity.EXTRA_DELAY_SECONDS, decision.delaySeconds)
                     putExtra(BlockOverlayActivity.EXTRA_PACKAGE_NAME, packageName)
-                    putExtra(BlockOverlayActivity.EXTRA_FEATURE_KEY, featureKey)
+                    putExtra(BlockOverlayActivity.EXTRA_FEATURE_KEY, decision.feature)
                     putExtra(BlockOverlayActivity.EXTRA_RULE_NAME, decision.ruleName)
                     putExtra(BlockOverlayActivity.EXTRA_NUKE, decision.nuke)
                     putExtra(
@@ -3140,16 +3138,12 @@ class NudgeAccessibilityService : AccessibilityService() {
                 // once per iteration, for as long as it ran.
                 val counted = entryPoint.blockLaunchGuard().claimConfrontation(
                     targetPackage = web?.browserPackage ?: packageName,
-                    key = BlockLaunchGate.confrontationKey(
-                        attributedPackage = packageName,
-                        featureKey = featureKey,
-                        webDomain = web?.domain
-                    )
+                    key = identity.confrontationKey
                 )
                 if (!counted) {
                     log.i(
                         "block shown but NOT counted package=$packageName " +
-                            "reason=already_counted_this_arrival feature=$featureKey " +
+                            "reason=already_counted_this_arrival feature=${decision.feature} " +
                             "domain=${web?.domain}"
                     )
                     return

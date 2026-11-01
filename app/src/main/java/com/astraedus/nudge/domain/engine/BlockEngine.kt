@@ -98,7 +98,8 @@ class BlockEngine @Inject constructor(
                 ruleName = unconditionalHardBlockRule.ruleName,
                 dailyTimeRemainingMs = dailyTimeRemainingMs,
                 dailyLimitMinutes = minDailyLimit,
-                tabVanish = unconditionalHardBlockRule.tabVanish
+                tabVanish = unconditionalHardBlockRule.tabVanish,
+                feature = featureDecidedBy(unconditionalHardBlockRule, detectedFeature)
             )
         }
 
@@ -116,7 +117,8 @@ class BlockEngine @Inject constructor(
                 ruleName = budgetRuleName,
                 dailyTimeRemainingMs = dailyTimeRemainingMs,
                 dailyLimitMinutes = minDailyLimit,
-                tabVanish = timeBudgetRule.tabVanish
+                tabVanish = timeBudgetRule.tabVanish,
+                feature = featureDecidedBy(timeBudgetRule, detectedFeature)
             )
         }
 
@@ -138,7 +140,8 @@ class BlockEngine @Inject constructor(
                     dailyTimeRemainingMs = dailyTimeRemainingMs,
                     dailyLimitMinutes = minDailyLimit,
                     tabVanish = rule.tabVanish,
-                    keepPassOnShortTrips = rule.keepPassOnShortTrips
+                    keepPassOnShortTrips = rule.keepPassOnShortTrips,
+                    feature = featureDecidedBy(rule, detectedFeature)
                 )
             }
         }
@@ -146,6 +149,19 @@ class BlockEngine @Inject constructor(
         logger.d("allow package=$packageName reason=no_matching_block_mode")
         return BlockDecision.Allow
     }
+
+    /**
+     * [BlockDecision.Block.feature] for a block [rule] decided: the detected feature when [rule] is
+     * a feature rule naming it, otherwise null.
+     *
+     * The FEATURE BELONGS TO THE RULE, NOT TO THE QUESTION (issue #131). A feature evaluation also
+     * matches whole-app rules (`includeWholeAppRulesForFeature`), and when one of those decides,
+     * the block the user meets is the whole-app block, the same one the foreground path launches
+     * for the same tap. Labelling it with the feature that happened to be on screen made it a
+     * second block with a second fingerprint, so it launched and counted twice.
+     */
+    private fun featureDecidedBy(rule: ActiveRule, detectedFeature: String?): String? =
+        detectedFeature?.takeIf { rule.inAppFeatures?.contains(it) == true }
 
     companion object {
         /** What the overlay's rule footer and the logs call a Nuke block. */

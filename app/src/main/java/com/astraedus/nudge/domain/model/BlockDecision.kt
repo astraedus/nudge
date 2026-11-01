@@ -35,6 +35,20 @@ sealed class BlockDecision {
          * pass), and the launch fingerprint keeps it distinct from a rule's hard block so a pending
          * rule overlay can never swallow it as a duplicate.
          */
-        val nuke: Boolean = false
+        val nuke: Boolean = false,
+        /**
+         * The in-app feature (Shorts, Reels, ...) this block is ABOUT: set only when the rule that
+         * DECIDED it is a feature rule naming that feature. Null for a whole-app rule, even when
+         * the evaluation that found it was asked about a feature, and null for Nuke.
+         *
+         * Issue [#131](https://github.com/astraedus/nudge/issues/131): the feature used to be
+         * taken from the PATH that asked rather than from the rule that answered. YouTube's
+         * whole-app Delay reached the launch twice for one tap, once from the foreground path and
+         * once from the feature detector (which had just recognised Shorts), and the two were
+         * fingerprinted as different blocks, so both launched and both were counted. One rule is
+         * one block, whichever path surfaced it. Read through
+         * [com.astraedus.nudge.domain.block.BlockLaunchGate.identityOf], never re-derived.
+         */
+        val feature: String? = null
     ) : BlockDecision()
 }

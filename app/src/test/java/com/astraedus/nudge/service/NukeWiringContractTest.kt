@@ -115,7 +115,9 @@ class NukeWiringContractTest {
     fun `the Nuke block reaches the overlay flagged, with its own fingerprint`() {
         val handle = body(service, "private suspend fun handleDecision(", "private suspend fun enforceExhaustedBudget(")
         assertTrue(handle.contains("putExtra(BlockOverlayActivity.EXTRA_NUKE, decision.nuke)"))
-        assertTrue(handle.contains("if (decision.nuke) NUKE_FINGERPRINT_MODE else decision.mode.name"))
+        // The fingerprint itself is a value now (#131), pinned by `BlockIdentityTest`: what is left
+        // to pin here is that the launch takes its keys from that one function.
+        assertTrue(handle.contains("BlockLaunchGate.identityOf(decision, packageName, web?.domain)"))
     }
 
     @Test

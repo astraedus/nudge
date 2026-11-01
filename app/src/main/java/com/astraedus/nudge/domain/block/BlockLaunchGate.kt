@@ -2,6 +2,7 @@ package com.astraedus.nudge.domain.block
 
 import com.astraedus.nudge.domain.events.A11yEventType
 import com.astraedus.nudge.domain.events.ForegroundSignal
+import com.astraedus.nudge.domain.model.BlockDecision
 
 /**
  * Whether a block decision that has just finished being computed may still be shown.
@@ -566,6 +567,57 @@ object BlockLaunchGate {
         append("|mode=").append(blockMode)
         if (dailyLimited) append("|daily")
     }
+
+    /** The launch fingerprint's mode for a Nuke block. Distinct from every `BlockMode` name. */
+    const val NUKE_FINGERPRINT_MODE = "NUKE"
+
+    /**
+     * The two identities one rule decision carries into a launch: [decisionKey] for [decide]'s
+     * "is this the overlay already in flight?" and [confrontationKey] for the arrival's "has the
+     * user already been counted for this?".
+     */
+    data class BlockIdentity(val decisionKey: String, val confrontationKey: String)
+
+    /**
+     * WHICH BLOCK [decision] is, derived from the DECISION and nothing else
+     * ([#131](https://github.com/astraedus/nudge/issues/131)).
+     *
+     * The feature comes from [BlockDecision.Block.feature], the rule that decided, never from the
+     * path that asked. Several paths can surface ONE rule for ONE launch: the foreground path, the
+     * in-app feature detector (which also matches whole-app rules), the #58 deferred re-evaluation.
+     * When the feature was the asking path's, the detector's copy of a whole-app Delay carried
+     * `feature=SHORTS` while the foreground path's did not, so [decide] saw two different blocks
+     * and launched both 10-25ms apart, and [isNewConfrontation] counted both. Device-captured:
+     * `youtube-delay-double-launch.jsonl`.
+     *
+     * One function for both keys, so they cannot disagree about what a block is, and the replay
+     * harness calls this same function rather than spelling a key of its own.
+     *
+     * @param attributedPackage the app the rule belongs to (for a web block, the rule's app, not
+     *   the browser).
+     * @param webDomain the site, for a web block; it belongs to the call because the rule engine
+     *   never sees URLs.
+     */
+    fun identityOf(
+        decision: BlockDecision.Block,
+        attributedPackage: String,
+        webDomain: String? = null
+    ): BlockIdentity = BlockIdentity(
+        decisionKey = decisionFingerprint(
+            attributedPackage = attributedPackage,
+            // Nuke's hard block is its own block: a pending RULE hard block for the same app must
+            // not swallow it as a duplicate (issue #50's shape).
+            blockMode = if (decision.nuke) NUKE_FINGERPRINT_MODE else decision.mode.name,
+            featureKey = decision.feature,
+            webDomain = webDomain,
+            dailyLimited = decision.dailyLimitMinutes != null
+        ),
+        confrontationKey = confrontationKey(
+            attributedPackage = attributedPackage,
+            featureKey = decision.feature,
+            webDomain = webDomain
+        )
+    )
 
     /**
      * Is a row owed for this confrontation, or has the user already been counted for this arrival?
