@@ -3082,6 +3082,9 @@ class NudgeAccessibilityService : AccessibilityService() {
      * @param extras fills in the intent. Called only when the launch is going to happen.
      * @return false when the gate refused, in which case the caller must not record the block
      *   either, a `UsageEvent` for an overlay nobody saw is the stat inflation issue #19 measured.
+     *   True for a launch AND for a re-show of a buried overlay (#143): both put the block in front
+     *   of the user, and the caller's `claimConfrontation` is what keeps a re-show from counting
+     *   twice (the guard has already restored the arrival the original launch was counted in).
      */
     private fun launchBlockOverlay(
         targetPackage: String,
@@ -3123,7 +3126,14 @@ class NudgeAccessibilityService : AccessibilityService() {
             )
         }
 
-        if (decision != BlockLaunchGate.Decision.LAUNCH) {
+        // THE SAME BLOCK, BURIED BEFORE IT ARRIVED (#143). A trampoline launcher (Google Camera's
+        // cold start through the permission dialog) put its own task back in front of the overlay
+        // before the overlay was even created. It is re-shown through the same `startActivity`
+        // (singleInstance brings its existing task forward), but it is not a new block: no wall,
+        // no new pending overlay, and the guard restores the arrival so the caller's claim finds
+        // this tap already counted.
+        val reshow = decision == BlockLaunchGate.Decision.RESHOW_HIDDEN
+        if (decision != BlockLaunchGate.Decision.LAUNCH && !reshow) {
             // Logged unconditionally and with BOTH the target and what is actually in front,
             // because "the block was dropped" and "the block never happened" are indistinguishable
             // from a device otherwise, the ambiguity that cost the v1.12.0 release cycle.
@@ -3146,16 +3156,24 @@ class NudgeAccessibilityService : AccessibilityService() {
         // A new block owns what happens next: a Delay completed before it must not read this
         // block's go-home as its own reveal landing on Home (#119).
         entryPoint.passthroughManager().cancelHandBack()
-        // A wall, for the bounce check-in: the app the user was actually IN (the browser, for a
-        // website block) and, when it is a website, the site. Every overlay in this service passes
-        // through here exactly once per launch the gate allows, which is what makes this the one
-        // place to report it.
-        bounceCheckIn.onWall(targetPackage, webDomain)
-        // ...and record that it is only STARTED, not yet on screen. Those are different facts and
-        // conflating them is what produced two blocks for one app entry: see
-        // [BlockLaunchGate.isGenuineBypass]. Keyed on the TARGET, because that is the package whose
-        // trailing window events must not be mistaken for the user getting past the overlay.
-        guard.onOverlayLaunched(targetPackage, decisionKey)
+        if (reshow) {
+            log.i(
+                "block overlay re-shown target=$targetPackage attributed=$attributedPackage " +
+                    "reason=hidden_behind_target_before_shown foreground=${guard.foregroundPackage}"
+            )
+            guard.onOverlayReshown(targetPackage)
+        } else {
+            // A wall, for the bounce check-in: the app the user was actually IN (the browser, for
+            // a website block) and, when it is a website, the site. Every NEW overlay in this
+            // service passes through here exactly once per launch the gate allows, which is what
+            // makes this the one place to report it. A re-show is the same wall, already reported.
+            bounceCheckIn.onWall(targetPackage, webDomain)
+            // ...and record that it is only STARTED, not yet on screen. Those are different facts
+            // and conflating them is what produced two blocks for one app entry: see
+            // [BlockLaunchGate.isGenuineBypass]. Keyed on the TARGET, because that is the package
+            // whose trailing window events must not be mistaken for the user getting past it.
+            guard.onOverlayLaunched(targetPackage, decisionKey)
+        }
         applicationContext.startActivity(overlayIntent)
         return true
     }

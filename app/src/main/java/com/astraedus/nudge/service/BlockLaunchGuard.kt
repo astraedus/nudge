@@ -99,7 +99,14 @@ class BlockLaunchGuard @Inject constructor() {
      * future early return can skip one but not the other. Pinned by
      * `EventDispatchOrderContractTest`.
      */
+    // Synchronized since #143 made this a read-modify-write of [pendingOverlay], which the IO
+    // scope also writes ([onOverlayLaunched]); a lost update there would forget a fresh launch.
+    @Synchronized
     fun onForegroundSignal(signal: ForegroundSignal) {
+        // FIRST, and with the arrival as it stands BEFORE this signal (#143): a window that buries
+        // an overlay still on its way to the screen also ends the arrival two lines down, and the
+        // re-show that follows must be able to put that arrival back rather than count it again.
+        pendingOverlay = BlockLaunchGate.pendingOverlayAfterSignal(signal, pendingOverlay, arrival)
         foregroundPackage = BlockLaunchGate.foregroundAfter(signal, foregroundPackage)
         walkAway = BlockLaunchGate.walkAwayAfter(signal, walkAway)
         arrival = BlockLaunchGate.arrivalAfterSignal(signal, arrival)
@@ -188,6 +195,22 @@ class BlockLaunchGuard @Inject constructor() {
     }
 
     /**
+     * The overlay [decide] answered [BlockLaunchGate.Decision.RESHOW_HIDDEN] for is being brought
+     * back to the front ([#143](https://github.com/astraedus/nudge/issues/143)).
+     *
+     * Same overlay, same id, on its way to the screen again; and same confrontation, so the arrival
+     * the burying window ended is put back (merged with anything counted since) and the claim that
+     * follows the re-show finds this tap already counted.
+     */
+    @Synchronized
+    fun onOverlayReshown(packageName: String) {
+        val pending = pendingOverlay ?: return
+        if (pending.packageName != packageName) return
+        arrival = BlockLaunchGate.arrivalAfterReshow(arrival, pending.displacedArrival)
+        pendingOverlay = BlockLaunchGate.pendingOverlayAfterReshow(pending, nowMs())
+    }
+
+    /**
      * The id of the overlay currently in flight, read by `BlockOverlayActivity` as it renders so it
      * can later say which overlay it was. [BlockLaunchGate.NO_OVERLAY_ID] when there is none.
      */
@@ -269,7 +292,8 @@ class BlockLaunchGuard @Inject constructor() {
         return "foreground=$foregroundPackage " +
             "pendingOverlay=" + (
                 pending?.let {
-                    "${it.packageName}(shown=${it.windowShown},age=${nowMs() - it.launchedAtMs}ms)"
+                    "${it.packageName}(shown=${it.windowShown},displaced=${it.displaced}," +
+                        "age=${nowMs() - it.launchedAtMs}ms)"
                 } ?: "none"
                 ) +
             " countedThisArrival=${arrival?.countedKeys?.size ?: 0}" +
