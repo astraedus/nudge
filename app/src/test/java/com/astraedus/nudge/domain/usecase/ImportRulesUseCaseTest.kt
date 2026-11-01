@@ -770,4 +770,46 @@ class ImportRulesUseCaseTest {
         assertFalse(byPackage.getValue("com.plain").keepPassOnShortTrips)
         assertFalse(byPackage.getValue("com.legacy").keepPassOnShortTrips)
     }
+
+    /**
+     * PR 2 L4 test (groups spec 5.6): import is ADDITIVE for groups, so it can never weaken a
+     * group a rule depends on. With "Social" {a, b} used by an enabled DELAY rule, a file that
+     * carries "Social" {c} only adds c: no member removed, no existing rule deleted, updated or
+     * disabled, and no settings in the file means `weakensProtection` stays false -- which is why
+     * the import path needs no per-group Strict Mode gate.
+     */
+    @Test
+    fun `importing a group used by an enabled rule only adds members and weakens nothing`() = runTest {
+        val social = AppGroup(id = 7, name = "Social")
+        val existingRule = BlockRule(id = 1, groupId = 7, mode = "DELAY", enabled = true)
+        every { repository.getAllGroups() } returns flowOf(listOf(social))
+        every { repository.getAllRules() } returns flowOf(listOf(existingRule))
+        every { repository.getGroupMembers(7) } returns flowOf(
+            listOf(AppGroupMember(7, "com.a"), AppGroupMember(7, "com.b"))
+        )
+        coEvery { repository.removeFromGroup(any(), any()) } returns Unit
+        coEvery { repository.updateRule(any()) } returns Unit
+        coEvery { repository.deleteRule(any()) } returns Unit
+        coEvery { repository.setEnabledForPackage(any(), any()) } returns Unit
+
+        val parsed = useCase.preview(
+            """
+            {"version": 1,
+             "rules": [{"groupName": "Social", "mode": "HARD_BLOCK"}],
+             "groups": [{"name": "Social", "members": ["com.c"]}]}
+            """.trimIndent()
+        ).result
+        assertFalse(useCase.weakensProtection(parsed))
+        val outcome = useCase.execute(parsed)
+
+        assertNull(outcome.error)
+        assertEquals(0, outcome.groupsCreated)
+        assertEquals(listOf(AppGroupMember(7, "com.c")), addedMembers)
+        assertEquals(listOf(7L), addedRules.map { it.groupId })
+        coVerify(exactly = 0) { repository.removeFromGroup(any(), any()) }
+        coVerify(exactly = 0) { repository.updateRule(any()) }
+        coVerify(exactly = 0) { repository.deleteRule(any()) }
+        coVerify(exactly = 0) { repository.setEnabledForPackage(any(), any()) }
+        assertEquals(emptyList<ExportedSettings>(), appliedSettings)
+    }
 }
