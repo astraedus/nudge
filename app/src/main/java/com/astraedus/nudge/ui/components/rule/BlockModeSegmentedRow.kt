@@ -9,6 +9,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.ui.components.blockModeLabel
+import com.astraedus.nudge.ui.components.blockModeShortLabel
 
 /**
  * The modes that actually gate an app, in ascending severity.
@@ -24,10 +25,12 @@ val BLOCKING_MODES: List<BlockMode> =
 /**
  * One segment per [BLOCKING_MODES] entry.
  *
- * [compact] drops the selected-check icon and keeps each label on one line: with four modes in the
- * row the icon's 18dp + 8dp would cost more than a quarter of the width left for "Hard Block", and
- * the selected segment is already unmistakable from its colour. The default behaviour picker uses
- * it; the schedule and website pickers keep the stock segment.
+ * [compact] drops the selected-check icon and keeps each label on one line, as one word
+ * ([blockModeShortLabel]: "Hard", not "Hard Block", which a quarter-width segment clipped and drew
+ * off-centre): with four modes in the row the icon's 18dp + 8dp would cost more than a quarter of
+ * the width, and the selected segment is already unmistakable from its colour. The default
+ * behaviour picker and the group editor use it; the schedule and website pickers keep the stock
+ * segment.
  */
 @Composable
 fun BlockModeSegmentedRow(
@@ -49,7 +52,7 @@ fun BlockModeSegmentedRow(
                     shape = shape,
                     icon = {}
                 ) {
-                    Text(blockModeLabel(mode), maxLines = 1)
+                    Text(blockModeShortLabel(mode), maxLines = 1)
                 }
             } else {
                 SegmentedButton(
