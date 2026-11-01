@@ -117,6 +117,22 @@ class PassthroughManager @Inject constructor() {
         private set
 
     /**
+     * Was the grant on [lastPackage] earned against the WHOLE APP, rather than only a website in it
+     * or a feature of it? (spec 5.5)
+     *
+     * For an ordinary app the distinction never mattered: [isGranted] lets the package through
+     * whichever block was completed. For a browser covered by a whole-app group rule it is the
+     * difference between "finished Chrome's group delay" and "finished youtube.com's delay", and
+     * only the first may let a covered browser past its group's block. Without this axis, completing
+     * a website's delay would have opened a browser its group hard-blocks.
+     *
+     * Set true by an app-level completion; a web or feature completion keeps whatever the SAME
+     * package already had (finishing a site's delay inside a browser you already earned keeps that
+     * browser earned) and is false otherwise. Dies with the grant in [clear].
+     */
+    @Volatile private var lastWhole: Boolean = false
+
+    /**
      * Record a completed block. Moves the sitting to [packageName] first: finishing a delay is
      * unambiguous evidence of where the user is, and a grant left attached to the PREVIOUS app's
      * sitting would be revoked by the very next transition.
@@ -138,6 +154,9 @@ class PassthroughManager @Inject constructor() {
         // The sitting moves FIRST, and its transition is announced like any other, so a grant that
         // relocates the user from app A to app B resets A's counter state instead of leaking it.
         val event = sitting.onGrantEarned(packageName, keepPassOnShortTrips)
+        // Read BEFORE lastPackage is overwritten: the carry-over is about the grant being replaced.
+        lastWhole = (webDomain == null && featureKey == null) ||
+            (lastPackage == packageName && lastWhole)
         lastPackage = packageName
         lastFeature = featureKey
         lastDomain = webDomain
@@ -254,6 +273,9 @@ class PassthroughManager @Inject constructor() {
 
     fun shouldSkipForegroundEvaluation(packageName: String): Boolean = isGranted(packageName)
 
+    /** Granted, and the grant was earned against the whole app. See [lastWhole]. */
+    fun isGrantedWhole(packageName: String): Boolean = isGranted(packageName) && lastWhole
+
     fun shouldSkipFeatureEvaluation(packageName: String, featureKey: String): Boolean =
         isGranted(packageName) && lastFeature == featureKey
 
@@ -272,6 +294,7 @@ class PassthroughManager @Inject constructor() {
         lastPackage = null
         lastFeature = null
         lastDomain = null
+        lastWhole = false
         lastTime = 0L
     }
 

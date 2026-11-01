@@ -113,4 +113,54 @@ class AppListViewModelStrictModeTest {
         assertNull(vm.challenge.value)
         coVerify(exactly = 1) { repository.addRule(any<BlockRule>()) }
     }
+
+    // ── Group rows (spec PR 2) ────────────────────────────────────────────
+
+    private fun groupRow(rule: BlockRule?) = GroupRow(
+        groupId = 3L,
+        title = "Social · 2 apps",
+        summary = "Delay 15s",
+        blocking = rule?.enabled == true,
+        rule = rule
+    )
+
+    private val groupRule = BlockRule(id = 9L, groupId = 3L, mode = "DELAY", enabled = true)
+
+    @Test
+    fun `strict on - switching a group off waits for the challenge, then turns its rule off`() = runTest {
+        val vm = viewModel(strictOn = true)
+
+        vm.toggleGroup(groupRow(groupRule))
+
+        assertNotNull(vm.challenge.value)
+        coVerify(exactly = 0) { repository.updateRule(any()) }
+
+        vm.verifyChallenge(vm.challenge.value!!.target)
+        coVerify(exactly = 1) { repository.updateRule(groupRule.copy(enabled = false)) }
+    }
+
+    @Test
+    fun `switching a group back on is never gated`() = runTest {
+        val vm = viewModel(strictOn = true)
+
+        vm.toggleGroup(groupRow(groupRule.copy(enabled = false)))
+
+        assertNull(vm.challenge.value)
+        coVerify(exactly = 1) { repository.updateRule(groupRule.copy(enabled = true)) }
+    }
+
+    @Test
+    fun `switching on a group with no rule gives it Delay 15s, ungated`() = runTest {
+        val vm = viewModel(strictOn = true)
+
+        vm.toggleGroup(groupRow(null))
+
+        assertNull(vm.challenge.value)
+        coVerify(exactly = 1) {
+            repository.addRule(match<BlockRule> {
+                it.groupId == 3L && it.packageName == null && it.mode == "DELAY" &&
+                    it.delaySeconds == 15 && it.enabled
+            })
+        }
+    }
 }

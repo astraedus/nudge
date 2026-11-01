@@ -62,4 +62,24 @@ class BlockRuleRepository @Inject constructor(
 
     /** Every group's members, one query. See [RuleSnapshotSource]. */
     fun getAllGroupMembers(): Flow<List<AppGroupMember>> = appGroupDao.getAllMembers()
+
+    fun getGroupRules(groupId: Long): Flow<List<BlockRule>> = blockRuleDao.getByGroupId(groupId)
+
+    /**
+     * Create (groupId == null) or update one group, its full member set and its own rule,
+     * atomically. Returns the group id. The rule is written with groupId = that id and
+     * packageName = null; rule.id == 0L inserts, otherwise updates. Members are replaced as a set.
+     */
+    suspend fun saveGroup(
+        groupId: Long?,
+        name: String,
+        members: Set<String>,
+        rule: BlockRule
+    ): Long = appGroupDao.saveGroupWithRule(groupId, name.trim(), members, rule)
+
+    /** Delete the group, every member row and every rule that targets it, in one transaction. */
+    suspend fun deleteGroupWithRules(groupId: Long) = appGroupDao.deleteGroupAndRules(groupId)
+
+    suspend fun renameGroup(groupId: Long, name: String) =
+        appGroupDao.renameGroup(groupId, name.trim())
 }

@@ -16,9 +16,12 @@ import com.astraedus.nudge.ui.components.UsageReminderInput
 import com.astraedus.nudge.ui.lock.StrictModeGate
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -39,6 +42,17 @@ class UnifiedAppConfigViewModel @Inject constructor(
 
     /** Active Strict Mode unlock challenge, if a weakening action is pending. */
     val challenge: StateFlow<ChallengeState?> = strictModeGate.challenge
+
+    /**
+     * The groups that block this app right now, for "Also covered by" (spec 3.7): read-only, live,
+     * so a group edited from here is current on the way back. Empty hides the section.
+     */
+    val coveredBy: StateFlow<List<CoveringGroup>> = combine(
+        blockRuleRepository.getAllGroups(),
+        blockRuleRepository.getAllGroupMembers(),
+        blockRuleRepository.getAllRules()
+    ) { groups, members, rules -> coveringGroups(packageName, groups, members, rules) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     /**
      * Snapshot of the existing default app rule at load time, used to decide whether a save

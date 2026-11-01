@@ -53,6 +53,28 @@ comes to the front, so the edit is in place by the next open, with no restart. P
 `EvaluateBlockSnapshotTest` (an added rule and a removed membership both land on the next
 evaluation without reopening any table), and on the bench in the spec PR 1 device QA.
 
+## The service's one synchronous read (spec 5.5)
+
+Every evaluation goes through the suspending `current()`, including the browser coverage question
+(`EvaluateBlockUseCase.isCoveredWhole`, which decides whether a browser is evaluated as an app), so
+a cold start is fail closed for a grouped browser exactly as for any app. The one synchronous read is
+`NudgeAccessibilityService.isCoveredWholeNow`, used only where suspending or opening a query is not
+allowed: the grant checks and the feature-detection guard on the event thread. It reads
+`RuleSnapshotSource.snapshot.value` directly (the source is exposed on the service's Hilt entry
+point) and answers **true for a browser while it is null**, so the grant check accepts only a
+whole-app grant until the snapshot is warm. Nothing reads `snapshot.value` and fails open. Anything
+that can suspend must keep using `current()`. Details: `web-domain-blocking.md`, "Browsers in a
+group".
+
+## Group names
+
+`RuleSnapshot.of` maps each group rule with the name of its group (`BlockRuleData.groupName`,
+looked up once from the groups it already holds; null for a direct rule and for a rule whose group
+row is missing). `RuleEvaluator.buildRuleName` uses it in place of the mode name, so the block
+overlay shows "Rule: Social" rather than "Rule: Delay"; a group rule with no name shows "Group",
+never a mode name. Qualifiers and the feature prefix stay ("Social (30 min/day)", "Reels - Social").
+Pinned in `RuleEvaluatorGroupNameTest`.
+
 ## Package facts: failure direction
 
 A package that cannot be read is `NOT_INSTALLED` (uncategorised, not launchable), so it is never
@@ -66,4 +88,5 @@ broadcast invalidates it; any other failure is not cached, so the next read retr
 |---|---|---|
 | L3 | `EvaluateBlockSnapshotTest` | zero table opens and zero per-group reads once warm; edits land on the next evaluation; cold start (members never emit) still blocks; a failing table is retried until warm; snapshot and per-call readers decide alike across modes, features, a bad mode string and a rule for a missing group |
 | L1 | `EvaluateBlock*Test`, `FollowingSteerEnabledTest` | unchanged by spec PR 1: they run on the per-call reader, which is the proof the decisions did not move |
+| L1 | `RuleEvaluatorGroupNameTest` | a group rule is named after its group in every mode, with qualifiers and feature prefix; "Group" for a missing name; direct rules unchanged; `RuleSnapshot.of` fills `groupName` |
 | L1 | `PackageFactsCacheTest`, `AndroidPackageFactsCategoryTest` | cache hit/miss/invalidate, a throwing resolve is not cached; every `CATEGORY_*` mapping, unknown → `UNDEFINED` |

@@ -14,8 +14,8 @@ import androidx.navigation.navArgument
 import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.ui.screens.apps.AppListScreen
 import com.astraedus.nudge.ui.screens.apps.AppListViewModel
-import com.astraedus.nudge.ui.screens.groups.GroupScreen
-import com.astraedus.nudge.ui.screens.groups.GroupViewModel
+import com.astraedus.nudge.ui.screens.groups.GroupEditorScreen
+import com.astraedus.nudge.ui.screens.groups.GroupEditorViewModel
 import com.astraedus.nudge.ui.screens.home.HomeScreen
 import com.astraedus.nudge.ui.screens.home.HomeViewModel
 import com.astraedus.nudge.ui.screens.nuke.NukeScreen
@@ -41,7 +41,6 @@ import kotlinx.coroutines.launch
 sealed class Screen(val route: String) {
     data object Home : Screen("home")
     data object Apps : Screen("apps")
-    data object Groups : Screen("groups")
     data object Stats : Screen("stats")
     data object Willpower : Screen("willpower")
     data object Interventions : Screen("interventions")
@@ -57,6 +56,12 @@ sealed class Screen(val route: String) {
         fun createRoute(packageName: String) = "app_detail/$packageName"
     }
     data object Nuke : Screen("nuke")
+
+    /** The group editor (spec 3.3). No id, or an id of 0 or less, opens a new group. */
+    data object GroupEditor : Screen("group_editor?groupId={groupId}") {
+        fun createRoute(groupId: Long? = null) =
+            if (groupId == null) "group_editor" else "group_editor?groupId=$groupId"
+    }
 }
 
 @Composable
@@ -166,6 +171,9 @@ fun NudgeNavGraph(
                 onNavigateBack = { navController.popBackStack() },
                 onNavigateToAppConfig = { pkg ->
                     navController.navigate(Screen.AppConfig.createRoute(pkg))
+                },
+                onOpenGroup = { groupId ->
+                    navController.navigate(Screen.GroupEditor.createRoute(groupId))
                 }
             )
         }
@@ -176,6 +184,25 @@ fun NudgeNavGraph(
         ) {
             val viewModel: UnifiedAppConfigViewModel = hiltViewModel()
             UnifiedAppConfigScreen(
+                viewModel = viewModel,
+                onNavigateBack = { navController.popBackStack() },
+                onOpenGroup = { groupId ->
+                    navController.navigate(Screen.GroupEditor.createRoute(groupId))
+                }
+            )
+        }
+
+        composable(
+            route = Screen.GroupEditor.route,
+            arguments = listOf(
+                navArgument(GroupEditorViewModel.ARG_GROUP_ID) {
+                    type = NavType.LongType
+                    defaultValue = -1L
+                }
+            )
+        ) {
+            val viewModel: GroupEditorViewModel = hiltViewModel()
+            GroupEditorScreen(
                 viewModel = viewModel,
                 onNavigateBack = { navController.popBackStack() }
             )
@@ -189,14 +216,6 @@ fun NudgeNavGraph(
                 onNavigateToAppConfig = { pkg, _ ->
                     navController.navigate(Screen.AppConfig.createRoute(pkg))
                 }
-            )
-        }
-
-        composable(Screen.Groups.route) {
-            val viewModel: GroupViewModel = hiltViewModel()
-            GroupScreen(
-                viewModel = viewModel,
-                onNavigateBack = { navController.popBackStack() }
             )
         }
 

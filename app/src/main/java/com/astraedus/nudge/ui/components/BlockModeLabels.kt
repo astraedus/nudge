@@ -22,6 +22,16 @@ internal fun blockModeLabel(mode: BlockMode): String = when (mode) {
     BlockMode.BREATHING -> "Breathing"
 }
 
+/**
+ * The label inside a four-segment picker row, where each segment is about a quarter of the screen.
+ * One word each: "Hard Block" in a quarter-width segment with `maxLines = 1` was clipped to "Hard"
+ * and, overflowing, drawn off-centre (device QA, groups PR 2).
+ */
+internal fun blockModeShortLabel(mode: BlockMode): String = when (mode) {
+    BlockMode.HARD_BLOCK -> "Hard"
+    BlockMode.NONE, BlockMode.DELAY, BlockMode.HOLD, BlockMode.BREATHING -> blockModeLabel(mode)
+}
+
 /** One line under the picker saying what the selected mode actually does. */
 internal fun blockModeDescription(mode: BlockMode): String = when (mode) {
     BlockMode.NONE -> "Not blocked."

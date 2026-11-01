@@ -164,6 +164,18 @@ class ActiveRulesViewModel @Inject constructor(
             return parts.joinToString(" · ")
         }
 
+        /** A group row's title on Manage Apps: "Social · 9 apps", "Work · 1 app". */
+        fun groupTitle(name: String, memberCount: Int): String =
+            "$name · $memberCount ${if (memberCount == 1) "app" else "apps"}"
+
+        /**
+         * A group row's one summary line: its own rule in the same words an app's rules use
+         * ("Delay 15s · 30min limit"), or "Not blocked" for a group with no rule of its own (an
+         * imported one, say). Whether the rule is on is the row's switch, not this text.
+         */
+        fun groupSummaryText(ownRule: BlockRule?): String =
+            if (ownRule == null) "Not blocked" else buildSummaryText(listOf(ownRule))
+
         private fun formatMode(mode: String, delaySeconds: Int): String {
             return when (mode) {
                 // The app itself is not gated; only this rule's feature overrides and daily limit

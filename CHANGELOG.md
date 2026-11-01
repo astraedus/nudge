@@ -4,9 +4,21 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+### Added
+- Groups you can build: "Block several apps" on Manage Apps makes a named group (say, Social) and blocks all its apps with one rule: one mode, one wait, an optional daily limit for each app, all the time or on chosen days and times. Groups show on Manage Apps as "Social · 9 apps" with what they do and a switch. Tap one to change its apps or how it blocks, or to delete it. Leaving a group with unsaved changes asks before discarding them.
+- An app that is in a blocking group shows "Also covered by Social" on its own settings, so it is clear why it is still blocked when its own switch is off. Tap the line to open the group.
+- With Strict Mode on, removing an app from a blocking group, softening the group's block, turning it off or deleting it asks for the challenge. Adding apps or making the block stricter never does.
+- A browser in a blocking group (Chrome in Social, say) is now blocked as an app, on any site, so it is no longer the way around the group. Finishing a website's countdown does not open a browser its group blocks. A browser's own rules still apply only to the websites they name.
+
+### Removed
+- The old, unreachable groups screen.
+
 ### Changed
 - Nuke Mode now also never blocks your default messaging app, your clock and alarms, emergency and personal-safety apps, any accessibility service you have turned on (such as a screen reader), or your password manager's autofill. The Nuke screen says so: "Your phone, messages, clock, launcher, keyboard and Settings are never on this list." The dashboard's Nuke card now counts the same apps as the Nuke screen, so the two never disagree.
 - Block checks read your rules from memory instead of the database on every app switch; a rule edit still applies on the next app you open, with no restart.
+
+### Fixed
+- The block mode picker on an app's settings showed "Hard Block" cut to "Hard" and off-centre. It now reads "Hard", centred with the others.
 
 ## [1.23.2] - 2026-11-01
 

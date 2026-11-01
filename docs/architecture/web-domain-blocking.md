@@ -13,7 +13,7 @@ For the generic opt-in restricted-content blocklist, see `content-filter.md` ins
 
 - `domain/WebDomainMatcher.kt` — pure Kotlin (no Android deps). `extractDomain(urlBarText)` strips protocol/path/port, normalizes subdomains (www, m, mobile, l, lm). `matches(urlBarText, webDomains)` checks extracted domain against comma-separated rule domains.
 - `service/WebDomainDetector.kt` — `@Singleton`, two-strategy URL-bar read. Multi-browser: `BROWSER_URL_BAR_IDS` maps each package to ordered candidate view-id suffixes (Chrome/Brave/Edge/Kiwi `url_bar`+`omnibox_url_text`, Firefox/Fenix `ADDRESSBAR_URL_BOX`+`mozac_browser_toolbar_url_view`, Samsung Internet `location_bar_edit_text`, Opera `url_field`, DuckDuckGo `omnibarTextInput`). **Strategy 1 (fast path)**: `findAccessibilityNodeInfosByViewId()` over fully-qualified `pkg:id/suffix` ids (Chromium family, Samsung, Opera, DDG). **Strategy 2 (traversal fallback)**: when the fast path finds nothing, `findNodeByViewId()` does a bounded (≤600 nodes) DFS matching `node.viewIdResourceName` against the BARE suffixes — needed for modern Firefox, whose Compose toolbar exposes the URL bar as a bare testTag `ADDRESSBAR_URL_BOX` (no `pkg:id/` prefix) that `findAccessibilityNodeInfosByViewId` will NOT match at runtime, with the URL in `contentDescription` (not `text`). `readUrlRaw(node)` reads text→contentDescription; `cleanAddressBarText()` strips Firefox's localized "…. Search or enter address" hint by cutting at the first `\.\s` (locale-agnostic; URLs never contain period-space). `urlBarViewIdsFor`/`qualifiedUrlBarViewIdsFor`/`bareUrlBarViewIdsFor` are pure, unit-tested. `isBrowser(pkg)` checks map membership. Findings/rationale: `docs/firefox-webblock-findings.md`.
-- Integration in `NudgeAccessibilityService`: on `TYPE_WINDOW_STATE_CHANGED`/`TYPE_WINDOW_CONTENT_CHANGED` for browser packages, calls `evaluateWebDomain()` which reads URL bar, extracts domain, queries `EvaluateBlockUseCase.evaluateWebDomain()`.
+- Integration in `NudgeAccessibilityService`: on `TYPE_WINDOW_STATE_CHANGED`/`TYPE_WINDOW_CONTENT_CHANGED` for browser packages, calls `evaluateBrowser()`, which first evaluates a browser a group covers as an app (see "Browsers in a group" below) and otherwise calls `evaluateWebDomain()`, which reads URL bar, extracts domain, queries `EvaluateBlockUseCase.evaluateWebDomain()`. `evaluateBrowser` is the only caller of `evaluateWebDomain` (pinned by `GroupBrowserWiringContractTest`).
 - `EvaluateBlockUseCase.evaluateWebDomain()` finds all enabled rules with matching `webDomains`, resolves each one's WEB mode, converts to `ActiveRule` list, passes through `BlockEngine`.
 - **Web enforcement is independent of the app-level mode (fixes [#21](https://github.com/astraedus/nudge/issues/21))**. Web domains used to be evaluated with `BlockMode.valueOf(rule.mode)`, the APP-level mode, so a rule with `BlockMode.NONE` (whole-app blocking off, the state that makes Shorts-only blocking expressible) allowed every configured website too: a blocker silently blocking nothing, the worst failure class this app has. It was mitigated in the UI only, by disabling the "Block on web too" toggle in that state.
   - `BlockRule.webBlockMode` (nullable, DB v10) is the independent mode. **NULL = inherit the app-level mode**, which is exactly what every pre-v10 rule did, so existing behaviour is untouched wherever the app mode is a real blocking mode.
@@ -26,6 +26,72 @@ For the generic opt-in restricted-content blocklist, see `content-filter.md` ins
   - Tests: `WebBlockModeTest` (resolution matrix), `EvaluateBlockWebDomainTest` (the NONE regression, real modes unchanged, override, content-filter fallthrough, trackingPackage/ruleName), `NudgeDatabaseMigrationTest` (ALTER + repair UPDATE), `RuleWeakeningTest` (web axis both directions), `RuleExporterTest` (round-trip + older exports), `UnifiedAppConfigViewModelTest`.
 - Passthrough: the completed-block grant is domain-scoped; the same domain won't re-trigger until the user navigates away, leaves the browser or goes Home. See "What happens AFTER the entry block" below for its lifetime, which changed in v1.15.2.
 - UI: "Block on web too" toggle in `UnifiedAppConfigScreen`, auto-populates known domains per `DEFAULT_WEB_DOMAINS` map. It is available **regardless** of whole-app blocking (issue #21). With whole-app blocking ON the websites follow the app's mode (`webBlockMode` persisted as null, and `setDefaultMode` keeps the web picker in sync so switching whole-app blocking off later doesn't silently change what the sites do); with it OFF the section shows a "Website block mode" segmented picker whose value IS persisted. The shared `delaySeconds` control (`UnifiedAppConfigState.showDelayDuration`) stays reachable in the web-only case, else a web DELAY would be stuck at whatever was last saved.
+
+## Browsers in a group (spec 5.5, [#109](https://github.com/astraedus/nudge/issues/109))
+
+Before spec PR 2 every browser went straight to the website path, whatever group it was in. A user
+who put Chrome in a "Social" group with a Hard block got website rules only: the group's rule has no
+`webDomains`, so every site was allowed and the group did nothing to Chrome. That was #109.
+
+**The rule now: a browser a group covers is evaluated as an app first.** "Covers" means
+`WholeAppCoverage.coversNow` (pure, `domain/engine/`): some enabled GROUP rule whose group contains
+the browser, with no in-app features (a feature rule blocks a part of an app, never a whole one) and
+inside its schedule right now. The mode is NOT checked: a NONE group rule still covers, and its app
+evaluation simply allows and hands over to the website path.
+
+The flow, in `evaluateBrowser(browserPackage, grantAlive)`:
+
+1. `coveredWhole = !grantAlive && EvaluateBlockUseCase.isCoveredWhole(browser)`, and
+   `BrowserRouting.route(coveredWhole)` gives `APP_FIRST` or `WEB`. `isCoveredWhole` reads the rules
+   through `RuleSnapshots.current()`, the same read every app evaluation uses, so it is fail closed
+   on a cold start (see below).
+2. On `APP_FIRST`, `EvaluateBlockUseCase.invoke(browser, excludeDirectRules = true)` evaluates the
+   browser's GROUP rules only. A **direct** rule on a browser keeps its old meaning, web-only, so
+   an existing "Chrome: block youtube.com" rule never starts blocking Chrome itself.
+3. If that decision blocks (`!BrowserRouting.continuesToWeb(decision)`), the browser is blocked as
+   an app: `handleDecision(decision, browser)` with no website, so the confrontation, the grant and
+   the walk-away are the app's, and any web session's clock is ended (`endWebSession`). The overlay
+   reads "Rule: <group name>".
+4. Otherwise (Allow) the website path runs exactly as before, so a site rule still applies inside a
+   browser the group let through.
+
+The four service sites:
+
+| Site | Where | What |
+|---|---|---|
+| 1 | `evaluateForegroundPackage` | the pinned `!nuked && isBrowser` branch calls `evaluateBrowser(packageName, grantAlive = false)` (a grant already returned above) |
+| 2 | `handleWindowContentChanged`, browser branch | `evaluateBrowser(packageName, grantAlive = grantAliveFor(packageName))`, the grant read on the event thread, so a schedule starting or a limit running out reaches a user who is still browsing; debounced 2 s, swallowed under a live overlay, deduped by `BlockLaunchGate` |
+| 3 | `detectAndEvaluateFeature` | returns for a covered browser, right after the Nuke line (no browser is in `InAppDetector.SUPPORTED_PACKAGES` today; this pins the rule for the day one is) |
+| 4 | `grantLetsThrough` / `grantAliveFor` via `passthroughEarned` | a covered browser is let through only by a WHOLE-app grant (`PassthroughManager.isGrantedWhole`), so a finished website delay does not open a browser its group blocks |
+
+**Cold start fails closed.** The decision to evaluate a browser as an app is made by
+`EvaluateBlockUseCase.isCoveredWhole`, which reads `RuleSnapshots.current()`: before the in-memory
+snapshot's first emission (or while its collector is failing) that is a direct table read, so Chrome
+in a hard-blocked group is blocked in the first moments after the process starts exactly like
+Instagram in the same group. The first version read `snapshot.value` and answered "not covered"
+while it was null, which let a grouped browser open freely for that window; review
+caught it before merge.
+
+Sites 3 and 4 run on the event thread, which must not suspend or touch the database, so they keep
+the synchronous `isCoveredWholeNow` over `RuleSnapshotSource.snapshot.value`. Cold, it answers
+**true** for a browser: the grant check then accepts only a whole-app grant and `evaluateBrowser`
+makes the table-backed decision (a browser that turns out not to be covered goes on to its website
+rules as always), and feature detection steps aside for a browser that has no supported features
+anyway.
+
+Known edges, accepted:
+
+- A Custom Tab runs in its browser's package, so it is blocked too while that browser is covered.
+- `enforceExhaustedBudget` still evaluates a browser with its direct rules (the counter cache holds
+  direct rules only), unchanged by 5.5.
+- While a covered browser is allowed, site 2 runs one in-memory app evaluation per 2 s debounce.
+
+Tests: `WholeAppCoverageTest` (L1, every condition), `PassthroughWholeAxisTest` (L1),
+`EvaluateBlockGroupRulesTest` (L3, `excludeDirectRules`, strictest-wins with a direct rule, and
+`isCoveredWhole` through a `RuleSnapshotSource` that never emits: a cold grouped browser is covered),
+`GroupBrowserCaptureReplayTest` (L2: `chrome-open-and-browse.jsonl` through the classifier and the
+routing; every Chrome evaluation blocks as an app, zero reach the website path, and the pre-fix
+routing never blocks), `GroupBrowserWiringContractTest` (the four sites).
 
 ## What happens AFTER the entry block, v1.15.2
 

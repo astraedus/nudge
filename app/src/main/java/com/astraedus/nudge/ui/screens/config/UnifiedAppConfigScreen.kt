@@ -1,5 +1,6 @@
 package com.astraedus.nudge.ui.screens.config
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -9,11 +10,14 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -37,26 +41,24 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.ui.components.blockModeDescription
 import com.astraedus.nudge.domain.model.FeatureMode
-import com.astraedus.nudge.ui.components.CustomTimeDialog
 import com.astraedus.nudge.ui.components.DurationInput
 import com.astraedus.nudge.ui.components.MinutesField
 import com.astraedus.nudge.ui.components.StrictModeChallengeHost
 import com.astraedus.nudge.ui.components.UsageReminderSection
-import com.astraedus.nudge.ui.components.formatMinutesDisplay
 import com.astraedus.nudge.ui.components.rule.BlockModeSegmentedRow
+import com.astraedus.nudge.ui.components.rule.DailyLimitChips
 import com.astraedus.nudge.ui.components.rule.InfoButton
 import com.astraedus.nudge.ui.components.rule.ScheduleSection
 import com.astraedus.nudge.ui.components.rule.WaitTimeChips
@@ -67,9 +69,12 @@ import kotlinx.coroutines.launch
 @Composable
 fun UnifiedAppConfigScreen(
     viewModel: UnifiedAppConfigViewModel,
-    onNavigateBack: () -> Unit
+    onNavigateBack: () -> Unit,
+    /** Opens a group that covers this app, from "Also covered by". */
+    onOpenGroup: (Long) -> Unit
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val coveredBy by viewModel.coveredBy.collectAsStateWithLifecycle()
     val challenge by viewModel.challenge.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
@@ -132,6 +137,10 @@ fun UnifiedAppConfigScreen(
                 )
             }
 
+            if (coveredBy.isNotEmpty()) {
+                AlsoCoveredBy(groups = coveredBy, onOpenGroup = onOpenGroup)
+            }
+
             HorizontalDivider()
 
             // ═══ ALWAYS ACTIVE ═══
@@ -177,48 +186,11 @@ fun UnifiedAppConfigScreen(
                 }
 
                 if (state.dailyLimitEnabled) {
-                    val dailyPresets = remember { listOf(15, 30, 60, 120) }
-                    val dailyPresetLabels = remember { mapOf(15 to "15m", 30 to "30m", 60 to "1h", 120 to "2h") }
-                    var showDailyLimitDialog by remember { mutableStateOf(false) }
-                    val isCustomDaily = state.dailyLimitMinutes !in dailyPresets
-
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        dailyPresets.forEach { minutes ->
-                            FilterChip(
-                                selected = state.dailyLimitMinutes == minutes,
-                                onClick = { viewModel.setDailyLimitMinutes(minutes) },
-                                label = { Text(dailyPresetLabels[minutes] ?: "${minutes}m") }
-                            )
-                        }
-                        FilterChip(
-                            selected = isCustomDaily,
-                            onClick = { showDailyLimitDialog = true },
-                            label = {
-                                Text(
-                                    if (isCustomDaily) formatMinutesDisplay(state.dailyLimitMinutes)
-                                    else "Custom"
-                                )
-                            }
-                        )
-                    }
-
-                    if (showDailyLimitDialog) {
-                        CustomTimeDialog(
-                            title = "Custom Daily Limit",
-                            unit = "minutes",
-                            currentValue = state.dailyLimitMinutes,
-                            min = 1,
-                            max = 480,
-                            onConfirm = { minutes ->
-                                viewModel.setDailyLimitMinutes(minutes)
-                                showDailyLimitDialog = false
-                            },
-                            onDismiss = { showDailyLimitDialog = false }
-                        )
-                    }
+                    DailyLimitChips(
+                        minutes = state.dailyLimitMinutes,
+                        onSelect = viewModel::setDailyLimitMinutes,
+                        customDialogTitle = "Custom Daily Limit"
+                    )
 
                     // Show time remaining sub-toggle
                     Row(
@@ -929,3 +901,46 @@ private fun featureModeLabel(mode: FeatureMode): String = when (mode) {
     FeatureMode.HOLD -> "Hold"
     FeatureMode.BREATHING -> "Breathing"
 }
+
+/**
+ * "Also covered by" (spec 3.7): the groups that block this app as well, so "why is it blocked when
+ * its own switch is off?" answers itself. Read-only; each row opens that group.
+ */
+@Composable
+private fun AlsoCoveredBy(groups: List<CoveringGroup>, onOpenGroup: (Long) -> Unit) {
+    Column {
+        Text(
+            "Also covered by",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        groups.forEach { group ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp)
+                    .clickable(role = Role.Button) { onOpenGroup(group.groupId) },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Icon(
+                    Icons.Default.Folder,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    group.label,
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier.weight(1f)
+                )
+                Icon(
+                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+

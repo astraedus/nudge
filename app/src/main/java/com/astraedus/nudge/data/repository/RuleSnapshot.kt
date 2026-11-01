@@ -40,10 +40,13 @@ class RuleSnapshot private constructor(
             // no-op on a healthy database. It keeps the old per-group read's exact semantics (only
             // members of groups that exist) whatever the member table holds.
             val groupIds = groups.mapTo(HashSet()) { it.id }
+            val groupNames = groups.associate { it.id to it.name }
             return RuleSnapshot(
                 enabledRules = enabledRules,
                 groups = groups,
-                ruleData = enabledRules.map { it.toRuleData() },
+                ruleData = enabledRules.map { rule ->
+                    rule.toRuleData(groupName = rule.groupId?.let { groupNames[it] })
+                },
                 memberships = members
                     .filter { it.groupId in groupIds }
                     .map { GroupMembership(groupId = it.groupId, packageName = it.packageName) }
@@ -55,8 +58,11 @@ class RuleSnapshot private constructor(
 /**
  * The one entity-to-domain mapping for a rule. Moved here unchanged from
  * `EvaluateBlockUseCase.resolveActiveRules` so the snapshot and every future reader share it.
+ *
+ * [groupName] is not on the row; the caller that holds the groups table ([RuleSnapshot.of]) passes
+ * it so a group rule's overlay label can name its group.
  */
-fun BlockRule.toRuleData(): BlockRuleData = BlockRuleData(
+fun BlockRule.toRuleData(groupName: String? = null): BlockRuleData = BlockRuleData(
     id = id,
     packageName = packageName,
     groupId = groupId,
@@ -72,7 +78,8 @@ fun BlockRule.toRuleData(): BlockRuleData = BlockRuleData(
     webDomains = webDomains,
     tabVanish = tabVanish,
     followingSteer = followingSteer,
-    keepPassOnShortTrips = keepPassOnShortTrips
+    keepPassOnShortTrips = keepPassOnShortTrips,
+    groupName = groupName
 )
 
 /**
