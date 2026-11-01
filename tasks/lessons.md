@@ -1536,3 +1536,7 @@ Merging Active Rules into Manage Apps made "has a rule" decide which section an 
 
 - **A control never moves the row it lives in, while the user is still on that list.** Keep the row in place for the visit, and let the next visit re-sort it (`keepInPlace` / `switchedOnHere`). Test it through the real ViewModel with a rules Flow that emits the write (`SwitchedOnStaysInPlaceTest`).
 - **An empty state asks the whole model ("is there anything at all?"), never the length of one rendered list.**
+
+## Spec PR 2/3 renamed on-screen text and the release gate broke, not the app (2026-11-02)
+**What happened:** #145 changed the Manage Apps search placeholder to "Search apps and groups" and #147 deleted Active Rules. Both lanes passed their own device QA, but the 1.24.0 release gate failed `setup` (Maestro asserted "Active Rules") and both daily-limit cases ("Search apps..." not on screen). lane-pr3 had seen the setup failure and blamed the debug APK.
+**Rule:** a PR that renames, moves or deletes any user-visible string greps `scripts/` and `.maestro/` for the old text and fixes the hits in the same PR. A device-qa failure on a string the PR changed is the PR's bug, never "the debug build".
