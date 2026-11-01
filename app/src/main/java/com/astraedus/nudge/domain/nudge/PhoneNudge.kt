@@ -185,8 +185,15 @@ class PhoneNudge(
 
         const val MIN_THRESHOLD_MINUTES = 5
         const val MAX_THRESHOLD_MINUTES = 180
-        const val MIN_PAUSE_SECONDS = 3
-        const val MAX_PAUSE_SECONDS = 30
+        const val MIN_PAUSE_SECONDS = 5
+        const val MAX_PAUSE_SECONDS = 60
+
+        /**
+         * The cap the escalation grows to. 30 s is the maintainer's number for the default 5 s
+         * first pause. A longer first pause raises the cap to itself, so picking 60 s does not get
+         * shortened to 30 on the next check.
+         */
+        const val ESCALATION_CAP_SECONDS = 30
 
         /** A blank shorter than this continues the session, the same window `SittingTracker` uses. */
         const val GRACE_MS = 2 * 60_000L
@@ -197,12 +204,13 @@ class PhoneNudge(
          */
         fun pauseSeconds(index: Int, firstSeconds: Int): Int {
             if (index <= 1) return firstSeconds.coerceIn(MIN_PAUSE_SECONDS, MAX_PAUSE_SECONDS)
+            val cap = maxOf(ESCALATION_CAP_SECONDS, firstSeconds)
             var seconds = firstSeconds
             repeat(index - 1) {
                 seconds *= 2
-                if (seconds >= MAX_PAUSE_SECONDS) return MAX_PAUSE_SECONDS
+                if (seconds >= cap) return cap
             }
-            return seconds.coerceAtMost(MAX_PAUSE_SECONDS)
+            return seconds.coerceAtMost(cap)
         }
     }
 }

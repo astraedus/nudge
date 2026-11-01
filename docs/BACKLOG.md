@@ -3,6 +3,14 @@
 Known issues, in-progress work and future ideas. Moved out of `CLAUDE.md` so it is not loaded every session.
 Entries marked `[x]` shipped, the version is noted so the history stays readable. Cross-check `CHANGELOG.md`.
 
+## [ ] Phone nudge: verify the timer launch on Android 14 (2026-11-01)
+The pause is launched from a `Handler` in the accessibility service, and that is proven on Android 16
+(`spike: startActivity returned without throwing`, activity foregrounded). Android 14 tightened
+background activity starts and the maintainer asked for it explicitly, so it is still owed. Needs an
+API 34 emulator: this machine wants ~7.3 GB for its userdata and has ~4.7 GB free, so either free
+space (the Gradle caches are 6.7 GB) or run it elsewhere. The log-only spike is on
+`spike/123-timer-launch`.
+
 ## Known issues — surfaced incidentally during v1.9.0 device QA (pre-existing, NOT from the 1-min-pass feature; each needs its own investigation)
 - [x] ~~**Genuine app-switch may not re-block when the interaction counter overlay is active**~~ (surfaced 2026-07-27 during #5 QA) — **RESOLVED in v1.9.4**: this was the same defect users reported as [#7](https://github.com/astraedus/nudge/issues/7). The counter overlay was a red herring; the real cause is that a re-entry delivering only `TYPE_WINDOW_CONTENT_CHANGED` never reached `evaluateForegroundPackage` for non-`SUPPORTED_PACKAGES`. Confirmed with real recents-overview taps (not `monkey`): 5 of 6 re-entries missed on the pre-fix build. See "Content-change app-switch fallback". Likely related to the existing "counter doesn't increment on YouTube swipes under a whole-app rule" item below.
 - [ ] **Per-domain web time is not measured across a day — daily budgets and stats can't see the web** (design note, split out of the v1.15.2 web-enforcement fix; the ENFORCEMENT half shipped, this is the data half). Every screen-time number in Nudge comes from `UsageStatsManager`, which has no concept of a website: only the browser package emits `ACTIVITY_RESUMED`/`PAUSED`. Two consequences, both currently honest-but-absent rather than wrong:

@@ -9,7 +9,7 @@ class PhoneNudgeRowCopyTest {
     @Test
     fun `the escalation preview spells out the later pauses`() {
         assertEquals("Then 10 s, 20 s, 30 s, 30 s", escalationPreview(5))
-        assertEquals("Then 6 s, 12 s, 24 s, 30 s", escalationPreview(3))
-        assertEquals("Then 30 s, 30 s, 30 s, 30 s", escalationPreview(15))
+        assertEquals("Then 20 s, 30 s, 30 s, 30 s", escalationPreview(10))
+        assertEquals("Then 60 s, 60 s, 60 s, 60 s", escalationPreview(60))
     }
 }

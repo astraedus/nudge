@@ -177,8 +177,10 @@ class PhoneNudgeTest {
         assertEquals(20, PhoneNudge.pauseSeconds(3, 5))
         assertEquals(30, PhoneNudge.pauseSeconds(4, 5))
         assertEquals(30, PhoneNudge.pauseSeconds(9, 5))
-        assertEquals(3, PhoneNudge.pauseSeconds(1, 3))
-        assertEquals(30, PhoneNudge.pauseSeconds(5, 15))
+        assertEquals(5, PhoneNudge.pauseSeconds(1, 5))
+        assertEquals(30, PhoneNudge.pauseSeconds(4, 15))
+        assertEquals(60, PhoneNudge.pauseSeconds(1, 60))
+        assertEquals(60, PhoneNudge.pauseSeconds(3, 60))
     }
 
     @Test(expected = IllegalArgumentException::class)
@@ -188,6 +190,6 @@ class PhoneNudgeTest {
 
     @Test(expected = IllegalArgumentException::class)
     fun `a pause outside the supported range is rejected`() {
-        PhoneNudge.Config(enabled = true, firstPauseSeconds = 60)
+        PhoneNudge.Config(enabled = true, firstPauseSeconds = 90)
     }
 }
