@@ -45,6 +45,25 @@ Base: main after PR 1 (#141, rule snapshot + essentials list).
 - L4: import of a group used by an enabled rule only adds members (never weakens).
 - Contract: the four service sites carry the coverage check; `NukeWiringContractTest` stays green.
 
+## Status (2026-11-02)
+
+Built, gated (scoped tests + every `*ContractTest`, `compileDebugKotlin`, `lintDebug` 0 errors), PR open
+for the orchestrator to merge. Found and fixed after the first build:
+- **Cold-start fail-open** (coordinator review): browser coverage read the in-memory snapshot, which is
+  null before the first emission, so a grouped Chrome opened freely just after process start. Coverage
+  now goes through `EvaluateBlockUseCase.isCoveredWhole`, which reads `RuleSnapshots.current()` (the
+  direct-read fallback), and the service's synchronous check fails closed (`?: return true`).
+- **First group "vanished" on Manage Apps** (device QA): LazyColumn key anchoring kept "Block several
+  apps" at the top, so the new group was inserted above the viewport. A newly added group now scrolls
+  into view (`newlyAddedGroupId`).
+- **"Hard Block" clipped off-centre** in the compact mode picker: one-word `blockModeShortLabel`.
+
+Known, pre-existing, out of scope (coordinator: leave it, name it in the PR): the mid-session budget
+trigger is fed by the counter cache, and `CounterCacheRefresher.appEntryFor` builds entries only from
+rules that name a package. A GROUP rule's daily limit is therefore enforced when an app is opened
+(the evaluation counts it), not at the minute it runs out while the app stays in front. Follow-up:
+expand group rules to per-member cache entries.
+
 ## Device QA (device-tester, sonnet)
 
 Social with 3 apps at Delay 15s; Strict remove -> challenge; Chrome in a Hard group blocked on any
