@@ -4,6 +4,8 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+## [1.24.0] - 2026-11-02
+
 ### Added
 - Groups you can build: "Block several apps" on Manage Apps makes a named group (say, Social) and blocks all its apps with one rule: one mode, one wait, an optional daily limit for each app, all the time or on chosen days and times. Groups show on Manage Apps as "Social · 9 apps" with what they do and a switch. Tap one to change its apps or how it blocks, or to delete it. Leaving a group with unsaved changes asks before discarding them.
 - An app that is in a blocking group shows "Also covered by Social" on its own settings, so it is clear why it is still blocked when its own switch is off. Tap the line to open the group.

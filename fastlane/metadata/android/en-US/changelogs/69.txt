@@ -1,0 +1,5 @@
+• Groups: block several apps at once. Make a group like Social, pick its apps, and give it one block, schedule and daily limit.
+• Manage Apps is now one list: your groups, then apps with rules, then everything else. Apps blocked by a group say so.
+• Google Camera opened from cold no longer skips the block screen.
+• Pressing Home to leave an app no longer sometimes brings it back with a countdown.
+• Nuke Mode never blocks your messages, clock, emergency apps or screen reader.
