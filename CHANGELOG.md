@@ -4,6 +4,22 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+### Added
+- "All apps except a few": "Block several apps" on Manage Apps now also offers a rule that blocks every app except the ones you choose. Pick the apps that stay open (Spotify, Maps), or whole groups (Work), then how it blocks and when: all the time, or on chosen days and times. The editor says how many apps it blocks. Your essentials (phone, messages, clock, launcher, keyboard, Settings and Nudge itself) are never blocked by it, whatever the list says; "Always allowed" shows exactly which apps those are on your phone. An app you allow can still be blocked by its own rule or a group's. Saving Hard block, all the time asks first ("Block 84 apps all the time?"), and so does switching such a rule on from Manage Apps.
+- All apps rules show on Manage Apps in their own section, with a switch. An app's settings say "Also covered by" the All apps rule that blocks it, and a group's editor lists the All apps rules that leave it open.
+- While an All apps rule is blocking, the dashboard shows a card saying so and until when. It goes away when the rule's time is up.
+- An All apps block screen shows the apps you allowed, so one tap takes you to one of them instead.
+- Any block screen for a rule that ends at a set time says when: "Until 8:42 AM". A spent daily limit says midnight when the limit resets before the rule's window ends.
+- With Strict Mode on, letting more apps or groups through an All apps rule, adding an app to a group it lets through, softening it, shortening its days and times, turning it off or deleting it asks for the challenge. Making it stricter never does.
+- Backups include All apps rules. The groups they let through are matched by name on the phone you restore to.
+
+### Fixed
+- Firefox, and any other browser that fills in passwords, was treated as an essential app, so Nuke Mode and groups could not block it. Browsers are now never essential.
+
+### Changed
+- Importing a backup that reduces protection under Strict Mode now asks "Import a backup that reduces protection". A backup that adds apps to a group an All apps rule lets through counts as reducing it.
+- Breathing now shows its wait time in the group editor and the All apps editor alike.
+
 ## [1.24.0] - 2026-11-02
 
 ### Added
