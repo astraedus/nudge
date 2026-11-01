@@ -6,6 +6,7 @@ import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.data.repository.BlockRuleRepository
 import com.astraedus.nudge.data.repository.InstalledAppsRepository
 import com.astraedus.nudge.domain.lock.StrictModeChallenge
+import com.astraedus.nudge.domain.packages.FakeEssentialPackages
 import com.astraedus.nudge.ui.components.rule.AllAppsRuleItem
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -15,8 +16,10 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -41,6 +44,8 @@ class AppListViewModelStrictModeTest {
     fun setUp() {
         repository = mockk(relaxed = true)
         every { repository.getAllRules() } returns flowOf(emptyList())
+        every { repository.getAllGroups() } returns flowOf(emptyList())
+        every { repository.getAllGroupMembers() } returns flowOf(emptyList())
     }
 
     /** An app row as the sections build it: no rule, or a rule that is on / off. */
@@ -50,13 +55,17 @@ class AppListViewModelStrictModeTest {
         isOn = on
     )
 
-    private fun viewModel(strictOn: Boolean): AppListViewModel {
+    private fun viewModel(
+        strictOn: Boolean,
+        installedApps: List<InstalledAppsRepository.AppInfo> = emptyList(),
+        essentials: Set<String> = emptySet()
+    ): AppListViewModel {
         val prefs = mockk<NudgePreferences>()
         every { prefs.isStrictModeEnabled } returns flowOf(strictOn)
         every { prefs.strictModeChallengeLength } returns flowOf(StrictModeChallenge.DEFAULT_LENGTH)
         val installed = mockk<InstalledAppsRepository>()
-        coEvery { installed.getInstalledApps() } returns emptyList()
-        return AppListViewModel(installed, repository, prefs)
+        coEvery { installed.getInstalledApps() } returns installedApps
+        return AppListViewModel(installed, repository, prefs, FakeEssentialPackages(essentials))
     }
 
     @Test
@@ -219,10 +228,72 @@ class AppListViewModelStrictModeTest {
     @Test
     fun `switching an All apps rule back on is never gated`() = runTest {
         val vm = viewModel(strictOn = true)
+        val delayRule = allAppsRule.copy(mode = "DELAY", delaySeconds = 15)
+
+        vm.toggleAllApps(allAppsRow(delayRule.copy(enabled = false)))
+
+        assertNull(vm.challenge.value)
+        assertNull(vm.allAppsSwitchOn.value)
+        coVerify(exactly = 1) { repository.saveAllAppsRule(delayRule) }
+    }
+
+    // -- The switch asks what the editor's Save asks (orchestrator ruling, spec 3.4) -----------
+
+    private val launcherApps = listOf("com.example.a", "com.example.b", "com.example.keyboard")
+        .map { InstalledAppsRepository.AppInfo(it, it, icon = null) }
+
+    @Test
+    fun `switching on a Hard block all-the-time rule asks first and writes nothing`() = runTest {
+        val vm = viewModel(strictOn = false, installedApps = launcherApps, essentials = setOf("com.example.keyboard"))
 
         vm.toggleAllApps(allAppsRow(allAppsRule.copy(enabled = false)))
 
+        // Same count the editor shows: launcher apps minus essentials.
+        assertEquals(AllAppsSwitchOn(allAppsRule.copy(enabled = false), blockedCount = 2), vm.allAppsSwitchOn.value)
         assertNull(vm.challenge.value)
+        coVerify(exactly = 0) { repository.saveAllAppsRule(any()) }
+    }
+
+    @Test
+    fun `Block them on the switch's confirm turns the rule on`() = runTest {
+        val vm = viewModel(strictOn = true, installedApps = launcherApps)
+        vm.toggleAllApps(allAppsRow(allAppsRule.copy(enabled = false)))
+
+        vm.confirmAllAppsSwitchOn()
+
+        assertNull(vm.allAppsSwitchOn.value)
         coVerify(exactly = 1) { repository.saveAllAppsRule(allAppsRule) }
+    }
+
+    @Test
+    fun `Cancel on the switch's confirm writes nothing`() = runTest {
+        val vm = viewModel(strictOn = false, installedApps = launcherApps)
+        vm.toggleAllApps(allAppsRow(allAppsRule.copy(enabled = false)))
+
+        vm.dismissAllAppsSwitchOn()
+        vm.confirmAllAppsSwitchOn() // a late second tap after Cancel does nothing either
+
+        assertNull(vm.allAppsSwitchOn.value)
+        coVerify(exactly = 0) { repository.saveAllAppsRule(any()) }
+    }
+
+    @Test
+    fun `a scheduled Hard block rule switches on without asking`() = runTest {
+        val vm = viewModel(strictOn = false, installedApps = launcherApps)
+        val scheduled = allAppsRule.copy(enabled = false, scheduleDays = "1,2,3,4,5", scheduleStartMinute = 540, scheduleEndMinute = 1020)
+
+        vm.toggleAllApps(allAppsRow(scheduled))
+
+        assertNull(vm.allAppsSwitchOn.value)
+        coVerify(exactly = 1) { repository.saveAllAppsRule(scheduled.copy(enabled = true)) }
+    }
+
+    @Test
+    fun `the switch and the editor ask through the one predicate`() {
+        // One function, two callers: the switch cannot drift from the editor's Save.
+        val vmSrc = java.io.File("src/main/java/com/astraedus/nudge/ui/screens/apps/AppListViewModel.kt").readText()
+        val formSrc = java.io.File("src/main/java/com/astraedus/nudge/ui/screens/allapps/AllAppsForm.kt").readText()
+        assertTrue(vmSrc.contains("confirmsSwitchOn(rule)"))
+        assertTrue(formSrc.contains("AllAppsForm.from(rule).copy(enabled = true).confirmsOnSave"))
     }
 }

@@ -67,9 +67,20 @@ class AllAppsFormTest {
     }
 
     @Test
-    fun `the wait time shows for Delay and Hold only`() {
+    fun `the wait time shows for every mode with a length, Breathing included`() {
         val shown = BlockMode.entries.filter { AllAppsForm(mode = it).showsWaitTime }.toSet()
-        assertEquals(setOf(BlockMode.DELAY, BlockMode.HOLD), shown)
+        // Breathing runs for delaySeconds (BreathingContent), so it has a wait like Delay and Hold.
+        assertEquals(setOf(BlockMode.DELAY, BlockMode.HOLD, BlockMode.BREATHING), shown)
+    }
+
+    @Test
+    fun `the group editor shows the wait time through the same shared predicate`() {
+        // The two editors once disagreed on Breathing; both must ask the one function.
+        val src = java.io.File(
+            "src/main/java/com/astraedus/nudge/ui/screens/groups/GroupEditorScreen.kt"
+        ).readText()
+        assertTrue(src.contains("if (showsWaitTime(form.mode))"))
+        assertFalse(src.contains("form.mode != BlockMode.HARD_BLOCK"))
     }
 
     @Test

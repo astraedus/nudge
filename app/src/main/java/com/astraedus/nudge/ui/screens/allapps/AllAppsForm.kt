@@ -4,6 +4,7 @@ import com.astraedus.nudge.data.db.entity.BlockRule
 import com.astraedus.nudge.domain.lock.RuleWeakening
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.domain.model.ExceptCsv
+import com.astraedus.nudge.ui.components.rule.showsWaitTime
 import com.astraedus.nudge.ui.screens.groups.GroupRuleForm
 import com.astraedus.nudge.ui.screens.groups.toRule
 
@@ -28,8 +29,8 @@ data class AllAppsForm(
     /** A days-and-times window with no day picked would never be active; Save waits for a day. */
     val isComplete: Boolean get() = !scheduled || scheduleDays.isNotEmpty()
 
-    /** The wait time chips show for Delay and Hold only (spec 3.4). */
-    val showsWaitTime: Boolean get() = mode == BlockMode.DELAY || mode == BlockMode.HOLD
+    /** The wait time chips show for every mode with a length ([showsWaitTime]), as in the group editor. */
+    val showsWaitTime: Boolean get() = showsWaitTime(mode)
 
     /**
      * "All the time" with Hard block, while on: the one combination that asks "Block N apps all the
@@ -115,6 +116,15 @@ fun AllAppsForm.toRule(
  */
 fun allAppsSaveWeakens(old: BlockRule?, new: BlockRule): Boolean =
     old != null && old.enabled && RuleWeakening.isWeakening(old, new)
+
+/**
+ * Whether switching [rule] ON (Manage Apps' switch) asks "Block N apps all the time?" first: the
+ * same question, through the same [AllAppsForm.confirmsOnSave], as saving it on from the editor.
+ * Turning on an off Hard block, all-the-time rule is the quickest way to lock the phone, so it must
+ * not skip the question the editor asks. One predicate, two callers.
+ */
+fun confirmsSwitchOn(rule: BlockRule): Boolean =
+    AllAppsForm.from(rule).copy(enabled = true).confirmsOnSave
 
 /** Whether deleting [rule] needs the challenge: only a rule that is on protects anything. */
 fun allAppsDeleteWeakens(rule: BlockRule): Boolean = rule.enabled

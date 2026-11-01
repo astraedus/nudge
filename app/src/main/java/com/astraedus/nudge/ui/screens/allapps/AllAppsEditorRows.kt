@@ -5,25 +5,22 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -31,7 +28,6 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -40,8 +36,8 @@ import com.astraedus.nudge.ui.components.AppListItem
 import com.astraedus.nudge.ui.components.TonalIcon
 
 /*
- * The All apps editor's rows. SectionTitle, AddRow and WhenOption match the group editor's private
- * ones exactly (same type, padding and touch target), so the two editors read as one family.
+ * The All apps editor's own rows. The headings, "+ Add" row and When options both editors share
+ * live in ui/components/rule/EditorRows.kt.
  */
 
 /** "Enabled" with its switch, and the one number that says how big the rule is under it. */
@@ -64,16 +60,6 @@ internal fun EnabledRow(enabled: Boolean, blocksText: String, onEnabledChange: (
         }
         Switch(checked = enabled, onCheckedChange = onEnabledChange)
     }
-}
-
-@Composable
-internal fun SectionTitle(text: String) {
-    Text(
-        text,
-        style = MaterialTheme.typography.titleMedium,
-        fontWeight = FontWeight.Medium,
-        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-    )
 }
 
 /** An allowed group: tapping it opens the group editor, ✕ takes it off this list only. */
@@ -113,16 +99,6 @@ internal fun AllowedAppItem(row: AllowedAppRow, onRemove: () -> Unit) {
     )
 }
 
-/** "+ Add apps or groups": a list row whose 40dp icon slot lines up with the rows above it. */
-@Composable
-internal fun AddRow(text: String, onClick: () -> Unit) {
-    ListItem(
-        headlineContent = { Text(text, color = MaterialTheme.colorScheme.primary) },
-        leadingContent = { TonalIcon(Icons.Default.Add, primary = true) },
-        modifier = Modifier.clickable(onClick = onClick)
-    )
-}
-
 /** The locked essentials row: no ✕ and no checkbox, because these can never be blocked here. */
 @Composable
 internal fun AlwaysAllowedItem(text: String, onClick: () -> Unit) {
@@ -138,24 +114,6 @@ internal fun AlwaysAllowedItem(text: String, onClick: () -> Unit) {
         },
         modifier = Modifier.clickable(onClick = onClick)
     )
-}
-
-@Composable
-internal fun WhenOption(label: String, selected: Boolean, onSelect: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(min = 48.dp)
-            .selectable(selected = selected, onClick = onSelect, role = Role.RadioButton),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        RadioButton(selected = selected, onClick = null)
-        Text(
-            label,
-            style = MaterialTheme.typography.bodyLarge,
-            modifier = Modifier.padding(start = 16.dp)
-        )
-    }
 }
 
 /**
@@ -200,3 +158,21 @@ internal fun AlwaysAllowedSheet(
         }
     }
 }
+
+/**
+ * "Block N apps all the time?" (spec 3.4): asked before an All apps rule goes on as Hard block, all
+ * the time, from the editor's Save and from Manage Apps' switch alike ([confirmsSwitchOn]).
+ */
+@Composable
+fun AllTheTimeConfirmDialog(blockedCount: Int, onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(confirmTitle(blockedCount)) },
+        text = { Text(ALL_THE_TIME_CONFIRM_BODY) },
+        confirmButton = { TextButton(onClick = onConfirm) { Text("Block them") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
+/** The confirm's body, word for word from the spec. */
+const val ALL_THE_TIME_CONFIRM_BODY = "Only the apps you listed and your essentials will open."

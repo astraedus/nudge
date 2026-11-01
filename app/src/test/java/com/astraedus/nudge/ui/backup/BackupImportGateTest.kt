@@ -112,7 +112,7 @@ class BackupImportGateTest {
         assertNull("no outcome dialog while the import is pending", vm.uiState.value.importOutcome)
         val challenge = vm.challenge.value
         assertNotNull("a challenge must be raised", challenge)
-        assertEquals("Import settings that reduce protection", challenge!!.prompt)
+        assertEquals("Import a backup that reduces protection", challenge!!.prompt)
         // The confirmation dialog steps aside so the challenge does not stack on top of it.
         assertNull(vm.uiState.value.importPreview)
     }

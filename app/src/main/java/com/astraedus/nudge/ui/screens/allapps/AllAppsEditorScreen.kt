@@ -37,6 +37,10 @@ import com.astraedus.nudge.ui.components.StrictModeChallengeHost
 import com.astraedus.nudge.ui.components.blockModeDescription
 import com.astraedus.nudge.ui.components.rule.BlockModeSegmentedRow
 import com.astraedus.nudge.ui.components.rule.DaysAndTimesFields
+import com.astraedus.nudge.ui.components.rule.EditorAddRow
+import com.astraedus.nudge.ui.components.rule.EditorSectionTitle
+import com.astraedus.nudge.ui.components.rule.EditorSubsectionTitle
+import com.astraedus.nudge.ui.components.rule.EditorWhenOption
 import com.astraedus.nudge.ui.components.rule.WaitTimeChips
 
 /**
@@ -98,16 +102,10 @@ fun AllAppsEditorScreen(
     }
 
     if (state.showSaveConfirmation) {
-        AlertDialog(
-            onDismissRequest = viewModel::dismissSaveConfirmation,
-            title = { Text(confirmTitle(state.blockedCount)) },
-            text = { Text("Only the apps you listed and your essentials will open.") },
-            confirmButton = {
-                TextButton(onClick = viewModel::confirmSave) { Text("Block them") }
-            },
-            dismissButton = {
-                TextButton(onClick = viewModel::dismissSaveConfirmation) { Text("Cancel") }
-            }
+        AllTheTimeConfirmDialog(
+            blockedCount = state.blockedCount,
+            onConfirm = viewModel::confirmSave,
+            onDismiss = viewModel::dismissSaveConfirmation
         )
     }
 
@@ -165,7 +163,7 @@ fun AllAppsEditorScreen(
             )
 
             Spacer(Modifier.height(16.dp))
-            SectionTitle("Except these")
+            EditorSectionTitle("Except these")
             rows.groups.forEach { row ->
                 AllowedGroupItem(
                     row = row,
@@ -176,7 +174,7 @@ fun AllAppsEditorScreen(
             rows.apps.forEach { row ->
                 AllowedAppItem(row = row, onRemove = { viewModel.removeApp(row.packageName) })
             }
-            AddRow(text = "Add apps or groups", onClick = viewModel::openPicker)
+            EditorAddRow(text = "Add apps or groups", onClick = viewModel::openPicker)
             AlwaysAllowedItem(text = alwaysAllowed, onClick = viewModel::openAlwaysAllowed)
 
             HowAndWhen(form = state.form, onFormChange = viewModel::updateForm)
@@ -196,7 +194,7 @@ fun AllAppsEditorScreen(
     }
 }
 
-/** How (the mode, and the wait for Delay and Hold) and When (all the time, or days and times). */
+/** How (the mode, and its wait when it has one) and When (all the time, or days and times). */
 @Composable
 private fun HowAndWhen(
     form: AllAppsForm,
@@ -207,7 +205,7 @@ private fun HowAndWhen(
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         Spacer(Modifier.height(0.dp))
-        SubsectionTitle("How")
+        EditorSubsectionTitle("How")
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             BlockModeSegmentedRow(
                 selected = form.mode,
@@ -229,14 +227,14 @@ private fun HowAndWhen(
         }
 
         Spacer(Modifier.height(0.dp))
-        SubsectionTitle("When")
+        EditorSubsectionTitle("When")
         Column(Modifier.selectableGroup()) {
-            WhenOption(
+            EditorWhenOption(
                 label = "All the time",
                 selected = !form.scheduled,
                 onSelect = { onFormChange { it.copy(scheduled = false) } }
             )
-            WhenOption(
+            EditorWhenOption(
                 label = "Days and times",
                 selected = form.scheduled,
                 onSelect = { onFormChange { it.copy(scheduled = true) } }
@@ -257,12 +255,3 @@ private fun HowAndWhen(
     }
 }
 
-@Composable
-private fun SubsectionTitle(text: String) {
-    Text(
-        text,
-        style = MaterialTheme.typography.titleSmall,
-        fontWeight = FontWeight.Medium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant
-    )
-}

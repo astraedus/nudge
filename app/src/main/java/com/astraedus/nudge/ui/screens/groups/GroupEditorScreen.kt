@@ -10,17 +10,14 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
@@ -31,7 +28,6 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -48,7 +44,6 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.ui.components.AppListItem
 import com.astraedus.nudge.ui.components.AppPicker
 import com.astraedus.nudge.ui.components.StrictModeChallengeHost
@@ -59,7 +54,12 @@ import com.astraedus.nudge.ui.components.rule.AllAppsRuleItem
 import com.astraedus.nudge.ui.components.rule.BlockModeSegmentedRow
 import com.astraedus.nudge.ui.components.rule.DailyLimitChips
 import com.astraedus.nudge.ui.components.rule.DaysAndTimesFields
+import com.astraedus.nudge.ui.components.rule.EditorAddRow
+import com.astraedus.nudge.ui.components.rule.EditorSectionTitle
+import com.astraedus.nudge.ui.components.rule.EditorSubsectionTitle
+import com.astraedus.nudge.ui.components.rule.EditorWhenOption
 import com.astraedus.nudge.ui.components.rule.WaitTimeChips
+import com.astraedus.nudge.ui.components.rule.showsWaitTime
 
 /**
  * The group editor (spec 3.3), laid out in the user's question order: which apps, then what happens
@@ -169,7 +169,7 @@ fun GroupEditorScreen(
             )
 
             Spacer(Modifier.height(16.dp))
-            SectionTitle(
+            EditorSectionTitle(
                 if (state.members.isEmpty()) "Apps" else "Apps · ${state.members.size}"
             )
             state.members.forEach { app ->
@@ -183,7 +183,7 @@ fun GroupEditorScreen(
                     }
                 )
             }
-            AddAppsRow(onClick = viewModel::openPicker)
+            EditorAddRow("Add apps", onClick = viewModel::openPicker)
 
             Spacer(Modifier.height(16.dp))
             BlockSwitchRow(
@@ -228,7 +228,7 @@ private fun BlockingFields(
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         Spacer(Modifier.height(0.dp))
-        SubsectionTitle("How")
+        EditorSubsectionTitle("How")
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             BlockModeSegmentedRow(
                 selected = form.mode,
@@ -241,7 +241,7 @@ private fun BlockingFields(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
-        if (form.mode != BlockMode.HARD_BLOCK) {
+        if (showsWaitTime(form.mode)) {
             WaitTimeChips(
                 seconds = form.waitSeconds,
                 onSelect = { seconds -> onFormChange { it.copy(waitSeconds = seconds) } },
@@ -264,14 +264,14 @@ private fun BlockingFields(
         }
 
         Spacer(Modifier.height(0.dp))
-        SubsectionTitle("When")
+        EditorSubsectionTitle("When")
         Column(Modifier.selectableGroup()) {
-            WhenOption(
+            EditorWhenOption(
                 label = "All the time",
                 selected = !form.scheduled,
                 onSelect = { onFormChange { it.copy(scheduled = false) } }
             )
-            WhenOption(
+            EditorWhenOption(
                 label = "Days and times",
                 selected = form.scheduled,
                 onSelect = { onFormChange { it.copy(scheduled = true) } }
@@ -292,26 +292,6 @@ private fun BlockingFields(
     }
 }
 
-@Composable
-private fun SectionTitle(text: String) {
-    Text(
-        text,
-        style = MaterialTheme.typography.titleMedium,
-        fontWeight = FontWeight.Medium,
-        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-    )
-}
-
-@Composable
-private fun SubsectionTitle(text: String) {
-    Text(
-        text,
-        style = MaterialTheme.typography.titleSmall,
-        fontWeight = FontWeight.Medium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant
-    )
-}
-
 /**
  * "Allowed during" (spec 3.3): the All apps rules that let this group through. Each row opens that
  * rule, so the one place a group's two uses meet shows that adding an app here lets it through.
@@ -319,7 +299,7 @@ private fun SubsectionTitle(text: String) {
 @Composable
 private fun AllowedDuringSection(rules: List<AllAppsRuleItem>, onOpen: (Long) -> Unit) {
     Spacer(Modifier.height(16.dp))
-    SectionTitle("Allowed during")
+    EditorSectionTitle("Allowed during")
     rules.forEach { rule ->
         ListItem(
             headlineContent = { Text(rule.title, maxLines = 2, overflow = TextOverflow.Ellipsis) },
@@ -334,16 +314,6 @@ private fun AllowedDuringSection(rules: List<AllAppsRuleItem>, onOpen: (Long) ->
             modifier = Modifier.clickable(role = Role.Button) { onOpen(rule.ruleId) }
         )
     }
-}
-
-/** "+ Add apps": a list row whose 40dp icon slot lines up with the app icons above it. */
-@Composable
-private fun AddAppsRow(onClick: () -> Unit) {
-    ListItem(
-        headlineContent = { Text("Add apps", color = MaterialTheme.colorScheme.primary) },
-        leadingContent = { TonalIcon(Icons.Default.Add, primary = true) },
-        modifier = Modifier.clickable(onClick = onClick)
-    )
 }
 
 /** The group's own block switch, styled as the heading of How and When. */
@@ -377,20 +347,3 @@ private fun LabelledSwitch(label: String, checked: Boolean, onCheckedChange: (Bo
     }
 }
 
-@Composable
-private fun WhenOption(label: String, selected: Boolean, onSelect: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(min = 48.dp)
-            .selectable(selected = selected, onClick = onSelect, role = Role.RadioButton),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        RadioButton(selected = selected, onClick = null)
-        Text(
-            label,
-            style = MaterialTheme.typography.bodyLarge,
-            modifier = Modifier.padding(start = 16.dp)
-        )
-    }
-}

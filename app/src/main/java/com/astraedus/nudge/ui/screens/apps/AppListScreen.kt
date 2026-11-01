@@ -39,6 +39,7 @@ import com.astraedus.nudge.ui.components.StrictModeChallengeHost
 import com.astraedus.nudge.ui.components.TonalIcon
 import com.astraedus.nudge.ui.components.rule.AllAppsIcon
 import com.astraedus.nudge.ui.components.rule.AllAppsRuleItem
+import com.astraedus.nudge.ui.screens.allapps.AllTheTimeConfirmDialog
 
 /**
  * Manage Apps, the one list of rules (spec 3.2): the All apps rules, the user's groups (a group is
@@ -58,6 +59,7 @@ fun AppListScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val challenge by viewModel.challenge.collectAsStateWithLifecycle()
+    val allAppsSwitchOn by viewModel.allAppsSwitchOn.collectAsStateWithLifecycle()
     val searching = state.searchQuery.isNotBlank()
     val listState = rememberLazyListState()
     var showBlockSeveral by rememberSaveable { mutableStateOf(false) }
@@ -76,6 +78,15 @@ fun AppListScreen(
         onVerify = viewModel::verifyChallenge,
         onCancel = viewModel::cancelChallenge
     )
+
+    // The switch asks what the editor's Save asks before a Hard block, all-the-time rule goes on.
+    allAppsSwitchOn?.let { pending ->
+        AllTheTimeConfirmDialog(
+            blockedCount = pending.blockedCount,
+            onConfirm = viewModel::confirmAllAppsSwitchOn,
+            onDismiss = viewModel::dismissAllAppsSwitchOn
+        )
+    }
 
     if (showBlockSeveral) {
         BlockSeveralSheet(

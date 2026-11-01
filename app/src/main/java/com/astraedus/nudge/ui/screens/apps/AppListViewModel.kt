@@ -12,8 +12,13 @@ import com.astraedus.nudge.data.repository.InstalledAppsRepository
 import com.astraedus.nudge.data.repository.InstalledAppsRepository.AppInfo
 import com.astraedus.nudge.domain.lock.ChallengeState
 import com.astraedus.nudge.domain.model.BlockMode
+import com.astraedus.nudge.domain.packages.EssentialPackages
 import com.astraedus.nudge.ui.components.rule.AllAppsRuleItem
 import com.astraedus.nudge.ui.lock.StrictModeGate
+import com.astraedus.nudge.ui.screens.allapps.DeviceApps
+import com.astraedus.nudge.ui.screens.allapps.RuleTables
+import com.astraedus.nudge.ui.screens.allapps.blockedCount
+import com.astraedus.nudge.ui.screens.allapps.confirmsSwitchOn
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -21,6 +26,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.onStart
@@ -40,6 +46,10 @@ data class AppListUiState(
     val revealGroupId: Long? = null
 )
 
+/** The confirm Manage Apps shows before switching [rule] on: [blockedCount] fills its title. */
+@Immutable
+data class AllAppsSwitchOn(val rule: BlockRule, val blockedCount: Int)
+
 private data class GroupData(
     val groups: List<AppGroup>,
     val members: List<AppGroupMember>,
@@ -55,13 +65,19 @@ private data class GroupData(
 class AppListViewModel @Inject constructor(
     private val installedAppsRepository: InstalledAppsRepository,
     private val blockRuleRepository: BlockRuleRepository,
-    nudgePreferences: NudgePreferences
+    nudgePreferences: NudgePreferences,
+    /** The one essentials list, for the "Block N apps all the time?" count (spec 5.4). */
+    private val essentialPackages: EssentialPackages
 ) : ViewModel() {
 
     private val strictModeGate = StrictModeGate(nudgePreferences)
 
     /** Active Strict Mode unlock challenge, if turning a block off is pending. */
     val challenge: StateFlow<ChallengeState?> = strictModeGate.challenge
+
+    /** An All apps rule switched on from here that is waiting on "Block N apps all the time?". */
+    private val pendingSwitchOn = MutableStateFlow<AllAppsSwitchOn?>(null)
+    val allAppsSwitchOn: StateFlow<AllAppsSwitchOn?> = pendingSwitchOn
 
     private val searchQuery = MutableStateFlow("")
 
@@ -215,15 +231,46 @@ class AppListViewModel @Inject constructor(
     fun toggleAllApps(item: AllAppsRuleItem) {
         viewModelScope.launch {
             val rule = item.rule
-            if (item.enabled) {
-                strictModeGate.run(prompt = "Turn off blocking for these apps") {
+            when {
+                item.enabled -> strictModeGate.run(prompt = "Turn off blocking for these apps") {
                     blockRuleRepository.saveAllAppsRule(rule.copy(enabled = false))
                 }
-            } else {
-                blockRuleRepository.saveAllAppsRule(rule.copy(enabled = true))
+                // Hard block, all the time: the editor's question first ("Block N apps all the
+                // time?"), through the same predicate, so the switch is no way around it.
+                confirmsSwitchOn(rule) ->
+                    pendingSwitchOn.value = AllAppsSwitchOn(rule, blockedCountNow(rule))
+                else -> blockRuleRepository.saveAllAppsRule(rule.copy(enabled = true))
             }
         }
     }
+
+    /** "Block them" on the switch's confirm: turns the rule on. */
+    fun confirmAllAppsSwitchOn() {
+        val pending = pendingSwitchOn.value ?: return
+        pendingSwitchOn.value = null
+        viewModelScope.launch {
+            blockRuleRepository.saveAllAppsRule(pending.rule.copy(enabled = true))
+        }
+    }
+
+    /** "Cancel" on the switch's confirm: nothing is written, the rule stays off. */
+    fun dismissAllAppsSwitchOn() {
+        pendingSwitchOn.value = null
+    }
+
+    /** "Blocks N apps" for [rule] right now, counted exactly as the editor counts it. */
+    private suspend fun blockedCountNow(rule: BlockRule): Int = blockedCount(
+        rule = rule,
+        tables = RuleTables(
+            rules = blockRuleRepository.getAllRules().first(),
+            groups = blockRuleRepository.getAllGroups().first(),
+            members = blockRuleRepository.getAllGroupMembers().first()
+        ),
+        device = DeviceApps(
+            installed = installedApps.value ?: installedAppsRepository.getInstalledApps(),
+            essentials = essentialPackages.current()
+        )
+    )
 
     /** The screen has scrolled [AppListUiState.revealGroupId] into view (or could not: a search hides it). */
     fun onGroupRevealed() {
