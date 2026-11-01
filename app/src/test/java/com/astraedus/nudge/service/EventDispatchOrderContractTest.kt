@@ -181,6 +181,31 @@ class EventDispatchOrderContractTest {
     }
 
     /**
+     * A window-typed event the classifier says claims nothing (an accessibility-pane change) is
+     * not evaluated as an arrival. `PaneChangeReplayTest` is the behaviour (L2): YouTube's player
+     * pane, torn down after Home, put a Delay overlay on the launcher. This pins only WHERE the
+     * service listens to that answer: in the window branch, before the deferred-launch redeem and
+     * before `evaluateForegroundPackage`, and off the signal rather than a second pane test.
+     */
+    @Test
+    fun `a window event that claims nothing is not evaluated as an arrival`() {
+        val branch = dispatchCode.substring(indexIn(dispatchCode, "A11yEventType.WINDOWS_CHANGED ->"))
+        val notForeground = indexIn(branch, "if (signal is ForegroundSignal.NotForeground) return")
+        assertTrue(
+            "the NotForeground return must precede the deferred-launch redeem",
+            notForeground < indexIn(branch, "redeemDeferredLaunch(")
+        )
+        assertTrue(
+            "the NotForeground return must precede the evaluation",
+            notForeground < indexIn(branch, "evaluateForegroundPackage(packageName)")
+        )
+        assertFalse(
+            "the service reads the classifier's answer; it does not re-test the pane itself",
+            dispatchCode.contains("isPaneChange")
+        )
+    }
+
+    /**
      * THE SECOND ENTRY POINT, and the one that silently bypassed the sitting.
      *
      * `maybeEvaluateContentChangeAsAppSwitch` is issue #7's fallback: a re-entry via a notification

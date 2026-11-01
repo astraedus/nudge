@@ -73,6 +73,15 @@ class EventClassifier(
         // change is exactly the ghost app-switch that would reintroduce #5.
         if (!record.type.isWindowChange) return ForegroundSignal.NotForeground(pkg)
 
+        // ...and neither does a PANE change, which is a content change the platform delivers under
+        // the window type (see [AccessibilityEventRecord.isPaneChange]). Asked BEFORE Home and before
+        // the window evidence, because neither can rescue it: on the bench the straggler came from
+        // a window the live list no longer contained, which the window evidence reads as "no
+        // evidence", not as "not the app". A pane change from the app the user is genuinely in loses
+        // nothing here: the sitting is already that app's, and its next window event or verified
+        // content change (issue #7) moves the foreground exactly as before.
+        if (record.isPaneChange) return ForegroundSignal.NotForeground(pkg)
+
         // Home is restricted to TYPE_WINDOW_STATE_CHANGED for the same reason the overlay-bypass
         // check is: it is the only event type meaning "a new activity is in front". Launcher
         // content-change churn (widgets, the icon grid redrawing behind a fullscreen app) is not

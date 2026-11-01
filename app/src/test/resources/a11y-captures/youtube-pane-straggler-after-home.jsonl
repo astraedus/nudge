@@ -1,0 +1,93 @@
+# a11y capture: youtube-pane-straggler-after-home
+# device: Pixel 3 bench device, Android 12 / API 31. Captured 2026-11-01T19:45:37Z (05:45 device time).
+# HOW: `scripts/device-qa.sh home-reopen`, trial 1, on main-latest (0d9f5ae; versionCode 68, release
+#      key, Debug Logging on so the NudgeA11yTrace lines were live). YouTube under ONE whole-app
+#      DELAY rule (5s), its delay already completed (passthrough granted), Shorts playing, then
+#      KEYCODE_HOME. The EV lines were cut from the run's saved logcat with the same `sed` that
+#      `scripts/a11y-capture.sh` uses, so every record below is exactly what the device traced.
+# EXPECTED (test oracle): ONE Home press ends the YouTube sitting (WENT_HOME) and NOTHING starts a
+#      new one: no `sitting started`, no Delay overlay over the launcher, the launcher stays in
+#      front. The record that must claim nothing is the third: YouTube, `android.view.ViewGroup`,
+#      WINDOW_STATE_CHANGED with cct=32 (CONTENT_CHANGE_TYPE_PANE_DISAPPEARED), from window 8931,
+#      which the live window list no longer contained.
+# MEASURED (the same run's logcat, not in this file):
+#      05:45:38.444 windows changed [8927:system, 8925:system, 8914:application:nexuslauncher:focused:active]
+#      05:45:38.446 foreground switch detected from content change package=nexuslauncher signal=Home  (record 1, #58 path)
+#      05:45:38.446 sitting ended package=youtube cause=WENT_HOME - passthrough revoked
+#      05:45:38.501 EV WINDOW_STATE_CHANGED youtube android.view.ViewGroup w=8931 cct=32           (record 3)
+#      05:45:38.502 sitting started package=youtube
+#      05:45:38.506 block package=youtube reason=delay_rule, START BlockOverlayActivity over the launcher
+#      05:45:43.808 delay completed onto home, handing back to the app package=youtube
+#      ...so the harness's next `wait_fg launcher` found YouTube in front: "Home did not reach the launcher".
+#      Everything after record 3 (our overlay, the hand-back, YouTube relaunched) is the bug's own
+#      consequence; the replay asserts on records 1-3 and keeps the rest as context.
+# ALSO SEEN: on v1.23.2 (05:39:22.195, a run that PASSED by luck) and on a second main-latest run
+#      (05:43:12.324). The straggler lands 36-55ms AFTER the Home signal on some presses and not at
+#      all on others, which is why the case flaked rather than failing every time.
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.nexuslauncher","c":"android.widget.FrameLayout","w":8914,"ts":2394752007,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":0}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.nexuslauncher","c":"android.widget.FrameLayout","w":8914,"ts":2394752067,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":3}
+{"t":"WINDOW_STATE_CHANGED","p":"com.google.android.youtube","c":"android.view.ViewGroup","w":8931,"ts":2394752068,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":32}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.widget.FrameLayout","w":8961,"ts":2394752236,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_STATE_CHANGED","p":"dev.astraedus.nudge","c":"com.astraedus.nudge.ui.overlay.BlockOverlayActivity","w":8961,"ts":2394752236,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":0}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":8961,"ts":2394752244,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":8961,"ts":2394752244,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":8961,"ts":2394752245,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":8961,"ts":2394752245,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":8961,"ts":2394752245,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":8961,"ts":2394752245,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":8961,"ts":2394752245,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":8961,"ts":2394752245,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":8961,"ts":2394752245,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":8961,"ts":2394752245,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":8961,"ts":2394752245,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":8961,"ts":2394752245,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.ViewGroup","w":8961,"ts":2394752336,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":8961,"ts":2394752345,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":8961,"ts":2394752447,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":8961,"ts":2394753284,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":64}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":8961,"ts":2394753284,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":0}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":8961,"ts":2394754282,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":64}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":8961,"ts":2394754283,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":0}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":8961,"ts":2394755281,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":64}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":8961,"ts":2394755281,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":0}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":8961,"ts":2394756297,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":64}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":8961,"ts":2394756297,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":0}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":8961,"ts":2394757335,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":64}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":8961,"ts":2394757336,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":0}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.nexuslauncher","c":"android.widget.FrameLayout","w":8914,"ts":2394757355,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":0}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.nexuslauncher","c":"android.widget.FrameLayout","w":8914,"ts":2394757386,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_STATE_CHANGED","p":"com.google.android.apps.nexuslauncher","c":"com.google.android.apps.nexuslauncher.NexusLauncherActivity","w":8914,"ts":2394757387,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":0}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.nexuslauncher","c":"android.widget.ScrollView","w":8914,"ts":2394757486,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":2,"scr":true}
+{"t":"WINDOW_STATE_CHANGED","p":"com.google.android.youtube","c":"com.google.android.apps.youtube.app.watchwhile.MainActivity","w":8931,"ts":2394757607,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":0}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.youtube","c":"android.widget.ProgressBar","w":8931,"ts":2394757659,"fi":-1,"ti":-1,"ci":0,"n":100,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.youtube","c":"android.view.ViewGroup","w":8931,"ts":2394757760,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.widget.FrameLayout","w":8963,"ts":2394757794,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_STATE_CHANGED","p":"com.google.android.youtube","c":"android.view.ViewGroup","w":8931,"ts":2394757804,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":32}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":8963,"ts":2394757805,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":8963,"ts":2394757805,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":8963,"ts":2394757805,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":8963,"ts":2394757805,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":8963,"ts":2394757805,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":8963,"ts":2394757805,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":8963,"ts":2394757805,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":8963,"ts":2394757805,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":8963,"ts":2394757806,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":8963,"ts":2394757806,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":8963,"ts":2394757806,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":8963,"ts":2394757806,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.ViewGroup","w":8963,"ts":2394757894,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":8963,"ts":2394757907,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":8963,"ts":2394758008,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":8963,"ts":2394758834,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":64}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":8963,"ts":2394758834,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":0}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":8963,"ts":2394759834,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":64}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":8963,"ts":2394759834,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":0}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":8963,"ts":2394760848,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":64}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":8963,"ts":2394760849,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":0}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":8963,"ts":2394761846,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":64}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":8963,"ts":2394761847,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":0}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":8963,"ts":2394762892,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":64}
+{"t":"WINDOW_CONTENT_CHANGED","p":"dev.astraedus.nudge","c":"android.view.View","w":8963,"ts":2394762893,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":0}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.youtube","c":"android.widget.ProgressBar","w":8931,"ts":2394762997,"fi":-1,"ti":-1,"ci":0,"n":100,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_STATE_CHANGED","p":"com.google.android.youtube","c":"com.google.android.apps.youtube.app.watchwhile.MainActivity","w":8931,"ts":2394762997,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":0}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.youtube","c":"android.view.ViewGroup","w":8931,"ts":2394763096,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}

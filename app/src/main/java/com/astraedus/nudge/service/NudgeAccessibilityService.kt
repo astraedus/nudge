@@ -1713,6 +1713,13 @@ class NudgeAccessibilityService : AccessibilityService() {
         when (record.type) {
             A11yEventType.WINDOW_STATE_CHANGED,
             A11yEventType.WINDOWS_CHANGED -> {
+                // A window-typed event the classifier says claims nothing about the foreground: an
+                // accessibility-pane change (`AccessibilityEventRecord.isPaneChange`). It is not an
+                // arrival, so it is not evaluated as one. Evaluating it anyway is how YouTube's
+                // player pane, torn down just after the user pressed Home, put a Delay overlay on
+                // the launcher. Read off the SIGNAL rather than re-tested here, so "what is on
+                // screen" keeps one answer.
+                if (signal is ForegroundSignal.NotForeground) return
                 // THE SETTLE THAT FINISHES A BLOCK WE RACED OURSELVES OUT OF (issue #58).
                 //
                 // A launch refused with DROP_FOREGROUND_MOVED because the evaluation finished a
