@@ -26,6 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.astraedus.nudge.ui.components.AppListItem
+import com.astraedus.nudge.ui.components.StrictModeChallengeHost
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -35,6 +36,13 @@ fun AppListScreen(
     onNavigateToRuleEditor: (String) -> Unit
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val challenge by viewModel.challenge.collectAsStateWithLifecycle()
+
+    StrictModeChallengeHost(
+        challenge = challenge,
+        onVerify = viewModel::verifyChallenge,
+        onCancel = viewModel::cancelChallenge
+    )
 
     Scaffold(
         topBar = {
