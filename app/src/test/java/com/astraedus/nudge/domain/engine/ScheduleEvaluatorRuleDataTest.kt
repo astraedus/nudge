@@ -39,7 +39,7 @@ class ScheduleEvaluatorRuleDataTest {
             val active = RuleEvaluator()
                 .resolveRulesForPackage("pkg", listOf(data), listOf(
                     com.astraedus.nudge.domain.model.GroupMembership(1, "pkg")
-                ))
+                ), CoverageFacts(essential = false, launchable = true))
                 .single()
             for (day in Calendar.SUNDAY..Calendar.SATURDAY) {
                 for (hour in 0..23) {

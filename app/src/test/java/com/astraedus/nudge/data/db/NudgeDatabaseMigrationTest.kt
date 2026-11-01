@@ -215,6 +215,24 @@ class NudgeDatabaseMigrationTest {
     }
 
     @Test
+    fun `MIGRATION_13_14 adds the All apps target and its allowed lists, inert for every existing rule`() {
+        val db = RecordingDatabase()
+
+        NudgeDatabase.MIGRATION_13_14.migrate(db.proxy)
+
+        // allApps DEFAULT 0 and both lists NULL: an upgraded rule keeps exactly the one app or the
+        // one group it targeted. A default of 1 here would turn every rule into "block everything".
+        assertEquals(
+            listOf(
+                "ALTER TABLE block_rules ADD COLUMN allApps INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE block_rules ADD COLUMN exceptPackages TEXT DEFAULT NULL",
+                "ALTER TABLE block_rules ADD COLUMN exceptGroupIds TEXT DEFAULT NULL"
+            ),
+            db.sql
+        )
+    }
+
+    @Test
     fun `all migrations registered from version 1 to current`() {
         val allMigrations = listOf(
             NudgeDatabase.MIGRATION_1_2,
@@ -228,7 +246,8 @@ class NudgeDatabaseMigrationTest {
             NudgeDatabase.MIGRATION_9_10,
             NudgeDatabase.MIGRATION_10_11,
             NudgeDatabase.MIGRATION_11_12,
-            NudgeDatabase.MIGRATION_12_13
+            NudgeDatabase.MIGRATION_12_13,
+            NudgeDatabase.MIGRATION_13_14
         )
 
         // Read from production, not hand-typed: a hand-kept constant here is exactly the

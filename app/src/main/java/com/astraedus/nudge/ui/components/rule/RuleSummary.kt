@@ -79,6 +79,28 @@ object RuleSummary {
         "$name$SEPARATOR$memberCount ${if (memberCount == 1) "app" else "apps"}"
 
     /**
+     * An All apps rule's title, everywhere it is named (Manage Apps, the Home lock card, the block
+     * screen's rule line, App config's "Also covered by"): "All apps", "All apps except Spotify",
+     * "All apps except Work, Spotify", "All apps except Work, Spotify +3".
+     *
+     * [allowedNames] are the allowed groups' names, then the allowed apps' labels, in that order
+     * (groups first, as the editor lists them). The caller passes only names it can resolve: an
+     * allowed app that is not installed is left out, as the editor hides it.
+     */
+    fun allAppsTitle(allowedNames: List<String>): String = when (allowedNames.size) {
+        0 -> ALL_APPS
+        1, 2 -> "$ALL_APPS except ${allowedNames.joinToString(", ")}"
+        else -> "$ALL_APPS except ${allowedNames.take(2).joinToString(", ")} +${allowedNames.size - 2}"
+    }
+
+    /**
+     * "Until 8:42 AM" / "Until 17:00": the end of the window a scheduled block is in (spec 3.8, 3.9).
+     * [clockText] is the time already formatted in the user's 12/24-hour setting (the caller has the
+     * Android `DateFormat`; this stays pure).
+     */
+    fun untilText(clockText: String): String = "Until $clockText"
+
+    /**
      * A group row's one summary line: its own rule in the same words an app's rules use
      * ("Delay 15s · 30min limit"), or "Not blocked" for a group with no rule of its own (an
      * imported one, say). Whether the rule is on is the row's switch, not this text.
@@ -152,6 +174,8 @@ object RuleSummary {
     }
 
     private const val NONE = "NONE"
+
+    private const val ALL_APPS = "All apps"
 
     private val DAY_NAMES = mapOf(
         1 to "Mon", 2 to "Tue", 3 to "Wed", 4 to "Thu", 5 to "Fri", 6 to "Sat", 7 to "Sun"

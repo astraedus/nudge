@@ -90,7 +90,8 @@ class RuleEvaluatorGroupNameTest {
         val resolved = evaluator.resolveRulesForPackage(
             "com.instagram.android",
             listOf(rule()),
-            listOf(GroupMembership(7L, "com.instagram.android"))
+            listOf(GroupMembership(7L, "com.instagram.android")),
+            CoverageFacts(essential = false, launchable = true)
         )
         assertEquals("Social", resolved.single().ruleName)
     }

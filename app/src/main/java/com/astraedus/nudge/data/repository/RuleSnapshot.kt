@@ -5,6 +5,8 @@ import com.astraedus.nudge.data.db.entity.AppGroupMember
 import com.astraedus.nudge.data.db.entity.BlockRule
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.domain.model.BlockRuleData
+import com.astraedus.nudge.domain.model.ExceptCsv
+import com.astraedus.nudge.domain.model.RuleTarget
 import com.astraedus.nudge.domain.model.GroupMembership
 import kotlinx.coroutines.flow.first
 
@@ -45,7 +47,10 @@ class RuleSnapshot private constructor(
                 enabledRules = enabledRules,
                 groups = groups,
                 ruleData = enabledRules.map { rule ->
-                    rule.toRuleData(groupName = rule.groupId?.let { groupNames[it] })
+                    rule.toRuleData(
+                        groupName = rule.groupId?.let { groupNames[it] },
+                        groupNames = groupNames
+                    )
                 },
                 memberships = members
                     .filter { it.groupId in groupIds }
@@ -60,26 +65,46 @@ class RuleSnapshot private constructor(
  * `EvaluateBlockUseCase.resolveActiveRules` so the snapshot and every future reader share it.
  *
  * [groupName] is not on the row; the caller that holds the groups table ([RuleSnapshot.of]) passes
- * it so a group rule's overlay label can name its group.
+ * it so a group rule's overlay label can name its group. [groupNames] (every group, by id) names an
+ * All apps rule's allowed groups the same way; a stale id has no entry and so no name.
  */
-fun BlockRule.toRuleData(groupName: String? = null): BlockRuleData = BlockRuleData(
-    id = id,
+fun BlockRule.toRuleData(
+    groupName: String? = null,
+    groupNames: Map<Long, String> = emptyMap()
+): BlockRuleData {
+    val exceptGroups = ExceptCsv.groupIds(exceptGroupIds)
+    return BlockRuleData(
+        id = id,
+        packageName = packageName,
+        groupId = groupId,
+        mode = try { BlockMode.valueOf(mode) } catch (_: Exception) { BlockMode.HARD_BLOCK },
+        delaySeconds = delaySeconds,
+        dailyLimitMinutes = dailyLimitMinutes,
+        enabled = enabled,
+        scheduleDays = scheduleDays?.split(",")?.mapNotNull { it.trim().toIntOrNull() },
+        scheduleStartMinute = scheduleStartMinute,
+        scheduleEndMinute = scheduleEndMinute,
+        inAppFeatures = inAppFeatures?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() },
+        grayscale = grayscale,
+        webDomains = webDomains,
+        tabVanish = tabVanish,
+        followingSteer = followingSteer,
+        keepPassOnShortTrips = keepPassOnShortTrips,
+        groupName = groupName,
+        allApps = allApps,
+        exceptPackages = ExceptCsv.packages(exceptPackages),
+        exceptGroupIds = exceptGroups,
+        exceptGroupNames = exceptGroups.mapNotNull { groupNames[it] }
+    )
+}
+
+/** This row's target. See [RuleTarget]: never re-derive it from which columns are null. */
+fun BlockRule.target(): RuleTarget? = RuleTarget.of(
     packageName = packageName,
     groupId = groupId,
-    mode = try { BlockMode.valueOf(mode) } catch (_: Exception) { BlockMode.HARD_BLOCK },
-    delaySeconds = delaySeconds,
-    dailyLimitMinutes = dailyLimitMinutes,
-    enabled = enabled,
-    scheduleDays = scheduleDays?.split(",")?.mapNotNull { it.trim().toIntOrNull() },
-    scheduleStartMinute = scheduleStartMinute,
-    scheduleEndMinute = scheduleEndMinute,
-    inAppFeatures = inAppFeatures?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() },
-    grayscale = grayscale,
-    webDomains = webDomains,
-    tabVanish = tabVanish,
-    followingSteer = followingSteer,
-    keepPassOnShortTrips = keepPassOnShortTrips,
-    groupName = groupName
+    allApps = allApps,
+    exceptPackages = ExceptCsv.packages(exceptPackages),
+    exceptGroupIds = ExceptCsv.groupIds(exceptGroupIds)
 )
 
 /**

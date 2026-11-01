@@ -29,6 +29,8 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.astraedus.nudge.domain.packages.FakeEssentialPackages
+import com.astraedus.nudge.domain.packages.FakePackageFacts
 
 /**
  * L3: group rules through the real [EvaluateBlockUseCase] (spec PR 2).
@@ -71,7 +73,9 @@ class EvaluateBlockGroupRulesTest {
         scheduleEvaluator = ScheduleEvaluator(),
         preferences = mockk<NudgePreferences> { every { contentFilterEnabled } returns flowOf(false) },
         contentFilter = mockk<ContentFilter>(),
-        nukeEnforcement = NukeEnforcement.NEVER
+        nukeEnforcement = NukeEnforcement.NEVER,
+        essentialPackages = FakeEssentialPackages(),
+        packageFacts = FakePackageFacts()
     )
 
     private fun BlockDecision.block(): BlockDecision.Block {

@@ -1,0 +1,21 @@
+package com.astraedus.nudge.domain.packages
+
+/**
+ * The one essentials list (spec 5.4), as the engine reads it: the apps no group or All apps rule
+ * may ever cover. Production binds `service.EssentialApps`, which resolves it on the device; the
+ * "Always allowed" sheet renders the same set.
+ */
+interface EssentialPackages {
+
+    /**
+     * Every essential package. Suspends; reads the device off the main thread. Never smaller than
+     * the static floor (Nudge itself, Settings, the system surfaces), whatever a source does.
+     */
+    suspend fun current(): Set<String>
+
+    /**
+     * The last resolved set without resolving anything, for a caller that cannot suspend (the
+     * accessibility service's synchronous browser check). Null before the first resolution.
+     */
+    fun cachedOrNull(): Set<String>?
+}

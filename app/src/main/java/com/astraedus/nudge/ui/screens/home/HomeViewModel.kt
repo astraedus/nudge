@@ -136,6 +136,14 @@ class HomeViewModel @Inject constructor(
     val nukeGate = NukeGate(currentState = { nudgePreferences.nukeState.first() })
     val nukeUnlock: StateFlow<NukeUnlockState?> = nukeGate.unlock
 
+    /** The one essentials list, resolved off the main thread (it reads PackageManager and roles). */
+    private fun essentialsFlow() = flow { emit(essentialApps.packages()) }.flowOn(ioDispatcher)
+
+    /** The installed apps with a launcher entry: what an All apps rule can cover (spec 4.1). */
+    private fun launchableFlow() = flow {
+        emit(installedAppsRepository.getInstalledApps().map { it.packageName }.toSet())
+    }.flowOn(ioDispatcher)
+
     /**
      * The dashboard's Nuke card. Its OWN flow rather than a field on [uiState]: the card changes
      * when Nuke does, and folding it into the clock-driven combine would re-render the whole
@@ -147,7 +155,7 @@ class HomeViewModel @Inject constructor(
      */
     val nukeSummary: StateFlow<NukeSummary> = combine(
         nudgePreferences.nukeState,
-        flow { emit(essentialApps.packages()) }.flowOn(ioDispatcher)
+        essentialsFlow()
     ) { state, essentials -> NukeSummary.from(state, essentials) }
         .distinctUntilChanged()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), NukeSummary())
@@ -295,6 +303,8 @@ class HomeViewModel @Inject constructor(
             blockRuleRepository.getEnabledRules(),
             blockRuleRepository.getAllGroups(),
             blockRuleRepository.getAllGroupMembers(),
+            launchableFlow(),
+            essentialsFlow(),
             ::activeAppsCount
         ),
         countsFlow,

@@ -14,6 +14,8 @@ import androidx.navigation.navArgument
 import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.ui.screens.apps.AppListScreen
 import com.astraedus.nudge.ui.screens.apps.AppListViewModel
+import com.astraedus.nudge.ui.screens.allapps.AllAppsEditorScreen
+import com.astraedus.nudge.ui.screens.allapps.AllAppsEditorViewModel
 import com.astraedus.nudge.ui.screens.groups.GroupEditorScreen
 import com.astraedus.nudge.ui.screens.groups.GroupEditorViewModel
 import com.astraedus.nudge.ui.screens.home.HomeScreen
@@ -58,6 +60,12 @@ sealed class Screen(val route: String) {
     data object GroupEditor : Screen("group_editor?groupId={groupId}") {
         fun createRoute(groupId: Long? = null) =
             if (groupId == null) "group_editor" else "group_editor?groupId=$groupId"
+    }
+
+    /** The All apps editor (spec 3.4). No id, or an id of 0 or less, opens a new rule. */
+    data object AllAppsEditor : Screen("all_apps_editor?ruleId={ruleId}") {
+        fun createRoute(ruleId: Long? = null) =
+            if (ruleId == null) "all_apps_editor" else "all_apps_editor?ruleId=$ruleId"
     }
 }
 
@@ -201,6 +209,25 @@ fun NudgeNavGraph(
             GroupEditorScreen(
                 viewModel = viewModel,
                 onNavigateBack = { navController.popBackStack() }
+            )
+        }
+
+        composable(
+            route = Screen.AllAppsEditor.route,
+            arguments = listOf(
+                navArgument(AllAppsEditorViewModel.ARG_RULE_ID) {
+                    type = NavType.LongType
+                    defaultValue = -1L
+                }
+            )
+        ) {
+            val viewModel: AllAppsEditorViewModel = hiltViewModel()
+            AllAppsEditorScreen(
+                viewModel = viewModel,
+                onNavigateBack = { navController.popBackStack() },
+                onOpenGroup = { groupId ->
+                    navController.navigate(Screen.GroupEditor.createRoute(groupId))
+                }
             )
         }
 

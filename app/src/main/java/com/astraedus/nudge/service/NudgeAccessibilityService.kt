@@ -18,6 +18,7 @@ import com.astraedus.nudge.data.repository.RuleSnapshotSource
 import com.astraedus.nudge.data.repository.UsageRepository
 import com.astraedus.nudge.domain.WebDomainMatcher
 import com.astraedus.nudge.domain.engine.BrowserRouting
+import com.astraedus.nudge.domain.engine.CoverageFacts
 import com.astraedus.nudge.domain.engine.ScheduleEvaluator
 import com.astraedus.nudge.domain.engine.WholeAppCoverage
 import com.astraedus.nudge.domain.block.BlockLaunchGate
@@ -612,10 +613,14 @@ class NudgeAccessibilityService : AccessibilityService() {
         if (!entryPoint.webDomainDetector().isBrowser(packageName)) return false
         val snapshot = entryPoint.ruleSnapshotSource().snapshot.value ?: return true
         val schedule = entryPoint.scheduleEvaluator()
+        // Fail closed on both facts: a browser is treated as launchable, and an essentials list not
+        // resolved yet as empty. Either only sends the browser to the real (suspending) evaluation.
+        val essentials = entryPoint.essentialApps().cachedOrNull() ?: emptySet()
         return WholeAppCoverage.coversNow(
             packageName = packageName,
             rules = snapshot.ruleData,
-            memberships = snapshot.memberships
+            memberships = snapshot.memberships,
+            facts = CoverageFacts(essential = packageName in essentials, launchable = true)
         ) { rule -> schedule.isActiveNow(rule) }
     }
 

@@ -26,6 +26,9 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.astraedus.nudge.domain.packages.FakeEssentialPackages
+import com.astraedus.nudge.domain.packages.FakePackageFacts
+import com.astraedus.nudge.domain.engine.CoverageFacts
 
 /**
  * L2: the device-captured Chrome session (`chrome-open-and-browse.jsonl`: open Chrome, load
@@ -97,7 +100,9 @@ class GroupBrowserCaptureReplayTest {
         scheduleEvaluator = ScheduleEvaluator(),
         preferences = mockk<NudgePreferences> { every { contentFilterEnabled } returns flowOf(false) },
         contentFilter = mockk<ContentFilter>(),
-        nukeEnforcement = NukeEnforcement.NEVER
+        nukeEnforcement = NukeEnforcement.NEVER,
+        essentialPackages = FakeEssentialPackages(),
+        packageFacts = FakePackageFacts()
     )
 
     private val detector = WebDomainDetector()
@@ -133,7 +138,12 @@ class GroupBrowserCaptureReplayTest {
     }
 
     private fun coveredNow(pkg: String) =
-        WholeAppCoverage.coversNow(pkg, snapshot.ruleData, snapshot.memberships) { schedule.isActiveNow(it) }
+        WholeAppCoverage.coversNow(
+            pkg,
+            snapshot.ruleData,
+            snapshot.memberships,
+            CoverageFacts(essential = false, launchable = true)
+        ) { schedule.isActiveNow(it) }
 
     @Test
     fun `Chrome reaches the foreground in the capture`() {

@@ -46,6 +46,31 @@ class BlockRuleRepository @Inject constructor(
     suspend fun setEnabledForPackage(packageName: String, enabled: Boolean) =
         blockRuleDao.setEnabledForPackage(packageName, enabled)
 
+    // --- All apps rules (spec 3.4) ---
+
+    /** Every All apps rule, on or off, oldest first. */
+    fun getAllAppsRules(): Flow<List<BlockRule>> = blockRuleDao.getAllAppsRules()
+
+    /** One rule by id, or null if it is gone (deleted from another screen, say). */
+    suspend fun getRule(id: Long): BlockRule? = blockRuleDao.getById(id)
+
+    /**
+     * Create (rule.id == 0L) or update one All apps rule; returns its id. The rule must be an All
+     * apps rule and nothing else: `allApps` set, no package, no group. Anything else is a caller
+     * bug and throws, rather than writing a row that targets two things.
+     */
+    suspend fun saveAllAppsRule(rule: BlockRule): Long {
+        require(rule.allApps && rule.packageName == null && rule.groupId == null) {
+            "saveAllAppsRule needs an All apps rule with no package and no group"
+        }
+        return if (rule.id == 0L) {
+            blockRuleDao.insert(rule)
+        } else {
+            blockRuleDao.update(rule)
+            rule.id
+        }
+    }
+
     // --- Group operations ---
 
     fun getAllGroups(): Flow<List<AppGroup>> = appGroupDao.getAll()

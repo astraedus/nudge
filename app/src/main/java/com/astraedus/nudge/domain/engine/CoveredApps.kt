@@ -2,9 +2,11 @@ package com.astraedus.nudge.domain.engine
 
 import com.astraedus.nudge.domain.model.BlockRuleData
 import com.astraedus.nudge.domain.model.GroupMembership
+import com.astraedus.nudge.domain.model.RuleTarget
 
 /**
- * The apps a rule that is ON covers: what the Home tile "Active Apps" counts (spec 3.2).
+ * The apps a rule that is ON covers: what the Home tile "Active Apps" counts (spec 3.2), and what an
+ * All apps rule's "Blocks N apps" counts when asked about that one rule (spec 3.4).
  *
  * Asked of the engine itself, not re-derived: a package is covered when
  * [RuleEvaluator.resolveRulesForPackage], the call every block evaluation makes, finds at least one
@@ -13,20 +15,33 @@ import com.astraedus.nudge.domain.model.GroupMembership
  * inputs are a [com.astraedus.nudge.data.repository.RuleSnapshot]'s `ruleData` and `memberships`,
  * the same mapping evaluation reads.
  *
- * Essentials are not taken out: the engine does not take them out of groups yet (the picker hides
- * them; PR 4/6 adds the resolver), and this count must say what the engine does.
+ * The device facts come in as sets, because a screen has the whole list in hand: [launchable] is the
+ * installed apps with a launcher entry (`InstalledAppsRepository`), [essentials] the one essentials
+ * list (`EssentialApps`). An essential app is never counted under a group or All apps rule, exactly
+ * as the engine never covers it.
  */
 object CoveredApps {
 
     private val evaluator = RuleEvaluator()
 
     /** Every covered package, deduplicated. */
-    fun packages(ruleData: List<BlockRuleData>, memberships: List<GroupMembership>): Set<String> {
-        // Only a package named by a rule, or in a group, can resolve to anything.
-        val candidates = ruleData.mapNotNullTo(HashSet()) { it.packageName } +
-            memberships.map { it.packageName }
+    fun packages(
+        ruleData: List<BlockRuleData>,
+        memberships: List<GroupMembership>,
+        launchable: Set<String>,
+        essentials: Set<String>
+    ): Set<String> {
+        // Only a package named by a rule, in a group, or (with an All apps rule on) launchable can
+        // resolve to anything.
+        val candidates = HashSet<String>()
+        ruleData.mapNotNullTo(candidates) { it.packageName }
+        memberships.mapTo(candidates) { it.packageName }
+        if (ruleData.any { it.enabled && RuleTarget.of(it) is RuleTarget.AllApps }) {
+            candidates += launchable
+        }
         return candidates.filterTo(HashSet()) { pkg ->
-            evaluator.resolveRulesForPackage(pkg, ruleData, memberships).any { it.enabled }
+            val facts = CoverageFacts(essential = pkg in essentials, launchable = pkg in launchable)
+            evaluator.resolveRulesForPackage(pkg, ruleData, memberships, facts).any { it.enabled }
         }
     }
 }

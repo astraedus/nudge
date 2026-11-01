@@ -12,10 +12,13 @@ import com.astraedus.nudge.domain.health.EnabledAccessibilityServices
 import com.astraedus.nudge.domain.lock.StrictModeEscapeGuard
 import com.astraedus.nudge.domain.logging.NudgeLog
 import com.astraedus.nudge.domain.nuke.NukePolicy
+import com.astraedus.nudge.domain.packages.EssentialPackages
 import com.astraedus.nudge.util.InputMethods
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * The apps no block may ever cover: the one essentials list (spec section 5.4).
@@ -42,7 +45,7 @@ import javax.inject.Singleton
 class EssentialApps internal constructor(
     private val sources: List<EssentialSource>,
     logger: NudgeLog
-) {
+) : EssentialPackages {
 
     @Inject
     constructor(@ApplicationContext context: Context, logger: NudgeLog) :
@@ -61,6 +64,19 @@ class EssentialApps internal constructor(
         cachedAt = now
         return resolved
     }
+
+    /**
+     * [packages] for the engine ([EssentialPackages]). A fresh cache answers in place, with no
+     * dispatcher hop (this is on the evaluation hot path); only a resolution moves off the main thread.
+     */
+    override suspend fun current(): Set<String> {
+        val current = cached
+        if (current != null && System.currentTimeMillis() - cachedAt < REFRESH_MS) return current
+        return withContext(Dispatchers.IO) { packages() }
+    }
+
+    /** The last resolved set, however old, without resolving. Null before the first resolution. */
+    override fun cachedOrNull(): Set<String>? = cached
 
     /** Drop the cache (e.g. after the user changes a default app). */
     fun invalidate() {
