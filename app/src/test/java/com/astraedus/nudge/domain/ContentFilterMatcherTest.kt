@@ -307,6 +307,91 @@ class ContentFilterMatcherTest {
         )
     }
 
+    // ---- Issue #117: short keywords only match at a word boundary ----
+
+    /** Real places, names and words that contain a short built-in keyword. None may block. */
+    private val boundaryCollisionUrls = listOf(
+        // "milf"
+        "https://www.milfordct.gov/",
+        "https://en.wikipedia.org/wiki/Milford,_Connecticut",
+        "https://www.google.com/search?q=milford+sound+cruise",
+        "https://www.google.com/maps/place/Milford+Sound",
+        "https://www.milfordhaven-port.co.uk/",
+        "https://en.wikipedia.org/wiki/Milfoil",
+        "https://www.google.com/search?q=milford%20sound",
+        "https://www.tripadvisor.com/Milford_Haven",
+        // "xxx"
+        "https://www.shop.example/mens/tshirt-xxxl",
+        "https://www.google.com/search?q=xxxtentacion+songs",
+        "https://open.spotify.com/artist/xxxtentacion"
+    )
+
+    @Test
+    fun `boundary keywords do not match inside longer words, via either layer`() {
+        val viaKeyword = boundaryCollisionUrls.filter { ContentFilterMatcher.matchesKeyword(it, keywords) }
+        assertTrue("these benign URLs tripped a boundary keyword: $viaKeyword", viaKeyword.isEmpty())
+        // The whole verdict (domain layer + keyword layer + strict layer ON) agrees.
+        val viaComposition = boundaryCollisionUrls.filter {
+            ContentFilterMatcher.isBlocked(
+                it, blocklist, strictKeywords = true, allowlist = ContentFilterAllowlist.EMPTY
+            )
+        }
+        assertTrue("these benign URLs were blocked by the composition: $viaComposition", viaComposition.isEmpty())
+    }
+
+    @Test
+    fun `boundary keywords still match at a boundary`() {
+        for (url in listOf(
+            "https://site.tld/milf/",
+            "https://site.tld/milf-videos",
+            "https://site.tld/videos_milf",
+            "https://site.tld/milf.html",
+            "https://milf.example/",
+            "https://www.google.com/search?q=milf+x",
+            "https://www.google.com/search?q=hot%20milf",
+            "https://www.google.com/search?q=hot%2Dmilf",
+            "https://www.google.com/search?q=milf%2Fx",
+            "https://site.tld/page?tag=milf&x=1",
+            "https://site.tld/page#milf",
+            "https://site.tld/milf2",
+            "https://site.tld/2milf",
+            "https://site.tld/milfs",
+            "https://site.tld/MILF",
+            "milf",
+            "https://site.tld/xxx",
+            "https://xxx.example/",
+            "https://site.tld/free-xxx-videos",
+            "https://www.google.com/search?q=free+xxx+videos"
+        )) {
+            assertTrue("$url should still match", ContentFilterMatcher.matchesKeyword(url, keywords))
+        }
+    }
+
+    @Test
+    fun `boundary keywords no longer match as one run (accepted trade-off)`() {
+        // Documented in content-filter.md: the curated domain list covers these.
+        assertFalse(ContentFilterMatcher.matchesKeyword("https://freemilfvideos.example/", keywords))
+        assertFalse(ContentFilterMatcher.matchesKeyword("https://xxxpics.example/", keywords))
+    }
+
+    @Test
+    fun `every boundary keyword is a default keyword and the rest stay substring matches`() {
+        for (kw in ContentFilterMatcher.BOUNDARY_KEYWORDS) {
+            assertTrue("$kw must stay in DEFAULT_KEYWORDS", kw in ContentFilterMatcher.DEFAULT_KEYWORDS)
+        }
+        // Coined tokens keep matching inside one-run domains.
+        assertTrue(ContentFilterMatcher.matchesKeyword("https://freepornsite.example/", keywords))
+        assertTrue(ContentFilterMatcher.matchesKeyword("https://bestnsfwpics.example/", keywords))
+        assertTrue(ContentFilterMatcher.matchesKeyword("https://thehentaihaven.example/", keywords))
+    }
+
+    @Test
+    fun `boundary rule does not touch the user's own blocked words or Strict layers`() {
+        // A user's own "milf" entry is deliberately a raw substring (#105).
+        val user = ContentFilterBlocklist(listOf("milf"))
+        assertTrue(ContentFilterMatcher.matchesUserBlocklist("https://www.milfordct.gov/", user))
+    }
+
     // ---- extractSearchQuery ----
 
     @Test
