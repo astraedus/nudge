@@ -45,7 +45,14 @@ class BlockRuleRepository @Inject constructor(
      */
     suspend fun addRule(rule: BlockRule): Long = blockRuleDao.insert(checkedRow(rule))
 
-    suspend fun updateRule(rule: BlockRule) = blockRuleDao.update(checkedRow(rule))
+    /**
+     * Update one rule, with the same check as [addRule], except for one row shape that already exists
+     * on phones: an app AND a group, which only an old hand-edited import could write. Throwing on
+     * that would crash the switch that flips it, so it is written back as the app rule the engine
+     * has always read it as ([legacyTwoTargetRepaired]); the behaviour does not change.
+     */
+    suspend fun updateRule(rule: BlockRule) =
+        blockRuleDao.update(checkedRow(legacyTwoTargetRepaired(rule)))
 
     suspend fun deleteRule(id: Long) = blockRuleDao.deleteById(id)
 
@@ -135,17 +142,26 @@ class BlockRuleRepository @Inject constructor(
 }
 
 /**
+ * A stored row with a package AND a group (and not All apps), rewritten as the app rule
+ * [RuleTarget.of] reads it as (the package wins). Every other row is returned unchanged.
+ */
+internal fun legacyTwoTargetRepaired(rule: BlockRule): BlockRule =
+    if (rule.packageName != null && rule.groupId != null && !rule.allApps) rule.copy(groupId = null) else rule
+
+/**
  * The row an All apps rule is stored as. The editor offers mode, wait, days and times and the
  * except lists, nothing else (spec 3.4), so every other option is forced off here, where every
  * write path (editor, import, a copied row) passes:
  *  - keep the pass on short trips: off. One pass would otherwise reopen every covered app.
- *  - daily limit, auto-kick, reminder, counter, time remaining, grayscale, web domains, in-app
- *    features, Following steer: cleared. They are per-app tools with no meaning across all apps.
+ *  - auto-kick, reminder, counter, time remaining, grayscale, web domains, in-app features,
+ *    Following steer: cleared. They are per-app tools with no meaning across all apps.
+ *  - daily limit: KEPT. It is not offered here, but one that arrives (an imported rule) only makes
+ *    the rule stricter (each covered app gets that many minutes a day), and the editor keeps it on
+ *    save, so the two layers agree.
  * The except lists are rewritten in their one canonical form ([ExceptCsv]).
  */
 internal fun normalizedAllAppsRule(rule: BlockRule): BlockRule = rule.copy(
     keepPassOnShortTrips = false,
-    dailyLimitMinutes = null,
     autoKickAfter = null,
     autoKickAfterMinutes = null,
     remindAfterMinutes = null,

@@ -167,7 +167,7 @@ class ImportAllAppsRulesTest {
         val stored = target.rules.single()
         assertTrue(stored.allApps)
         assertFalse(stored.keepPassOnShortTrips)
-        assertNull(stored.dailyLimitMinutes)
+        assertEquals(30, stored.dailyLimitMinutes) // only adds, so it is kept
         assertFalse(stored.grayscale)
         assertNull(stored.webDomains)
         assertNull(stored.inAppFeatures)

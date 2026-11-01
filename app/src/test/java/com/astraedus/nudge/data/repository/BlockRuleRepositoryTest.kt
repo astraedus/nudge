@@ -3,6 +3,7 @@ package com.astraedus.nudge.data.repository
 import com.astraedus.nudge.data.db.dao.AppGroupDao
 import com.astraedus.nudge.data.db.dao.BlockRuleDao
 import com.astraedus.nudge.data.db.entity.BlockRule
+import com.astraedus.nudge.domain.model.RuleTarget
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -32,20 +33,39 @@ class BlockRuleRepositoryTest {
         out
     }
 
+    /** The one malformed shape already on phones (old hand-edited imports): an app and a group. */
+    private fun isLegacyAppAndGroup(rule: BlockRule) =
+        rule.packageName != null && rule.groupId != null && !rule.allApps
+
     @Test
     fun `addRule and updateRule write exactly the well-formed targets and throw on the rest`() {
         for ((rule, wellFormed) in targets) {
-            for (write in listOf<suspend (BlockRule) -> Unit>({ repo.addRule(it) }, { repo.updateRule(it) })) {
-                if (wellFormed) {
-                    runBlocking { write(rule) }
-                } else {
-                    assertThrows("$rule", IllegalArgumentException::class.java) { runBlocking { write(rule) } }
-                }
-            }
+            if (wellFormed) runBlocking { repo.addRule(rule) }
+            else assertThrows("$rule", IllegalArgumentException::class.java) { runBlocking { repo.addRule(rule) } }
+
+            if (wellFormed || isLegacyAppAndGroup(rule)) runBlocking { repo.updateRule(rule) }
+            else assertThrows("$rule", IllegalArgumentException::class.java) { runBlocking { repo.updateRule(rule) } }
         }
         val wellFormedCount = targets.count { it.second }
         coVerify(exactly = wellFormedCount) { dao.insert(any()) }
-        coVerify(exactly = wellFormedCount) { dao.update(any()) }
+        coVerify(exactly = wellFormedCount + 1) { dao.update(any()) }
+    }
+
+    @Test
+    fun `updating a legacy app-and-group row writes the app rule the engine reads, instead of crashing`() = runTest {
+        // A switch flipping such a row used to reach a throwing write (a crash). The engine has always
+        // read it as the app (RuleTarget.of: the package wins), so the repair changes no behaviour.
+        val legacy = BlockRule(id = 3, mode = "DELAY", packageName = "com.a", groupId = 4L, enabled = false)
+        val row = slot<BlockRule>()
+        coEvery { dao.update(capture(row)) } returns Unit
+
+        repo.updateRule(legacy)
+
+        assertEquals(legacy.copy(groupId = null), row.captured)
+        assertEquals(
+            RuleTarget.of(legacy.packageName, legacy.groupId, legacy.allApps, emptySet(), emptySet()),
+            RuleTarget.of(row.captured.packageName, row.captured.groupId, row.captured.allApps, emptySet(), emptySet())
+        )
     }
 
     @Test
@@ -97,7 +117,9 @@ class BlockRuleRepositoryTest {
         scheduleEndMinute = 1020,
         allApps = true,
         exceptPackages = "com.a,com.b",
-        exceptGroupIds = "3,4"
+        exceptGroupIds = "3,4",
+        // Kept: a daily limit only adds, and the editor keeps it on save (orchestrator ruling).
+        dailyLimitMinutes = 30
     )
 
     @Test
