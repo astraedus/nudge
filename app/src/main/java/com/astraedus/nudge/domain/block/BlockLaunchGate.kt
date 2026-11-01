@@ -102,7 +102,33 @@ object BlockLaunchGate {
          * Defaulted for the pure tests that predate it. Production has exactly one writer
          * ([pendingOverlayAfterLaunch]) and it has no default there.
          */
-        val decisionKey: String = ""
+        val decisionKey: String = "",
+        /**
+         * Another app's window came in front of this overlay before it ever reached the screen
+         * ([#143](https://github.com/astraedus/nudge/issues/143)), so the platform has buried it
+         * in its own task behind whatever came forward. Set only by [pendingOverlayAfterSignal].
+         *
+         * Until #143 an unshown overlay could only be *on its way*: the one pending state meant both
+         * "the screen will show this any moment" and "nothing will ever show this". A trampoline
+         * launcher (Google Camera's `CameraLauncher` asking for a permission through
+         * `GrantPermissionsActivity` on a cold start) brings its own task back in front ~50ms after
+         * our `startActivity`, before the overlay's activity is even created; the overlay's record
+         * then sits in a background task, never resumed, and the re-block the service correctly
+         * computed when Camera returned was refused as [Decision.DROP_ALREADY_PENDING] -- a
+         * duplicate of an overlay nobody would ever see. This flag is what tells those two apart,
+         * and [decide] answers the second with [Decision.RESHOW_HIDDEN].
+         */
+        val displaced: Boolean = false,
+        /**
+         * The arrival as it stood the moment this overlay was [displaced], before the displacing
+         * window ended it ([arrivalAfterSignal] reads any other app in front as a departure).
+         *
+         * Re-showing the overlay is the SAME confrontation the original launch already counted, so
+         * [arrivalAfterReshow] puts this back: without it the re-show (and any later re-block in
+         * the same sitting) would look like a fresh arrival and write a second row for one tap,
+         * which is the #131 property this fix must keep.
+         */
+        val displacedArrival: Arrival? = null
     )
 
     /** The id of an overlay nobody has claimed. Never equal to an id the guard hands out. */
@@ -139,7 +165,16 @@ object BlockLaunchGate {
          * An overlay for this same app is already launched and still on its way to the screen.
          * Showing a second one would log a second block for a single entry.
          */
-        DROP_ALREADY_PENDING
+        DROP_ALREADY_PENDING,
+
+        /**
+         * The SAME block is already launched, but another window buried it before it reached the
+         * screen and the blocked app is back in front of it
+         * ([#143](https://github.com/astraedus/nudge/issues/143)). Bring that overlay back to the
+         * front -- it is the block the user is owed -- but as the same overlay and the same
+         * confrontation: no new overlay id, no new wall, no new row.
+         */
+        RESHOW_HIDDEN
     }
 
     /**
@@ -177,11 +212,11 @@ object BlockLaunchGate {
         // DIFFERENT block for the same app redundant too. Same package, same three seconds, and
         // the fresh decision was thrown away in favour of a screen the rules no longer produced.
         // A pending overlay is only this launch's duplicate while it is still the SAME BLOCK.
-        pendingOverlay != null &&
-            !pendingOverlay.windowShown &&
-            pendingOverlay.packageName == target &&
-            (decisionKey == null || pendingOverlay.decisionKey == decisionKey) &&
-            nowMs - pendingOverlay.launchedAtMs < OVERLAY_SETTLE_MS -> Decision.DROP_ALREADY_PENDING
+        //
+        // ...and only while it is still on its way to the screen (#143). One that another window
+        // buried before it got there is not coming, so it is no duplicate: see RESHOW_HIDDEN below.
+        isSameBlockInFlight(pendingOverlay, target, decisionKey, nowMs) &&
+            pendingOverlay?.displaced == false -> Decision.DROP_ALREADY_PENDING
 
         // Asked FIRST because it is the more specific answer, and because in the #26 case the
         // foreground check cannot help: the blocked app really is in front at that instant.
@@ -191,8 +226,30 @@ object BlockLaunchGate {
 
         foreground != null && foreground != target -> Decision.DROP_FOREGROUND_MOVED
 
+        // BELOW the two "where is the user" checks, unlike the duplicate test above, because this
+        // one puts an overlay on screen: a buried overlay is re-shown only over its own target,
+        // never over an app the user really has moved on to (#143). Re-shown rather than launched
+        // afresh because it is still one block and one confrontation.
+        isSameBlockInFlight(pendingOverlay, target, decisionKey, nowMs) -> Decision.RESHOW_HIDDEN
+
         else -> Decision.LAUNCH
     }
+
+    /**
+     * Is [pending] the block a launch for [target] with [decisionKey] would show, launched and not
+     * yet on screen? The shared premise of [Decision.DROP_ALREADY_PENDING] and
+     * [Decision.RESHOW_HIDDEN]; [PendingOverlay.displaced] is what separates them.
+     */
+    private fun isSameBlockInFlight(
+        pending: PendingOverlay?,
+        target: String,
+        decisionKey: String?,
+        nowMs: Long
+    ): Boolean = pending != null &&
+        !pending.windowShown &&
+        pending.packageName == target &&
+        (decisionKey == null || pending.decisionKey == decisionKey) &&
+        nowMs - pending.launchedAtMs < OVERLAY_SETTLE_MS
 
     /**
      * What the foreground package becomes after [signal], given [previous].
@@ -303,12 +360,76 @@ object BlockLaunchGate {
         // Some OTHER app really did come forward. That is a foreground change whatever our overlay
         // is doing, and suppressing it would swallow a genuine switch.
         if (signal.packageName != pending.packageName) return true
+        // The target is back in front of an overlay another window has already buried (#143).
+        // Its window events are no longer the app "still starting up underneath an overlay on its
+        // way": nothing is on its way, so this is the moment to re-evaluate and re-show.
+        if (pending.displaced) return true
         return nowMs - pending.launchedAtMs >= settleMs
     }
 
     /** The pending overlay after [signal], which only the overlay reporting itself can resolve. */
     fun pendingOverlayAfter(pending: PendingOverlay?, overlayShown: Boolean): PendingOverlay? =
         if (pending != null && overlayShown) pending.copy(windowShown = true) else pending
+
+    /**
+     * The pending overlay after [signal]: [PendingOverlay.displaced] once another app's window has
+     * come in front of an overlay that never reached the screen
+     * ([#143](https://github.com/astraedus/nudge/issues/143)).
+     *
+     * The evidence is the one every departure rule in this file uses, a [ForegroundSignal.AppWindow]
+     * for a DIFFERENT package, and it is general on purpose: Camera's permission trampoline is the
+     * case that was measured, but any launcher activity that bounces through another app's window
+     * during its cold start buries our overlay the same way. A system surface, a keyboard, our own
+     * windows and a picture-in-picture bubble displace nothing. An overlay already on screen is not
+     * pending in this sense at all; getting past THAT one is the ordinary bypass [isGenuineBypass]
+     * already answers.
+     *
+     * @param arrival the arrival BEFORE [signal] is applied to it, kept on the record so a re-show
+     *   can restore it ([arrivalAfterReshow]); the displacing window itself is about to end it.
+     */
+    fun pendingOverlayAfterSignal(
+        signal: ForegroundSignal,
+        pending: PendingOverlay?,
+        arrival: Arrival?
+    ): PendingOverlay? {
+        if (pending == null || pending.windowShown || pending.displaced) return pending
+        if (signal !is ForegroundSignal.AppWindow || signal.packageName == pending.packageName) {
+            return pending
+        }
+        return pending.copy(
+            displaced = true,
+            displacedArrival = arrival?.takeIf { it.targetPackage == pending.packageName }
+        )
+    }
+
+    /**
+     * The pending overlay after a [Decision.RESHOW_HIDDEN] has asked the platform to bring it back.
+     *
+     * The SAME overlay (same id, same block) on its way to the screen again, so it is no longer
+     * displaced and its settle window restarts now: the target's own window events while the
+     * overlay comes back are the app being covered, exactly as after the original launch.
+     */
+    fun pendingOverlayAfterReshow(pending: PendingOverlay, nowMs: Long): PendingOverlay =
+        pending.copy(launchedAtMs = nowMs, displaced = false, displacedArrival = null)
+
+    /**
+     * The arrival after a re-show of an overlay that was displaced while [displaced] was the
+     * arrival: the confrontations counted before the displacement, merged with any counted since.
+     *
+     * A merge rather than a restore because the original launch's claim runs on the IO scope while
+     * the displacing window arrives on the main thread, so that claim can land on either side of
+     * the displacement. Merging gives one row whichever side it landed on.
+     */
+    fun arrivalAfterReshow(arrival: Arrival?, displaced: Arrival?): Arrival? {
+        if (displaced == null) return arrival
+        if (arrival == null || arrival.targetPackage != displaced.targetPackage) return displaced
+        return Arrival(
+            targetPackage = displaced.targetPackage,
+            countedKeys = (displaced.countedKeys + arrival.countedKeys)
+                .distinct()
+                .takeLast(MAX_COUNTED_CONFRONTATIONS_PER_ARRIVAL)
+        )
+    }
 
     fun walkAwayAfter(signal: ForegroundSignal, pending: WalkAway?): WalkAway? {
         if (pending == null) return null
@@ -388,7 +509,8 @@ object BlockLaunchGate {
      * suppressions with nothing owed, and re-arming after them would undo the thing they are for:
      * [Decision.DROP_WALK_AWAY_IN_FLIGHT] is the user having just declined this very block (#26),
      * and [Decision.DROP_ALREADY_PENDING] means the overlay is on its way already. A
-     * [Decision.LAUNCH] settles the debt outright.
+     * [Decision.LAUNCH] settles the debt outright, and so does [Decision.RESHOW_HIDDEN], which puts
+     * the block back in front of its target.
      */
     fun deferredLaunchAfterDecision(
         deferred: DeferredLaunch?,
@@ -398,6 +520,7 @@ object BlockLaunchGate {
     ): DeferredLaunch? = when (decision) {
         Decision.DROP_FOREGROUND_MOVED -> DeferredLaunch(target, nowMs)
         Decision.LAUNCH,
+        Decision.RESHOW_HIDDEN,
         Decision.DROP_WALK_AWAY_IN_FLIGHT,
         Decision.DROP_ALREADY_PENDING ->
             if (deferred != null && deferred.targetPackage == target) null else deferred

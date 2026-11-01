@@ -1520,3 +1520,12 @@ PR 1 added a third `flowOn(ioDispatcher)` to `HomeViewModel` (the Nuke count). T
 
 - **When a change touches a class, also run the source-scan contract tests that read it.** Find them with `grep -rl "<ClassName>.kt" app/src/test`. They live by concern, not next to the class.
 - **A contract test pins the invariant, not a number.** "Every `flowOn` in this file is the injected one" survives a new step. "There are exactly 2" fails on the first correct addition.
+
+## #143: a "pending" overlay that its own app buried before it was drawn swallowed the re-block (2026-11-02)
+
+Cold Google Camera under a Delay: the overlay's `START` landed, CameraLauncher re-fronted Camera's task and trampolined through `permissioncontroller`, and the overlay activity was never created. The service correctly called the permission dialog a bypass and correctly re-evaluated Camera to a block, but the gate's pending record still said "on its way" and refused it as `DROP_ALREADY_PENDING`. Missed block 5/5 on the bench, pre-existing on v1.23.0.
+
+- **"Launched" is not "will be shown".** A pending record is a claim about the screen; anything that can take the screen before the overlay draws (another app's window) has to update that claim, not just the service's `isOverlayActive` flag. Two holders of "is the overlay up" that update on different evidence will disagree, and the disagreement is a silent miss.
+- **A dedupe that can suppress an ENFORCEMENT action must have an exit for "the original never happened".** `RESHOW_HIDDEN` re-shows the same overlay (same id, no new wall, arrival restored so #131's one-tap-one-row holds) instead of dropping; it is asked after the walk-away and foreground checks so a re-show can never cover an app the user moved to.
+- **Order the gate's branches by what the outcome DOES.** A drop can be decided early; anything that puts a window on screen goes after every "the user is elsewhere" check. My first draft put the re-show first and would have dragged the overlay over the app the user switched to.
+- Cold-launch trials need a force-stop of the TARGET (not just Home) and a logcat check that Nudge logged at all: three of five v1.23.1 trials had no Nudge lines and proved nothing.

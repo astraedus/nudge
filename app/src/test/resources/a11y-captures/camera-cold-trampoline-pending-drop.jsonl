@@ -1,0 +1,41 @@
+# a11y capture: camera-cold-trampoline-pending-drop
+# device: Pixel 3 (192.168.1.68:5555), Android 12 / API 31. Captured 2026-11-01T17:50:33Z, 25s window.
+# HOW: main-latest (versionCode 68, release key) with Debug Logging on, scripts/a11y-capture.sh
+#      running. Google Camera under ONE whole-app DELAY rule (15s). `am force-stop` Camera, Home,
+#      then a COLD launch of Camera from the launcher. Logcat (main + events) recorded alongside.
+# EXPECTED (test oracle): one cold tap -> the Delay overlay is the focused window (it was not: Camera
+#      held focus at T+2s and T+5s), ONE overlay on screen, ONE Blocked row.
+# MEASURED: missed block. 0/5 cold on each of v1.23.0, v1.23.1, v1.23.2 and main-latest (20/20
+#      misses, pre-existing); warm launches blocked 8/8.
+# WHAT IT PROVES (issue #143), from the same run's logcat:
+#      03:50:14.950 handling block GoogleCamera DELAY                     (Camera's WSC, first event)
+#      03:50:14.959 wm_create_activity BlockOverlayActivity, task 3860    (our START)
+#      03:50:15.037 wm_task_to_front 3859 + CameraLauncher resumed, reason bringingFoundTaskToFront
+#      03:50:15.042 wm_create_activity GrantPermissionsActivity (REQUEST_PERMISSIONS, finishes at .138)
+#                   -> the overlay record is created but its client never gets onCreate/onResume
+#      03:50:15.352 block overlay bypassed by foreground switch, re-evaluating package=...permissioncontroller
+#      03:50:15.369 foreground switch detected from content change package=...GoogleCamera
+#      03:50:15.374 handling block GoogleCamera -> launch dropped reason=DROP_ALREADY_PENDING
+#      The pending overlay is "on its way" (unshown, < 3s) and the gate calls Camera's re-block its
+#      duplicate, though Camera's own task has buried it. TrampolineLaunchReplayTest makes those
+#      three decisions at these events (the service's decisions are not in the trace).
+{"t":"WINDOW_STATE_CHANGED","p":"com.google.android.GoogleCamera","c":"android.widget.FrameLayout","w":5907,"ts":2388033359,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":0}
+{"t":"WINDOW_STATE_CHANGED","p":"dev.astraedus.nudge","c":"android.widget.FrameLayout","w":5908,"ts":2388033497,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":0}
+{"t":"WINDOW_STATE_CHANGED","p":"com.google.android.permissioncontroller","c":"com.android.permissioncontroller.permission.ui.GrantPermissionsActivity","w":5910,"ts":2388033673,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":0}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.android.systemui","c":"android.widget.FrameLayout","w":5875,"ts":2388033681,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.GoogleCamera","c":"android.view.ViewGroup","w":5909,"ts":2388033738,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.GoogleCamera","c":"android.view.ViewGroup","w":5909,"ts":2388033854,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":7}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.GoogleCamera","c":"android.view.ViewGroup","w":5909,"ts":2388033873,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":5}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.GoogleCamera","c":"android.widget.SeekBar","w":5909,"ts":2388033914,"fi":-1,"ti":-1,"ci":0,"n":1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":64}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.GoogleCamera","c":"android.view.ViewGroup","w":5909,"ts":2388033956,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"VIEW_SCROLLED","p":"com.google.android.GoogleCamera","c":"android.widget.HorizontalScrollView","w":5909,"ts":2388033956,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":523,"dy":0,"sx":523,"sy":0,"mx":985,"my":0,"cct":0,"vid":"com.google.android.GoogleCamera:id/mode_switcher","scr":true}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.GoogleCamera","c":"android.widget.RelativeLayout","w":5909,"ts":2388034056,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.GoogleCamera","c":"android.view.ViewGroup","w":5909,"ts":2388034133,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":3}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.GoogleCamera","c":"android.widget.RelativeLayout","w":5909,"ts":2388034233,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":3}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.GoogleCamera","c":"android.view.ViewGroup","w":5909,"ts":2388035198,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.GoogleCamera","c":"android.widget.FrameLayout","w":5909,"ts":2388035199,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":0}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.GoogleCamera","c":"android.widget.FrameLayout","w":5909,"ts":2388035200,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":0}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.android.systemui","c":"android.widget.FrameLayout","w":5875,"ts":2388035408,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.android.systemui","c":"android.widget.FrameLayout","w":5875,"ts":2388035508,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.GoogleCamera","c":"android.view.ViewGroup","w":5909,"ts":2388037209,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.GoogleCamera","c":"android.view.ViewGroup","w":5909,"ts":2388037312,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}

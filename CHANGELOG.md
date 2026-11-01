@@ -18,6 +18,7 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
 - Block checks read your rules from memory instead of the database on every app switch; a rule edit still applies on the next app you open, with no restart.
 
 ### Fixed
+- Opening Google Camera when it was not already running, under a Delay rule, could skip the block screen entirely. Camera bounces through its permission check while it starts, which pushed the block screen behind it before it was ever drawn, and Nudge then refused to show it again as a duplicate. A block screen that its own app hides before it is drawn is now brought back, and the tap still counts once. This applies to any app that starts through another screen this way, not just Camera. (#143)
 - The block mode picker on an app's settings showed "Hard Block" cut to "Hard" and off-centre. It now reads "Hard", centred with the others.
 
 ## [1.23.2] - 2026-11-01

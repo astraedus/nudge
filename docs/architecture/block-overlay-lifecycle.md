@@ -108,6 +108,32 @@ The ordering that produces it is this table's own second row wearing a different
 
 `PendingOverlay` now carries a `decisionKey` (`BlockLaunchGate.decisionFingerprint`: the confrontation's identity, plus the block mode, plus whether it is the daily-limit variant), and a launch is a duplicate only while the fingerprint matches. Nothing that TICKS is in it — a countdown in a fingerprint would make every re-launch look new and hand this table's whole problem back. A re-delivery keeps the on-screen overlay's id and `windowShown` and adopts the NEW fingerprint, because that is the block it is about to render. Full reasoning, the two rejected alternatives (a rule-change flow, the record's age), and the test list: `foreground-detection.md`, *"Already pending" has to mean the SAME BLOCK*.
 
+### A pending overlay can be BURIED, and then it is re-shown, not dropped ([#143](https://github.com/astraedus/nudge/issues/143))
+
+`PendingOverlay` had one meaning for two different situations: *the screen will show this any moment* and *nothing will ever show this*. The second is a trampoline launcher. Cold-launching Google Camera under a Delay rule on the bench Pixel 3 (Android 12), 5/5:
+
+```
+.553  ATM   START BlockOverlayActivity                 <- our launch; its record is created
+.556  ATM   wm_new_intent / set_resumed BlockOverlay   <- ...in its own task, brought to front
+.605  ATM   wm_task_to_front Camera task               <- CameraLauncher re-fronts ITS task (REQUEST_PERMISSIONS)
+.609  ATM   wm_create_activity GrantPermissionsActivity
+.945  nudge block overlay bypassed by foreground switch, re-evaluating package=...permissioncontroller
+2.012 nudge block overlay launch dropped target=...GoogleCamera reason=DROP_ALREADY_PENDING
+```
+
+The overlay record is never created on the client (no `onCreate`, no `onResume`), so nothing reports it shown, and nothing finishes it either: it sits in a background task. The service evaluated correctly at both events: the permission dialog's window really is a bypass, and Camera coming back really is a block. The gate refused the block anyway, as a "duplicate" of an overlay nobody would see. It reproduced on v1.23.0 and v1.23.1, so it is not a regression from #131.
+
+The fix is evidence, not a timer. `BlockLaunchGate.pendingOverlayAfterSignal` marks an unshown pending overlay `displaced` the moment ANOTHER app's `AppWindow` comes forward. That is the departure evidence every rule in this file already uses, so it is not Camera-specific: any launcher that bounces through another app's window during its cold start buries the overlay the same way. Then:
+
+- **`decide` answers the same block for a displaced overlay with `Decision.RESHOW_HIDDEN`**, and asks it *below* the walk-away and foreground checks, unlike `DROP_ALREADY_PENDING`. A re-show puts an overlay on screen, so it must never drag a buried overlay over an app the user really moved on to. A DIFFERENT block (#50) still launches afresh, and a displaced overlay past `OVERLAY_SETTLE_MS` falls back to an ordinary launch.
+- **`launchBlockOverlay` re-shows through the same `startActivity`.** `singleInstance` brings the existing overlay task forward, and on the device the never-created record is then created and resumed. It marks the overlay active again. It reports no new wall to the bounce check-in and makes no new pending overlay: same id and same block, with only the settle window restarted (`pendingOverlayAfterReshow`).
+- **One tap is still one row (#131).** The displacing window also ends the arrival (`arrivalAfterSignal`), so a re-show would otherwise look like a fresh confrontation. The pending record keeps the arrival as it stood BEFORE the displacement (`displacedArrival`). `BlockLaunchGuard.onOverlayReshown` merges it back (`arrivalAfterReshow`), so `handleDecision`'s ordinary `claimConfrontation` finds the tap already counted. It is a merge rather than a restore because the original claim runs on the IO scope and can land on either side of the displacement.
+- **`isGenuineBypass` also says yes for the target's own window over a displaced overlay.** A displacing event that did not go through the bypass branch (a verified content change, a floating window) would otherwise leave `isOverlayActive` up, and Camera's return would be swallowed as "still starting up under its overlay".
+
+Walk-away and Delay completion are untouched: both act on an overlay that reached the screen (`windowShown = true`), and a shown overlay is never displaced.
+
+Tests: `TrampolineLaunchReplayTest` (L2, `camera-cold-trampoline-pending-drop.jsonl` through the real classifier, guard, gate and engine; asserts a re-show after the permission dialog and one row in both claim orders, with the pre-fix gate on the same events as the counterfactual) and `BlockLaunchGateTest` (the displacement, decide and re-show functions branch by branch, including the class test that nothing but another app's window displaces).
+
 Tests: `InterventionCountReplayTest` (every mechanism above replayed through the real classifier, guard and gate, each asserting ROWS — with the launch count on the same run as the counterfactual, since one row per allowed launch is literally what the old code did; plus the arrival matrix over every departure kind × every block kind, and the dated 100-iteration regression), `ArrivalAndStormGateTest` (the pure functions, branch by branch), `BlockOverlayLaunchContractTest` (the claim's position, the single row writer, the two reported departures, the storm log, the fail-safe re-arm).
 
 ## The redirect app — one better app on every block screen (v1.20.0)

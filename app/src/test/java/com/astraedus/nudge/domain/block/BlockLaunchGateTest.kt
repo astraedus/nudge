@@ -516,6 +516,211 @@ class BlockLaunchGateTest {
         assertNull(BlockLaunchGate.pendingOverlayAfter(null, overlayShown = true))
     }
 
+    // --- an overlay buried before it reached the screen (issue #143) ------------------------------
+
+    private val arrival = BlockLaunchGate.Arrival(blocked, listOf(blocked))
+
+    private fun displaced(at: Long = 1_000) =
+        BlockLaunchGate.pendingOverlayAfterSignal(
+            ForegroundSignal.AppWindow(other), pending(at = at).copy(decisionKey = plainDelay), arrival
+        )!!
+
+    @Test
+    fun `another app's window in front of an unshown overlay displaces it, keeping the arrival`() {
+        val d = displaced()
+        assertTrue(d.displaced)
+        assertEquals(
+            "the arrival as it was BEFORE the displacing window ended it, so a re-show can restore it",
+            arrival,
+            d.displacedArrival
+        )
+    }
+
+    /** The class, not the instance: every signal that is not another app's window displaces nothing. */
+    @Test
+    fun `nothing but another app's window displaces a pending overlay`() {
+        val p = pending()
+        listOf(
+            ForegroundSignal.AppWindow(blocked),
+            ForegroundSignal.Home(launcher),
+            ForegroundSignal.OwnUi(nudge),
+            ForegroundSignal.AwarenessOverlay(nudge),
+            ForegroundSignal.SystemSurface("com.android.systemui"),
+            ForegroundSignal.Transient("com.google.android.inputmethod.latin"),
+            ForegroundSignal.PipOnly("com.google.android.youtube"),
+            ForegroundSignal.NotForeground(other)
+        ).forEach { signal ->
+            assertSame("$signal", p, BlockLaunchGate.pendingOverlayAfterSignal(signal, p, arrival))
+        }
+    }
+
+    @Test
+    fun `an overlay already on screen is never displaced, that is the ordinary bypass`() {
+        val shown = pending(shown = true)
+        assertSame(
+            shown,
+            BlockLaunchGate.pendingOverlayAfterSignal(ForegroundSignal.AppWindow(other), shown, arrival)
+        )
+        assertNull(BlockLaunchGate.pendingOverlayAfterSignal(ForegroundSignal.AppWindow(other), null, arrival))
+    }
+
+    @Test
+    fun `the first displacement's arrival is kept, a second window does not overwrite it`() {
+        val d = displaced()
+        assertSame(
+            d,
+            BlockLaunchGate.pendingOverlayAfterSignal(ForegroundSignal.AppWindow("com.example.b"), d, null)
+        )
+    }
+
+    @Test
+    fun `an arrival for another app is not the displaced overlay's to restore`() {
+        val d = BlockLaunchGate.pendingOverlayAfterSignal(
+            ForegroundSignal.AppWindow(other), pending(), BlockLaunchGate.Arrival(other, listOf(other))
+        )!!
+        assertTrue(d.displaced)
+        assertNull(d.displacedArrival)
+    }
+
+    /** THE #143 DECISION: the same block, buried before it arrived, is re-shown and not dropped. */
+    @Test
+    fun `the same block for a displaced overlay is re-shown, not dropped as pending`() {
+        assertEquals(
+            Decision.RESHOW_HIDDEN,
+            BlockLaunchGate.decide(
+                blocked, blocked, null, nowMs = 1_150, pendingOverlay = displaced(), decisionKey = plainDelay
+            )
+        )
+    }
+
+    /** ...and the counterfactual: the identical state without the displacement is the drop #143 hit. */
+    @Test
+    fun `counterfactual - the same state without the displacement is still dropped as pending`() {
+        assertEquals(
+            Decision.DROP_ALREADY_PENDING,
+            BlockLaunchGate.decide(
+                blocked, blocked, null, nowMs = 1_150,
+                pendingOverlay = displaced().copy(displaced = false), decisionKey = plainDelay
+            )
+        )
+    }
+
+    @Test
+    fun `a DIFFERENT block for a displaced overlay is a fresh launch, as issue 50 requires`() {
+        assertEquals(
+            Decision.LAUNCH,
+            BlockLaunchGate.decide(
+                blocked, blocked, null, nowMs = 1_150, pendingOverlay = displaced(), decisionKey = dailyLimit
+            )
+        )
+    }
+
+    @Test
+    fun `a displaced overlay past the settle window falls back to an ordinary launch`() {
+        assertEquals(
+            Decision.LAUNCH,
+            BlockLaunchGate.decide(
+                blocked, blocked, null,
+                nowMs = 1_000 + BlockLaunchGate.OVERLAY_SETTLE_MS,
+                pendingOverlay = displaced(), decisionKey = plainDelay
+            )
+        )
+    }
+
+    /**
+     * A re-show puts an overlay on screen, so it answers to the same "where is the user" checks a
+     * launch does: a buried overlay must never be dragged back over an app the user moved on to.
+     */
+    @Test
+    fun `a re-show is refused when the user has moved on or is walking away`() {
+        assertEquals(
+            Decision.DROP_FOREGROUND_MOVED,
+            BlockLaunchGate.decide(
+                blocked, foreground = other, walkAway = null, nowMs = 1_150,
+                pendingOverlay = displaced(), decisionKey = plainDelay
+            )
+        )
+        assertEquals(
+            Decision.DROP_WALK_AWAY_IN_FLIGHT,
+            BlockLaunchGate.decide(
+                blocked, foreground = blocked, walkAway = WalkAway(blocked, 1_100), nowMs = 1_150,
+                pendingOverlay = displaced(), decisionKey = plainDelay
+            )
+        )
+        assertEquals(
+            "with no claim about the foreground, the gate does not weaken enforcement",
+            Decision.RESHOW_HIDDEN,
+            BlockLaunchGate.decide(
+                blocked, foreground = null, walkAway = null, nowMs = 1_150,
+                pendingOverlay = displaced(), decisionKey = plainDelay
+            )
+        )
+    }
+
+    @Test
+    fun `a displaced overlay for one app does not touch a launch for another`() {
+        assertEquals(
+            Decision.LAUNCH,
+            BlockLaunchGate.decide(other, other, null, nowMs = 1_150, pendingOverlay = displaced())
+        )
+    }
+
+    @Test
+    fun `the target back in front of a displaced overlay is a bypass, even inside the settle window`() {
+        assertFalse(
+            "fixture: undisplaced, the same event is the app still starting under its overlay",
+            bypass(ForegroundSignal.AppWindow(blocked), pending())
+        )
+        assertTrue(bypass(ForegroundSignal.AppWindow(blocked), displaced()))
+        assertFalse(
+            "a floating window is still never a bypass (#71)",
+            BlockLaunchGate.isGenuineBypass(
+                A11yEventType.WINDOW_STATE_CHANGED, ForegroundSignal.AppWindow(blocked), displaced(),
+                nowMs = 1_100, floating = true
+            )
+        )
+    }
+
+    @Test
+    fun `a re-show keeps the overlay, restarts its settle window and clears the displacement`() {
+        val d = displaced().copy(id = 7)
+        val r = BlockLaunchGate.pendingOverlayAfterReshow(d, nowMs = 1_200)
+        assertEquals(7, r.id)
+        assertEquals(plainDelay, r.decisionKey)
+        assertEquals(1_200, r.launchedAtMs)
+        assertFalse(r.displaced)
+        assertNull(r.displacedArrival)
+        assertFalse(r.windowShown)
+        assertEquals(
+            "the target's own windows while it comes back are the app being covered again",
+            Decision.DROP_ALREADY_PENDING,
+            BlockLaunchGate.decide(blocked, blocked, null, nowMs = 1_300, pendingOverlay = r, decisionKey = plainDelay)
+        )
+    }
+
+    @Test
+    fun `a re-show restores the arrival whichever side of the displacement the claim landed`() {
+        val key = BlockLaunchGate.confrontationKey(blocked)
+        val counted = BlockLaunchGate.Arrival(blocked, listOf(key))
+        // Claimed before the displacement: the snapshot has it, the live arrival was ended.
+        assertEquals(counted, BlockLaunchGate.arrivalAfterReshow(null, counted))
+        // Claimed after: the snapshot predates it, the live arrival has it.
+        assertEquals(counted, BlockLaunchGate.arrivalAfterReshow(counted, null))
+        assertEquals(
+            counted,
+            BlockLaunchGate.arrivalAfterReshow(counted, BlockLaunchGate.Arrival(blocked, emptyList()))
+        )
+        // Both: one key, never two.
+        assertEquals(counted, BlockLaunchGate.arrivalAfterReshow(counted, counted))
+        assertFalse(BlockLaunchGate.isNewConfrontation(BlockLaunchGate.arrivalAfterReshow(null, counted), blocked, key))
+    }
+
+    @Test
+    fun `a re-show settles a deferred launch for its target like a launch does`() {
+        val deferred = BlockLaunchGate.DeferredLaunch(blocked, 1_000)
+        assertNull(BlockLaunchGate.deferredLaunchAfterDecision(deferred, Decision.RESHOW_HIDDEN, blocked, 1_100))
+    }
+
     // --- foregroundAfter ------------------------------------------------------------------------
 
     @Test
