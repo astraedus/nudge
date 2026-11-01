@@ -1,14 +1,19 @@
 /**
- * `https://www.youtube.com/feed/channels`, as the worker receives it.
+ * Builders for `https://www.youtube.com/feed/channels`, as the worker receives it.
  *
- * UNVERIFIED AGAINST A SIGNED-IN CAPTURE. No signed-in session was available when this
- * shipped, so the shape is built from the documented renderer layout that yt-dlp and
- * Invidious parse (`twoColumnBrowseResultsRenderer > tabs > tabRenderer > content >
- * sectionListRenderer > itemSectionRenderer > shelfRenderer > expandedShelfContentsRenderer
- * > items[] > channelRenderer`, continuation via `continuationItemRenderer`). The signed-out
- * case IS from a real request (2026-11-01): YouTube redirects to accounts.google.com.
- * Replace with a live capture once one exists (PR QA list).
+ * SHAPE VERIFIED against a live signed-in capture (2026-11-01). The sanitized capture itself
+ * is `youtubeSubscriptionsCapture.ts`, and these builders follow it: the same
+ * `twoColumnBrowseResultsRenderer > tabs > tabRenderer > content > sectionListRenderer >
+ * itemSectionRenderer > shelfRenderer > expandedShelfContentsRenderer > items[] >
+ * channelRenderer` path, the REAL sort-chip header (its `continuationCommand`s re-sort the
+ * list and must not be followed), and the real field semantics inside a channelRenderer
+ * (`subscriberCountText` = the handle, `videoCountText` = the subscriber count). What the
+ * builders add on top of the capture is variety one account could not show: id-only
+ * channels, unsafe handles, a "load more" `continuationItemRenderer`, hundreds of rows.
+ * The signed-out case is from a real request too: YouTube redirects to accounts.google.com.
  */
+
+import { CAPTURED_FEED_CHANNELS_DATA, sectionListOf } from './youtubeSubscriptionsCapture';
 
 export const VERITASIUM_ID = 'UCHnyfMqiRRG1u-2MsSQLbXA';
 export const KURZGESAGT_ID = 'UCsXVk37bltHxD1rDPwtNM8Q';
@@ -21,6 +26,11 @@ export const API_KEY = 'AIzaSyFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAK';
 
 type Renderer = Record<string, unknown>;
 
+/** The live page's sort-chip header ("Most relevant" / "New activity" / "A-Z"). */
+function sortChipHeader(): Renderer {
+  return sectionListOf(structuredClone(CAPTURED_FEED_CHANNELS_DATA)).header as Renderer;
+}
+
 export function channelRenderer(options: {
   channelId: string;
   title: string;
@@ -28,9 +38,12 @@ export function channelRenderer(options: {
   canonicalBaseUrl?: string;
   /** Use `title.runs` instead of `title.simpleText`. */
   runs?: boolean;
+  /** What the live page prints in `subscriberCountText`: the `@handle`, when there is one. */
   subscriberCountText?: string;
 }): Renderer {
   const url = options.canonicalBaseUrl ?? `/channel/${options.channelId}`;
+  const handleText = options.canonicalBaseUrl?.startsWith('/@') ? options.canonicalBaseUrl.slice(1) : undefined;
+  const subscriberCountText = options.subscriberCountText ?? handleText;
   return {
     channelRenderer: {
       channelId: options.channelId,
@@ -43,8 +56,8 @@ export function channelRenderer(options: {
           ...(options.canonicalBaseUrl !== undefined ? { canonicalBaseUrl: options.canonicalBaseUrl } : {}),
         },
       },
-      subscriberCountText: { simpleText: options.subscriberCountText ?? '1.2M subscribers' },
-      videoCountText: { runs: [{ text: '412' }, { text: ' videos' }] },
+      ...(subscriberCountText !== undefined ? { subscriberCountText: { simpleText: subscriberCountText } } : {}),
+      videoCountText: { simpleText: '1.2M subscribers' },
       subscriptionButton: { subscribed: true },
     },
   };
@@ -89,6 +102,7 @@ export function initialData(items: Renderer[], options: { continuation?: string 
               selected: true,
               content: {
                 sectionListRenderer: {
+                  header: sortChipHeader(),
                   contents: [
                     {
                       itemSectionRenderer: {
@@ -112,8 +126,8 @@ export function initialData(items: Renderer[], options: { continuation?: string 
     },
     // The header names a channel that is NOT a subscription; the parser must not read it.
     header: {
-      feedTabbedHeaderRenderer: {
-        title: { runs: [{ text: 'All subscriptions' }] },
+      pageHeaderRenderer: {
+        pageTitle: 'All subscriptions',
         promoted: channelRenderer({ channelId: HEADER_ONLY_ID, title: 'Promoted', canonicalBaseUrl: '/@promoted' }),
       },
     },

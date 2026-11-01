@@ -293,7 +293,28 @@ async function buildBlockContext(target: string, now: Date): Promise<BlockContex
 function allowedChannelsFor(rule: SiteRule | null): ChannelEntry[] {
   const youtube = rule?.features?.youtube;
   if (youtube === undefined || youtube.channelMode !== 'WHITELIST') return [];
-  return youtube.channels;
+  // Synced subscriptions are allowed channels too (`effectiveChannelLists`), and they need
+  // the links MORE than typed ones: the subscriptions page is itself redirected, so without
+  // them a user who allowed "channels I'm subscribed to" and typed none was shown no way in
+  // at all (live QA, 2026-11-01). Typed channels first and always all of them; subscriptions
+  // after, in YouTube's own "most relevant" order, capped so 500 of them stay a short list.
+  const subscribed = youtube.allowSubscriptions ? youtube.subscribedChannels : [];
+  const typed = new Set(youtube.channels.flatMap(channelKeys));
+  const extra = subscribed
+    .filter((entry) => !channelKeys(entry).some((key) => typed.has(key)))
+    .slice(0, MAX_BLOCK_PAGE_SUBSCRIPTIONS);
+  return [...youtube.channels, ...extra];
+}
+
+/** At most this many synced subscriptions are linked from the block page. */
+export const MAX_BLOCK_PAGE_SUBSCRIPTIONS = 12;
+
+/** The identifiers that make two entries the same channel, normalised. */
+function channelKeys(entry: ChannelEntry): string[] {
+  const keys: string[] = [];
+  if (entry.channelId !== null) keys.push(`id:${entry.channelId}`);
+  if (entry.handle !== null) keys.push(`h:${entry.handle.replace(/^@/, '').toLowerCase()}`);
+  return keys;
 }
 
 /**

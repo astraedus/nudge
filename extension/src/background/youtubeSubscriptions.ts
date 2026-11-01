@@ -16,6 +16,13 @@
  * requested with cookies alone; if YouTube refuses them, the list is what the first page
  * held and the status says so (`truncated: 'partial'`) rather than pretending it is whole.
  *
+ * LIVE RESULT (signed-in QA, 2026-11-01): YouTube DOES refuse them. A cookie-only browse
+ * POST with a real continuation token answers 403 (Google's "Sorry..." page) from the worker,
+ * with or without credentials, and from a youtube.com page it answers 200 but signed OUT. So
+ * today the synced list is the first page of `/feed/channels`, and any account with more
+ * subscriptions than that page holds reads "partial". Going further needs the SAPISIDHASH
+ * header, which is the privacy call above, not a bug fix.
+ *
  * DNR cannot get in the way: every redirect rule this extension installs is `main_frame`
  * only (`background/dnr.ts`), and a worker `fetch` is not a main-frame navigation, so the
  * sync works while YouTube is blocked and after the daily limit is spent.

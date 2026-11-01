@@ -233,8 +233,10 @@ export function channelFromRenderer(renderer: unknown, addedAt: number): Channel
   const links = [browse?.canonicalBaseUrl, webUrl].filter((v): v is string => typeof v === 'string');
   const fromLink =
     links.map(handleFromPath).find((h): h is string => h !== null) ?? null;
-  // Last resort only: on search results YouTube prints the handle in this field, on this
-  // page it is normally a real subscriber count, which `cleanHandle` rejects (no `@`).
+  // Last resort only. On `/feed/channels` YouTube prints the handle ("@veritasium") in this
+  // field and the subscriber count in `videoCountText` (live capture, 2026-11-01), but the
+  // link above is the stable source; a real count here (other layouts) has no `@` and
+  // `cleanHandle` rejects it.
   const handle = fromLink ?? cleanHandle(textOf(r.subscriberCountText));
 
   if (channelId === null && handle === null) return null;
@@ -305,8 +307,33 @@ export function parseSubscriptionsPage(html: string, now: number): Subscriptions
   // Only the page's main content: the header and the guide name channels that are not
   // necessarily subscriptions.
   const { channels, continuation, sawList } = walkForChannels(data.contents, now);
-  if (!sawList && channels.length === 0) return { kind: 'unparseable' };
+  if (!sawList && channels.length === 0 && !isEmptyFeed(data.contents)) return { kind: 'unparseable' };
   return { kind: 'ok', channels, continuation, innertube: extractInnertubeConfig(html) };
+}
+
+/**
+ * Whether `contents` is the feed page with NOTHING in it: a tab whose `sectionListRenderer`
+ * has no `contents` at all (or an empty array).
+ *
+ * That is how YouTube serves `/feed/channels` to a signed-in account with zero subscriptions
+ * (live capture, 2026-11-01): the sort-chip header is there, the list container is not, so
+ * the "an empty list container proves the right page" signal in `walkForChannels` never
+ * fires. Without this the user saw "Couldn't read your subscriptions" instead of 0 channels.
+ * A section list that DOES hold something unrecognised stays `unparseable`: only a provably
+ * empty feed counts as an answer.
+ */
+function isEmptyFeed(contents: unknown): boolean {
+  const tabs = (contents as { twoColumnBrowseResultsRenderer?: { tabs?: unknown } } | undefined)
+    ?.twoColumnBrowseResultsRenderer?.tabs;
+  if (!Array.isArray(tabs)) return false;
+  return tabs.some((tab) => {
+    const sectionList = (
+      tab as { tabRenderer?: { content?: { sectionListRenderer?: { contents?: unknown } } } } | null
+    )?.tabRenderer?.content?.sectionListRenderer;
+    if (sectionList === undefined || sectionList === null || typeof sectionList !== 'object') return false;
+    const items = sectionList.contents;
+    return items === undefined || (Array.isArray(items) && items.length === 0);
+  });
 }
 
 /**

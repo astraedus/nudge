@@ -166,7 +166,16 @@ unit-testable, exactly as the Android domain layer is.
    parses `ytInitialData` (`core/youtubeSubscriptions.ts`, pure; header/shelf channels are
    ignored, only the grid's `channelRenderer`s count), and follows continuations with a
    cookie-only `youtubei/v1/browse` POST (no SAPISIDHASH; a refused page = `truncated:
-   'partial'`, the list so far is kept). Signed out = the request ends on
+   'partial'`, the list so far is kept). **Live QA 2026-11-01: YouTube refuses every
+   cookie-only continuation** (403 "Sorry" from the worker, signed-out 200 from the page),
+   so in practice the list is the FIRST page only and a bigger account reads "partial";
+   more needs SAPISIDHASH, an open privacy decision. The parser fixture is a sanitized live
+   capture (`tests/core/fixtures/youtubeSubscriptionsCapture.ts`): on this page a
+   channelRenderer's `subscriberCountText` is the HANDLE and `videoCountText` the subscriber
+   count; the sort chips carry `continuationCommand`s that must NOT be followed; zero
+   subscriptions = a section list with no `contents` (parsed as ok, 0 channels). The block
+   page links typed channels plus up to `MAX_BLOCK_PAGE_SUBSCRIPTIONS` subscribed ones (the
+   subscriptions page itself is redirected, so the block page is the only way in). Signed out = the request ends on
    `accounts.google.com`, judged by the FINAL URL, not the status. The list lives in
    `storage.local` under `nudge:ytSubscriptions` (never `storage.sync`: it is a derived,
    private, up-to-500-entry blob), `loadSettings` hydrates it into the youtube rule through
@@ -425,7 +434,13 @@ bump `package.json` + `package-lock.json`, rename `## Unreleased` to `## <versio
 merge, then push the tag. `## Unreleased` never outlives the session that merged into it.
 Dispatches that say "do not tag" only mean the dev agent leaves it to the orchestrator; the
 orchestrator still tags. If a case can only be checked signed in, run it on a copy of the real
-Chrome profile with `--load-extension` before tagging, not after.
+Chrome profile before tagging, not after. **Branded Chrome (148) IGNORES `--load-extension`**:
+launch with `--remote-debugging-pipe --enable-unsafe-extension-debugging` and send CDP
+`Extensions.loadUnpacked` over the pipe, then drive it with Playwright `connectOverCDP`.
+Cookies decrypt only with the real `--password-store` (kwallet) on the real session bus;
+to keep `chrome.idle` "active" on a locked desktop, give Chrome an `xdg-dbus-proxy`
+filtered bus that talks to kwallet/secrets only (ScreenSaver hidden). Never import cookies
+into a `basic`-store copy: Chrome's account consistency signs that copy out within minutes.
 
 CI: `.github/workflows/extension-ci.yml` (lint → typecheck → unit → build → Playwright under
 xvfb), scoped with `paths: ['extension/**']`. The Android workflow carries the mirror-image

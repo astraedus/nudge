@@ -1,10 +1,16 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { applyRules } from '../../src/background/dnr';
-import { handleRequest } from '../../src/background/messagesRouter';
+import { MAX_BLOCK_PAGE_SUBSCRIPTIONS, handleRequest } from '../../src/background/messagesRouter';
 import { videoChannelLookup } from '../../src/background/videoChannels';
 import { featureSummary } from '../../src/core/featureSummary';
-import { loadDay, loadSettings, saveDay, saveSettings } from '../../src/background/storage';
+import {
+  loadDay,
+  loadSettings,
+  saveDay,
+  saveSettings,
+  saveSubscriptionState,
+} from '../../src/background/storage';
 import { localDayKey } from '../../src/core/scheduleEvaluator';
 import { emptyDayUsage } from '../../src/core/stats';
 import { surfaceKey } from '../../src/core/surfaceKeys';
@@ -362,6 +368,51 @@ describe('GET_BLOCK_CONTEXT', () => {
     expect(context.allowedChannels.map((entry) => entry.displayName)).toEqual([
       'Veritasium',
     ]);
+  });
+
+  it('offers the synced subscriptions too, after the typed channels, deduped and capped', async () => {
+    const subscribed = Array.from({ length: MAX_BLOCK_PAGE_SUBSCRIPTIONS + 5 }, (_, i) =>
+      channel({ handle: `sub${i}`, channelId: `UC${String(i).padStart(22, '0')}`, displayName: `Sub ${i}` }),
+    );
+    // The same channel the user also typed, by handle with a different case: listed once.
+    subscribed.unshift(channel({ handle: 'Veritasium', channelId: 'UCHnyfMqiRRG1u-2MsSQLbXA', displayName: 'Veritasium (sub)' }));
+    await saveSubscriptionState({
+      channels: subscribed,
+      syncedAt: NOW.getTime(),
+      lastAttemptAt: NOW.getTime(),
+      error: null,
+      truncated: null,
+    });
+    const youtubeRule = (allowSubscriptions: boolean, channels: ChannelEntry[]) =>
+      settings({
+        rules: [
+          siteRule({
+            domain: 'youtube.com',
+            mode: 'HARD_BLOCK',
+            features: featuresWith('youtube', {
+              youtube: { channelMode: 'WHITELIST', channels, allowSubscriptions },
+            }),
+          }),
+        ],
+      });
+    const ctx = () =>
+      ask<BlockContext>({ type: 'GET_BLOCK_CONTEXT', target: 'https://www.youtube.com/' });
+
+    await seed(youtubeRule(true, [channel({ handle: 'veritasium', displayName: 'Veritasium' })]));
+    const names = (await ctx()).allowedChannels.map((entry) => entry.displayName);
+    expect(names[0]).toBe('Veritasium');
+    expect(names).not.toContain('Veritasium (sub)');
+    expect(names.slice(1)).toEqual(
+      Array.from({ length: MAX_BLOCK_PAGE_SUBSCRIPTIONS }, (_, i) => `Sub ${i}`),
+    );
+
+    // Subscriptions only, nothing typed: the block page is still a way in.
+    await seed(youtubeRule(true, []));
+    expect((await ctx()).allowedChannels).toHaveLength(MAX_BLOCK_PAGE_SUBSCRIPTIONS);
+
+    // Option off: the synced list is not an allowed channel, so it is not offered.
+    await seed(youtubeRule(false, []));
+    expect((await ctx()).allowedChannels).toEqual([]);
   });
 
   it('offers none when the list is a blacklist, or on an ordinary site', async () => {
