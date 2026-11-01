@@ -7,7 +7,7 @@ day selection, the one events-based screen-time source, and the Willpower / Inte
 ## Feature summary
 
 - **"Walked Away" tracking** — counts when user taps "I changed my mind" instead of waiting
-- **2x2 dashboard stats** — Screen Time, Active Rules (tappable), Blocked, Walked Away
+- **2x2 dashboard stats** — Screen Time, Active Apps (opens Manage Apps), Blocked, Walked Away. Active Apps is `activeAppsCount`: the apps an enabled rule covers, direct rules and enabled group members together, each app once. It is the engine's own answer (`domain/engine/CoveredApps` asks `RuleEvaluator.resolveRulesForPackage` per candidate), never a count of rule rows, so it cannot disagree with what blocks (`ActiveAppsCountTest`).
 
 ## Stats visualization architecture
 

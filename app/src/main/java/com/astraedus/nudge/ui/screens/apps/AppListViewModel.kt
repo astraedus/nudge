@@ -9,44 +9,27 @@ import com.astraedus.nudge.data.db.entity.BlockRule
 import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.data.repository.BlockRuleRepository
 import com.astraedus.nudge.data.repository.InstalledAppsRepository
+import com.astraedus.nudge.data.repository.InstalledAppsRepository.AppInfo
 import com.astraedus.nudge.domain.lock.ChallengeState
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.ui.lock.StrictModeGate
-import com.astraedus.nudge.ui.screens.groups.ownGroupRule
-import com.astraedus.nudge.ui.screens.rules.ActiveRulesViewModel
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 @Immutable
-data class AppWithBlockStatus(
-    val appInfo: InstalledAppsRepository.AppInfo,
-    val isBlocked: Boolean,
-    val ruleId: Long? = null
-)
-
-/** One group on Manage Apps: "Social · 9 apps", its rule in one line, and its switch. */
-@Immutable
-data class GroupRow(
-    val groupId: Long,
-    val title: String,
-    val summary: String,
-    /** The group's own rule is on. */
-    val blocking: Boolean,
-    /** The group's own rule, or null for a group that has none. */
-    val rule: BlockRule?
-)
-
-@Immutable
 data class AppListUiState(
-    val groups: List<GroupRow> = emptyList(),
-    val apps: List<AppWithBlockStatus> = emptyList(),
+    val sections: ManageAppsSections = ManageAppsSections(),
     val searchQuery: String = "",
     val isLoading: Boolean = true,
     /**
@@ -62,6 +45,11 @@ private data class GroupData(
     val rules: List<BlockRule>
 )
 
+/**
+ * Manage Apps: one list of every rule the user has made and every app they could make one for
+ * (spec 3.2; it replaced the separate Active Rules screen). The sections are built by the pure
+ * [buildManageAppsSections]; this class feeds it the tables and owns the switches.
+ */
 @HiltViewModel
 class AppListViewModel @Inject constructor(
     private val installedAppsRepository: InstalledAppsRepository,
@@ -75,12 +63,25 @@ class AppListViewModel @Inject constructor(
     val challenge: StateFlow<ChallengeState?> = strictModeGate.challenge
 
     private val searchQuery = MutableStateFlow("")
-    private val installedApps = MutableStateFlow<List<InstalledAppsRepository.AppInfo>>(emptyList())
+
+    /** The launcher apps; null until PackageManager has answered once (cached after that). */
+    private val installedApps = MutableStateFlow<List<AppInfo>?>(null)
 
     private val revealGroupId = MutableStateFlow<Long?>(null)
 
     /** Group ids seen in the last emission; null before the first. Outlives a trip to the editor. */
     private var knownGroupIds: Set<Long>? = null
+
+    /** Packages whose "no rule yet" switch was just flipped: one tap makes one rule. */
+    private val creating = HashSet<String>()
+
+    /**
+     * Apps switched on from this screen during this visit. They stay where they were in the list
+     * (see `keepInPlace` on [buildManageAppsSections]) until Manage Apps is opened again.
+     */
+    private val switchedOnHere = MutableStateFlow<Set<String>>(emptySet())
+
+    private val filters = combine(searchQuery, switchedOnHere, ::Pair)
 
     private val groupData = combine(
         blockRuleRepository.getAllGroups(),
@@ -92,31 +93,48 @@ class AppListViewModel @Inject constructor(
         knownGroupIds = data.groups.mapTo(HashSet()) { it.id }
     }
 
+    /**
+     * Names and icons for packages that have a rule but are not in the launcher list (uninstalled,
+     * say). Active Rules listed those, so the merged list must too, or the rule disappears from
+     * view while the engine still applies it on a reinstall. Looked up once the launcher list is in,
+     * through the repository's per-package cache.
+     */
+    private val extraApps = combine(
+        installedApps.filterNotNull(),
+        blockRuleRepository.getAllRules()
+    ) { installed, rules ->
+        val launcher = installed.mapTo(HashSet()) { it.packageName }
+        rules.mapNotNullTo(sortedSetOf()) { rule -> rule.packageName?.takeIf { it !in launcher } }
+    }
+        .distinctUntilChanged()
+        .map { missing ->
+            missing.associateWith { pkg ->
+                AppInfo(
+                    packageName = pkg,
+                    appName = installedAppsRepository.resolveAppName(pkg),
+                    icon = installedAppsRepository.resolveIcon(pkg)
+                )
+            }
+        }
+        .onStart { emit(emptyMap()) }
+
     val uiState: StateFlow<AppListUiState> = combine(
         installedApps,
         groupData,
-        searchQuery,
-        revealGroupId
-    ) { apps, data, query, reveal ->
-        val rulesByPackage = data.rules
-            .filter { it.packageName != null }
-            .associateBy { it.packageName }
-
-        val filtered = apps.filter {
-            query.isBlank() || it.appName.contains(query, ignoreCase = true) ||
-                it.packageName.contains(query, ignoreCase = true)
-        }
-
+        filters,
+        revealGroupId,
+        extraApps
+    ) { installed, data, (query, keepInPlace), reveal, extras ->
         AppListUiState(
-            groups = buildGroupRows(data.groups, data.members, data.rules, query),
-            apps = filtered.map { app ->
-                val rule = rulesByPackage[app.packageName]
-                AppWithBlockStatus(
-                    appInfo = app,
-                    isBlocked = rule != null && rule.enabled,
-                    ruleId = rule?.id
-                )
-            },
+            sections = buildManageAppsSections(
+                installed = installed.orEmpty(),
+                groups = data.groups,
+                members = data.members,
+                rules = data.rules,
+                query = query,
+                extraApps = extras,
+                keepInPlace = keepInPlace
+            ),
             searchQuery = query,
             isLoading = false,
             revealGroupId = reveal
@@ -133,26 +151,37 @@ class AppListViewModel @Inject constructor(
         searchQuery.value = query
     }
 
-    fun toggleBlockRule(packageName: String, currentlyBlocked: Boolean, ruleId: Long?) {
+    /**
+     * An app row's switch, with Active Rules' meaning (spec 3.2). Off is a weakening and Strict
+     * Mode gated, from whichever section the row is in. On re-enables the app's own rules. An app
+     * with no rule gets Delay 15s, as the switch always did.
+     */
+    fun toggleApp(row: AppRow) {
+        val pkg = row.packageName
         viewModelScope.launch {
-            if (ruleId != null) {
-                if (currentlyBlocked) {
-                    // Turning a block off weakens protection: same gate as Active Rules.
-                    strictModeGate.run(prompt = "Disable blocking for this app") {
-                        blockRuleRepository.setEnabledForPackage(packageName, false)
+            when {
+                !row.hasRule -> {
+                    // A second tap before the list catches up would add a second rule.
+                    if (!creating.add(pkg)) return@launch
+                    // Before the write, so the first list with the rule already keeps the row put.
+                    switchedOnHere.value = switchedOnHere.value + pkg
+                    try {
+                        blockRuleRepository.addRule(
+                            BlockRule(
+                                packageName = pkg,
+                                mode = BlockMode.DELAY.name,
+                                delaySeconds = 15,
+                                enabled = true
+                            )
+                        )
+                    } finally {
+                        creating.remove(pkg)
                     }
-                } else {
-                    blockRuleRepository.setEnabledForPackage(packageName, true)
                 }
-            } else {
-                blockRuleRepository.addRule(
-                    BlockRule(
-                        packageName = packageName,
-                        mode = BlockMode.DELAY.name,
-                        delaySeconds = 15,
-                        enabled = true
-                    )
-                )
+                row.isOn -> strictModeGate.run(prompt = "Turn off blocking for this app") {
+                    blockRuleRepository.setEnabledForPackage(pkg, false)
+                }
+                else -> blockRuleRepository.setEnabledForPackage(pkg, true)
             }
         }
     }
@@ -204,33 +233,6 @@ class AppListViewModel @Inject constructor(
         fun newlyAddedGroupId(known: Set<Long>?, groups: List<AppGroup>): Long? {
             if (known == null) return null
             return groups.filter { it.id !in known }.minByOrNull { it.name.lowercase() }?.id
-        }
-
-        /**
-         * The group rows, sorted by name. A search keeps the groups whose NAME matches: a group is
-         * found by what the user called it, not by the apps inside it.
-         */
-        fun buildGroupRows(
-            groups: List<AppGroup>,
-            members: List<AppGroupMember>,
-            rules: List<BlockRule>,
-            query: String
-        ): List<GroupRow> {
-            val countByGroup = members.groupingBy { it.groupId }.eachCount()
-            val needle = query.trim()
-            return groups
-                .filter { needle.isEmpty() || it.name.contains(needle, ignoreCase = true) }
-                .sortedBy { it.name.lowercase() }
-                .map { group ->
-                    val rule = ownGroupRule(group.id, rules)
-                    GroupRow(
-                        groupId = group.id,
-                        title = ActiveRulesViewModel.groupTitle(group.name, countByGroup[group.id] ?: 0),
-                        summary = ActiveRulesViewModel.groupSummaryText(rule),
-                        blocking = rule?.enabled == true,
-                        rule = rule
-                    )
-                }
         }
     }
 }

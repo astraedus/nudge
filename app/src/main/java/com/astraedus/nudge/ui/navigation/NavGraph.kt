@@ -23,8 +23,6 @@ import com.astraedus.nudge.ui.screens.nuke.NukeViewModel
 import com.astraedus.nudge.ui.screens.onboarding.OnboardingScreen
 import com.astraedus.nudge.ui.screens.config.UnifiedAppConfigScreen
 import com.astraedus.nudge.ui.screens.config.UnifiedAppConfigViewModel
-import com.astraedus.nudge.ui.screens.rules.ActiveRulesScreen
-import com.astraedus.nudge.ui.screens.rules.ActiveRulesViewModel
 import com.astraedus.nudge.ui.screens.settings.GrayscaleGuideScreen
 import com.astraedus.nudge.ui.screens.settings.MessagesEditorScreen
 import com.astraedus.nudge.ui.screens.settings.SettingsScreen
@@ -48,7 +46,6 @@ sealed class Screen(val route: String) {
     data object Onboarding : Screen("onboarding")
     data object GrayscaleGuide : Screen("grayscale_guide")
     data object MessagesEditor : Screen("messages_editor")
-    data object ActiveRules : Screen("active_rules")
     data object AppConfig : Screen("app_config/{packageName}") {
         fun createRoute(packageName: String) = "app_config/$packageName"
     }
@@ -130,7 +127,6 @@ fun NudgeNavGraph(
                 onNavigateToApps = { navController.navigate(Screen.Apps.route) },
                 onNavigateToStats = { navController.navigate(Screen.Stats.route) },
                 onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
-                onNavigateToActiveRules = { navController.navigate(Screen.ActiveRules.route) },
                 onNavigateToWillpower = { navController.navigate(Screen.Willpower.route) },
                 onNavigateToInterventions = { navController.navigate(Screen.Interventions.route) },
                 onNavigateToAppDetail = { pkg ->
@@ -205,17 +201,6 @@ fun NudgeNavGraph(
             GroupEditorScreen(
                 viewModel = viewModel,
                 onNavigateBack = { navController.popBackStack() }
-            )
-        }
-
-        composable(Screen.ActiveRules.route) {
-            val viewModel: ActiveRulesViewModel = hiltViewModel()
-            ActiveRulesScreen(
-                viewModel = viewModel,
-                onNavigateBack = { navController.popBackStack() },
-                onNavigateToAppConfig = { pkg, _ ->
-                    navController.navigate(Screen.AppConfig.createRoute(pkg))
-                }
             )
         }
 

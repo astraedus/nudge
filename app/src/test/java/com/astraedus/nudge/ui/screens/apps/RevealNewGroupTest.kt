@@ -99,7 +99,7 @@ class RevealNewGroupTest {
         val vm = viewModel()
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.uiState.collect {} }
 
-        assertEquals(2, vm.uiState.value.groups.size)
+        assertEquals(2, vm.uiState.value.sections.groups.size)
         assertNull(vm.uiState.value.revealGroupId)
     }
 

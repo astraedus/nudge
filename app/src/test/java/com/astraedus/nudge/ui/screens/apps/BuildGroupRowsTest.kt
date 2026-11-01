@@ -26,7 +26,7 @@ class BuildGroupRowsTest {
 
     @Test
     fun `rows are sorted by name and carry count, summary and switch state`() {
-        val rows = AppListViewModel.buildGroupRows(listOf(social, games), members, rules, query = "")
+        val rows = buildGroupRows(listOf(social, games), members, rules, query = "")
 
         assertEquals(listOf("games · 1 app", "Social · 3 apps"), rows.map { it.title })
         assertEquals(listOf("Hard Block", "Delay 15s · 30min limit"), rows.map { it.summary })
@@ -36,7 +36,7 @@ class BuildGroupRowsTest {
 
     @Test
     fun `a group with no rule reads Not blocked and its switch is off`() {
-        val row = AppListViewModel.buildGroupRows(listOf(social), members, emptyList(), query = "").single()
+        val row = buildGroupRows(listOf(social), members, emptyList(), query = "").single()
 
         assertEquals("Not blocked", row.summary)
         assertFalse(row.blocking)
@@ -47,8 +47,8 @@ class BuildGroupRowsTest {
     fun `search matches the group's name, not its apps`() {
         assertEquals(
             listOf("Social · 3 apps"),
-            AppListViewModel.buildGroupRows(listOf(social, games), members, rules, query = " soc ").map { it.title }
+            buildGroupRows(listOf(social, games), members, rules, query = " soc ").map { it.title }
         )
-        assertTrue(AppListViewModel.buildGroupRows(listOf(social, games), members, rules, query = "com.a").isEmpty())
+        assertTrue(buildGroupRows(listOf(social, games), members, rules, query = "com.a").isEmpty())
     }
 }

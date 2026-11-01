@@ -1529,3 +1529,10 @@ Cold Google Camera under a Delay: the overlay's `START` landed, CameraLauncher r
 - **A dedupe that can suppress an ENFORCEMENT action must have an exit for "the original never happened".** `RESHOW_HIDDEN` re-shows the same overlay (same id, no new wall, arrival restored so #131's one-tap-one-row holds) instead of dropping; it is asked after the walk-away and foreground checks so a re-show can never cover an app the user moved to.
 - **Order the gate's branches by what the outcome DOES.** A drop can be decided early; anything that puts a window on screen goes after every "the user is elsewhere" check. My first draft put the re-show first and would have dragged the overlay over the app the user switched to.
 - Cold-launch trials need a force-stop of the TARGET (not just Home) and a logcat check that Nudge logged at all: three of five v1.23.1 trials had no Nudge lines and proved nothing.
+
+## Spec PR 3: a switch moved its own row while the finger was still on the list (2026-11-02)
+
+Merging Active Rules into Manage Apps made "has a rule" decide which section an app sits in. Switching an app on created its rule, the row jumped up to "Apps with rules", the next app slid into its place, and the device tester's quick second tap switched THAT app on. Every L1 test was green, because each section was right on its own. Only a tap sequence on the device showed it. The same run found a second bug of the "right for each part, wrong together" kind: the "nothing matches" line counted app rows only, and the groups live inside the top row.
+
+- **A control never moves the row it lives in, while the user is still on that list.** Keep the row in place for the visit, and let the next visit re-sort it (`keepInPlace` / `switchedOnHere`). Test it through the real ViewModel with a rules Flow that emits the write (`SwitchedOnStaysInPlaceTest`).
+- **An empty state asks the whole model ("is there anything at all?"), never the length of one rendered list.**

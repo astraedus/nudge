@@ -361,8 +361,8 @@ replaces an older one instead of stacking. Tap opens Nudge's home screen. A refu
 (`SecurityException`) is swallowed, as everywhere on the accessibility thread. The label is the app's
 `getApplicationLabel`, falling back to the package name.
 
-**Editors.** The editor (`UnifiedAppConfigScreen`, reached from the app list and the
-active rules list) renders one shared `ui/components/UsageReminderSection`
+**Editors.** The editor (`UnifiedAppConfigScreen`, reached from Manage Apps)
+renders one shared `ui/components/UsageReminderSection`
 right under auto-kick: title + help + switch, a minutes field ("Remind me after", blank = off; switching
 on with an empty field fills 20 so the switch is never a no-op), the kick-precedence hint, and, while
 on, an error-coloured "Notifications are off" line that opens Nudge's notification settings. Turning it

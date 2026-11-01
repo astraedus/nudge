@@ -5,7 +5,7 @@ import com.astraedus.nudge.data.db.entity.AppGroup
 import com.astraedus.nudge.data.db.entity.AppGroupMember
 import com.astraedus.nudge.data.db.entity.BlockRule
 import com.astraedus.nudge.ui.screens.groups.ownGroupRule
-import com.astraedus.nudge.ui.screens.rules.ActiveRulesViewModel
+import com.astraedus.nudge.ui.components.rule.RuleSummary
 
 /** One "Also covered by" row on App config: "Social · Delay 15s", opening that group. */
 @Immutable
@@ -31,6 +31,6 @@ fun coveringGroups(
         }
         .sortedBy { (group, _) -> group.name.lowercase() }
         .map { (group, rule) ->
-            CoveringGroup(group.id, "${group.name} · ${ActiveRulesViewModel.groupSummaryText(rule)}")
+            CoveringGroup(group.id, "${group.name} · ${RuleSummary.groupSummaryText(rule)}")
         }
 }

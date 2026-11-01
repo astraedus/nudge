@@ -14,7 +14,6 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
@@ -29,6 +28,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.astraedus.nudge.ui.components.AppListItem
@@ -36,8 +36,9 @@ import com.astraedus.nudge.ui.components.StrictModeChallengeHost
 import com.astraedus.nudge.ui.components.TonalIcon
 
 /**
- * Manage Apps: the user's groups first (a group is one decision covering many apps), then
- * "Block several apps" to make another, then every installed app. One search filters both lists.
+ * Manage Apps, the one list of rules (spec 3.2): the user's groups (a group is one decision covering
+ * many apps), "Block several apps" to make another, the apps that have rules of their own, then
+ * every other app. Each section shows only when it has rows; one search filters them all.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -99,45 +100,45 @@ fun AppListScreen(
             // Nothing until the first state with the groups in it: the initial value has none, and
             // drawing "Block several apps" alone for a frame would make the groups pop in above it.
             if (!state.isLoading) LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+                val rows = manageAppsRows(state.sections)
                 items(
-                    manageAppsRows(state.apps),
+                    rows,
                     key = { it.key },
                     contentType = { it::class }
                 ) { row ->
                     when (row) {
                         ManageAppsRow.Top -> TopSection(
-                            groups = state.groups,
-                            showNewGroup = !searching,
+                            groups = state.sections.groups,
+                            showNewGroup = state.sections.showNewGroup,
                             onToggleGroup = viewModel::toggleGroup,
                             onOpenGroup = onOpenGroup
                         )
-                        ManageAppsRow.AppsHeader -> ListSubheader("Apps")
+                        is ManageAppsRow.Header -> ListSubheader(row.title)
                         is ManageAppsRow.App -> {
                             val app = row.app
                             AppListItem(
                                 appName = app.appInfo.appName,
                                 icon = app.appInfo.icon,
-                                modifier = Modifier.clickable {
-                                    onNavigateToAppConfig(app.appInfo.packageName)
-                                },
+                                supportingText = app.summary,
+                                modifier = Modifier.clickable { onNavigateToAppConfig(app.packageName) },
                                 trailingContent = {
                                     Switch(
-                                        checked = app.isBlocked,
-                                        onCheckedChange = {
-                                            viewModel.toggleBlockRule(
-                                                app.appInfo.packageName,
-                                                app.isBlocked,
-                                                app.ruleId
-                                            )
-                                        }
+                                        checked = app.isOn,
+                                        onCheckedChange = { viewModel.toggleApp(app) }
                                     )
                                 }
                             )
-                            HorizontalDivider(
-                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-                            )
                         }
                     }
+                }
+                // No group and no app matched: say so, rather than showing a blank list.
+                if (searching && state.sections.nothingMatches) item(key = "no_matches") {
+                    Text(
+                        "No apps or groups match \"${state.searchQuery.trim()}\"",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 24.dp)
+                    )
                 }
             }
         }
@@ -160,8 +161,12 @@ private fun TopSection(
         groups.forEach { group ->
             key(group.groupId) {
                 ListItem(
-                    headlineContent = { Text(group.title) },
-                    supportingContent = { Text(group.summary) },
+                    headlineContent = {
+                        Text(group.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    },
+                    supportingContent = {
+                        Text(group.summary, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    },
                     leadingContent = { TonalIcon(Icons.Default.Folder) },
                     trailingContent = {
                         Switch(
