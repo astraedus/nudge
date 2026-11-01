@@ -51,7 +51,7 @@ data class AppListUiState(
     val isLoading: Boolean = true,
     /**
      * A group that appeared while this screen was away (just saved in the editor): the screen
-     * scrolls it into view, then calls [AppListViewModel.onGroupRevealed].
+     * scrolls back to the groups, then calls [AppListViewModel.onGroupRevealed].
      */
     val revealGroupId: Long? = null
 )
@@ -197,19 +197,13 @@ class AppListViewModel @Inject constructor(
          * The group to bring into view after the list changes: one whose id was not there last time,
          * first by name. Null on the first load (nothing was "added", the list just opened).
          *
-         * Why this exists: the list keeps its first visible row in place by key. With no groups yet,
-         * that row is "Block several apps", so a group saved from it lands ABOVE the viewport and the
-         * user returns to a list that looks like it dropped what they just made (device QA, PR 2).
+         * Why this exists: a group saved in the editor must be on screen when the user comes back,
+         * or the list looks like it dropped what they just made (device QA, PR 2). The groups live in
+         * the list's first row ([ManageAppsRow.Top]), so the screen scrolls back to the top.
          */
         fun newlyAddedGroupId(known: Set<Long>?, groups: List<AppGroup>): Long? {
             if (known == null) return null
             return groups.filter { it.id !in known }.minByOrNull { it.name.lowercase() }?.id
-        }
-
-        /** The LazyColumn index of a group's row: the "Groups" header is index 0. -1 if not shown. */
-        fun groupRowIndex(rows: List<GroupRow>, groupId: Long): Int {
-            val position = rows.indexOfFirst { it.groupId == groupId }
-            return if (position < 0) -1 else position + 1
         }
 
         /**

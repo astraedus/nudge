@@ -27,6 +27,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -52,12 +53,12 @@ fun AppListScreen(
     val searching = state.searchQuery.isNotBlank()
     val listState = rememberLazyListState()
 
-    // A group just saved in the editor: bring its row into view with the row above it (the header,
-    // or the group before it) for context. See AppListViewModel.newlyAddedGroupId for why.
+    // A group just saved in the editor: back to the top, where the groups are. The top row only
+    // grows in place, but the user may have been part-way down it (or into the apps) when they left.
+    // See AppListViewModel.newlyAddedGroupId.
     LaunchedEffect(state.revealGroupId) {
-        val id = state.revealGroupId ?: return@LaunchedEffect
-        val index = AppListViewModel.groupRowIndex(state.groups, id)
-        if (index >= 0) listState.scrollToItem((index - 1).coerceAtLeast(0))
+        if (state.revealGroupId == null) return@LaunchedEffect
+        listState.scrollToItem(0)
         viewModel.onGroupRevealed()
     }
 
@@ -95,63 +96,91 @@ fun AppListScreen(
                 singleLine = true
             )
 
-            LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
-                if (state.groups.isNotEmpty()) {
-                    item(key = "groups_header") { ListSubheader("Groups") }
-                }
-                items(state.groups, key = { "group_${it.groupId}" }) { group ->
-                    ListItem(
-                        headlineContent = { Text(group.title) },
-                        supportingContent = { Text(group.summary) },
-                        leadingContent = { TonalIcon(Icons.Default.Folder) },
-                        trailingContent = {
-                            Switch(
-                                checked = group.blocking,
-                                onCheckedChange = { viewModel.toggleGroup(group) }
-                            )
-                        },
-                        modifier = Modifier.clickable { onOpenGroup(group.groupId) }
-                    )
-                }
-                if (!searching) {
-                    item(key = "new_group") {
-                        ListItem(
-                            headlineContent = {
-                                Text("Block several apps", color = MaterialTheme.colorScheme.primary)
-                            },
-                            leadingContent = { TonalIcon(Icons.Default.Add, primary = true) },
-                            modifier = Modifier.clickable { onOpenGroup(null) }
+            // Nothing until the first state with the groups in it: the initial value has none, and
+            // drawing "Block several apps" alone for a frame would make the groups pop in above it.
+            if (!state.isLoading) LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+                items(
+                    manageAppsRows(state.apps),
+                    key = { it.key },
+                    contentType = { it::class }
+                ) { row ->
+                    when (row) {
+                        ManageAppsRow.Top -> TopSection(
+                            groups = state.groups,
+                            showNewGroup = !searching,
+                            onToggleGroup = viewModel::toggleGroup,
+                            onOpenGroup = onOpenGroup
                         )
-                    }
-                }
-                if (state.apps.isNotEmpty()) {
-                    item(key = "apps_header") { ListSubheader("Apps") }
-                }
-                items(state.apps, key = { it.appInfo.packageName }) { app ->
-                    AppListItem(
-                        appName = app.appInfo.appName,
-                        icon = app.appInfo.icon,
-                        modifier = Modifier.clickable {
-                            onNavigateToAppConfig(app.appInfo.packageName)
-                        },
-                        trailingContent = {
-                            Switch(
-                                checked = app.isBlocked,
-                                onCheckedChange = {
-                                    viewModel.toggleBlockRule(
-                                        app.appInfo.packageName,
-                                        app.isBlocked,
-                                        app.ruleId
+                        ManageAppsRow.AppsHeader -> ListSubheader("Apps")
+                        is ManageAppsRow.App -> {
+                            val app = row.app
+                            AppListItem(
+                                appName = app.appInfo.appName,
+                                icon = app.appInfo.icon,
+                                modifier = Modifier.clickable {
+                                    onNavigateToAppConfig(app.appInfo.packageName)
+                                },
+                                trailingContent = {
+                                    Switch(
+                                        checked = app.isBlocked,
+                                        onCheckedChange = {
+                                            viewModel.toggleBlockRule(
+                                                app.appInfo.packageName,
+                                                app.isBlocked,
+                                                app.ruleId
+                                            )
+                                        }
                                     )
                                 }
                             )
+                            HorizontalDivider(
+                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                            )
                         }
-                    )
-                    HorizontalDivider(
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-                    )
+                    }
                 }
             }
+        }
+    }
+}
+
+/**
+ * Everything above the app list, as ONE list row (see [ManageAppsRow] for why it must be one): the
+ * Groups heading and rows when there are any, then "Block several apps" unless a search is showing.
+ */
+@Composable
+private fun TopSection(
+    groups: List<GroupRow>,
+    showNewGroup: Boolean,
+    onToggleGroup: (GroupRow) -> Unit,
+    onOpenGroup: (Long?) -> Unit
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        if (groups.isNotEmpty()) ListSubheader("Groups")
+        groups.forEach { group ->
+            key(group.groupId) {
+                ListItem(
+                    headlineContent = { Text(group.title) },
+                    supportingContent = { Text(group.summary) },
+                    leadingContent = { TonalIcon(Icons.Default.Folder) },
+                    trailingContent = {
+                        Switch(
+                            checked = group.blocking,
+                            onCheckedChange = { onToggleGroup(group) }
+                        )
+                    },
+                    modifier = Modifier.clickable { onOpenGroup(group.groupId) }
+                )
+            }
+        }
+        if (showNewGroup) {
+            ListItem(
+                headlineContent = {
+                    Text("Block several apps", color = MaterialTheme.colorScheme.primary)
+                },
+                leadingContent = { TonalIcon(Icons.Default.Add, primary = true) },
+                modifier = Modifier.clickable { onOpenGroup(null) }
+            )
         }
     }
 }

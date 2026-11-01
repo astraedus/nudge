@@ -25,8 +25,9 @@ import org.junit.Test
 /**
  * Device QA (PR 2): the first group saved from Manage Apps "vanished". The list keeps its first
  * visible row in place by key; with no groups that row is "Block several apps", so the new group's
- * rows were inserted above the viewport. The screen now scrolls a newly added group into view; these
- * pin WHICH group and WHEN (never on an ordinary open, which would yank the user's scroll).
+ * rows were inserted above the viewport. The list's top is now one stable row ([ManageAppsRowsTest]),
+ * and a newly added group also scrolls the list back to it; these pin WHICH group and WHEN (never on
+ * an ordinary open, which would yank the user's scroll).
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class RevealNewGroupTest {
@@ -60,15 +61,6 @@ class RevealNewGroupTest {
     @Test
     fun `two new groups at once reveal the first by name, as the list sorts them`() {
         assertEquals(3L, AppListViewModel.newlyAddedGroupId(setOf(1L), listOf(social, games, browsers.copy(name = "x"))))
-    }
-
-    @Test
-    fun `the row index counts the Groups header, and a hidden group is -1`() {
-        val rows = AppListViewModel.buildGroupRows(listOf(social, browsers), emptyList(), emptyList(), query = "")
-        // Header 0, Browsers 1, Social 2.
-        assertEquals(1, AppListViewModel.groupRowIndex(rows, 2L))
-        assertEquals(2, AppListViewModel.groupRowIndex(rows, 1L))
-        assertEquals(-1, AppListViewModel.groupRowIndex(rows, 99L))
     }
 
     // ── The ViewModel: survives the trip to the editor ─────────────────────
