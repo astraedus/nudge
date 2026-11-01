@@ -140,7 +140,10 @@ fun NudgeNavGraph(
                 onNavigateToAppDetail = { pkg ->
                     navController.navigate(Screen.AppDetail.createRoute(pkg))
                 },
-                onNavigateToNuke = { navController.navigate(Screen.Nuke.route) }
+                onNavigateToNuke = { navController.navigate(Screen.Nuke.route) },
+                onOpenAllAppsRule = { ruleId ->
+                    navController.navigate(Screen.AllAppsEditor.createRoute(ruleId))
+                }
             )
         }
 
@@ -178,6 +181,9 @@ fun NudgeNavGraph(
                 },
                 onOpenGroup = { groupId ->
                     navController.navigate(Screen.GroupEditor.createRoute(groupId))
+                },
+                onOpenAllAppsRule = { ruleId ->
+                    navController.navigate(Screen.AllAppsEditor.createRoute(ruleId))
                 }
             )
         }
@@ -192,6 +198,9 @@ fun NudgeNavGraph(
                 onNavigateBack = { navController.popBackStack() },
                 onOpenGroup = { groupId ->
                     navController.navigate(Screen.GroupEditor.createRoute(groupId))
+                },
+                onOpenAllAppsRule = { ruleId ->
+                    navController.navigate(Screen.AllAppsEditor.createRoute(ruleId))
                 }
             )
         }
@@ -208,7 +217,10 @@ fun NudgeNavGraph(
             val viewModel: GroupEditorViewModel = hiltViewModel()
             GroupEditorScreen(
                 viewModel = viewModel,
-                onNavigateBack = { navController.popBackStack() }
+                onNavigateBack = { navController.popBackStack() },
+                onOpenAllAppsRule = { ruleId ->
+                    navController.navigate(Screen.AllAppsEditor.createRoute(ruleId))
+                }
             )
         }
 
