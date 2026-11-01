@@ -45,6 +45,8 @@ function config(overrides: Partial<ChannelConfig> = {}): ChannelConfig {
       disableAutoplay: false,
       creatorMode: false,
       myChannel: null,
+      allowSubscriptions: false,
+      subscribedChannels: [],
     },
     ...overrides,
   };
@@ -174,6 +176,8 @@ describe('reporting from a channel page', () => {
         disableAutoplay: false,
         creatorMode: false,
         myChannel: null,
+        allowSubscriptions: false,
+        subscribedChannels: [],
       },
     });
 
@@ -274,6 +278,8 @@ describe('staying quiet when there is nothing to learn', () => {
         disableAutoplay: false,
         creatorMode: false,
         myChannel: null,
+        allowSubscriptions: false,
+        subscribedChannels: [],
       },
     });
 

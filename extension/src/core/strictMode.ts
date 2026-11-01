@@ -235,6 +235,21 @@ function isYoutubeFeatureWeakened(
   // missing identifier (`core/channels.enrichEntries`) still matches the old one, so it never
   // trips the lock.
   if (!oldYt.creatorMode && newYt.creatorMode) return true;
+
+  // "Also allow channels I'm subscribed to" adds every subscription to the whitelist at
+  // once, so turning it ON is a weakening, and OFF is free. What it is NOT is a gate on each
+  // later sync: a sync is not a settings save (it writes its own `storage.local` key, see
+  // `background/youtubeSubscriptions.ts`), and the user's consent was to "the channels I'm
+  // subscribed to", a set they manage on YouTube, not a list frozen on the day they agreed.
+  // The synced list itself is never compared here: `handleSave` overwrites whatever a save
+  // carries with the stored list, so both sides always hold the same channels.
+  // Judged on whether subscriptions are IN FORCE (WHITELIST + on), not the bare flag: the
+  // flag can be left on while the list is a blacklist, and switching that list back into a
+  // whitelist opens every subscription at once just the same.
+  const subscriptionsInForce = (yt: typeof oldYt) =>
+    yt.channelMode === 'WHITELIST' && yt.allowSubscriptions;
+  if (!subscriptionsInForce(oldYt) && subscriptionsInForce(newYt)) return true;
+
   if (newYt.creatorMode && newYt.myChannel !== null) {
     const previous = oldYt.creatorMode ? oldYt.myChannel : null;
     if (previous === null || !channelMatches(previous, newYt.myChannel)) return true;

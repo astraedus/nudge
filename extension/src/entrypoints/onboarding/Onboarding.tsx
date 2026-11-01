@@ -213,8 +213,9 @@ export function Onboarding() {
             </p>
             <Card style={{ marginBottom: 28 }}>
               <p style={{ margin: 0, fontSize: 14, lineHeight: 1.6 }}>
-                Everything stays on this device. No account, no sign-in, no telemetry — Nudge makes
-                zero network requests, and your browsing stats never leave your computer.
+                Everything stays on this device. No account, no sign-in, no telemetry. Nudge sends
+                nothing anywhere, and your browsing stats never leave your computer. The one thing it
+                can ever load is your own YouTube subscriptions page, and only if you switch that on.
               </p>
             </Card>
             <Button onClick={() => setStep(1)}>Get started</Button>

@@ -1,11 +1,13 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { addChannel, parseChannelInput, removeChannel } from '../../core/channels';
 import { DELAY_MAX_SECONDS, DELAY_MIN_SECONDS, DELAY_PRESETS } from '../../core/settingsSchema';
 import type { ChannelEntry, ChannelListMode, YoutubeFeatureSettings } from '../../core/settingsSchema';
 import type { BlockMode, SiteMode } from '../../core/types';
 import { isBlockMode, MODE_LABELS, SITE_MODE_LABELS } from '../../core/types';
+import type { SubscriptionSyncStatus } from '../../core/protocol';
 import { Button, Card, Chip, Toggle } from '../../ui/components';
+import { send } from '../../ui/rpc';
 
 const CHANNEL_BLOCK_MODES: BlockMode[] = ['HARD_BLOCK', 'DELAY', 'BREATHING'];
 
@@ -270,6 +272,146 @@ function CreatorModeSection({
   );
 }
 
+/** What went wrong with the last sync, in one short line. */
+export function subscriptionErrorText(status: SubscriptionSyncStatus): string | null {
+  const kept = status.count > 0 ? ' Your last list is kept.' : '';
+  switch (status.error) {
+    case 'signed-out':
+      return `Couldn't sync: you're not signed in to YouTube in this browser.${kept}`;
+    case 'unparseable':
+      return `Couldn't read your subscriptions from YouTube.${kept}`;
+    case 'network':
+      return `Couldn't reach YouTube.${kept}`;
+    case 'empty':
+      return `YouTube returned no subscriptions.${kept}`;
+    default:
+      return null;
+  }
+}
+
+/** "120 channels, synced 5 min ago" (or "Not synced yet"). */
+export function subscriptionSummaryText(status: SubscriptionSyncStatus, now: number): string {
+  if (status.syncedAt === null) return status.syncing ? 'Syncing…' : 'Not synced yet';
+  const channels = `${status.count} ${status.count === 1 ? 'channel' : 'channels'}`;
+  const minutes = Math.max(0, Math.floor((now - status.syncedAt) / 60_000));
+  const ago =
+    minutes < 1
+      ? 'just now'
+      : minutes < 60
+        ? `${minutes} min ago`
+        : minutes < 48 * 60
+          ? `${Math.floor(minutes / 60)} h ago`
+          : `${Math.floor(minutes / (24 * 60))} days ago`;
+  return `${channels}, synced ${ago}`;
+}
+
+function subscriptionTruncationText(status: SubscriptionSyncStatus): string | null {
+  if (status.truncated === 'cap') return `Only the first ${status.count} are allowed.`;
+  if (status.truncated === 'partial') return 'Some may be missing: YouTube only sent part of your list.';
+  return null;
+}
+
+/**
+ * The worker's sync status, read only while the option is on. Never throws: outside the
+ * extension (a test page with no `chrome`) it simply stays null.
+ */
+function useSubscriptionStatus(enabled: boolean) {
+  const [status, setStatus] = useState<SubscriptionSyncStatus | null>(null);
+  // When the status was read: "synced 5 min ago" is measured from here, never from a clock
+  // read during render.
+  const [readAt, setReadAt] = useState(0);
+  const refresh = useCallback(async () => {
+    try {
+      const next = await send({ type: 'GET_YT_SUBSCRIPTIONS' });
+      setReadAt(Date.now());
+      setStatus(next);
+    } catch {
+      // No worker to ask (or it is restarting): keep what is shown.
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!enabled || typeof chrome === 'undefined' || chrome.storage?.onChanged === undefined) return;
+    void refresh();
+    // A sync finishing (automatic or "Sync now" in another tab) writes storage.local.
+    const listener = () => void refresh();
+    chrome.storage.onChanged.addListener(listener);
+    return () => chrome.storage.onChanged.removeListener(listener);
+  }, [enabled, refresh]);
+
+  const syncNow = useCallback(async () => {
+    setStatus((prev) => (prev === null ? prev : { ...prev, syncing: true }));
+    try {
+      const next = await send({ type: 'SYNC_YT_SUBSCRIPTIONS' });
+      setReadAt(Date.now());
+      setStatus(next);
+    } catch {
+      await refresh();
+    }
+  }, [refresh]);
+
+  return { status, readAt, syncNow };
+}
+
+/**
+ * "Also allow channels I'm subscribed to". Only offered for a WHITELIST: it widens an allow
+ * list and has nothing to say to a block list. Turning it on goes through `onChange` like
+ * every other edit, so the rule's "Save rule" sends it through the worker's Commitment Lock;
+ * the worker then syncs on its own (`background/youtubeSubscriptions.ts`).
+ */
+function SubscriptionsSection({
+  allowSubscriptions,
+  status,
+  readAt,
+  onToggle,
+  onSyncNow,
+}: {
+  allowSubscriptions: boolean;
+  status: SubscriptionSyncStatus | null;
+  readAt: number;
+  onToggle: (next: boolean) => void;
+  onSyncNow: () => void;
+}) {
+  const error = status === null ? null : subscriptionErrorText(status);
+  const truncation = status === null ? null : subscriptionTruncationText(status);
+  return (
+    <div style={{ margin: '12px 0 16px' }}>
+      <Toggle
+        checked={allowSubscriptions}
+        onChange={onToggle}
+        label="Also allow channels I'm subscribed to"
+      />
+      {allowSubscriptions && status !== null && (
+        <div style={{ margin: '8px 0 0 30px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 13, color: 'var(--nudge-on-surface-variant)' }}>
+              {subscriptionSummaryText(status, readAt)}
+            </span>
+            <Button
+              variant="muted"
+              onClick={onSyncNow}
+              disabled={status.syncing}
+              style={{ padding: '4px 10px', fontSize: 12 }}
+            >
+              {status.syncing ? 'Syncing…' : 'Sync now'}
+            </Button>
+          </div>
+          {truncation !== null && (
+            <p style={{ margin: '6px 0 0', fontSize: 12, color: 'var(--nudge-on-surface-variant)' }}>
+              {truncation}
+            </p>
+          )}
+          {error !== null && (
+            <p role="status" style={{ margin: '6px 0 0', fontSize: 12, color: 'var(--nudge-danger)' }}>
+              {error}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /**
  * The YouTube channel allowlist/blocklist block of the youtube.com rule's features —
  * moved out of the old standalone YoutubePanel tab (ext-13 §5) into a component owned by
@@ -312,7 +454,15 @@ export function ChannelListEditor({
     patch({ channels: removeChannel(youtube.channels, entry) });
   }
 
-  const whitelistIsEmpty = youtube.channelMode === 'WHITELIST' && youtube.channels.length === 0;
+  const subscriptionsOn = youtube.channelMode === 'WHITELIST' && youtube.allowSubscriptions;
+  const { status: syncStatus, readAt: syncReadAt, syncNow } = useSubscriptionStatus(subscriptionsOn);
+  // The worker's count is fresher than the list this screen loaded with (a sync can land
+  // after the dashboard opened), so it wins when there is one.
+  const subscribedCount = subscriptionsOn
+    ? (syncStatus?.count ?? youtube.subscribedChannels.length)
+    : 0;
+  const whitelistIsEmpty =
+    youtube.channelMode === 'WHITELIST' && youtube.channels.length === 0 && subscribedCount === 0;
 
   /**
    * A meaningless field combination is a UI bug, not just an engine one (repo lesson).
@@ -348,6 +498,16 @@ export function ChannelListEditor({
           />
         ))}
       </div>
+
+      {youtube.channelMode === 'WHITELIST' && (
+        <SubscriptionsSection
+          allowSubscriptions={youtube.allowSubscriptions}
+          status={syncStatus}
+          readAt={syncReadAt}
+          onToggle={(allowSubscriptions) => patch({ allowSubscriptions })}
+          onSyncNow={() => void syncNow()}
+        />
+      )}
 
       {whitelistIsEmpty && (
         <div

@@ -67,6 +67,8 @@ const NO_CHANNEL_LISTS: NonNullable<SiteConfig['youtube']> = {
   disableAutoplay: false,
   creatorMode: false,
   myChannel: null,
+  allowSubscriptions: false,
+  subscribedChannels: [],
 };
 
 /**

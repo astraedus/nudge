@@ -8,6 +8,19 @@ namespaces were already split for exactly that reason.
 
 ## Unreleased
 
+### Added
+
+- **Allow the channels you're subscribed to.** With "Only these channels" on, a new switch,
+  "Also allow channels I'm subscribed to" (off by default), adds your YouTube subscriptions
+  to the allowed list, so you don't have to type them in one by one. Nudge reads your own
+  subscriptions page on youtube.com, in your browser, with the YouTube sign-in you already
+  have: no new permissions, no account, and the list never leaves your computer and is not
+  copied to Chrome sync. It syncs when you turn it on, then at most once a day when you visit
+  YouTube. The settings show how many channels it found and when, with a "Sync now" button.
+  If a sync fails (signed out, or YouTube changed its page) it keeps the last list and says
+  why. Turning it on needs the unlock under Strict Mode; turning it off never does. A
+  subscribed channel behaves like any channel on your list, including after the daily limit.
+
 ### Changed
 
 - **Channels you allowed stay watchable after the daily YouTube limit.** With "Only these

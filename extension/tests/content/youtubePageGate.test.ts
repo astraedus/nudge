@@ -67,6 +67,8 @@ function blockedSiteConfig(overrides: Partial<SiteConfig> = {}, youtube: Partial
       disableAutoplay: false,
       creatorMode: false,
       myChannel: null,
+      allowSubscriptions: false,
+      subscribedChannels: [],
       ...youtube,
     },
     ...overrides,

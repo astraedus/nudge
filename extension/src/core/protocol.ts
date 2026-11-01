@@ -10,6 +10,7 @@
 import type { BlockDecision, BlockMode, SiteMode } from './types';
 import type { EnrichmentReason } from './channels';
 import type { GateId, HideId, Platform } from './platforms';
+import type { SyncError, SyncTruncation } from './youtubeSubscriptions';
 import type {
   ChannelEntry,
   NudgeSettings,
@@ -241,7 +242,34 @@ export type Request =
    * has no previous entry, and bailing to the site root would land on the block page,
    * which is the Known gap this closes.
    */
-  | { type: 'CLOSE_TAB' };
+  | { type: 'CLOSE_TAB' }
+  /**
+   * The synced YouTube subscriptions' status, for the dashboard's channel-list section.
+   * Read-only: the list itself reaches the UI through `GET_SETTINGS`, hydrated.
+   */
+  | { type: 'GET_YT_SUBSCRIPTIONS' }
+  /**
+   * "Sync now". Fetches the user's own subscriptions page from youtube.com and stores the
+   * result (`background/youtubeSubscriptions.ts`). NOT a settings change and not gated:
+   * it can only refresh the list of channels the user already consented to allow, and it
+   * does nothing at all unless "Also allow channels I'm subscribed to" is on, which IS
+   * gated (`core/strictMode.ts`).
+   */
+  | { type: 'SYNC_YT_SUBSCRIPTIONS' };
+
+/** What the dashboard shows under "Also allow channels I'm subscribed to". */
+export interface SubscriptionSyncStatus {
+  /** Channels in the stored list. */
+  count: number;
+  /** When the list was last replaced by a successful sync (epoch ms), or null. */
+  syncedAt: number | null;
+  /** The last attempt's failure, or null when it succeeded or none was made. */
+  error: SyncError | null;
+  /** Why the list may be shorter than the user's real subscriptions, or null. */
+  truncated: SyncTruncation | null;
+  /** A sync is running right now. */
+  syncing: boolean;
+}
 
 /** Granting temporary access, or refusing to. */
 export interface GrantResult {
@@ -346,6 +374,9 @@ export interface ResponseMap {
   VIDEO_CHANNEL: { ok: boolean; stored: boolean };
   /** `ok: false` when the sender had no tab id (a non-tab context) or the close failed. */
   CLOSE_TAB: { ok: boolean };
+  GET_YT_SUBSCRIPTIONS: SubscriptionSyncStatus;
+  /** The status after the sync finished (or was refused because the option is off). */
+  SYNC_YT_SUBSCRIPTIONS: SubscriptionSyncStatus;
 }
 
 export type ResponseFor<T extends Request['type']> = ResponseMap[T];

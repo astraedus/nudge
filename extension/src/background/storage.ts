@@ -9,7 +9,12 @@
  *                                 for temp-allow grants: a crash can't leave a site unlocked)
  */
 
-import { migrateSettings, type NudgeSettings } from '../core/settingsSchema';
+import { migrateSettings, withSubscribedChannels, type NudgeSettings } from '../core/settingsSchema';
+import {
+  coerceSyncState,
+  emptySyncState,
+  type SubscriptionSyncState,
+} from '../core/youtubeSubscriptions';
 import { localDayKey } from '../core/scheduleEvaluator';
 import { coerceDayUsage, emptyDayUsage } from '../core/stats';
 import { coerceSeenItems, emptySeenItems, type SeenItems } from '../core/seenItems';
@@ -21,9 +26,16 @@ const PASS_LEDGER_KEY = 'nudge:passLedger';
 const TRACKER_STATE_KEY = 'nudge:tracker';
 const TEMP_ALLOW_KEY = 'nudge:tempAllow';
 const SEEN_ITEMS_KEY = 'nudge:seenItems';
+/**
+ * The synced YouTube subscriptions (`core/youtubeSubscriptions.ts`). `storage.local`, never
+ * sync: the list can run to hundreds of channels, and settings travel as ONE sync item
+ * under an 8 KB per-item quota, so folding it into settings would push every settings save
+ * past the quota for exactly the users with the most subscriptions.
+ */
+export const YT_SUBSCRIPTIONS_KEY = 'nudge:ytSubscriptions';
 
 /** Settings live in sync; a sync failure (quota, sync disabled) degrades to local. */
-export async function loadSettings(): Promise<NudgeSettings> {
+async function loadStoredSettings(): Promise<NudgeSettings> {
   try {
     const synced = await chrome.storage.sync.get(SETTINGS_KEY);
     if (synced[SETTINGS_KEY] !== undefined) return migrateSettings(synced[SETTINGS_KEY]);
@@ -34,8 +46,22 @@ export async function loadSettings(): Promise<NudgeSettings> {
   return migrateSettings(local[SETTINGS_KEY]);
 }
 
+/**
+ * Settings, with the synced YouTube subscriptions HYDRATED into every YouTube rule.
+ *
+ * Hydrating here is what lets every consumer (the DNR compiler, `buildSiteConfig`, the
+ * content scripts' config) read subscriptions through the ordinary
+ * `effectiveChannelLists` path with no plumbing of its own. `saveSettings` strips them
+ * again, so the list is never written into the settings blob.
+ */
+export async function loadSettings(): Promise<NudgeSettings> {
+  const [settings, subscriptions] = await Promise.all([loadStoredSettings(), loadSubscriptionState()]);
+  return withSubscribedChannels(settings, subscriptions.channels);
+}
+
 export async function saveSettings(settings: NudgeSettings): Promise<void> {
-  const normalized = migrateSettings(settings);
+  // The synced list lives under its own key; it never rides along in settings.
+  const normalized = withSubscribedChannels(migrateSettings(settings), []);
   // Always mirror to local so a later sync outage still reads current settings.
   await chrome.storage.local.set({ [SETTINGS_KEY]: normalized });
   try {
@@ -43,6 +69,20 @@ export async function saveSettings(settings: NudgeSettings): Promise<void> {
   } catch {
     // Sync unavailable or over quota — local mirror above is authoritative.
   }
+}
+
+/** The synced subscriptions and their sync status. An empty state when nothing is stored. */
+export async function loadSubscriptionState(): Promise<SubscriptionSyncState> {
+  try {
+    const stored = await chrome.storage.local.get(YT_SUBSCRIPTIONS_KEY);
+    return coerceSyncState(stored[YT_SUBSCRIPTIONS_KEY]);
+  } catch {
+    return emptySyncState();
+  }
+}
+
+export async function saveSubscriptionState(state: SubscriptionSyncState): Promise<void> {
+  await chrome.storage.local.set({ [YT_SUBSCRIPTIONS_KEY]: state });
 }
 
 function usageKey(dayKey: string): string {

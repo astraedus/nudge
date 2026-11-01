@@ -69,6 +69,8 @@ function config(overrides: Partial<ChannelConfig> = {}): ChannelConfig {
       disableAutoplay: false,
       creatorMode: false,
       myChannel: null,
+      allowSubscriptions: false,
+      subscribedChannels: [],
     },
     ...overrides,
   };

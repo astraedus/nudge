@@ -66,6 +66,7 @@ import {
   DEFAULT_DELAY_SECONDS,
   migrateSettings,
   newSiteRule,
+  withSubscribedChannels,
   type ChannelEntry,
   type GateSetting,
   type NudgeSettings,
@@ -84,6 +85,7 @@ import {
   loadDay,
   loadPassLedger,
   loadSettings,
+  loadSubscriptionState,
   saveSettings,
   savePassLedger,
   todayItemCount,
@@ -91,6 +93,7 @@ import {
 } from './storage';
 import { grantTempAllow, tempAllowedUntil } from './tempAllow';
 import { logBlocked, logWalkedAway, onActivityEvent } from './tracker';
+import { maybeAutoSync, subscriptionStatus, syncSubscriptions } from './youtubeSubscriptions';
 
 const PENDING_CHALLENGE_KEY = 'nudge:pendingChallenge';
 
@@ -508,7 +511,16 @@ async function handleSave(
   // A screen saves the whole object it loaded, which can predate an identifier the worker
   // learned since (`CHANNEL_OBSERVED`). Fold those back in BEFORE the lock judges the save,
   // so neither the data nor the verdict depends on how long a dashboard tab has been open.
-  const normalized = keepLearnedChannelIdentifiers(current, migrateSettings(next));
+  //
+  // The synced subscriptions are the WORKER's, never the caller's: whatever list a save
+  // carries (a stale tab's, or one a page made up) is replaced by the stored one, so a
+  // save can neither smuggle channels into the whitelist past the Commitment Lock nor
+  // erase a sync that landed after the screen loaded.
+  const stored = await loadSubscriptionState();
+  const normalized = withSubscribedChannels(
+    keepLearnedChannelIdentifiers(current, migrateSettings(next)),
+    stored.channels,
+  );
 
   if (current.strictMode.enabled && strict.isWeakening(current, normalized)) {
     const pending = (await loadPendingChallenge()) ?? strict.generate(
@@ -529,7 +541,19 @@ async function handleSave(
   await applyRules(normalized, now);
   await ensureScheduleAlarm(normalized, now);
   await onActivityEvent(now.getTime());
+  // Turning "Also allow channels I'm subscribed to" on syncs straight away, so the user sees
+  // their list (or why there is none) without having to visit YouTube first. Not awaited:
+  // the save is done, and the sync writes its own storage key when it lands.
+  if (subscriptionsJustEnabled(current, normalized)) void syncSubscriptions();
   return { ok: true };
+}
+
+function anySubscriptionsOn(settings: NudgeSettings): boolean {
+  return settings.rules.some((rule) => rule.features?.youtube?.allowSubscriptions === true);
+}
+
+function subscriptionsJustEnabled(before: NudgeSettings, after: NudgeSettings): boolean {
+  return !anySubscriptionsOn(before) && anySubscriptionsOn(after);
 }
 
 async function addSite(
@@ -740,8 +764,15 @@ export async function handleRequest(
       return handleSave(request.settings, request.challengeResponse, now);
     case 'GET_SETTINGS':
       return loadSettings();
-    case 'GET_SITE_CONFIG':
-      return buildSiteConfig(request.url, now);
+    case 'GET_SITE_CONFIG': {
+      const config = await buildSiteConfig(request.url, now);
+      // A youtube.com visit is the cue for the at-most-daily subscription refresh. Fire and
+      // forget: the page's config never waits on the network.
+      if (config.platform === 'youtube' && config.youtube?.allowSubscriptions === true) {
+        void maybeAutoSync();
+      }
+      return config;
+    }
     case 'ITEM_VIEWED':
       return handleItemViewed(request.url, now);
     case 'SET_GRAYSCALE':
@@ -764,6 +795,11 @@ export async function handleRequest(
       return handleVideoChannel(request.url, request.channelId, request.handle, now);
     case 'CLOSE_TAB':
       return closeSenderTab(sender);
+    case 'GET_YT_SUBSCRIPTIONS':
+      return subscriptionStatus();
+    case 'SYNC_YT_SUBSCRIPTIONS':
+      await syncSubscriptions();
+      return subscriptionStatus();
     default:
       return { ok: false, reason: 'unknown-request' };
   }

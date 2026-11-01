@@ -64,14 +64,14 @@ function youtubeOf(settings: NudgeSettings): NonNullable<NonNullable<SiteRule['f
 }
 
 describe('schema v5', () => {
-  it('is version 5', () => {
-    expect(SCHEMA_VERSION).toBe(5);
+  it('is at least version 5', () => {
+    expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(5);
   });
 
   it('upgrades a v4 install with creator mode OFF and no channel, keeping its whitelist', () => {
     const migrated = migrateSettings(blob(4, [youtubeRuleBlob(V4_YOUTUBE)]));
     const yt = youtubeOf(migrated);
-    expect(migrated.schemaVersion).toBe(5);
+    expect(migrated.schemaVersion).toBe(SCHEMA_VERSION);
     expect(yt.creatorMode).toBe(false);
     expect(yt.myChannel).toBeNull();
     expect(yt.channelMode).toBe('WHITELIST');

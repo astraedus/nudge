@@ -44,6 +44,8 @@ function config(
       disableAutoplay: false,
       creatorMode: false,
       myChannel: null,
+      allowSubscriptions: false,
+      subscribedChannels: [],
     },
     ...overrides,
   };
@@ -107,6 +109,8 @@ describe('staying quiet', () => {
         disableAutoplay: false,
         creatorMode: true,
         myChannel: { channelId: 'UCmine', handle: 'mine', displayName: 'Me', addedAt: 0 },
+        allowSubscriptions: false,
+        subscribedChannels: [],
       },
     });
     createVideoChannelReporter(report).observe(load(WATCH_ID_INLINE_HANDLE_DOM_HTML), implicit, {

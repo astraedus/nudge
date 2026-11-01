@@ -160,6 +160,27 @@ unit-testable, exactly as the Android domain layer is.
    (`survivesLimitCrossing`). Creator mode's IMPLICIT whitelist and BLACKLIST/OFF modes get
    no such exemption. Strict Mode: switching an existing list INTO a whitelist is a
    weakening (it allows every entry at once).
+   **Subscribed channels** (`allowSubscriptions`, schema v6, WHITELIST only, off by default):
+   the worker fetches `https://www.youtube.com/feed/channels` with the user's own cookies
+   (`credentials: 'include'`, host permission already held, NO new manifest permission),
+   parses `ytInitialData` (`core/youtubeSubscriptions.ts`, pure; header/shelf channels are
+   ignored, only the grid's `channelRenderer`s count), and follows continuations with a
+   cookie-only `youtubei/v1/browse` POST (no SAPISIDHASH; a refused page = `truncated:
+   'partial'`, the list so far is kept). Signed out = the request ends on
+   `accounts.google.com`, judged by the FINAL URL, not the status. The list lives in
+   `storage.local` under `nudge:ytSubscriptions` (never `storage.sync`: it is a derived,
+   private, up-to-500-entry blob), `loadSettings` hydrates it into the youtube rule through
+   `withSubscribedChannels`, `saveSettings` strips it, and `handleSave` replaces any list a
+   page carried with the stored one BEFORE the strict verdict (a page cannot smuggle
+   channels in). It reaches DNR and the watch gate ONLY through `effectiveChannelLists`, so
+   it inherits the limit exemption and `isWhitelistedVideoUrl` for free. Sync: on toggle ON,
+   on "Sync now", and at most daily on a youtube.com visit (`maybeAutoSync`); concurrent
+   syncs dedupe; a failure keeps the last list. Strict: ON while a whitelist (or switching
+   into a whitelist with the flag on) is a weakening; OFF is free; later syncs are not
+   judged (the consent was to "my subscriptions", not a snapshot). Export strips the list.
+   Packing: identifiers are packed into alternation groups under
+   `CHANNEL_ALTERNATION_BUDGET` characters so 500 subscriptions compile to a few hundred
+   rules, not 1000+.
 1d. **The priority ladder**: site redirect 1 < gate redirect 2 < channel allow 3 < temp allow 4.
    Rung 4 above rung 2 is deliberate — a pause completed ON a gate surface must not bounce
    straight back into that gate's redirect. The cost is that a site-level grant also opens
@@ -371,8 +392,13 @@ frame on every video you are trying not to be pulled into.
 
 ## Non-negotiables
 
-- **Zero network requests.** No telemetry, no remote config, no CDN. All selectors are
+- **Nothing leaves the browser.** No telemetry, no remote config, no CDN. All selectors are
   bundled. `no-restricted-globals` bans `fetch` in lint so this stays true, not aspirational.
+  The ONE exception is the opt-in subscriptions read (`background/youtubeSubscriptions.ts`,
+  one `eslint-disable` line): a GET of the user's own youtube.com page plus its continuation,
+  in their session, result kept in `storage.local`. Nothing of ours is sent anywhere. A
+  second exception needs the same shape (opt-in, off by default, first-party read, stays
+  local) and its own line in the onboarding copy and PRIVACY.md.
 - **Usage data never leaves the device.** Settings go to `storage.sync` (free cross-device
   sync via the user's Chrome account); usage rollups are `storage.local` ONLY.
 - Android naming parity: "Hard Block" / "Delay" / "Breathing", "Daily Time Limit",
@@ -610,6 +636,20 @@ xvfb), scoped with `paths: ['extension/**']`. The Android workflow carries the m
   suite and was caught only by the live after-matrix. **And an interstitial is keyed to the
   URL it was raised for** (`overlayFor`). One left up across a hop kept the hold pinned to
   the old URL, and completing it would have released the new video.
+- **DNR caps regex rules at 1000 per extension, and RE2 caps each regex's memory.** One allow
+  rule per channel URL stops scaling long before 500 subscriptions, and one giant
+  alternation is silently rejected (`isRegexSupported` says `memoryLimitExceeded` from
+  roughly 72 identifier characters in one `(a|b|c)` group). `core/youtubeAccess.ts` packs
+  identifiers into groups under `CHANNEL_ALTERNATION_BUDGET` (60); `tests/core/youtubeAccess.test.ts`
+  "channel packing" pins the rule count, the per-group budget and exact-match (no prefix
+  match, dots escaped) over 500 synthetic channels.
+- **`vi.unstubAllGlobals()` REMOVES WXT's fake `chrome`**, not just your stubs (WxtVitest
+  installs it as a stubbed global). Every later `chrome.*` then throws "chrome is not
+  defined". Stub `fetch` by assigning `globalThis.fetch` and restore the saved original in
+  `afterEach` instead.
+- **A "page cannot smuggle X in" test must assert on what is ENFORCED, not what is stored.**
+  The first smuggle test checked storage and passed with the guard deleted, because
+  `saveSettings` strips the list anyway; it now reads `getDynamicRules()`. Plant the defect.
 - The React Compiler advisory lint rules (`set-state-in-effect`,
   `preserve-manual-memoization`, `use-memo`) are deliberately **off**; `rules-of-hooks` is
   deliberately **on** and has already earned its keep.
