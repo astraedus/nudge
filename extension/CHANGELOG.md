@@ -6,6 +6,20 @@ independently-numbered products in one file invites the reader to match a `v1.17
 release against a `0.2.0` extension release and conclude something about both; the tag
 namespaces were already split for exactly that reason.
 
+## Unreleased
+
+### Changed
+
+- **"Also allow channels I'm subscribed to" now reads your whole subscription list**, not
+  just the first page. YouTube only hands out the rest of the list to a request signed with
+  your sign-in, the way its own page signs it, so Nudge asks for the next pages from inside a
+  YouTube tab you already have open and signs them there. Your sign-in is never stored, never
+  passed to the rest of the extension, and never sent anywhere but YouTube. Still no new
+  permission. If no YouTube tab is open when you press "Sync now", Nudge keeps the first page,
+  the settings say "The rest of your list loads next time you open YouTube.", and the list
+  finishes on your next visit; Nudge never opens a tab for you. If YouTube refuses a page, the
+  channels already read are kept and merged with your last list rather than replacing it.
+
 ## 0.5.0 — 2026-11-01
 
 ### Added

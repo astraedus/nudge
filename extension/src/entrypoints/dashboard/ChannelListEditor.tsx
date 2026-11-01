@@ -305,9 +305,11 @@ export function subscriptionSummaryText(status: SubscriptionSyncStatus, now: num
   return `${channels}, synced ${ago}`;
 }
 
-function subscriptionTruncationText(status: SubscriptionSyncStatus): string | null {
+/** Why the synced list may be short, in a line. Every `SyncTruncation` has one (tested). */
+export function subscriptionTruncationText(status: SubscriptionSyncStatus): string | null {
   if (status.truncated === 'cap') return `Only the first ${status.count} are allowed.`;
   if (status.truncated === 'partial') return 'Some may be missing: YouTube only sent part of your list.';
+  if (status.truncated === 'pending') return 'The rest of your list loads next time you open YouTube.';
   return null;
 }
 

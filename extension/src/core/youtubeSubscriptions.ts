@@ -4,7 +4,9 @@
  *
  * The worker (`background/youtubeSubscriptions.ts`) fetches
  * `https://www.youtube.com/feed/channels` in the user's OWN signed-in session (the existing
- * `<all_urls>` host permission, no new permission) and hands the HTML here. Nothing about
+ * `<all_urls>` host permission, no new permission) and hands the HTML here; later pages come
+ * back as browse JSON from a youtube.com tab that signed the request (`content/signedBrowse.ts`)
+ * and are parsed here too (`parseContinuationResponse`). Nothing about
  * the list ever leaves the browser: it is stored in `storage.local` and read only by the
  * channel-list code that already decides "may this channel play".
  *
@@ -19,13 +21,13 @@
  * the last good list, not silently allow nothing new and drop everything old.
  *
  * WHAT IS VERIFIED. The renderer shape (`channelId`, `title`, `navigationEndpoint.
- * browseEndpoint.canonicalBaseUrl`) is the documented one used by yt-dlp and friends; the
- * fixture in `tests/core/fixtures/` is built from that shape, not from a live signed-in
- * capture (no signed-in session was available when this shipped). The live check is in the
- * PR's QA list.
+ * browseEndpoint.canonicalBaseUrl`) is the documented one used by yt-dlp and friends, and
+ * `tests/core/fixtures/youtubeSubscriptionsCapture.ts` is a sanitized live signed-in capture
+ * of the page (2026-11-01). The signed-continuation probe is 2026-11-02 (extension/CLAUDE.md 1c).
  */
 
 import { SAFE_CHANNEL_IDENTIFIER } from './youtubeAccess';
+import { browseSession, type BrowseSession } from './signedBrowse';
 import type { ChannelEntry } from './settingsSchema';
 
 /** The page the worker fetches. Its own session's subscriptions, A-Z. */
@@ -51,6 +53,12 @@ export const MAX_CONTINUATION_PAGES = 25;
 export const AUTO_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000;
 /** After a failed attempt, an automatic retry waits at least this long. */
 export const AUTO_SYNC_RETRY_MS = 60 * 60 * 1000;
+/**
+ * A `pending` list (first page only, no youtube.com tab to read the rest from) is finished
+ * on the next youtube.com visit, but never retried more often than this: a floor against a
+ * page that keeps asking, not a wait the user should ever notice.
+ */
+export const PENDING_RETRY_MS = 60 * 1000;
 
 const CHANNEL_ID = /^UC[A-Za-z0-9_-]{22}$/;
 const CHANNEL_RENDERER_KEYS = ['channelRenderer', 'gridChannelRenderer'] as const;
@@ -60,6 +68,8 @@ export interface InnertubeConfig {
   apiKey: string | null;
   clientVersion: string | null;
   context: Record<string, unknown> | null;
+  /** Which signed-in session the page is for, so the next pages are the same list. */
+  session: BrowseSession;
 }
 
 export type SubscriptionsPage =
@@ -75,8 +85,14 @@ export type SubscriptionsPage =
 /** Why the last sync did not produce a list. */
 export type SyncError = 'signed-out' | 'unparseable' | 'network' | 'empty';
 
-/** Why the stored list may be shorter than the user's real subscriptions. */
-export type SyncTruncation = 'cap' | 'partial';
+/**
+ * Why the stored list may be shorter than the user's real subscriptions.
+ *
+ * `cap`: stopped at `MAX_SUBSCRIBED_CHANNELS`. `partial`: YouTube would not give the rest.
+ * `pending`: only the first page so far, because no youtube.com tab was open to read the
+ * rest from; the next youtube.com visit finishes it.
+ */
+export type SyncTruncation = 'cap' | 'partial' | 'pending';
 
 /** What the worker keeps in `storage.local`. */
 export interface SubscriptionSyncState {
@@ -161,11 +177,22 @@ export function extractLoggedIn(html: string): boolean | null {
   return match === null ? null : match[1] === 'true';
 }
 
+/** A ytcfg field that YouTube prints as a string or a bare number (`SESSION_INDEX`). */
+function stringOrNumberField(html: string, name: string): string | null {
+  const match = new RegExp(`"${name}"\\s*:\\s*(?:"([^"\\\\]*)"|(\\d+))`).exec(html);
+  return match?.[1] ?? match?.[2] ?? null;
+}
+
 export function extractInnertubeConfig(html: string): InnertubeConfig {
   return {
     apiKey: stringField(html, 'INNERTUBE_API_KEY'),
     clientVersion: stringField(html, 'INNERTUBE_CLIENT_VERSION'),
     context: parseObjectAfter(html, /"INNERTUBE_CONTEXT"\s*:\s*\{/),
+    session: browseSession({
+      userSessionId: stringField(html, 'USER_SESSION_ID'),
+      sessionIndex: stringOrNumberField(html, 'SESSION_INDEX'),
+      delegatedSessionId: stringField(html, 'DELEGATED_SESSION_ID'),
+    }),
   };
 }
 
@@ -397,7 +424,9 @@ export function mergeSubscriptionPages(
  * and a result of zero channels while a list is stored all keep the last good channels and
  * only record the error, because the one thing worse than a stale list of allowed channels
  * is a sync hiccup that silently blocks every one of them. (A user who really unsubscribed
- * from everything can turn the option off.)
+ * from everything can turn the option off.) The same holds for a read that stopped early
+ * (`partial`, `pending`): it adds what it read and drops nothing; only a whole read (or one
+ * that stopped at the cap) replaces the list.
  */
 export function applySyncOutcome(
   previous: SubscriptionSyncState,
@@ -408,8 +437,14 @@ export function applySyncOutcome(
   if (outcome.channels.length === 0 && previous.channels.length > 0) {
     return { ...previous, lastAttemptAt: now, error: 'empty' };
   }
+  // An incomplete read (YouTube stopped answering, or no youtube.com tab to read the rest
+  // from) is not evidence that the channels it did not reach were unsubscribed: they stay,
+  // after the ones just read, until a WHOLE read replaces the list.
+  const incomplete = outcome.truncated === 'partial' || outcome.truncated === 'pending';
   return {
-    channels: outcome.channels,
+    channels: incomplete
+      ? mergeSubscriptionPages([outcome.channels, previous.channels]).channels
+      : outcome.channels,
     syncedAt: now,
     lastAttemptAt: now,
     error: null,
@@ -422,15 +457,21 @@ export function applySyncOutcome(
  *
  * At most once per `AUTO_SYNC_INTERVAL_MS` after a success, and never more than once per
  * `AUTO_SYNC_RETRY_MS` after a failure, so a signed-out user is not fetched on every page.
+ * The exception is a `pending` list, which is due on the very next visit (floored at
+ * `PENDING_RETRY_MS`): finishing it needs a youtube.com tab, and a visit means there is one.
  */
 export function isAutoSyncDue(state: SubscriptionSyncState, now: number): boolean {
+  // A first page waiting for a youtube.com tab: this visit IS the tab it was waiting for.
+  if (state.truncated === 'pending' && state.error === null) {
+    return state.lastAttemptAt === null || now - state.lastAttemptAt >= PENDING_RETRY_MS;
+  }
   if (state.lastAttemptAt !== null && now - state.lastAttemptAt < AUTO_SYNC_RETRY_MS) return false;
   if (state.syncedAt === null) return true;
   return now - state.syncedAt >= AUTO_SYNC_INTERVAL_MS;
 }
 
 const SYNC_ERRORS: readonly SyncError[] = ['signed-out', 'unparseable', 'network', 'empty'];
-const TRUNCATIONS: readonly SyncTruncation[] = ['cap', 'partial'];
+const TRUNCATIONS: readonly SyncTruncation[] = ['cap', 'partial', 'pending'];
 
 function coerceTime(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;

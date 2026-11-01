@@ -4,6 +4,8 @@ import {
   AUTO_SYNC_INTERVAL_MS,
   AUTO_SYNC_RETRY_MS,
   MAX_SUBSCRIBED_CHANNELS,
+  PENDING_RETRY_MS,
+  extractInnertubeConfig,
   applySyncOutcome,
   channelFromRenderer,
   coerceSyncState,
@@ -25,6 +27,7 @@ import {
   INNERTUBE_CONTEXT,
   KURZGESAGT_ID,
   NO_HANDLE_ID,
+  USER_SESSION_ID,
   VERITASIUM_ID,
   channelRenderer,
   continuationResponse,
@@ -32,6 +35,7 @@ import {
   initialData,
   manyChannels,
   subscriptionsPageHtml,
+  ytcfg,
 } from './fixtures/youtubeSubscriptionsPage';
 import {
   CAPTURED_CHANNELS,
@@ -102,6 +106,11 @@ describe('parseSubscriptionsPage', () => {
     expect(page.continuation).toBe(CONTINUATION_TOKEN);
     expect(page.innertube.apiKey).toBe(API_KEY);
     expect(page.innertube.context).toEqual(INNERTUBE_CONTEXT);
+    expect(page.innertube.session).toEqual({
+      userSessionId: USER_SESSION_ID,
+      sessionIndex: '0',
+      delegatedSessionId: null,
+    });
   });
 
   it('reads the window["ytInitialData"] spelling too', () => {
@@ -215,8 +224,37 @@ describe('continuationRequestBody', () => {
   });
 
   it('builds a minimal WEB context when the page had none', () => {
-    const body = continuationRequestBody({ apiKey: null, clientVersion: '2.1', context: null }, 'tok');
+    const session = { userSessionId: null, sessionIndex: null, delegatedSessionId: null };
+    const body = continuationRequestBody({ apiKey: null, clientVersion: '2.1', context: null, session }, 'tok');
     expect(body).toEqual({ context: { client: { clientName: 'WEB', clientVersion: '2.1' } }, continuation: 'tok' });
+  });
+});
+
+describe('extractInnertubeConfig: which session the next pages are asked as', () => {
+  it('reads a numeric SESSION_INDEX and a brand-channel DELEGATED_SESSION_ID', () => {
+    const html = ytcfg(true, { DELEGATED_SESSION_ID: '118833771122', SESSION_INDEX: 1 }).replace('"SESSION_INDEX":"0",', '');
+    expect(extractInnertubeConfig(html).session).toEqual({
+      userSessionId: USER_SESSION_ID,
+      sessionIndex: '1',
+      delegatedSessionId: '118833771122',
+    });
+  });
+
+  it('is all null when the page says nothing (signed out)', () => {
+    expect(extractInnertubeConfig(ytcfg(false)).session).toEqual({
+      userSessionId: null,
+      sessionIndex: null,
+      delegatedSessionId: null,
+    });
+  });
+
+  it('drops a value that could break a header, field by field', () => {
+    const html = ytcfg(false, { USER_SESSION_ID: 'a b', SESSION_INDEX: '0', DELEGATED_SESSION_ID: 'x\\r\\nInjected: 1' });
+    expect(extractInnertubeConfig(html).session).toEqual({
+      userSessionId: null,
+      sessionIndex: '0',
+      delegatedSessionId: null,
+    });
   });
 });
 
@@ -278,12 +316,24 @@ describe('applySyncOutcome: a failure never wipes the list', () => {
     expect(next).toEqual({ channels: [], syncedAt: NOW, lastAttemptAt: NOW, error: null, truncated: null });
   });
 
-  it('a success replaces the list, clears the error and records truncation', () => {
+  it.each([null, 'cap'] as const)('a whole read (truncated: %s) replaces the list and clears the error', (truncated) => {
     const failed = { ...stored, error: 'network' as const };
     const channels = [entry('kurzgesagt', KURZGESAGT_ID)];
-    const next = applySyncOutcome(failed, { ok: true, channels, truncated: 'partial' }, NOW);
-    expect(next).toEqual({ channels, syncedAt: NOW, lastAttemptAt: NOW, error: null, truncated: 'partial' });
+    const next = applySyncOutcome(failed, { ok: true, channels, truncated }, NOW);
+    expect(next).toEqual({ channels, syncedAt: NOW, lastAttemptAt: NOW, error: null, truncated });
   });
+
+  it.each(['partial', 'pending'] as const)(
+    'a read that stopped early (%s) adds what it read and drops nothing it did not reach',
+    (truncated) => {
+      const channels = [entry('kurzgesagt', KURZGESAGT_ID), entry('veritasium', VERITASIUM_ID)];
+      const next = applySyncOutcome(stored, { ok: true, channels, truncated }, NOW);
+      expect(next.channels.map((c) => c.handle)).toEqual(['kurzgesagt', 'veritasium']);
+      const fresh = applySyncOutcome(stored, { ok: true, channels: [entry('kurzgesagt', KURZGESAGT_ID)], truncated }, NOW);
+      expect(fresh.channels.map((c) => c.handle)).toEqual(['kurzgesagt', 'veritasium']);
+      expect(fresh).toMatchObject({ syncedAt: NOW, error: null, truncated });
+    },
+  );
 });
 
 describe('isAutoSyncDue', () => {
@@ -305,6 +355,16 @@ describe('isAutoSyncDue', () => {
   it('after a failed attempt, waits the retry interval even when never synced (no fetch per page view)', () => {
     expect(isAutoSyncDue(synced(null, NOW - 60_000), NOW)).toBe(false);
     expect(isAutoSyncDue(synced(null, NOW - AUTO_SYNC_RETRY_MS), NOW)).toBe(true);
+  });
+
+  it('a pending list is due on the next visit, floored at PENDING_RETRY_MS, not after a day', () => {
+    const pending = { ...synced(NOW - 1000), truncated: 'pending' as const };
+    expect(isAutoSyncDue(pending, NOW)).toBe(false);
+    expect(isAutoSyncDue({ ...pending, lastAttemptAt: NOW - PENDING_RETRY_MS }, NOW)).toBe(true);
+    // A partial list is YouTube's answer, not a missing tab: the daily rhythm applies.
+    expect(isAutoSyncDue({ ...pending, truncated: 'partial', lastAttemptAt: NOW - PENDING_RETRY_MS }, NOW)).toBe(false);
+    // A pending list whose next attempt FAILED (e.g. signed out) backs off like any failure.
+    expect(isAutoSyncDue({ ...pending, error: 'signed-out', lastAttemptAt: NOW - PENDING_RETRY_MS }, NOW)).toBe(false);
   });
 });
 
@@ -335,6 +395,10 @@ describe('coerceSyncState: the stored state is repaired on read', () => {
     expect(state.lastAttemptAt).toBeNull();
     expect(state.error).toBeNull();
     expect(state.truncated).toBe('cap');
+  });
+
+  it.each(['cap', 'partial', 'pending'] as const)('keeps a stored truncation of %s', (truncated) => {
+    expect(coerceSyncState({ channels: [], truncated }).truncated).toBe(truncated);
   });
 
   it('round-trips a real state unchanged', () => {
