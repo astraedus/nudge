@@ -7,9 +7,9 @@ package com.astraedus.nudge.domain
  * Two independent signals:
  *  - [matchesDomain]: the URL's base domain (and any parent domains) is present
  *    in the bundled blocklist set.
- *  - [matchesKeyword]: a high-signal keyword appears as a substring of the raw
- *    URL text (catches search queries and unknown domains where the term is in
- *    the path/host/query).
+ *  - [matchesKeyword]: a high-signal keyword appears in the raw URL text, as a
+ *    substring or (for the short [BOUNDARY_KEYWORDS]) at a word boundary (catches
+ *    search queries and unknown domains where the term is in the path/host/query).
  *
  * Both skip browser-internal schemes (chrome://, about://, etc.) via
  * [WebDomainMatcher.extractDomain] / explicit scheme handling.
@@ -55,12 +55,11 @@ object ContentFilterMatcher {
      *  - Every token here is either a coined/brand term (xvideos, xhamster,
      *    redtube, brazzers, pornhub) that has no mainstream-word collision, or a
      *    long compound unlikely to appear inside a benign domain/path
-     *    ("camgirl", "gangbang"). "milf" / "hentai" / "nsfw" / "porn" / "xxx" are
-     *    strong and effectively never substrings of legitimate site URLs people
-     *    browse.
-     *  - "xxx" is kept because it is overwhelmingly adult-signalling; the only
-     *    benign collisions ("xxxl" sizing) are rare in URLs and acceptable.
-     *  - These are SUBSTRING matches on the full URL (host + path + query), so a
+     *    ("camgirl", "gangbang"). "hentai" / "nsfw" / "porn" are strong and
+     *    effectively never substrings of legitimate site URLs people browse.
+     *  - The short tokens that ARE the start of real words ("milf" in milford,
+     *    "xxx" in xxxl) are not in this substring set: see [BOUNDARY_KEYWORDS].
+     *  - The tokens below are SUBSTRING matches on the full URL (host + path + query), so a
      *    search like "google.com/search?q=porn" or an unknown domain
      *    "freepornsite.tld" is caught even when the domain isn't in the list.
      *
@@ -79,9 +78,8 @@ object ContentFilterMatcher {
      * as a whole word in a search query it is a strong signal, and it does not collide
      * with "fetishism"/"fetishist" under whole-word matching.
      */
-    val DEFAULT_KEYWORDS: List<String> = listOf(
+    private val SUBSTRING_KEYWORDS: List<String> = listOf(
         "porn",
-        "xxx",
         "nsfw",
         "xvideos",
         "xhamster",
@@ -95,7 +93,6 @@ object ContentFilterMatcher {
         "camgirl",
         "camsoda",
         "chaturbate",
-        "milf",
         "bukkake",
         "bdsm",
         "deepthroat",
@@ -133,6 +130,42 @@ object ContentFilterMatcher {
         "camwhore",
         "pornstar"
     )
+
+    /**
+     * Short tokens that are also the start of an innocent longer word, so they only count at a
+     * word boundary (issue #117). A raw substring match blocked `milford` (Milford, CT; Milford
+     * Sound, NZ), `milfoil` and `xxxl` (sizing) / `xxxtentacion`.
+     *
+     * A hit is real when the character on each side is not a letter: digits and separators
+     * (`. - _ / + ? = & #`), the start or end of the text, and a URL-encoded byte (`%20`, `%2F`)
+     * all count as boundaries, so `/milf/`, `milf-videos` and `?q=milf+x` still block. A single
+     * trailing "s" is tolerated (`milfs`).
+     *
+     * Accepted cost: a domain written as one run (`freemilfvideos.com`, `xxxvideos.com`) no longer
+     * matches here. The curated domain list is the place for those, per the curation policy in
+     * docs/architecture/content-filter.md.
+     *
+     * Membership: a token joins this set when it is short (<= 4 letters) AND a real word, name or
+     * place contains it. Coined tokens with no such collision stay in [SUBSTRING_KEYWORDS] so
+     * one-run domains keep blocking. Known collision left as a raw substring on purpose: "porn"
+     * (Pornichet, a French town) is the highest-signal token and most unknown adult domains are
+     * one-run `<word>porn<word>` names, so a boundary rule would gut the keyword layer.
+     */
+    val BOUNDARY_KEYWORDS: List<String> = listOf(
+        "milf",
+        "xxx"
+    )
+
+    /** Every built-in keyword: [SUBSTRING_KEYWORDS] match anywhere, [BOUNDARY_KEYWORDS] at a word boundary. */
+    val DEFAULT_KEYWORDS: List<String> = SUBSTRING_KEYWORDS + BOUNDARY_KEYWORDS
+
+    /**
+     * The boundary rule for one keyword. The lookbehind also accepts a preceding `%XX` escape,
+     * because the hex digit of `%2Dmilf` would otherwise read as a letter.
+     */
+    private val BOUNDARY_PATTERNS: Map<String, Regex> = BOUNDARY_KEYWORDS.associateWith {
+        Regex("""(?:(?<!\p{L})|(?<=%[0-9a-f]{2}))${Regex.escape(it)}s?(?!\p{L})""")
+    }
 
     /**
      * Ambiguous slang tokens that are dangerous as raw substring matches (e.g. "fetish"
@@ -213,15 +246,19 @@ object ContentFilterMatcher {
     }
 
     /**
-     * True if any keyword appears (case-insensitive substring) in the raw URL
-     * text. Skips browser-internal schemes and blank input.
+     * True if any keyword appears (case-insensitive) in the raw URL text: as a substring, except
+     * the [BOUNDARY_KEYWORDS], which must sit at a word boundary. Skips browser-internal schemes
+     * and blank input.
      */
     fun matchesKeyword(urlBarText: String, keywords: List<String>): Boolean {
         val trimmed = urlBarText.trim()
         if (trimmed.isBlank()) return false
         val lower = trimmed.lowercase()
         if (INTERNAL_SCHEME_PREFIXES.any { lower.startsWith(it) }) return false
-        return keywords.any { it.isNotBlank() && lower.contains(it.lowercase()) }
+        return keywords.any { kw ->
+            val k = kw.lowercase()
+            k.isNotBlank() && (BOUNDARY_PATTERNS[k]?.containsMatchIn(lower) ?: lower.contains(k))
+        }
     }
 
     /**

@@ -4,6 +4,9 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+### Fixed
+- The content filter no longer blocks ordinary places and words that merely contain a short built-in keyword: Milford (Connecticut, Milford Sound, Milford Haven), milfoil, XXXL sizing and the like. The short keywords now only match as a separate word (`/milf/`, `milf-videos` and searches still block). A site written as one run with the keyword inside it is no longer caught by the keyword layer alone; the curated site list covers those. Reported by @danieltsam. (#117)
+
 ## [1.23.0] - 2026-10-31
 
 Community release: thanks to @mrdivax, @danieltsam and @ErenDikkulah, who reported, argued for and built most of it.
