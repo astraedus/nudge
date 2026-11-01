@@ -108,8 +108,9 @@ appId: dev.astraedus.nudge
 - takeScreenshot: 05-debug-logging
 
 # ─── Prove the fixtures actually landed ───────────────────────────────────────
-# `ActiveRulesViewModel.buildSummaryText` renders a rule as "Delay 5s" and
-# "Not blocked · 1min limit". Asserting those strings checks the VALUES the later cases
+# `RuleSummary.buildSummaryText` renders a rule as "Delay 5s" and, for a NONE rule that only
+# caps the day, "1min limit". Manage Apps lists both under "Apps with rules" (Active Rules
+# merged into it in 1.24.0). Asserting those strings checks the VALUES the later cases
 # depend on, not merely that an import dialog said success.
 - pressKey: Back
 # "Nudge" is the Home top-bar title, so it is the right anchor here: Compose Navigation
@@ -124,11 +125,11 @@ appId: dev.astraedus.nudge
     direction: UP
 - tapOn: "Manage"
 - extendedWaitUntil:
-    visible: "Active Rules"
+    visible: "Search apps and groups"
     timeout: 15000
 - assertVisible: "YouTube"
 - assertVisible: "Delay 5s"
 - assertVisible: "Calculator"
-- assertVisible: "Not blocked · 1min limit"
-- takeScreenshot: 09-active-rules
+- assertVisible: "1min limit"
+- takeScreenshot: 09-manage-apps
 - pressKey: Back

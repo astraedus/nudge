@@ -1281,8 +1281,8 @@ case_daily_limit_refresh() {
   nudge_route_home
   ui_wait_text "Manage Apps" 5 || scroll_to_text "Manage Apps" 6
   ui_tap_text "Manage Apps" || return 1
-  ui_wait_text "Search apps..." 10 || { fail "the app list did not open"; return 1; }
-  ui_tap_text "Search apps..." || return 1
+  ui_wait_text "Search apps and groups" 10 || { fail "the app list did not open"; return 1; }
+  ui_tap_text "Search apps and groups" || return 1
   # A PREFIX, not the full name: the search field's own text is a node too, so typing
   # "Calculator" makes the field itself the first match for the app name.
   ash input text "Calcul" >/dev/null 2>&1
@@ -1346,7 +1346,7 @@ set_daily_limit_minutes() { # minutes
   nudge_route_home
   ui_wait_text "Manage Apps" 5 || scroll_to_text "Manage Apps" 6
   ui_tap_text "Manage Apps" 10 || return 1
-  ui_tap_text "Search apps..." 10 || return 1
+  ui_tap_text "Search apps and groups" 10 || return 1
   ash input text "Calcul" >/dev/null 2>&1
   sleep 2
   ash input keyevent KEYCODE_BACK >/dev/null 2>&1
