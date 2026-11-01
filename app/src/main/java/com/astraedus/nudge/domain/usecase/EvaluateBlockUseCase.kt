@@ -12,6 +12,7 @@ import com.astraedus.nudge.domain.WebDomainMatcher
 import com.astraedus.nudge.domain.engine.BlockEngine
 import com.astraedus.nudge.domain.engine.RuleEvaluator
 import com.astraedus.nudge.domain.engine.ScheduleEvaluator
+import com.astraedus.nudge.domain.engine.WholeAppCoverage
 import com.astraedus.nudge.domain.model.ActiveRule
 import com.astraedus.nudge.domain.model.BlockDecision
 import com.astraedus.nudge.domain.model.BlockMode
@@ -20,6 +21,7 @@ import com.astraedus.nudge.domain.nuke.NukeEnforcement
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
+import java.util.Calendar
 import javax.inject.Inject
 
 class EvaluateBlockUseCase @Inject constructor(
@@ -109,6 +111,25 @@ class EvaluateBlockUseCase @Inject constructor(
             detectedFeature = detectedFeature,
             includeWholeAppRulesForFeature = includeWholeAppRulesForFeature
         )
+    }
+
+    /**
+     * Is [packageName] covered right now by a whole-app GROUP rule ([WholeAppCoverage], spec 5.5)?
+     * The question that decides whether a BROWSER is evaluated as an app before its websites.
+     *
+     * Reads [ruleSnapshots] like every evaluation does, so it fails CLOSED exactly as they do: before
+     * the in-memory snapshot's first emission (or while its collector is failing) `current()` reads
+     * the tables directly. Answering from `RuleSnapshotSource.snapshot.value` instead would say "not
+     * covered" for that window, and Chrome in a hard-blocked group would open freely in the first
+     * moments after the process starts, while a cold Instagram in the same group is blocked.
+     */
+    suspend fun isCoveredWhole(packageName: String, now: Calendar = Calendar.getInstance()): Boolean {
+        val snapshot = ruleSnapshots.current()
+        return WholeAppCoverage.coversNow(
+            packageName = packageName,
+            rules = snapshot.ruleData,
+            memberships = snapshot.memberships
+        ) { rule -> scheduleEvaluator.isActiveAt(rule, now) }
     }
 
     /**

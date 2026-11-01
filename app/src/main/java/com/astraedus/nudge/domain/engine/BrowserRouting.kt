@@ -22,7 +22,8 @@ object BrowserRouting {
 
     /**
      * [coveredWhole] is "a whole-app group rule covers this browser now and the user has not earned
-     * their way past it" (the service's `isCoveredWholeNow`, minus a live whole-app grant).
+     * their way past it" (`EvaluateBlockUseCase.isCoveredWhole`, which is fail closed on a cold
+     * start, unless a live grant already lets the browser through).
      */
     fun route(coveredWhole: Boolean): Route = if (coveredWhole) Route.APP_FIRST else Route.WEB
 

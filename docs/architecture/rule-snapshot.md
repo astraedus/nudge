@@ -55,15 +55,16 @@ evaluation without reopening any table), and on the bench in the spec PR 1 devic
 
 ## The service's one synchronous read (spec 5.5)
 
-Every evaluation goes through the suspending `current()`. The one exception is
-`NudgeAccessibilityService.isCoveredWholeNow`, which asks "does a group rule cover this browser as a
-whole app right now?" from the event thread and the grant checks, where suspending or opening a
-query is not allowed. It reads `RuleSnapshotSource.snapshot.value` directly (the source is exposed
-on the service's Hilt entry point) and answers **false while it is null**. That is the one place a
-cold snapshot fails open, and it is bounded: for the first moments after process start a grouped
-browser gets website rules only, which is exactly what it got before spec 5.5. Anything that can
-suspend must keep using `current()`, which never fails open. Details: `web-domain-blocking.md`,
-"Browsers in a group".
+Every evaluation goes through the suspending `current()`, including the browser coverage question
+(`EvaluateBlockUseCase.isCoveredWhole`, which decides whether a browser is evaluated as an app), so
+a cold start is fail closed for a grouped browser exactly as for any app. The one synchronous read is
+`NudgeAccessibilityService.isCoveredWholeNow`, used only where suspending or opening a query is not
+allowed: the grant checks and the feature-detection guard on the event thread. It reads
+`RuleSnapshotSource.snapshot.value` directly (the source is exposed on the service's Hilt entry
+point) and answers **true for a browser while it is null**, so the grant check accepts only a
+whole-app grant until the snapshot is warm. Nothing reads `snapshot.value` and fails open. Anything
+that can suspend must keep using `current()`. Details: `web-domain-blocking.md`, "Browsers in a
+group".
 
 ## Group names
 

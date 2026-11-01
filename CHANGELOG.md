@@ -8,7 +8,7 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
 - Groups you can build: "Block several apps" on Manage Apps makes a named group (say, Social) and blocks all its apps with one rule: one mode, one wait, an optional daily limit for each app, all the time or on chosen days and times. Groups show on Manage Apps as "Social · 9 apps" with what they do and a switch. Tap one to change its apps or how it blocks, or to delete it.
 - An app that is in a blocking group shows "Also covered by Social" on its own settings, so it is clear why it is still blocked when its own switch is off. Tap the line to open the group.
 - With Strict Mode on, removing an app from a blocking group, softening the group's block, turning it off or deleting it asks for the challenge. Adding apps or making the block stricter never does.
-- A browser in a group is now blocked as an app, on any site, just as a browser with its own rule is.
+- A browser in a blocking group (Chrome in Social, say) is now blocked as an app, on any site, so it is no longer the way around the group. Finishing a website's countdown does not open a browser its group blocks. A browser's own rules still apply only to the websites they name.
 
 ### Removed
 - The old, unreachable groups screen.

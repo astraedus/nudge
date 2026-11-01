@@ -597,15 +597,20 @@ class NudgeAccessibilityService : AccessibilityService() {
      * holds; this only adds "is a browser" and the source of the rules.
      *
      * Synchronous and DB-free, like [isNukedNow]: it reads [RuleSnapshotSource.snapshot]'s current
-     * value. Before that snapshot's first emission (the few hundred milliseconds after the process
-     * starts) it is null and this answers FALSE, so for that window a browser in a group gets website
-     * rules only, exactly as before spec 5.5. Failing to "covered" instead would need the database
-     * read this must not make; the window is the same one [RuleSnapshotSource] documents for its own
-     * cold reads, and the next evaluation after it closes is correct.
+     * value. It serves the two SYNCHRONOUS sites only (the grant check [passthroughEarned] and the
+     * feature-detection guard). The decision to evaluate a browser as an app is made in
+     * [evaluateBrowser] through [EvaluateBlockUseCase.isCoveredWhole], which reads the tables
+     * directly when cold, exactly like every app evaluation.
+     *
+     * COLD (before the snapshot's first emission, or while its collector is failing) this answers
+     * TRUE for a browser: fail closed. At the grant site that means only a whole-app grant lets the
+     * browser skip evaluation, and [evaluateBrowser] then makes the real, table-backed decision; a
+     * browser that turns out not to be covered goes on to its website rules as always. Answering
+     * false would let a plain website grant open a browser its group hard-blocks.
      */
     private fun isCoveredWholeNow(packageName: String): Boolean {
         if (!entryPoint.webDomainDetector().isBrowser(packageName)) return false
-        val snapshot = entryPoint.ruleSnapshotSource().snapshot.value ?: return false
+        val snapshot = entryPoint.ruleSnapshotSource().snapshot.value ?: return true
         val schedule = entryPoint.scheduleEvaluator()
         return WholeAppCoverage.coversNow(
             packageName = packageName,
@@ -2153,9 +2158,9 @@ class NudgeAccessibilityService : AccessibilityService() {
             // For browsers, evaluate web domain blocking instead of (or alongside) app blocking.
             // Not for a NUKED browser: Nuke blocks the app itself, whatever site is open.
             // A browser a whole-app group rule covers is evaluated as an app first (spec 5.5);
-            // the passthrough above has already let an earned one through.
+            // the passthrough above has already let an earned one through, hence grantAlive = false.
             if (!nuked && entryPoint.webDomainDetector().isBrowser(packageName)) {
-                evaluateBrowser(packageName, coveredWhole = isCoveredWholeNow(packageName))
+                evaluateBrowser(packageName, grantAlive = false)
             } else {
                 val decision = entryPoint.evaluateBlockUseCase().invoke(packageName)
                 log.d("whole-app decision package=$packageName decision=$decision")
@@ -2250,10 +2255,17 @@ class NudgeAccessibilityService : AccessibilityService() {
      * ([PassthroughManager.isGrantedWhole]) and walking away goes home rather than back to a tab.
      * Only an Allow continues to the website's own rules.
      *
-     * @param coveredWhole the caller's [isCoveredWholeNow], minus any grant that already lets the
-     *   browser through.
+     * Coverage comes from [EvaluateBlockUseCase.isCoveredWhole], NOT the synchronous
+     * [isCoveredWholeNow]: it reads the rule tables directly while the in-memory snapshot is cold,
+     * so a browser in a hard-blocked group is blocked in the first moments after the process starts
+     * exactly like any other app in that group (fail closed).
+     *
+     * @param grantAlive a grant already lets the browser through (the caller's [grantAliveFor]); the
+     *   app evaluation is then skipped and only the website's rules run.
      */
-    private suspend fun evaluateBrowser(browserPackage: String, coveredWhole: Boolean) {
+    private suspend fun evaluateBrowser(browserPackage: String, grantAlive: Boolean) {
+        val coveredWhole = !grantAlive &&
+            entryPoint.evaluateBlockUseCase().isCoveredWhole(browserPackage)
         if (BrowserRouting.route(coveredWhole) == BrowserRouting.Route.APP_FIRST) {
             val decision = entryPoint.evaluateBlockUseCase()
                 .invoke(browserPackage, excludeDirectRules = true)
@@ -2592,12 +2604,13 @@ class NudgeAccessibilityService : AccessibilityService() {
             // same grant. Overlays cannot stack from here: under a live block overlay these events
             // never reach this method (the `isOverlayActive` branch above swallows them), the
             // re-check is debounced to `contentChangedDebounceMs`, and `BlockLaunchGate` drops a
-            // second launch of the same decision.
-            val coveredWhole = isCoveredWholeNow(packageName) && !grantAliveFor(packageName)
+            // second launch of the same decision. The grant is read HERE, on the event thread, like
+            // every other grant read; coverage itself is decided inside evaluateBrowser.
+            val grantAlive = grantAliveFor(packageName)
             serviceScope.launch {
                 val globalEnabled = entryPoint.nudgePreferences().isGlobalEnabled.first()
                 if (!globalEnabled) return@launch
-                evaluateBrowser(packageName, coveredWhole)
+                evaluateBrowser(packageName, grantAlive)
             }
             return
         }

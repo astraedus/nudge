@@ -14,8 +14,10 @@ import java.io.File
  * (real `AccessibilityService`, Hilt entry point, live windows), so this pins that it calls them,
  * the same tool `NukeWiringContractTest` uses for the same reason.
  *
- *  1. The foreground path routes a browser through `evaluateBrowser` with its coverage.
- *  2. The content-change browser branch does the same, minus a live grant.
+ *  1. The foreground path routes a browser through `evaluateBrowser`.
+ *  2. The content-change browser branch does the same, passing a live grant.
+ *  Coverage itself is decided inside `evaluateBrowser` by `EvaluateBlockUseCase.isCoveredWhole`,
+ *  which reads the tables directly while the snapshot is cold (fail closed, like every app).
  *  3. Feature detection steps aside for a covered browser.
  *  4. Both grant checks let a covered browser through only on a WHOLE-app grant.
  */
@@ -77,17 +79,15 @@ class GroupBrowserWiringContractTest {
             squashed.contains("if (!nuked && entryPoint.webDomainDetector().isBrowser(packageName)) {")
         )
         assertTrue(
-            squashed.contains(
-                "isBrowser(packageName)) { evaluateBrowser(packageName, coveredWhole = isCoveredWholeNow(packageName)) }"
-            )
+            squashed.contains("isBrowser(packageName)) { evaluateBrowser(packageName, grantAlive = false) }")
         )
         assertFalse("never straight to the website path", evaluateForeground.contains("evaluateWebDomain("))
     }
 
     @Test
     fun `site 2 - a content change in a covered browser re-checks it as an app unless a grant lets it through`() {
-        assertTrue(contentChanged.contains("isCoveredWholeNow(packageName) && !grantAliveFor(packageName)"))
-        assertTrue(contentChanged.contains("evaluateBrowser(packageName, coveredWhole)"))
+        assertTrue(contentChanged.contains("val grantAlive = grantAliveFor(packageName)"))
+        assertTrue(contentChanged.contains("evaluateBrowser(packageName, grantAlive)"))
         assertFalse("never straight to the website path", contentChanged.contains("evaluateWebDomain("))
     }
 
@@ -115,6 +115,14 @@ class GroupBrowserWiringContractTest {
     @Test
     fun `evaluateBrowser evaluates group rules only and blocks the browser itself`() {
         assertTrue(evaluateBrowser.contains("BrowserRouting.route(coveredWhole)"))
+        assertTrue(
+            "coverage comes from the use case, which falls back to a table read when cold",
+            squash(evaluateBrowser).contains("val coveredWhole = !grantAlive && entryPoint.evaluateBlockUseCase().isCoveredWhole(browserPackage)")
+        )
+        assertFalse(
+            "never the synchronous snapshot read, which cannot see the tables while cold",
+            evaluateBrowser.contains("isCoveredWholeNow(") || evaluateBrowser.contains("snapshot.value")
+        )
         assertTrue(evaluateBrowser.contains("excludeDirectRules = true"))
         assertTrue(evaluateBrowser.contains("BrowserRouting.continuesToWeb("))
         assertTrue(evaluateBrowser.contains("handleDecision(decision, browserPackage)"))
@@ -130,9 +138,11 @@ class GroupBrowserWiringContractTest {
     }
 
     @Test
-    fun `coverage reads the warm snapshot and asks the same schedule the engine does`() {
+    fun `the synchronous coverage read fails closed when cold and asks the same schedule the engine does`() {
         assertTrue(coverage.contains("isBrowser(packageName)"))
-        assertTrue(coverage.contains("ruleSnapshotSource().snapshot.value ?: return false"))
+        // Cold = "covered" for a browser: the grant site then accepts only a whole-app grant, and
+        // evaluateBrowser makes the real decision from the tables.
+        assertTrue(coverage.contains("ruleSnapshotSource().snapshot.value ?: return true"))
         assertTrue(coverage.contains("WholeAppCoverage.coversNow("))
         assertTrue(coverage.contains("isActiveNow("))
     }

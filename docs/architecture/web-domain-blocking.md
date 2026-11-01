@@ -39,9 +39,12 @@ the browser, with no in-app features (a feature rule blocks a part of an app, ne
 inside its schedule right now. The mode is NOT checked: a NONE group rule still covers, and its app
 evaluation simply allows and hands over to the website path.
 
-The flow, in `evaluateBrowser(browserPackage, coveredWhole)`:
+The flow, in `evaluateBrowser(browserPackage, grantAlive)`:
 
-1. `BrowserRouting.route(coveredWhole)` gives `APP_FIRST` or `WEB`.
+1. `coveredWhole = !grantAlive && EvaluateBlockUseCase.isCoveredWhole(browser)`, and
+   `BrowserRouting.route(coveredWhole)` gives `APP_FIRST` or `WEB`. `isCoveredWhole` reads the rules
+   through `RuleSnapshots.current()`, the same read every app evaluation uses, so it is fail closed
+   on a cold start (see below).
 2. On `APP_FIRST`, `EvaluateBlockUseCase.invoke(browser, excludeDirectRules = true)` evaluates the
    browser's GROUP rules only. A **direct** rule on a browser keeps its old meaning, web-only, so
    an existing "Chrome: block youtube.com" rule never starts blocking Chrome itself.
@@ -56,15 +59,25 @@ The four service sites:
 
 | Site | Where | What |
 |---|---|---|
-| 1 | `evaluateForegroundPackage` | the pinned `!nuked && isBrowser` branch calls `evaluateBrowser(packageName, coveredWhole = isCoveredWholeNow(packageName))` |
-| 2 | `handleWindowContentChanged`, browser branch | `coveredWhole = isCoveredWholeNow && !grantAliveFor`, so a schedule starting or a limit running out reaches a user who is still browsing; debounced 2 s, swallowed under a live overlay, deduped by `BlockLaunchGate` |
+| 1 | `evaluateForegroundPackage` | the pinned `!nuked && isBrowser` branch calls `evaluateBrowser(packageName, grantAlive = false)` (a grant already returned above) |
+| 2 | `handleWindowContentChanged`, browser branch | `evaluateBrowser(packageName, grantAlive = grantAliveFor(packageName))`, the grant read on the event thread, so a schedule starting or a limit running out reaches a user who is still browsing; debounced 2 s, swallowed under a live overlay, deduped by `BlockLaunchGate` |
 | 3 | `detectAndEvaluateFeature` | returns for a covered browser, right after the Nuke line (no browser is in `InAppDetector.SUPPORTED_PACKAGES` today; this pins the rule for the day one is) |
 | 4 | `grantLetsThrough` / `grantAliveFor` via `passthroughEarned` | a covered browser is let through only by a WHOLE-app grant (`PassthroughManager.isGrantedWhole`), so a finished website delay does not open a browser its group blocks |
 
-`isCoveredWholeNow` reads `RuleSnapshotSource.snapshot.value` synchronously (it runs on the event
-thread, which must not suspend or touch the database). While the snapshot is cold (null, the first
-moments after the process starts) it answers false, so for that window a grouped browser gets
-website rules only, as before 5.5. The next evaluation after the snapshot warms is correct.
+**Cold start fails closed.** The decision to evaluate a browser as an app is made by
+`EvaluateBlockUseCase.isCoveredWhole`, which reads `RuleSnapshots.current()`: before the in-memory
+snapshot's first emission (or while its collector is failing) that is a direct table read, so Chrome
+in a hard-blocked group is blocked in the first moments after the process starts exactly like
+Instagram in the same group. The first version read `snapshot.value` and answered "not covered"
+while it was null, which let a grouped browser open freely for that window; review
+caught it before merge.
+
+Sites 3 and 4 run on the event thread, which must not suspend or touch the database, so they keep
+the synchronous `isCoveredWholeNow` over `RuleSnapshotSource.snapshot.value`. Cold, it answers
+**true** for a browser: the grant check then accepts only a whole-app grant and `evaluateBrowser`
+makes the table-backed decision (a browser that turns out not to be covered goes on to its website
+rules as always), and feature detection steps aside for a browser that has no supported features
+anyway.
 
 Known edges, accepted:
 
@@ -74,7 +87,8 @@ Known edges, accepted:
 - While a covered browser is allowed, site 2 runs one in-memory app evaluation per 2 s debounce.
 
 Tests: `WholeAppCoverageTest` (L1, every condition), `PassthroughWholeAxisTest` (L1),
-`EvaluateBlockGroupRulesTest` (L3, `excludeDirectRules` and strictest-wins with a direct rule),
+`EvaluateBlockGroupRulesTest` (L3, `excludeDirectRules`, strictest-wins with a direct rule, and
+`isCoveredWhole` through a `RuleSnapshotSource` that never emits: a cold grouped browser is covered),
 `GroupBrowserCaptureReplayTest` (L2: `chrome-open-and-browse.jsonl` through the classifier and the
 routing; every Chrome evaluation blocks as an app, zero reach the website path, and the pre-fix
 routing never blocks), `GroupBrowserWiringContractTest` (the four sites).
