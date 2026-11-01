@@ -1,6 +1,7 @@
 package com.astraedus.nudge.domain.lock
 
 import com.astraedus.nudge.data.db.entity.BlockRule
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -584,6 +585,157 @@ class RuleWeakeningTest {
             RuleWeakening.isWeakening(
                 rule(delaySeconds = 15, keepPassOnShortTrips = false),
                 rule(delaySeconds = 60, keepPassOnShortTrips = true)
+            )
+        )
+    }
+
+    // ── target (spec PR 4) ──
+
+    private fun allApps(
+        exceptPackages: String? = null,
+        exceptGroupIds: String? = null,
+        days: String? = null,
+        start: Int? = null,
+        end: Int? = null,
+        mode: String = "HARD_BLOCK",
+        enabled: Boolean = true,
+        delaySeconds: Int = 15
+    ) = BlockRule(
+        mode = mode,
+        enabled = enabled,
+        delaySeconds = delaySeconds,
+        allApps = true,
+        exceptPackages = exceptPackages,
+        exceptGroupIds = exceptGroupIds,
+        scheduleDays = days,
+        scheduleStartMinute = start,
+        scheduleEndMinute = end
+    )
+
+    private fun groupRule(groupId: Long, days: String? = null, start: Int? = null, end: Int? = null) =
+        BlockRule(
+            groupId = groupId, mode = "DELAY", scheduleDays = days,
+            scheduleStartMinute = start, scheduleEndMinute = end
+        )
+
+    @Test
+    fun `changing the target between every pair of kinds is weakening`() {
+        val targets = listOf(
+            rule(),
+            rule().copy(packageName = "com.other"),
+            groupRule(1),
+            groupRule(2),
+            allApps()
+        )
+        for (old in targets) for (new in targets) {
+            val same = old === new
+            assertEquals("$old -> $new", !same, RuleWeakening.isWeakening(old, new))
+        }
+    }
+
+    @Test
+    fun `giving a targetless row a target is not weakening`() {
+        val none = BlockRule(mode = "DELAY")
+        assertFalse(RuleWeakening.isWeakening(none, rule()))
+        assertFalse(RuleWeakening.isWeakening(none, allApps()))
+        assertTrue(RuleWeakening.isWeakening(rule(), none))
+    }
+
+    // ── All apps except lists ──
+
+    @Test
+    fun `adding an allowed app is weakening`() {
+        assertTrue(RuleWeakening.isWeakening(allApps("com.a"), allApps("com.a,com.b")))
+        assertTrue(RuleWeakening.isWeakening(allApps(), allApps("com.a")))
+    }
+
+    @Test
+    fun `adding an allowed group is weakening`() {
+        assertTrue(RuleWeakening.isWeakening(allApps(exceptGroupIds = "1"), allApps(exceptGroupIds = "1,2")))
+        assertTrue(RuleWeakening.isWeakening(allApps(), allApps(exceptGroupIds = "3")))
+    }
+
+    @Test
+    fun `swapping one allowed app for another is weakening`() {
+        assertTrue(RuleWeakening.isWeakening(allApps("com.a"), allApps("com.b")))
+    }
+
+    @Test
+    fun `removing or reordering allowed apps and groups is free`() {
+        assertFalse(RuleWeakening.isWeakening(allApps("com.a,com.b"), allApps("com.a")))
+        assertFalse(RuleWeakening.isWeakening(allApps("com.a,com.b"), allApps("com.b,com.a")))
+        assertFalse(RuleWeakening.isWeakening(allApps("com.a"), allApps()))
+        assertFalse(RuleWeakening.isWeakening(allApps(exceptGroupIds = "1,2"), allApps(exceptGroupIds = "2")))
+        assertFalse(RuleWeakening.isWeakening(allApps(exceptGroupIds = "1,2"), allApps(exceptGroupIds = "2,1")))
+        assertFalse(RuleWeakening.isWeakening(allApps(exceptGroupIds = "1"), allApps()))
+    }
+
+    @Test
+    fun `adding an allowed app is weakening even while hardening the mode`() {
+        assertTrue(
+            RuleWeakening.isWeakening(allApps(mode = "DELAY"), allApps("com.a", mode = "HARD_BLOCK"))
+        )
+    }
+
+    @Test
+    fun `the existing axes apply to All apps rules`() {
+        assertTrue(RuleWeakening.isWeakening(allApps(), allApps(enabled = false)))
+        assertTrue(RuleWeakening.isWeakening(allApps(mode = "HARD_BLOCK"), allApps(mode = "DELAY")))
+        assertTrue(RuleWeakening.isWeakening(allApps(mode = "DELAY", delaySeconds = 30), allApps(mode = "DELAY")))
+        assertFalse(RuleWeakening.isWeakening(allApps(mode = "DELAY"), allApps(mode = "HARD_BLOCK")))
+        assertFalse(RuleWeakening.isWeakening(allApps(), allApps()))
+    }
+
+    // ── All apps window (All apps rules ONLY; app and group rules keep F6) ──
+
+    @Test
+    fun `All the time to scheduled is weakening`() {
+        assertTrue(RuleWeakening.isWeakening(allApps(), allApps(start = 9 * 60, end = 17 * 60)))
+        assertTrue(RuleWeakening.isWeakening(allApps(), allApps(days = "1,2,3,4,5")))
+    }
+
+    @Test
+    fun `scheduled to All the time is free`() {
+        assertFalse(RuleWeakening.isWeakening(allApps(days = "1,2", start = 540, end = 1020), allApps()))
+    }
+
+    @Test
+    fun `shortening the hours is weakening and lengthening them is free`() {
+        assertTrue(RuleWeakening.isWeakening(allApps(start = 540, end = 1020), allApps(start = 600, end = 1020)))
+        assertTrue(RuleWeakening.isWeakening(allApps(start = 540, end = 1020), allApps(start = 540, end = 1019)))
+        assertFalse(RuleWeakening.isWeakening(allApps(start = 600, end = 1020), allApps(start = 540, end = 1080)))
+    }
+
+    @Test
+    fun `dropping a day is weakening and adding one is free`() {
+        assertTrue(RuleWeakening.isWeakening(allApps(days = "1,2,3"), allApps(days = "1,2")))
+        assertFalse(RuleWeakening.isWeakening(allApps(days = "1,2"), allApps(days = "1,2,3")))
+        // Reordered days are the same window.
+        assertFalse(RuleWeakening.isWeakening(allApps(days = "3,1,2"), allApps(days = "1,2,3")))
+    }
+
+    @Test
+    fun `an overnight window compares by the minutes it covers`() {
+        // 22:00-06:00 every day contains 23:00-05:00, but not the other way round.
+        assertTrue(RuleWeakening.isWeakening(allApps(start = 1320, end = 360), allApps(start = 1380, end = 300)))
+        assertFalse(RuleWeakening.isWeakening(allApps(start = 1380, end = 300), allApps(start = 1320, end = 360)))
+        // Overnight to all day on the same days only adds minutes.
+        assertFalse(RuleWeakening.isWeakening(allApps(days = "5", start = 1320, end = 360), allApps(days = "5")))
+    }
+
+    @Test
+    fun `moving the window to other hours of the same length is weakening`() {
+        assertTrue(RuleWeakening.isWeakening(allApps(start = 540, end = 600), allApps(start = 600, end = 660)))
+    }
+
+    @Test
+    fun `a group or app rule's window edits stay free (F6)`() {
+        assertFalse(RuleWeakening.isWeakening(groupRule(1), groupRule(1, start = 540, end = 600)))
+        assertFalse(RuleWeakening.isWeakening(groupRule(1, days = "1,2,3"), groupRule(1, days = "1")))
+        assertFalse(
+            RuleWeakening.isWeakening(
+                rule(),
+                rule().copy(scheduleDays = "1", scheduleStartMinute = 540, scheduleEndMinute = 600)
             )
         )
     }

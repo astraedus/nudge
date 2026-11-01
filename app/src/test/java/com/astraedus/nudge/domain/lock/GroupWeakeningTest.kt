@@ -59,4 +59,79 @@ class GroupWeakeningTest {
         )
         assertEquals(GroupUsage.UNUSED, GroupUsage.of(5, rules))
     }
+
+    // -- every usage x every kind of edit (L1): the whole truth table of spec 5.6 --
+
+    @Test fun `every usage against join, leave, both and no change`() {
+        val joinOnly = g("a") to g("a", "b")
+        val leaveOnly = g("a", "b") to g("a")
+        val joinAndLeave = g("a", "b") to g("a", "c")
+        val noChange = g("a", "b") to g("a", "b")
+        // usage -> expected for (join, leave, join+leave, no change)
+        val expected = mapOf(
+            GroupUsage.UNUSED to listOf(false, false, false, false),
+            blocks to listOf(false, true, true, false),
+            allowed to listOf(true, false, true, false),
+            both to listOf(true, true, true, false)
+        )
+        for ((usage, want) in expected) {
+            val got = listOf(joinOnly, leaveOnly, joinAndLeave, noChange)
+                .map { (old, new) -> GroupWeakening.isWeakening(old, new, usage) }
+            assertEquals("usage $usage", want, got)
+        }
+    }
+
+    // -- GroupUsage.of with All apps rules (L1) --
+
+    private fun allApps(enabled: Boolean = true, exceptGroupIds: String?, exceptPackages: String? = null) =
+        BlockRule(
+            id = 9, mode = "HARD_BLOCK", enabled = enabled, allApps = true,
+            exceptGroupIds = exceptGroupIds, exceptPackages = exceptPackages
+        )
+
+    @Test fun `an enabled All apps rule that allows the group makes it allowedBy`() {
+        assertEquals(
+            GroupUsage(blocks = false, allowedBy = true),
+            GroupUsage.of(5, listOf(allApps(exceptGroupIds = "3,5")))
+        )
+    }
+
+    @Test fun `a disabled All apps rule that allows the group does not count`() {
+        assertEquals(GroupUsage.UNUSED, GroupUsage.of(5, listOf(allApps(enabled = false, exceptGroupIds = "5"))))
+    }
+
+    @Test fun `an All apps rule that allows other groups or only apps does not count`() {
+        val rules = listOf(
+            allApps(exceptGroupIds = "3,6"),
+            allApps(exceptGroupIds = null, exceptPackages = "com.five"),
+            allApps(exceptGroupIds = "55")
+        )
+        assertEquals(GroupUsage.UNUSED, GroupUsage.of(5, rules))
+    }
+
+    @Test fun `stale and unparseable ids in the except list do not make another group allowed`() {
+        // Group 7 was deleted; its id lingers. Group 5 must still read as unused.
+        assertEquals(GroupUsage.UNUSED, GroupUsage.of(5, listOf(allApps(exceptGroupIds = "7,x, ,"))))
+        // ...and the lingering id itself still reads as allowed for 7 (fail strict at the gate).
+        assertEquals(
+            GroupUsage(blocks = false, allowedBy = true),
+            GroupUsage.of(7, listOf(allApps(exceptGroupIds = "7,x, ,")))
+        )
+    }
+
+    @Test fun `a group both blocked and allowed has both uses`() {
+        val rules = listOf(
+            BlockRule(id = 1, groupId = 5, mode = "DELAY", enabled = true),
+            allApps(exceptGroupIds = "5")
+        )
+        assertEquals(GroupUsage(blocks = true, allowedBy = true), GroupUsage.of(5, rules))
+    }
+
+    @Test fun `a corrupt row naming a group and allApps is read as the group rule, not as allowing`() {
+        // RuleTarget.of reads the narrowest target, so this row blocks group 5 and allows nothing.
+        val corrupt = BlockRule(
+            id = 1, groupId = 5, mode = "DELAY", enabled = true, allApps = true, exceptGroupIds = "5"
+        )
+        assertEquals(GroupUsage(blocks = true, allowedBy = false), GroupUsage.of(5, listOf(corrupt)))
+    }
 }

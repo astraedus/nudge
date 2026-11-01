@@ -5,6 +5,8 @@ import com.astraedus.nudge.data.db.dao.BlockRuleDao
 import com.astraedus.nudge.data.db.entity.AppGroup
 import com.astraedus.nudge.data.db.entity.AppGroupMember
 import com.astraedus.nudge.data.db.entity.BlockRule
+import com.astraedus.nudge.domain.model.ExceptCsv
+import com.astraedus.nudge.domain.model.RuleTarget
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import javax.inject.Inject
@@ -34,9 +36,16 @@ class BlockRuleRepository @Inject constructor(
         }
     }
 
-    suspend fun addRule(rule: BlockRule): Long = blockRuleDao.insert(rule)
+    /**
+     * Insert one rule. Every write path checks the target invariant (exactly one of package, group,
+     * All apps, spec 5.1) and throws on a row that targets two things or nothing: such a row would
+     * be read as its narrowest target by the engine, which hides the caller bug instead of fixing
+     * it. An All apps rule is written as [normalizedAllAppsRule], exactly as [saveAllAppsRule]
+     * writes it.
+     */
+    suspend fun addRule(rule: BlockRule): Long = blockRuleDao.insert(checkedRow(rule))
 
-    suspend fun updateRule(rule: BlockRule) = blockRuleDao.update(rule)
+    suspend fun updateRule(rule: BlockRule) = blockRuleDao.update(checkedRow(rule))
 
     suspend fun deleteRule(id: Long) = blockRuleDao.deleteById(id)
 
@@ -58,16 +67,20 @@ class BlockRuleRepository @Inject constructor(
      * Create (rule.id == 0L) or update one All apps rule; returns its id. The rule must be an All
      * apps rule and nothing else: `allApps` set, no package, no group. Anything else is a caller
      * bug and throws, rather than writing a row that targets two things.
+     *
+     * Written through [normalizedAllAppsRule], so the options an All apps rule never offers (spec
+     * 3.4) can not ride in on a copied row or a hand-edited backup.
      */
     suspend fun saveAllAppsRule(rule: BlockRule): Long {
         require(rule.allApps && rule.packageName == null && rule.groupId == null) {
             "saveAllAppsRule needs an All apps rule with no package and no group"
         }
-        return if (rule.id == 0L) {
-            blockRuleDao.insert(rule)
+        val row = normalizedAllAppsRule(rule)
+        return if (row.id == 0L) {
+            blockRuleDao.insert(row)
         } else {
-            blockRuleDao.update(rule)
-            rule.id
+            blockRuleDao.update(row)
+            row.id
         }
     }
 
@@ -100,11 +113,49 @@ class BlockRuleRepository @Inject constructor(
         name: String,
         members: Set<String>,
         rule: BlockRule
-    ): Long = appGroupDao.saveGroupWithRule(groupId, name.trim(), members, rule)
+    ): Long {
+        // The DAO sets groupId and clears packageName, so the one way this row could target two
+        // things is the All apps flag.
+        require(!rule.allApps) { "saveGroup needs a group rule, not an All apps rule" }
+        return appGroupDao.saveGroupWithRule(groupId, name.trim(), members, rule)
+    }
 
     /** Delete the group, every member row and every rule that targets it, in one transaction. */
     suspend fun deleteGroupWithRules(groupId: Long) = appGroupDao.deleteGroupAndRules(groupId)
 
     suspend fun renameGroup(groupId: Long, name: String) =
         appGroupDao.renameGroup(groupId, name.trim())
+
+    private fun checkedRow(rule: BlockRule): BlockRule {
+        require(RuleTarget.isWellFormed(rule.packageName, rule.groupId, rule.allApps)) {
+            "A rule targets exactly one of an app, a group or all apps"
+        }
+        return if (rule.allApps) normalizedAllAppsRule(rule) else rule
+    }
 }
+
+/**
+ * The row an All apps rule is stored as. The editor offers mode, wait, days and times and the
+ * except lists, nothing else (spec 3.4), so every other option is forced off here, where every
+ * write path (editor, import, a copied row) passes:
+ *  - keep the pass on short trips: off. One pass would otherwise reopen every covered app.
+ *  - daily limit, auto-kick, reminder, counter, time remaining, grayscale, web domains, in-app
+ *    features, Following steer: cleared. They are per-app tools with no meaning across all apps.
+ * The except lists are rewritten in their one canonical form ([ExceptCsv]).
+ */
+internal fun normalizedAllAppsRule(rule: BlockRule): BlockRule = rule.copy(
+    keepPassOnShortTrips = false,
+    dailyLimitMinutes = null,
+    autoKickAfter = null,
+    autoKickAfterMinutes = null,
+    remindAfterMinutes = null,
+    showCounter = false,
+    showTimeRemaining = false,
+    grayscale = false,
+    webDomains = null,
+    webBlockMode = null,
+    inAppFeatures = null,
+    followingSteer = false,
+    exceptPackages = ExceptCsv.ofPackages(ExceptCsv.packages(rule.exceptPackages)),
+    exceptGroupIds = ExceptCsv.ofGroupIds(ExceptCsv.groupIds(rule.exceptGroupIds))
+)
