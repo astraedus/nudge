@@ -51,6 +51,10 @@ class UnifiedAppConfigViewModelTest {
 
         coEvery { installedAppsRepository.resolveAppName(any()) } returns "Instagram"
         every { nudgePreferences.isStrictModeEnabled } returns flowOf(false)
+        // "Also covered by" reads every group live; these tests are about the app's own rules.
+        every { blockRuleRepository.getAllGroups() } returns flowOf(emptyList())
+        every { blockRuleRepository.getAllGroupMembers() } returns flowOf(emptyList())
+        every { blockRuleRepository.getAllRules() } returns flowOf(emptyList())
     }
 
     private fun viewModel(rules: List<BlockRule> = emptyList()): UnifiedAppConfigViewModel {

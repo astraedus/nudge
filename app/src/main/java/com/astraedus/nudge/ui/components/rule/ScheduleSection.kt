@@ -48,6 +48,45 @@ fun ScheduleSection(
     trailing: @Composable ColumnScope.() -> Unit = {}
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        DaysAndTimesFields(
+            days = days,
+            onDaysChange = onDaysChange,
+            startHour = startHour,
+            startMinute = startMinute,
+            onStartTimeChange = onStartTimeChange,
+            endHour = endHour,
+            endMinute = endMinute,
+            onEndTimeChange = onEndTimeChange
+        )
+
+        BlockModeSegmentedRow(selected = mode, onSelect = onModeChange)
+
+        if (mode != BlockMode.HARD_BLOCK) {
+            WaitTimeChips(seconds = waitSeconds, onSelect = onWaitSecondsChange)
+        }
+
+        trailing()
+    }
+}
+
+/**
+ * The days and the window of a "days and times" schedule: day chips, then Start and End. Shared by
+ * App config's scheduled override (inside [ScheduleSection]) and the group editor's "When", so the
+ * two read the same (spec 3.3). Days are ISO day numbers (1 = Monday ... 7 = Sunday).
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun DaysAndTimesFields(
+    days: Set<Int>,
+    onDaysChange: (Set<Int>) -> Unit,
+    startHour: Int,
+    startMinute: Int,
+    onStartTimeChange: (Int, Int) -> Unit,
+    endHour: Int,
+    endMinute: Int,
+    onEndTimeChange: (Int, Int) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
             "Active days",
             style = MaterialTheme.typography.bodySmall,
@@ -69,14 +108,6 @@ fun ScheduleSection(
 
         TimeRow("Start time", startHour, startMinute, onStartTimeChange)
         TimeRow("End time", endHour, endMinute, onEndTimeChange)
-
-        BlockModeSegmentedRow(selected = mode, onSelect = onModeChange)
-
-        if (mode != BlockMode.HARD_BLOCK) {
-            WaitTimeChips(seconds = waitSeconds, onSelect = onWaitSecondsChange)
-        }
-
-        trailing()
     }
 }
 

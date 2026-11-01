@@ -1,6 +1,9 @@
 package com.astraedus.nudge.ui.screens.rules
 
 import com.astraedus.nudge.data.db.entity.BlockRule
+import com.astraedus.nudge.domain.model.BlockMode
+import com.astraedus.nudge.ui.screens.groups.GroupRuleForm
+import com.astraedus.nudge.ui.screens.groups.toRule
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -97,5 +100,38 @@ class BuildSummaryTextTest {
             listOf(rule(mode = "DELAY", delaySeconds = 15, scheduleStartMinute = 540))
         )
         assertEquals("Delay 15s · Scheduled", result)
+    }
+
+    // --- Group rows on Manage Apps (spec PR 2) ---
+
+    @Test
+    fun `group title counts its apps, singular for one`() {
+        assertEquals("Social · 9 apps", ActiveRulesViewModel.groupTitle("Social", 9))
+        assertEquals("Work · 1 app", ActiveRulesViewModel.groupTitle("Work", 1))
+        assertEquals("Empty · 0 apps", ActiveRulesViewModel.groupTitle("Empty", 0))
+    }
+
+    @Test
+    fun `a group with no rule of its own reads Not blocked`() {
+        assertEquals("Not blocked", ActiveRulesViewModel.groupSummaryText(null))
+    }
+
+    @Test
+    fun `a group rule saved by the editor reads in the same words as an app rule`() {
+        val saved = GroupRuleForm(
+            mode = BlockMode.DELAY,
+            waitSeconds = 15,
+            dailyLimitEnabled = true,
+            dailyLimitMinutes = 30,
+            scheduled = true
+        ).toRule(null).copy(groupId = 4L)
+
+        assertEquals("Delay 15s · 30min limit · Scheduled", ActiveRulesViewModel.groupSummaryText(saved))
+    }
+
+    @Test
+    fun `a hard-blocking group summarises as Hard Block`() {
+        val saved = BlockRule(groupId = 4L, mode = "HARD_BLOCK")
+        assertEquals("Hard Block", ActiveRulesViewModel.groupSummaryText(saved))
     }
 }
