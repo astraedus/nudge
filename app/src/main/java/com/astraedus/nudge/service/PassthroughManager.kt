@@ -1,5 +1,6 @@
 package com.astraedus.nudge.service
 
+import com.astraedus.nudge.domain.block.CompletionHandBack
 import com.astraedus.nudge.domain.events.ForegroundSignal
 import com.astraedus.nudge.domain.sitting.SittingEvent
 import com.astraedus.nudge.domain.sitting.SittingTracker
@@ -74,6 +75,32 @@ class PassthroughManager @Inject constructor() {
         sittingReaction = reaction
     }
 
+    /**
+     * Issue #119: a completed Delay whose reveal landed on Home instead of in the app. See
+     * [CompletionHandBack]. Lives here, beside the sitting, because the Home signal it intercepts is
+     * the one that would otherwise end the sitting and revoke the pass being handed back.
+     */
+    private val handBack = CompletionHandBack()
+
+    /**
+     * Bring the granted app forward. Registered by the accessibility service, which can start an
+     * activity from the background; returns false when it could not (no launch intent, no service),
+     * and then the Home signal is applied exactly as it always was.
+     */
+    @Volatile
+    private var handBackReaction: ((String) -> Boolean)? = null
+
+    /** Register the service's hand-back. Set on connect, cleared on destroy. */
+    fun setHandBackReaction(reaction: ((String) -> Boolean)?) {
+        handBackReaction = reaction
+    }
+
+    /** A block overlay is being launched: a completion before it no longer owns the next Home. */
+    fun cancelHandBack() = handBack.disarm()
+
+    /** The app a just-completed Delay is waiting to land in, if any. For logging and tests. */
+    val handBackPending: String? get() = handBack.armedPackage
+
     @Volatile var lastPackage: String? = null
         private set
     @Volatile var lastFeature: String? = null
@@ -97,12 +124,16 @@ class PassthroughManager @Inject constructor() {
      * @param keepPassOnShortTrips the rule that decided this block has "keep the pass on short
      *   trips" on (#110): a trip to the home screen then starts the sitting's away clock instead of
      *   ending it. See [SittingTracker.homeIsAbsence]. False is the shipped behaviour.
+     * @param completedAtMs when the Delay was completed, on the same MONOTONIC clock
+     *   [onForegroundSignal] is given. Non-null arms the #119 hand-back ([CompletionHandBack]) for an
+     *   app grant; a web grant never arms it. Null (the default) arms nothing.
      */
     fun grant(
         packageName: String,
         featureKey: String? = null,
         webDomain: String? = null,
-        keepPassOnShortTrips: Boolean = false
+        keepPassOnShortTrips: Boolean = false,
+        completedAtMs: Long? = null
     ) {
         // The sitting moves FIRST, and its transition is announced like any other, so a grant that
         // relocates the user from app A to app B resets A's counter state instead of leaking it.
@@ -111,6 +142,11 @@ class PassthroughManager @Inject constructor() {
         lastFeature = featureKey
         lastDomain = webDomain
         lastTime = System.currentTimeMillis()
+        if (completedAtMs != null && webDomain == null) {
+            handBack.arm(packageName, completedAtMs)
+        } else {
+            handBack.disarm()
+        }
         // Announced AFTER the grant is written, so the reaction observes the state the user is now
         // in. Deliberately NOT routed through `applyAndNotify`, whose job is revoking -- that would
         // clear the grant being handed out.
@@ -127,8 +163,18 @@ class PassthroughManager @Inject constructor() {
      * a future early return from re-creating issue #5, #7 or #28. Those bugs were all "a branch
      * returned before the thing that had to happen"; there is now nothing left to skip.
      */
-    fun onForegroundSignal(signal: ForegroundSignal, nowMs: Long): SittingEvent =
-        applyAndNotify(sitting.onSignal(signal, nowMs))
+    fun onForegroundSignal(signal: ForegroundSignal, nowMs: Long): SittingEvent {
+        // The one exception to "every signal reaches the sitting" (#119): the Home window that a
+        // just-completed Delay's reveal landed on is not the user leaving, it is the app's task
+        // having been lost under the overlay. If the app is brought back, that Home ends nothing.
+        // If it cannot be, the signal is applied below exactly as before, so this path fails into
+        // the old behaviour, never into a pass that outlives a real departure.
+        val handBackTo = handBack.onSignal(signal, nowMs)
+        if (handBackTo != null && handBackTo == lastPackage && handBackReaction?.invoke(handBackTo) == true) {
+            return SittingEvent.Unchanged
+        }
+        return applyAndNotify(sitting.onSignal(signal, nowMs))
+    }
 
     /**
      * The screen went off: start measuring the absence.
@@ -222,6 +268,7 @@ class PassthroughManager @Inject constructor() {
     }
 
     fun clear() {
+        handBack.disarm()
         lastPackage = null
         lastFeature = null
         lastDomain = null

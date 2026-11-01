@@ -164,7 +164,11 @@ class BlockOverlayActivity : ComponentActivity() {
                     packageName = passthroughPackage(intent),
                     featureKey = intent.getStringExtra(EXTRA_FEATURE_KEY),
                     webDomain = intent.getStringExtra(EXTRA_WEB_DOMAIN),
-                    keepPassOnShortTrips = intent.getBooleanExtra(EXTRA_KEEP_PASS_ON_SHORT_TRIPS, false)
+                    keepPassOnShortTrips = intent.getBooleanExtra(EXTRA_KEEP_PASS_ON_SHORT_TRIPS, false),
+                    // The sitting's clock (monotonic). Arms the #119 hand-back: if finishing reveals
+                    // Home rather than this app, the service brings the app back instead of letting
+                    // that Home revoke the pass just earned. See CompletionHandBack.
+                    completedAtMs = SystemClock.elapsedRealtime()
                 )
 
                 is OverlayLifecycle.Effect.ScheduleFailSafeFinish ->

@@ -204,13 +204,64 @@ rule: a letterboxed portrait-only app on a landscape tablet, and a dialog-themed
 app's only window, both read as floating. Both still end up blocked (cover plus BACK instead of the
 overlay), which is the safe direction.
 
+**Floating means STAYED floating-sized ([#119](https://github.com/astraedus/nudge/issues/119)).** One
+window list cannot tell a floating window from a fullscreen app that is still animating into place. On
+a Pixel 9a (GrapheneOS, Android 17), Clock resumed from Recents was listed at 868x1949 on a 1080x2424
+display, 80% on both axes, 17ms before its scale-up finished; the platform's own task record had it
+fullscreen throughout. The single-list rule pressed BACK on it, that destroyed Clock's only activity,
+its task was removed, and when the Delay completed the overlay finished onto Home, which revoked the
+pass. The "safe direction" above is not safe for this case: BACK is destructive. No size threshold
+fixes it, because a launch animation passes through every scale. So every floating decision in the
+service now goes through `FloatingWindowSettle` (`floatingVerdictFor`):
+
+- `observe(snapshot, now)` runs on every window read, BEFORE the snapshot is published, and tracks per
+  package since when it has been floating-sized and since when at its current bounds.
+- `verdict` is `Settled` once the bounds have held still for `SETTLE_MS` (750ms), or the package has
+  been floating-sized for `MAX_WAIT_MS` (2.5s) even while moving, so a window being dragged is still
+  covered, later. 750ms is above the 500ms after which `AccessibilityWindowsPopulator` forces out a
+  list it was holding back during continuous change (the capture logs it), so a still list really is
+  a still window. A package already under the cover stays `Settled` while it moves.
+- At the launch site, `Unsettled` blocks the target as FULLSCREEN (the ordinary overlay, no BACK, no
+  cover) and records it in `pendingFloatingTarget`, with a forced window re-read when it would settle.
+  `confirmPendingFloating` answers it on every read: gone or fullscreen (#119: our overlay occluded
+  Clock and it left the list) ends it; `Settled` with the block still up and no grant adds the cover.
+- The bypass check uses the settled verdict too. A fullscreen app animating back in over a live overlay
+  is a bypass, as it was before #71.
+
+What this costs #71: a real floating window gets the ordinary overlay first and the cover up to 750ms
+later, and by then the overlay usually holds focus, so the BACK press is skipped (`backTarget` needs
+the floating window focused) and the cover alone blocks it. That is the same position as the known gap
+below, not a new one. A positive "something is behind it" signal (a floating window floats OVER another
+app's window) was considered and rejected: #71 left no window capture from the OEM devices it is for,
+and a guess there could switch the cover off where it is needed. `FloatingSettleContractTest` pins
+that the service never asks a single list (`isFloating(`, `coverFor(`, `floatingBoundsOf(` are absent).
+
+**A completed Delay hands back to its app ([#119](https://github.com/astraedus/nudge/issues/119),
+defence in depth).** If the overlay's `finish()` reveals Home instead of the app, for whatever reason
+the app's task was lost, the next Home signal would end the sitting as `WENT_HOME` and revoke the pass
+the user just waited for. `PassthroughManager.grant(completedAtMs = …)` (stamped by
+`BlockOverlayActivity` on timer completion, app grants only) arms `CompletionHandBack`; the first app
+or home signal after it decides. The app's own window, or any other app's, disarms it. Home within
+`WINDOW_MS` (1.5s; the capture measured 139ms from `finish()` to the launcher's Home) makes the
+service start the app's launcher intent (`handBackToCompletedApp`, `NEW_TASK | RESET_TASK_IF_NEEDED`,
+what the icon does) and that one Home is not applied to the sitting. If nothing could be started, the
+Home is applied as before. Deliberately NOT unconditional (a launcher intent on top of a deep-link-rooted
+task restarts the app at its splash screen), NOT for web blocks (the browser's launch intent is not
+the page), and NOT for the walk-away (#26: it grants nothing, so nothing arms; a new block launch also
+disarms). Strict Mode is not weakened: the hand-back can only open the app whose pass the user has
+just earned, never Settings, so even a guard's Home that lands inside the window takes the user to
+that app and out of the escape route, which is all the guard asks. Pinned by `CompletionHandBackTest` and `PassthroughHandBackTest`
+(through the real `SittingTracker`, with the counterfactual that the same stream without the stamp
+revokes as `WENT_HOME`).
+
 **Known gap: the "Close window" button.** BACK goes to the focused window. When the overlay was just
 launched it holds focus, so the first tap can read as a walk-away on the overlay instead of closing
 the floating window. Unverified on a device which window gets focus after that; Recents always
 removes a floating window. Device QA case 4 in the PR is what settles it.
 
-Pinned by `WindowSnapshotTest`, `FloatingWindowCoverTest`, `WindowSnapshotReaderTest` and
-`WindowEvidenceTest` (which replays #76 through the real `SittingTracker`, with the counterfactual that
+Pinned by `WindowSnapshotTest`, `FloatingWindowCoverTest`, `FloatingWindowSettleTest` (the #119
+window sequence replayed, with the counterfactual that the single-list rule presses BACK on the same
+frame), `WindowSnapshotReaderTest` and `WindowEvidenceTest` (which replays #76 through the real `SittingTracker`, with the counterfactual that
 the same stream without window evidence revokes the grant).
 
 ## What a "sitting" is, and what it is not

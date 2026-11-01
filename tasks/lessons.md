@@ -1153,7 +1153,10 @@ was about (the target settling in front), never a retry timer.
 **Tooling:** `./gradlew lintDebug` failing with `NoClassDefFoundError` inside a lint DETECTOR
 (`NonNullableMutableLiveDataDetector`) is a stale build cache, not a finding in the diff --
 `rm -rf app/build/intermediates/lint*` and rerun. It appeared only after merging `origin/main` into
-a worktree whose lint model had already been built.
+a worktree whose lint model had already been built. Seen again 2026-11-01 (#119 lane, a Compose
+detector on an untouched `BlockedTrendChart.kt`, before AND after the merge-up): the shared Gradle
+daemon's cached lint classloader. `./gradlew --no-daemon lintDebug` passed first time, without
+touching another lane's daemon.
 
 ## Building the scripted device gate (`scripts/device-qa.sh`, 2026-09-29)
 
@@ -1487,3 +1490,17 @@ Two reports a week apart, a Samsung S24 Ultra (keyboard open, keyboard closed, r
   Close it by hand with the release link once the tag ships.
 - **The squash keeps the contributor as the author** even when we pushed most of the commits (#111),
   so adapting a PR on its own branch is how they keep the credit.
+
+## #119: a destructive action taken on ONE window list closed the app the user was waiting for (2026-11-01)
+
+- **A window list is a single frame of an animation.** #71's cover pressed BACK on any app window
+  under 85% of the display. A fullscreen app resumed from Recents is listed mid scale-up (Clock at
+  868x1949 of 1080x2424, 80%), so the BACK destroyed its task and the finished Delay revealed Home.
+  No threshold fixes this: a launch animation passes through every size. The fix is temporal
+  (`FloatingWindowSettle`: floating only after the bounds held still for 750ms), and the service is
+  source-pinned never to ask a single list (`FloatingSettleContractTest`).
+- **The bench did not reproduce it** (Pixel 3, Android 12); the field capture did (Pixel 9a,
+  Android 17). Window bounds are not in the EV jsonl, so the evidence was the service's own
+  `window-list` log lines. Any new window-geometry decision should log the bounds it acted on.
+- **Rule:** never take an irreversible action (BACK, HOME, kill) on one accessibility snapshot of
+  a window's geometry; require it to hold across time, and fail toward the non-destructive block.

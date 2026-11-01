@@ -52,7 +52,9 @@ import com.astraedus.nudge.ui.lock.StrictModeGuardActivity
 import com.astraedus.nudge.ui.overlay.BlockOverlayActivity
 import com.astraedus.nudge.ui.overlay.PipEscapeActivity
 import com.astraedus.nudge.domain.windows.FloatingCoverEffect
+import com.astraedus.nudge.domain.windows.FloatingVerdict
 import com.astraedus.nudge.domain.windows.FloatingWindowCover
+import com.astraedus.nudge.domain.windows.FloatingWindowSettle
 import com.astraedus.nudge.domain.windows.WindowBounds
 import com.astraedus.nudge.domain.windows.WindowKind
 import com.astraedus.nudge.domain.windows.WindowSnapshot
@@ -638,6 +640,22 @@ class NudgeAccessibilityService : AccessibilityService() {
     private val windowReadHandler by lazy { Handler(Looper.getMainLooper()) }
 
     /**
+     * How long each package has been floating-sized (issue #119). Fed on every window read, before
+     * [windowSnapshot] is published, and asked by every floating decision: one window list cannot
+     * tell a floating window from a fullscreen app still animating into place.
+     */
+    private val floatingSettle = FloatingWindowSettle()
+
+    /**
+     * A blocked package that was floating-SIZED when its block launched but not yet settled
+     * (#119). The ordinary overlay went up instead; [confirmPendingFloating] re-reads the window
+     * list once the window has had time to settle and adds the #71 cover only if it really is a
+     * floating window. Written from the launch path (background) and the main thread.
+     */
+    @Volatile private var pendingFloatingTarget: String? = null
+    private val confirmPendingFloatingRead = Runnable { refreshWindowState(force = true) }
+
+    /**
      * The cover over a blocked app's floating window (issue #71). A plain instance rather than an
      * injected singleton: it has one owner, this service, and needs this service's context and its
      * global BACK action.
@@ -789,6 +807,8 @@ class NudgeAccessibilityService : AccessibilityService() {
         }
         lastWindowReadAt = now
         val snapshot = windowSnapshotReader.read()
+        // Observed BEFORE it is published, so any snapshot a floating decision reads has a history.
+        floatingSettle.observe(snapshot, now)
         windowSnapshot = snapshot
         val description = WindowSnapshotReader.describe(snapshot)
         if (description != lastWindowDescription) {
@@ -797,6 +817,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         }
         refreshPipOnlyPackages(snapshot)
         maintainFloatingCover(snapshot)
+        confirmPendingFloating(snapshot, now)
     }
 
     /**
@@ -827,15 +848,40 @@ class NudgeAccessibilityService : AccessibilityService() {
     }
 
     /**
+     * The settled floating verdict for [packageName] against the current window list (#119). Every
+     * floating decision in this service goes through here, never through a bare
+     * `WindowSnapshot.isFloating`: one list cannot tell a floating window from a launch animation.
+     */
+    private fun floatingVerdictFor(packageName: String, snapshot: WindowSnapshot? = windowSnapshot): FloatingVerdict =
+        floatingSettle.verdict(
+            snapshot = snapshot,
+            packageName = packageName,
+            nowMs = android.os.SystemClock.uptimeMillis(),
+            covered = floatingCover.coveredPackage() == packageName
+        )
+
+    /**
      * A block is about to be shown for [targetPackage]. If it is FLOATING (issue #71), the overlay
      * alone cannot block it: cover the window, and press BACK on it once while it holds focus.
+     *
+     * Only once the window has SETTLED at a floating size (#119). A window that is merely
+     * floating-sized right now may be a fullscreen app caught mid-launch-animation, and BACK on that
+     * destroys the activity the user is waiting to enter. That case gets the ordinary overlay, and
+     * [confirmPendingFloating] adds the cover later if the window turns out to be floating after all.
      *
      * @return true when the target is floating, so the caller can skip relaunching an overlay that
      *   is already up underneath it.
      */
     private fun coverIfFloating(targetPackage: String): Boolean {
         val snapshot = windowSnapshot
-        val bounds = FloatingWindowCover.coverFor(snapshot, targetPackage) ?: return false
+        val bounds = when (val verdict = floatingVerdictFor(targetPackage, snapshot)) {
+            FloatingVerdict.NotFloating -> return false
+            is FloatingVerdict.Unsettled -> {
+                deferFloatingCover(targetPackage, verdict)
+                return false
+            }
+            is FloatingVerdict.Settled -> verdict.bounds
+        }
         // BACK FIRST, before the cover and before any overlay launch: it goes to the window with
         // input focus, and the overlay activity will take focus the moment it starts. Pressed on
         // the overlay instead, BACK would read as a walk-away.
@@ -846,6 +892,52 @@ class NudgeAccessibilityService : AccessibilityService() {
         }
         floatingCover.apply(FloatingCoverEffect.Show(targetPackage, bounds))
         return true
+    }
+
+    /**
+     * [targetPackage] is floating-sized but unsettled: block it as fullscreen now, and re-read the
+     * window list once it has had time to settle. Safe from any thread (Handler posts are).
+     */
+    private fun deferFloatingCover(targetPackage: String, verdict: FloatingVerdict.Unsettled) {
+        pendingFloatingTarget = targetPackage
+        log.i(
+            "floating-sized window not settled, blocking as fullscreen package=$targetPackage " +
+                "bounds=${verdict.bounds.width}x${verdict.bounds.height} recheckInMs=${verdict.recheckInMs}"
+        )
+        windowReadHandler.removeCallbacks(confirmPendingFloatingRead)
+        windowReadHandler.postDelayed(confirmPendingFloatingRead, verdict.recheckInMs)
+    }
+
+    /**
+     * Settle the question [deferFloatingCover] left open, on every window read until it is answered.
+     *
+     *  - No longer floating: it was a fullscreen app animating in (#119's Clock, which our own overlay
+     *    then occluded). The ordinary overlay was the right block. Nothing to do.
+     *  - Still unsettled: ask again later.
+     *  - Settled: it is a real floating window (#71). Cover it, if its block is still up and the
+     *    user has not earned their way in meanwhile.
+     */
+    private fun confirmPendingFloating(snapshot: WindowSnapshot?, nowMs: Long) {
+        val target = pendingFloatingTarget ?: return
+        when (val verdict = floatingSettle.verdict(snapshot, target, nowMs)) {
+            FloatingVerdict.NotFloating -> {
+                pendingFloatingTarget = null
+                log.i("floating-sized window settled as not floating package=$target")
+            }
+            is FloatingVerdict.Unsettled -> {
+                windowReadHandler.removeCallbacks(confirmPendingFloatingRead)
+                windowReadHandler.postDelayed(confirmPendingFloatingRead, verdict.recheckInMs)
+            }
+            is FloatingVerdict.Settled -> {
+                pendingFloatingTarget = null
+                if (isOverlayActive && !grantAliveFor(target)) {
+                    log.i("floating-sized window settled as floating, covering package=$target")
+                    coverIfFloating(target)
+                } else {
+                    log.d("floating window settled with no live block package=$target")
+                }
+            }
+        }
     }
 
     /**
@@ -966,6 +1058,34 @@ class NudgeAccessibilityService : AccessibilityService() {
     }
 
     /**
+     * A Delay for [packageName] was just completed, but the overlay finished onto the home screen:
+     * the app's task was gone underneath it (#119). Open the app, as a tap on its icon would, so the
+     * pass the user waited for is spent where they meant to spend it. Decided by
+     * [com.astraedus.nudge.domain.block.CompletionHandBack]; this only executes it.
+     *
+     * The launcher's own intent and flags, so an existing task is brought forward rather than a
+     * second one started. A bound accessibility service is exempt from background-activity-start
+     * limits, which is also how this service launches the block overlay.
+     *
+     * @return false when nothing was started, and the caller then applies the Home as usual.
+     */
+    private fun handBackToCompletedApp(packageName: String): Boolean {
+        val launch = packageManager.getLaunchIntentForPackage(packageName) ?: run {
+            log.w("delay completed onto home, no launch intent package=$packageName")
+            return false
+        }
+        launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
+        return try {
+            startActivity(launch)
+            log.i("delay completed onto home, handing back to the app package=$packageName")
+            true
+        } catch (e: Exception) {
+            log.w("delay completed onto home, hand-back failed package=$packageName", e)
+            false
+        }
+    }
+
+    /**
      * The user pressed Home: drop the post-overlay passthrough (and the web-domain equivalent) for
      * whatever app they were in, so re-opening it gets a fresh block.
      *
@@ -983,6 +1103,9 @@ class NudgeAccessibilityService : AccessibilityService() {
      * second piece of state means a second thing to remember to clear" trap that
      * `docs/architecture/foreground-detection.md` documents, and which left the web grant alive
      * across Home until v1.15.2. What remains is the web CLOCK, which is not a grant.
+     *
+     * One Home does not revoke (#119): the one a just-completed Delay's reveal landed on, when
+     * [handBackToCompletedApp] brought the app back. The grant survives it on purpose.
      */
     private fun onWentHome(packageName: String) {
         log.d(
@@ -1038,6 +1161,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         // never left. Same gap, opposite safe answers.
         entryPoint.blockLaunchGuard().reset()
         entryPoint.passthroughManager().setSittingReaction(::onSittingEvent)
+        entryPoint.passthroughManager().setHandBackReaction(::handBackToCompletedApp)
 
         entryPoint.counterOverlayManager().setServiceContext(this)
         entryPoint.timeRemainingOverlayManager().setServiceContext(this)
@@ -1441,8 +1565,12 @@ class NudgeAccessibilityService : AccessibilityService() {
             // bypass relaunched the overlay underneath the window on every touch, forever. It falls
             // through to evaluation instead WITHOUT dropping the overlay, so a blocked floating app
             // reaches `launchBlockOverlay`, which covers its window rather than relaunching.
+            //
+            // ...and only a window that has SETTLED as floating (#119). A fullscreen app animating
+            // back in over the overlay is floating-sized for a few frames; reading that as "not a
+            // bypass" would leave the user in the app with the overlay gone and the flag still up.
             val floating = signal is ForegroundSignal.AppWindow &&
-                windowSnapshot?.isFloating(signal.packageName) == true
+                floatingVerdictFor(signal.packageName) is FloatingVerdict.Settled
             if (entryPoint.blockLaunchGuard().isGenuineBypass(record.type, signal, floating)) {
                 markOverlayInactive()
                 log.i(
@@ -2900,6 +3028,9 @@ class NudgeAccessibilityService : AccessibilityService() {
         // authoritative even if the singleInstance activity is re-delivered via onNewIntent
         // (which never re-runs onCreate).
         markOverlayActive(attributedPackage)
+        // A new block owns what happens next: a Delay completed before it must not read this
+        // block's go-home as its own reveal landing on Home (#119).
+        entryPoint.passthroughManager().cancelHandBack()
         // A wall, for the bounce check-in: the app the user was actually IN (the browser, for a
         // website block) and, when it is a website, the site. Every overlay in this service passes
         // through here exactly once per launch the gate allows, which is what makes this the one
@@ -3258,6 +3389,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         }
         teardown.step("unregister_screen_off_receiver") { unregisterReceiver(screenOffReceiver) }
         teardown.step("clear_sitting_reaction") { entryPoint.passthroughManager().setSittingReaction(null) }
+        teardown.step("clear_hand_back_reaction") { entryPoint.passthroughManager().setHandBackReaction(null) }
         teardown.step("clear_counter_overlay") { entryPoint.counterOverlayManager().clearServiceContext() }
         teardown.step("clear_time_remaining_overlay") {
             entryPoint.timeRemainingOverlayManager().clearServiceContext()
@@ -3268,6 +3400,8 @@ class NudgeAccessibilityService : AccessibilityService() {
         teardown.step("cancel_window_reads") {
             windowReadHandler.removeCallbacksAndMessages(null)
             trailingWindowReadPosted = false
+            pendingFloatingTarget = null
+            floatingSettle.reset()
         }
         teardown.step("clear_passthrough_instance") { passthroughManagerInstance = null }
         teardown.step("disable_grayscale") {
