@@ -31,6 +31,13 @@ interface AppGroupDao {
     @Query("SELECT * FROM app_group_members WHERE groupId = :groupId")
     fun getMembersForGroup(groupId: Long): Flow<List<AppGroupMember>>
 
+    /**
+     * Every membership row in one query. The engine's rule snapshot (`RuleSnapshotSource`) watches
+     * this instead of opening one [getMembersForGroup] query per group on every evaluation.
+     */
+    @Query("SELECT * FROM app_group_members")
+    fun getAllMembers(): Flow<List<AppGroupMember>>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun addMember(member: AppGroupMember)
 

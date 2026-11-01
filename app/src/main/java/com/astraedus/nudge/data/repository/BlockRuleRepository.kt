@@ -59,4 +59,7 @@ class BlockRuleRepository @Inject constructor(
 
     fun getGroupMembers(groupId: Long): Flow<List<AppGroupMember>> =
         appGroupDao.getMembersForGroup(groupId)
+
+    /** Every group's members, one query. See [RuleSnapshotSource]. */
+    fun getAllGroupMembers(): Flow<List<AppGroupMember>> = appGroupDao.getAllMembers()
 }
