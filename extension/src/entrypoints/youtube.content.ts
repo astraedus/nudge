@@ -17,6 +17,7 @@
 import '../content/youtube.css';
 import { startItemViewCounter } from '../content/itemCounter';
 import { initYoutubeContentScript } from '../content/youtube';
+import { registerSignedBrowseListener } from '../content/signedBrowse';
 
 export default defineContentScript({
   matches: ['*://*.youtube.com/*'],
@@ -48,6 +49,11 @@ export default defineContentScript({
     // everything the controller does, and if the controller ever throws on an unfamiliar
     // page shape, the budget the user set must still be measured rather than silently
     // stopping for as long as that page is open.
+    // First of all, and independent of everything below: answering the worker's signed
+    // "load more" requests for the opt-in subscriptions list (`content/signedBrowse.ts`).
+    // Registered on EVERY youtube.com page, including an allowed /watch page while the rest
+    // of YouTube is blocked, which may be the only youtube.com tab the user has open.
+    const stopSignedBrowse = registerSignedBrowseListener();
     const itemCounter = startItemViewCounter({
       platform: 'youtube',
       navEvent: 'yt-navigate-finish',
@@ -56,6 +62,7 @@ export default defineContentScript({
     // An extension reload leaves the old script alive on the page; without this it keeps
     // its observer and interval running against a dead message port.
     ctx.onInvalidated(() => {
+      stopSignedBrowse();
       controller.stop();
       itemCounter.stop();
     });

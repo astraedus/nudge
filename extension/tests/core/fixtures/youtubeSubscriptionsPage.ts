@@ -139,10 +139,19 @@ const INNERTUBE_CONTEXT = {
   user: { lockedSafetyMode: false },
 };
 
-export function ytcfg(loggedIn: boolean): string {
+/** A made-up `USER_SESSION_ID` (the live one is 21 digits, 2026-11-02). */
+export const USER_SESSION_ID = '104729384756102938475';
+
+/**
+ * The page's ytcfg. The session fields are the live page's spellings (2026-11-02):
+ * `SESSION_INDEX` is a string, `DELEGATED_SESSION_ID` is absent for a personal channel.
+ */
+export function ytcfg(loggedIn: boolean, extra: Record<string, unknown> = {}): string {
+  const session = loggedIn ? `,"SESSION_INDEX":"0","USER_SESSION_ID":"${USER_SESSION_ID}"` : '';
+  const more = Object.entries(extra).map(([k, v]) => `,"${k}":${JSON.stringify(v)}`).join('');
   return `ytcfg.set({"INNERTUBE_API_KEY":"${API_KEY}","INNERTUBE_CLIENT_VERSION":"2.20261030.01.00","INNERTUBE_CONTEXT":${JSON.stringify(
     INNERTUBE_CONTEXT,
-  )},"LOGGED_IN":${loggedIn},"PAGE_CL":123456});`;
+  )},"LOGGED_IN":${loggedIn}${session}${more},"PAGE_CL":123456});`;
 }
 
 export { INNERTUBE_CONTEXT };

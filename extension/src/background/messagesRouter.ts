@@ -94,6 +94,7 @@ import {
 import { grantTempAllow, tempAllowedUntil } from './tempAllow';
 import { logBlocked, logWalkedAway, onActivityEvent } from './tracker';
 import { maybeAutoSync, subscriptionStatus, syncSubscriptions } from './youtubeSubscriptions';
+import { tabSignedBrowser } from './youtubeTabBrowse';
 
 const PENDING_CHALLENGE_KEY = 'nudge:pendingChallenge';
 
@@ -787,10 +788,12 @@ export async function handleRequest(
       return loadSettings();
     case 'GET_SITE_CONFIG': {
       const config = await buildSiteConfig(request.url, now);
-      // A youtube.com visit is the cue for the at-most-daily subscription refresh. Fire and
-      // forget: the page's config never waits on the network.
+      // A youtube.com visit is the cue for the at-most-daily subscription refresh, and for
+      // finishing a list left `pending` for want of a youtube.com tab. The visiting tab is
+      // asked first to sign the "load more" pages. Fire and forget: the page's config never
+      // waits on the network.
       if (config.platform === 'youtube' && config.youtube?.allowSubscriptions === true) {
-        void maybeAutoSync();
+        void maybeAutoSync({ browse: tabSignedBrowser(sender?.tab?.id) });
       }
       return config;
     }
