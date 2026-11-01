@@ -1,6 +1,6 @@
 # Privacy Policy
 
-**Last updated: 2026-07-27**
+**Last updated: 2026-11-01**
 
 Nudge is a privacy-first, open-source app blocker — an Android app and a Chrome extension. This policy explains what data Nudge handles and how. The sections below cover the Android app; see [Chrome Extension](#chrome-extension) for the extension.
 
@@ -70,7 +70,7 @@ Nudge is open source under the [GPL-3.0 license](LICENSE). You can read every li
 ## Chrome Extension
 
 Nudge for Chrome is a separate, sibling build to the Android app on this page, built on the
-same principle: **zero network requests, no account, nothing leaves your device.** This section
+same principle: **no account, nothing leaves your device.** This section
 covers what's specific to the extension.
 
 ### Data collected
@@ -82,6 +82,9 @@ Nudge for Chrome stores the following **locally in your browser only**, using Ch
   Breathing), including any daily time limits and schedules
 - **YouTube settings** — Shorts mode, channel whitelist/blacklist entries (channel handles/IDs
   you've added), gray-screen mode, and the Unhook-style hide toggles
+- **Your YouTube subscriptions**, only if you turn on "Also allow channels I'm subscribed to":
+  the IDs, handles and names of the channels you follow. Kept in `storage.local` only, never
+  synced, never included in exports
 - **Usage rollups** — per-site daily active seconds, block counts, and walked-away counts,
   bucketed by hour, used to render the Dashboard's stats
 - **Preferences** — delay durations, temporary-access length, custom block messages, Commitment
@@ -121,8 +124,12 @@ toggle: usage data is written to `storage.local` exclusively.
 
 ### What Nudge for Chrome does NOT do
 
-- **No network requests, ever.** Not for updates, not for "anonymous" analytics, not for
-  anything. If you don't trust this claim, read the code — every line is public.
+- **No network requests, with one opt-in exception.** If you turn on "Also allow channels I'm
+  subscribed to" (off by default), Nudge loads your own YouTube subscriptions page
+  (youtube.com/feed/channels) in your browser, using the YouTube sign-in you already have, to
+  read which channels you follow. Nothing is sent to us or anyone else; the list is stored only
+  in this browser and is not copied to Chrome sync. Turn it off and Nudge makes no network
+  requests at all: not for updates, not for "anonymous" analytics, not for anything. If you don't trust this claim, read the code — every line is public.
 - **No accounts.** No sign-up, no login, no email collection.
 - **No third-party SDKs, no ad networks, no tracking pixels.**
 - **No sale or transfer of data to anyone** — trivially true, since nothing is collected off
