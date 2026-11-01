@@ -17,7 +17,8 @@ Base: main after PR 1 (#141, rule snapshot + essentials list).
 - **One rule row per group**, always written on save; `enabled` = the "Block these apps" switch. Off = a
   named set (How/When collapse). Mode NONE is never written by the editor.
 - **GroupWeakening** compares resolved membership (includes minus excludes). `GroupUsage.blocks` = the
-  group has an enabled rule with mode != NONE; `allowedBy` = false until All apps rules exist (PR 4).
+  group has an enabled rule, any mode (a NONE rule with a daily limit still blocks after the limit;
+  erring toward the challenge is the safe side); `allowedBy` = false until All apps rules exist (PR 4).
   Save gate = `GroupWeakening || RuleWeakening(oldRule, newRule)`. Delete gate = the same with an empty
   new definition and the rule turned off.
 - **Browser coverage (5.5).** `isCoveredWholeNow(pkg)` = browser AND an enabled group rule whose group
