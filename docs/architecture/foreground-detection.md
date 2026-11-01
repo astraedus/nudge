@@ -400,6 +400,23 @@ not a fingerprint.
   `OverlayLifecycleGuardTest`, which drives the reported lifecycle ordering against the real
   `BlockLaunchGuard` with the pre-fix rule as its counterfactual.
 
+**The identity comes from the RULE that decided, never from the path that asked
+([#131](https://github.com/astraedus/nudge/issues/131)).** One warm tap on YouTube with a whole-app
+Delay reached `handleDecision` twice within ~13ms: the #58 redeem's foreground evaluation, and the
+in-app feature detector, which had just recognised Shorts and also matches whole-app rules
+(`includeWholeAppRulesForFeature`). Each spelled the fingerprint from what IT had asked about, so
+the detector's copy carried `feature=SHORTS`; the two records differed, `decide` launched both, and
+the arrival counted both (`wasBlocked` +4 for 3 declines on the bench). The feature is now a field
+of the decision itself (`BlockDecision.Block.feature`, set by `BlockEngine` only when the deciding
+rule names that feature), and both keys are built in ONE place, `BlockLaunchGate.identityOf`, which
+`handleDecision` and the replay harnesses call. A whole-app rule is therefore one block whichever
+path surfaced it; a genuine Shorts rule is still its own block and its own confrontation. The same
+key also feeds the overlay's `EXTRA_FEATURE_KEY`, so a completed whole-app Delay surfaced by the
+detector now grants a whole-app pass, as it should. Tests: `BlockIdentityTest` (L1, every engine
+branch that can decide a whole-app block, through both paths) and `DuplicateBlockLaunchReplayTest`
+(L2, the bench capture `youtube-delay-double-launch.jsonl`, both landing orders, with the
+path-keyed identity as the counterfactual that still launches twice).
+
 **Provenance and scope.** This defect PREDATES the #26/#31 work: the capture proving it,
 `picker-subflow-keeps-sitting.jsonl`, was committed in v1.16.0, and nothing in the #26/#31 change
 touched `isOverlayBypassedByForeground`, `clearOverlays` or the debounce. It is fixed here because it

@@ -1504,3 +1504,12 @@ Two reports a week apart, a Samsung S24 Ultra (keyboard open, keyboard closed, r
   `window-list` log lines. Any new window-geometry decision should log the bounds it acted on.
 - **Rule:** never take an irreversible action (BACK, HOME, kill) on one accessibility snapshot of
   a window's geometry; require it to hold across time, and fail toward the non-destructive block.
+
+## #131: two paths asked about one tap, and each named the block after its own question (2026-11-01)
+
+A warm YouTube relaunch under a whole-app Delay reached `handleDecision` twice within ~13ms: the #58 redeem's foreground evaluation and the Shorts detector's evaluation (which matches whole-app rules too). `handleDecision` took `featureKey` from its CALLER, so the detector's copy fingerprinted as `feature=SHORTS`, the gate saw two different blocks, launched both, and the arrival counted both. Two things let it hide: the replay harness spelled its own fingerprint (`delayKey(target)`, no feature, no domain) instead of calling production's, so it could not see a divergence that lived in the key; and the same code passed `walkaway-count` on 10-31, because which path lands first, and whether both land inside the settle window, is timing.
+
+- **A block's identity is a property of the DECISION, never of the path that asked.** Anything that dedupes or counts by a key derives that key from the deciding rule, in ONE function (`BlockLaunchGate.identityOf`) that production and every harness call.
+- **A test harness never re-spells a production key.** If the harness builds its own fingerprint, it tests the harness.
+- **On the bench, `device-qa.sh` UI dumps (uiautomator) suppress accessibility and reconnect the service, which resets the guard.** A run-to-run difference across a dump is harness variance first; read the capture before calling it a regression.
+- Count launches by overlay `START` lines and rows by the absence of `NOT counted`, not by `handling block`: a gated (dropped) decision logs `handling block` too.
