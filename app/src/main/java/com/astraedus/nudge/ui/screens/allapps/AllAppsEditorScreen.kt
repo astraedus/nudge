@@ -213,7 +213,7 @@ private fun HowAndWhen(
                 compact = true
             )
             Text(
-                blockModeDescription(form.mode),
+                blockModeDescription(form.mode, manyApps = true),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

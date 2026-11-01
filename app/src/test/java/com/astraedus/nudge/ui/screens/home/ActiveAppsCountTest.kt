@@ -78,6 +78,61 @@ class ActiveAppsCountTest {
         assertEquals(0, count(rules, listOf(social), members + AppGroupMember(9, "com.x")))
     }
 
+    // --- With an All apps rule on (spec PR 4): the tile counts covered apps, each once ---
+
+    private val launchable = setOf("com.instagram", "com.tiktok", "com.chess", "com.maps", "com.dialer")
+    private val essentials = setOf("com.dialer")
+
+    private fun allApps(id: Long, except: String? = null, exceptGroups: String? = null, enabled: Boolean = true) =
+        BlockRule(id = id, allApps = true, mode = "HARD_BLOCK", exceptPackages = except, exceptGroupIds = exceptGroups, enabled = enabled)
+
+    @Test
+    fun `an app covered by its own rule, its group and an All apps rule counts once`() {
+        val rules = listOf(
+            BlockRule(id = 1, packageName = "com.instagram", mode = "DELAY"),
+            BlockRule(id = 2, groupId = 1, mode = "DELAY"),
+            allApps(id = 3, except = "com.maps")
+        )
+        // instagram, tiktok, chess. Not maps (allowed), not the dialer (essential): 3, not 3 + 2 + 1.
+        assertEquals(3, activeAppsCount(rules, listOf(social, games), members, launchable, essentials))
+    }
+
+    @Test
+    fun `two All apps rules on at once count each app once`() {
+        val rules = listOf(allApps(id = 1), allApps(id = 2, except = "com.maps"))
+        // Every launchable app but the essential dialer; maps is still covered by rule 1.
+        assertEquals(4, activeAppsCount(rules, emptyList(), emptyList(), launchable, essentials))
+    }
+
+    @Test
+    fun `an app the All apps rule allows still counts while its own rule blocks it (rules only add)`() {
+        val rules = listOf(
+            BlockRule(id = 1, packageName = "com.maps", mode = "DELAY"),
+            allApps(id = 2, except = "com.maps")
+        )
+        assertEquals(4, activeAppsCount(rules, emptyList(), emptyList(), launchable, essentials))
+    }
+
+    @Test
+    fun `an All apps rule that is off adds nothing`() {
+        val rules = listOf(BlockRule(id = 1, packageName = "com.instagram", mode = "DELAY"), allApps(id = 2, enabled = false))
+        assertEquals(1, activeAppsCount(rules, emptyList(), emptyList(), launchable, essentials))
+    }
+
+    @Test
+    fun `with every kind of rule on at once, the count is the distinct apps, never a sum per rule`() {
+        val rules = listOf(
+            BlockRule(id = 1, packageName = "com.instagram", mode = "DELAY"),
+            BlockRule(id = 2, packageName = "com.notinstalled", mode = "DELAY"),
+            BlockRule(id = 3, groupId = 1, mode = "DELAY"),
+            allApps(id = 4),
+            allApps(id = 5, exceptGroups = "1")
+        )
+        val count = activeAppsCount(rules, listOf(social, games), members, launchable, essentials)
+        val ceiling = (launchable - essentials + "com.notinstalled").size
+        assertEquals(ceiling, count)
+    }
+
     /** The count is the engine's own answer, package by package, not a second implementation. */
     @Test
     fun `every counted app is one the engine resolves an enabled rule for, and vice versa`() {

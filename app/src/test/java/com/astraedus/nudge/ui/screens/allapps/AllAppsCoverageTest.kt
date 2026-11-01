@@ -81,13 +81,33 @@ class AllAppsCoverageTest {
         val rules = listOf(
             appRule(id = 10, pkg = FEED),
             groupRule(id = 11, groupId = SOCIAL),
-            allAppsRule(id = 12)
+            allAppsRule(id = 12, allowedPackages = listOf(GAME), allowedGroupIds = listOf(WORK))
         )
         val t = tables(rules)
+        // The All apps rule by the title Manage Apps, the Home card and the block screen give it,
+        // never a bare "All apps" (orchestrator screenshot review, PR 4).
         assertEquals(
-            listOf("its own rule", "Social", "All apps"),
+            listOf("its own rule", "Social", "All apps except Work, Game"),
             alsoBlockedBy(FEED, t.otherRules(editedRuleId = 20), t, device)
         )
+    }
+
+    @Test
+    fun `an All apps rule is named with the same title every other screen uses`() {
+        val other = allAppsRule(id = 12, allowedPackages = listOf(GAME, GONE), allowedGroupIds = listOf(WORK, DELETED))
+        val t = tables(listOf(other))
+        val title = com.astraedus.nudge.ui.components.rule.RuleSummary.allAppsTitle(
+            other, t.groupNames, device.labels
+        )
+        assertEquals(listOf(title), alsoBlockedBy(CHAT, t.otherRules(null), t, device))
+        // A stale group and an uninstalled app are left out, as the editor hides them.
+        assertEquals("All apps except Work, Game", title)
+    }
+
+    @Test
+    fun `an All apps rule with nothing allowed is All apps`() {
+        val t = tables(listOf(allAppsRule(id = 12)))
+        assertEquals(listOf("All apps"), alsoBlockedBy(CHAT, t.otherRules(null), t, device))
     }
 
     @Test
@@ -117,7 +137,16 @@ class AllAppsCoverageTest {
     fun `also blocked by text`() {
         assertNull(alsoBlockedByText(emptyList()))
         assertEquals("Also blocked by Social", alsoBlockedByText(listOf("Social")))
-        assertEquals("Also blocked by its own rule, Social", alsoBlockedByText(listOf("its own rule", "Social")))
+        assertEquals("Also blocked by its own rule and Social", alsoBlockedByText(listOf("its own rule", "Social")))
+        assertEquals(
+            "Also blocked by its own rule and All apps except Maps",
+            alsoBlockedByText(listOf("its own rule", "All apps except Maps"))
+        )
+        // Never a comma between two rules: an All apps title has its own commas.
+        assertEquals(
+            "Also blocked by Social and All apps except Work, Maps",
+            alsoBlockedByText(listOf("Social", "All apps except Work, Maps"))
+        )
         assertEquals("Also blocked by 3 rules", alsoBlockedByText(listOf("a", "b", "c")))
     }
 

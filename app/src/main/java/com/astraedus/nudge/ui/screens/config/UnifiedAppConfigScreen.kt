@@ -380,7 +380,7 @@ fun UnifiedAppConfigScreen(
                         )
                         Text(
                             "${state.appName} opens normally; these websites are still blocked. " +
-                                blockModeDescription(state.webBlockMode),
+                                blockModeDescription(state.webBlockMode, manyApps = false),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -437,7 +437,7 @@ fun UnifiedAppConfigScreen(
                     )
 
                     Text(
-                        blockModeDescription(state.defaultMode),
+                        blockModeDescription(state.defaultMode, manyApps = false),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

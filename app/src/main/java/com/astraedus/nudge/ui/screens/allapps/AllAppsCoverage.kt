@@ -11,6 +11,7 @@ import com.astraedus.nudge.domain.engine.RuleCoverage
 import com.astraedus.nudge.domain.model.BlockRuleData
 import com.astraedus.nudge.domain.model.GroupMembership
 import com.astraedus.nudge.domain.model.RuleTarget
+import com.astraedus.nudge.ui.components.rule.RuleSummary
 
 /**
  * The rule tables the editor reads live: every rule, every group and every group's members. Live,
@@ -60,6 +61,9 @@ data class DeviceApps(
 
     val byPackage: Map<String, InstalledAppsRepository.AppInfo> = installed.associateBy { it.packageName }
 
+    /** Each installed app's label, by package: what an All apps rule's title names. */
+    val labels: Map<String, String> = installed.associate { it.packageName to it.appName }
+
     /** What "Add apps or groups" offers: every installed app but the essentials (spec 3.6). */
     val pickerApps: List<InstalledAppsRepository.AppInfo> =
         installed.filterNot { it.packageName in essentials }
@@ -86,8 +90,9 @@ fun blockedCount(rule: BlockRule, tables: RuleTables, device: DeviceApps): Int =
 
 /**
  * The names of the other ENABLED rules that block [packageName] whatever this rule allows (rules
- * only add): a group rule by its group's name, an All apps rule as "All apps", the app's own rule as
- * "its own rule". In [otherRules] order, without repeats.
+ * only add): a group rule by its group's name, an All apps rule by the title every other screen
+ * gives it ("All apps except Maps", [RuleSummary.allAppsTitle]), the app's own rule as "its own
+ * rule". In [otherRules] order, without repeats.
  */
 fun alsoBlockedBy(
     packageName: String,
@@ -100,16 +105,21 @@ fun alsoBlockedBy(
         when (RuleTarget.of(rule)) {
             is RuleTarget.App -> OWN_RULE
             is RuleTarget.Group -> rule.groupName
-            is RuleTarget.AllApps -> ALL_APPS
+            is RuleTarget.AllApps -> RuleSummary.allAppsTitle(rule, device.labels)
             null -> null
         }
     }
     .distinct()
 
-/** "Also blocked by Social", "Also blocked by Social, All apps", "Also blocked by 3 rules"; null for none. */
+/**
+ * "Also blocked by Social", "Also blocked by its own rule and All apps except Maps", "Also blocked
+ * by 3 rules"; null for none. Two names are joined with "and", never a comma: an All apps title
+ * carries its own commas ("All apps except Work, Maps"), so a comma between rules would read as one
+ * more allowed app.
+ */
 fun alsoBlockedByText(names: List<String>): String? = when (names.size) {
     0 -> null
-    1, 2 -> "Also blocked by ${names.joinToString(", ")}"
+    1, 2 -> "Also blocked by ${names.joinToString(" and ")}"
     else -> "Also blocked by ${names.size} rules"
 }
 
@@ -159,4 +169,3 @@ fun alwaysAllowedText(labels: List<String>): String = when (labels.size) {
 private fun appCount(count: Int): String = if (count == 1) "1 app" else "$count apps"
 
 private const val OWN_RULE = "its own rule"
-private const val ALL_APPS = "All apps"

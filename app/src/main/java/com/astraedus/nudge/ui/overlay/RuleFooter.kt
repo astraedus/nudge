@@ -25,7 +25,7 @@ fun RuleFooter(ruleName: String?, until: String?) {
             Text(
                 text = "Rule: $ruleName",
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.7f),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
             )
         }
@@ -33,7 +33,7 @@ fun RuleFooter(ruleName: String?, until: String?) {
             Text(
                 text = until,
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.7f),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
             )
         }
