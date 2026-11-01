@@ -59,7 +59,6 @@ fun HomeScreen(
     onNavigateToApps: () -> Unit,
     onNavigateToStats: () -> Unit,
     onNavigateToSettings: () -> Unit,
-    onNavigateToActiveRules: () -> Unit = {},
     onNavigateToWillpower: () -> Unit = {},
     onNavigateToInterventions: () -> Unit = {},
     onNavigateToAppDetail: (String) -> Unit = {},
@@ -145,9 +144,9 @@ fun HomeScreen(
                 StatCard(
                     icon = Icons.Outlined.Shield,
                     label = "Active Apps",
-                    value = state.activeRuleCount.toString(),
+                    value = state.activeAppCount.toString(),
                     modifier = Modifier.weight(1f),
-                    action = TileAction("Manage", onNavigateToActiveRules)
+                    action = TileAction("Manage", onNavigateToApps)
                 )
             }
 

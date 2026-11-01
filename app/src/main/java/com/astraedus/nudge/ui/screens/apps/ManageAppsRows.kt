@@ -11,36 +11,49 @@ package com.astraedus.nudge.ui.screens.apps
  * inserted ABOVE that anchor, i.e. above the viewport, and the user opened Manage Apps to a list
  * with no Groups section at all (device QA, groups PR 2, seen 4 times from Home and after a save).
  *
- * So everything above the app list (the Groups heading, the group rows, "Block several apps") is a
- * single [Top] row that is ALWAYS first and always [TOP_KEY]. Late groups grow that row in place
- * instead of being inserted before the anchor. Groups are few, so laying them out non-lazily inside
- * one row costs nothing. [ManageAppsRowsTest] pins the invariant for every state the list can be in.
+ * So everything above the app lists (the Groups heading, the group rows, "Block several apps", and
+ * "All apps" when PR 4 adds it) is a single [Top] row that is ALWAYS first and always [TOP_KEY].
+ * Late groups grow that row in place instead of being inserted before the anchor. Groups are few,
+ * so laying them out non-lazily inside one row costs nothing. [ManageAppsRowsTest] pins the
+ * invariant for every state the list can be in.
+ *
+ * The app sections below it are lazy rows: there can be hundreds of apps.
  */
 sealed interface ManageAppsRow {
     val key: String
 
-    /** The Groups heading, the group rows and "Block several apps" (each shown only when relevant). */
+    /** "All apps" (PR 4), the Groups heading and rows, "Block several apps": each when relevant. */
     data object Top : ManageAppsRow {
         override val key = TOP_KEY
     }
 
-    data object AppsHeader : ManageAppsRow {
-        override val key = "apps_header"
-    }
+    /** A section heading. Its key has no dot, so it can never equal a package name. */
+    data class Header(override val key: String, val title: String) : ManageAppsRow
 
-    data class App(val app: AppWithBlockStatus) : ManageAppsRow {
-        // A package name always contains a dot, so it can never equal the two fixed keys above.
-        override val key = app.appInfo.packageName
+    data class App(val app: AppRow) : ManageAppsRow {
+        // A package name always contains a dot, so it can never equal a fixed key above.
+        override val key = app.packageName
     }
 
     companion object {
         const val TOP_KEY = "top"
+        const val WITH_RULES_KEY = "header_with_rules"
+        const val OTHER_APPS_KEY = "header_other_apps"
     }
 }
 
-/** The list's rows for [apps]: [ManageAppsRow.Top] first whatever has loaded, then the apps. */
-fun manageAppsRows(apps: List<AppWithBlockStatus>): List<ManageAppsRow> = buildList {
+/**
+ * The list's rows for [sections]: [ManageAppsRow.Top] first whatever has loaded, then "Apps with
+ * rules" and the other apps, each under its heading and only when it has rows.
+ */
+fun manageAppsRows(sections: ManageAppsSections): List<ManageAppsRow> = buildList {
     add(ManageAppsRow.Top)
-    if (apps.isNotEmpty()) add(ManageAppsRow.AppsHeader)
-    apps.mapTo(this) { ManageAppsRow.App(it) }
+    if (sections.appsWithRules.isNotEmpty()) {
+        add(ManageAppsRow.Header(ManageAppsRow.WITH_RULES_KEY, ManageAppsSections.APPS_WITH_RULES_TITLE))
+        sections.appsWithRules.mapTo(this) { ManageAppsRow.App(it) }
+    }
+    if (sections.otherApps.isNotEmpty()) {
+        add(ManageAppsRow.Header(ManageAppsRow.OTHER_APPS_KEY, sections.otherAppsTitle))
+        sections.otherApps.mapTo(this) { ManageAppsRow.App(it) }
+    }
 }

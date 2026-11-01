@@ -12,13 +12,18 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
 
 ### Removed
 - The old, unreachable groups screen.
+- The Active Rules screen. Everything it showed is now on Manage Apps, and backup is in Settings.
 
 ### Changed
+- Manage Apps and Active Rules are now one list. Manage Apps shows your groups, then "Block several apps", then "Apps with rules", each with what its rules do in one line ("Delay 30s · Hard Block Sat, Sun": a schedule follows the rule it belongs to), then every other app. An app with no rule of its own that a blocking group covers says so ("In Social"), so it no longer looks unblocked. On a phone with nothing set up yet it is just the one row and "Apps". A rule for an app that is no longer on the home screen is still listed, so it can be found and turned off. Search finds groups by name as well as apps. An app you switch on stays where it is in the list until you next open the screen, so a quick second tap cannot land on the app that would have slid into its place. Groups, apps and the app's own settings all describe a rule in the same words.
+- The dashboard's Active Apps card opens Manage Apps, and its number is now the apps a rule that is on covers, including every app in a blocking group, each app counted once.
+- App icons in app lists are drawn at the screen's real resolution, so they are sharper.
 - Nuke Mode now also never blocks your default messaging app, your clock and alarms, emergency and personal-safety apps, any accessibility service you have turned on (such as a screen reader), or your password manager's autofill. The Nuke screen says so: "Your phone, messages, clock, launcher, keyboard and Settings are never on this list." The dashboard's Nuke card now counts the same apps as the Nuke screen, so the two never disagree.
 - Block checks read your rules from memory instead of the database on every app switch; a rule edit still applies on the next app you open, with no restart.
 
 ### Fixed
 - Opening Google Camera when it was not already running, under a Delay rule, could skip the block screen entirely. Camera bounces through its permission check while it starts, which pushed the block screen behind it before it was ever drawn, and Nudge then refused to show it again as a duplicate. A block screen that its own app hides before it is drawn is now brought back, and the tap still counts once. This applies to any app that starts through another screen this way, not just Camera. (#143)
+- On Manage Apps, an app with more than one rule (a schedule, or a Reels block) showed its switch as whichever rule happened to be last. It now shows on when any of the app's rules is on.
 - The block mode picker on an app's settings showed "Hard Block" cut to "Hard" and off-centre. It now reads "Hard", centred with the others.
 
 ## [1.23.2] - 2026-11-01

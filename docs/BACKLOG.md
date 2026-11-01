@@ -183,7 +183,7 @@ change that surfaced it.
 - **`rememberAppIcon(icon, sizeDp)` is owed, and it is a visual change, not a cleanup.** The
   drawable-to-bitmap conversion is hand-rolled at five composable sites, and **every one passes a literal
   pixel size that does not match its own dp box**: `AppListItem` 48px into 40dp, `WillpowerScreen` 32px/32dp,
-  `InterventionsScreen` 64px/32dp, `ActiveRulesScreen` 48px/40dp. A shared helper rasterising at real device
+  `InterventionsScreen` 64px/32dp, `ActiveRulesScreen` 48px/40dp. (Groups PR 3: `AppListItem` now rasterises at the real px of its 40dp box and `ActiveRulesScreen` is gone; the other two remain.) A shared helper rasterising at real device
   density would make all four sharper (on a Pixel 3, 40dp is 110px against today's 48px) and cost roughly 5x
   the bitmap bytes per icon. That is probably an improvement and it changes rendering on four screens, so it
   wants its own device-QA'd task. `WidgetReads` is NOT in scope - Glance needs a raw `Bitmap`, which is a

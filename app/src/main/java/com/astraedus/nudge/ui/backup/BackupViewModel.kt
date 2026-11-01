@@ -32,12 +32,11 @@ data class BackupUiState(
 /**
  * Backup and restore, for every screen that offers it.
  *
- * Deliberately its OWN ViewModel rather than a second copy of these methods per screen: backup is
- * reachable from the Active Rules overflow menu AND from Settings (it used to be findable only via
- * a stat card -- a trained QA agent searching exhaustively concluded the feature did not exist),
- * and the Strict Mode gate below is exactly the kind of logic that must not exist twice. It also
- * costs a hosting screen nothing it does not need: Settings gets backup without dragging in the
- * installed-app scan and the rules flow that `ActiveRulesViewModel` exists for.
+ * Deliberately its OWN ViewModel rather than methods on a screen's ViewModel: backup used to live
+ * in the Active Rules overflow menu as well (findable only via a stat card -- a trained QA agent
+ * searching exhaustively concluded the feature did not exist), and the Strict Mode gate below is
+ * exactly the kind of logic that must not exist twice. Settings is now its one entry point
+ * (Active Rules merged into Manage Apps), and it gets backup without dragging in anything else.
  *
  * Every platform side-effect -- reading the picked file, writing the chosen document, handing the
  * file to the share sheet -- arrives as a lambda from the screen, so this class stays JVM-testable

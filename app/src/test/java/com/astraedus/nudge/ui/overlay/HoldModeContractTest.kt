@@ -316,8 +316,8 @@ class HoldModeContractTest {
                 "java/com/astraedus/nudge/ui/screens/stats/InsightsCalculator.kt",
             "AppDetailScreen.formatBlockMode" to
                 "java/com/astraedus/nudge/ui/screens/stats/AppDetailScreen.kt",
-            "ActiveRulesViewModel.formatMode" to
-                "java/com/astraedus/nudge/ui/screens/rules/ActiveRulesViewModel.kt",
+            "RuleSummary.formatMode" to
+                "java/com/astraedus/nudge/ui/components/rule/RuleSummary.kt",
             "InterventionsScreen.modeColor" to
                 "java/com/astraedus/nudge/ui/screens/stats/InterventionsScreen.kt"
         )

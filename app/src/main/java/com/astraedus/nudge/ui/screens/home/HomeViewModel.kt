@@ -69,7 +69,7 @@ data class TopBlockedApp(
 data class HomeUiState(
     val isGlobalEnabled: Boolean = true,
     val todayTotalUsageFormatted: String = "0s",
-    val activeRuleCount: Int = 0,
+    val activeAppCount: Int = 0,
     /**
      * The "Blocked" tiles: confrontations the user was SHOWN, each counted once. A walk-away is a
      * walk-away and lands in [changedMindCountToday] / [allTimeChangedMindCount]; it is not also a
@@ -290,13 +290,17 @@ class HomeViewModel @Inject constructor(
     // list ticks with the events.
     val uiState: StateFlow<HomeUiState> = combine(
         nudgePreferences.isGlobalEnabled,
-        blockRuleRepository.getEnabledRules().map { rules ->
-            rules.mapNotNull { it.packageName }.distinct().size
-        },
+        // Apps covered by a rule that is on (direct or through a group), as the engine sees them.
+        combine(
+            blockRuleRepository.getEnabledRules(),
+            blockRuleRepository.getAllGroups(),
+            blockRuleRepository.getAllGroupMembers(),
+            ::activeAppsCount
+        ),
         countsFlow,
         screenTimeFlow,
         weekEventsFlow
-    ) { enabled, activeRuleCount, counts, screenTime, weekEvents ->
+    ) { enabled, activeAppCount, counts, screenTime, weekEvents ->
         val charts = homeChartsBuilder.build(
             weeklyTotals = screenTime.weeklyTotals,
             weekEvents = weekEvents.events,
@@ -305,7 +309,7 @@ class HomeViewModel @Inject constructor(
         HomeUiState(
             isGlobalEnabled = enabled,
             todayTotalUsageFormatted = formatDayTotal(screenTime.todayMs, timeTracker),
-            activeRuleCount = activeRuleCount,
+            activeAppCount = activeAppCount,
             blockedCountToday = counts.shownToday,
             changedMindCountToday = counts.changedMindToday,
             allTimeBlockedCount = counts.allTimeShown,

@@ -21,9 +21,10 @@ import org.junit.Rule
 import org.junit.Test
 
 /**
- * The Manage Apps switch must obey the same Strict Mode contract as Active Rules: turning a block
- * OFF is a weakening and takes the typed challenge; turning one ON, or creating a rule, never does.
- * (Regression: the switch used to write straight through, defeating the commitment lock.)
+ * Every switch on Manage Apps obeys one Strict Mode contract (the one Active Rules had, before it
+ * merged in here): turning a block OFF is a weakening and takes the typed challenge, from an app row
+ * and from a group row alike; turning one ON, or creating a rule, never does. (Regression: the
+ * switch used to write straight through, defeating the commitment lock.)
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class AppListViewModelStrictModeTest {
@@ -41,6 +42,13 @@ class AppListViewModelStrictModeTest {
         every { repository.getAllRules() } returns flowOf(emptyList())
     }
 
+    /** An app row as the sections build it: no rule, or a rule that is on / off. */
+    private fun appRow(hasRule: Boolean, on: Boolean = false) = AppRow(
+        appInfo = InstalledAppsRepository.AppInfo("com.example", "Example", icon = null),
+        summary = if (hasRule) "Delay 15s" else null,
+        isOn = on
+    )
+
     private fun viewModel(strictOn: Boolean): AppListViewModel {
         val prefs = mockk<NudgePreferences>()
         every { prefs.isStrictModeEnabled } returns flowOf(strictOn)
@@ -54,7 +62,7 @@ class AppListViewModelStrictModeTest {
     fun `strict on - switching a block off waits for the challenge and writes nothing`() = runTest {
         val vm = viewModel(strictOn = true)
 
-        vm.toggleBlockRule("com.example", currentlyBlocked = true, ruleId = 1L)
+        vm.toggleApp(appRow(hasRule = true, on = true))
 
         assertNotNull(vm.challenge.value)
         coVerify(exactly = 0) { repository.setEnabledForPackage(any(), any()) }
@@ -63,7 +71,7 @@ class AppListViewModelStrictModeTest {
     @Test
     fun `strict on - the right challenge answer disables the block`() = runTest {
         val vm = viewModel(strictOn = true)
-        vm.toggleBlockRule("com.example", currentlyBlocked = true, ruleId = 1L)
+        vm.toggleApp(appRow(hasRule = true, on = true))
 
         vm.verifyChallenge(vm.challenge.value!!.target)
 
@@ -74,7 +82,7 @@ class AppListViewModelStrictModeTest {
     @Test
     fun `strict on - a wrong answer or cancel never disables the block`() = runTest {
         val vm = viewModel(strictOn = true)
-        vm.toggleBlockRule("com.example", currentlyBlocked = true, ruleId = 1L)
+        vm.toggleApp(appRow(hasRule = true, on = true))
 
         vm.verifyChallenge("not-the-code")
         coVerify(exactly = 0) { repository.setEnabledForPackage(any(), any()) }
@@ -88,7 +96,7 @@ class AppListViewModelStrictModeTest {
     fun `strict off - switching a block off writes immediately`() = runTest {
         val vm = viewModel(strictOn = false)
 
-        vm.toggleBlockRule("com.example", currentlyBlocked = true, ruleId = 1L)
+        vm.toggleApp(appRow(hasRule = true, on = true))
 
         assertNull(vm.challenge.value)
         coVerify(exactly = 1) { repository.setEnabledForPackage("com.example", false) }
@@ -98,7 +106,7 @@ class AppListViewModelStrictModeTest {
     fun `switching a block on is never gated, even with strict on`() = runTest {
         val vm = viewModel(strictOn = true)
 
-        vm.toggleBlockRule("com.example", currentlyBlocked = false, ruleId = 1L)
+        vm.toggleApp(appRow(hasRule = true, on = false))
 
         assertNull(vm.challenge.value)
         coVerify(exactly = 1) { repository.setEnabledForPackage("com.example", true) }
@@ -108,10 +116,24 @@ class AppListViewModelStrictModeTest {
     fun `creating a new rule is never gated, even with strict on`() = runTest {
         val vm = viewModel(strictOn = true)
 
-        vm.toggleBlockRule("com.example", currentlyBlocked = false, ruleId = null)
+        vm.toggleApp(appRow(hasRule = false))
 
         assertNull(vm.challenge.value)
-        coVerify(exactly = 1) { repository.addRule(any<BlockRule>()) }
+        coVerify(exactly = 1) {
+            repository.addRule(match<BlockRule> {
+                it.packageName == "com.example" && it.groupId == null && it.mode == "DELAY" &&
+                    it.delaySeconds == 15 && it.enabled
+            })
+        }
+    }
+
+    @Test
+    fun `strict on - an app row that is off but has a rule never creates a second rule`() = runTest {
+        val vm = viewModel(strictOn = true)
+
+        vm.toggleApp(appRow(hasRule = true, on = false))
+
+        coVerify(exactly = 0) { repository.addRule(any<BlockRule>()) }
     }
 
     // ── Group rows (spec PR 2) ────────────────────────────────────────────

@@ -57,6 +57,7 @@ import com.astraedus.nudge.ui.components.DurationInput
 import com.astraedus.nudge.ui.components.MinutesField
 import com.astraedus.nudge.ui.components.StrictModeChallengeHost
 import com.astraedus.nudge.ui.components.UsageReminderSection
+import com.astraedus.nudge.ui.components.TonalIcon
 import com.astraedus.nudge.ui.components.rule.BlockModeSegmentedRow
 import com.astraedus.nudge.ui.components.rule.DailyLimitChips
 import com.astraedus.nudge.ui.components.rule.InfoButton
@@ -919,16 +920,13 @@ private fun AlsoCoveredBy(groups: List<CoveringGroup>, onOpenGroup: (Long) -> Un
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(min = 48.dp)
+                    .heightIn(min = 56.dp)
                     .clickable(role = Role.Button) { onOpenGroup(group.groupId) },
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                Icon(
-                    Icons.Default.Folder,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                // The same 40dp tonal folder a group row has on Manage Apps: one look per group.
+                TonalIcon(Icons.Default.Folder)
                 Text(
                     group.label,
                     style = MaterialTheme.typography.bodyLarge,

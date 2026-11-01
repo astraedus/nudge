@@ -3,6 +3,9 @@ package com.astraedus.nudge.ui.screens.home
 import android.content.Context
 import com.astraedus.nudge.MainDispatcherRule
 import com.astraedus.nudge.data.db.BlockHistoryFixture
+import com.astraedus.nudge.data.db.entity.AppGroup
+import com.astraedus.nudge.data.db.entity.AppGroupMember
+import com.astraedus.nudge.data.db.entity.BlockRule
 import com.astraedus.nudge.data.db.entity.UsageEvent
 import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.data.repository.BlockRuleRepository
@@ -69,6 +72,8 @@ class HomeBlockedTileTest {
 
         every { preferences.isGlobalEnabled } returns MutableStateFlow(true)
         every { blockRuleRepository.getEnabledRules() } returns MutableStateFlow(emptyList())
+        every { blockRuleRepository.getAllGroups() } returns MutableStateFlow(emptyList())
+        every { blockRuleRepository.getAllGroupMembers() } returns MutableStateFlow(emptyList())
         every { screenTimeProvider.hasPermission() } returns true
         every { screenTimeProvider.getWeeklyUsage(any()) } answers {
             WeeklyUsage(listOf(firstArg()), listOf(emptyMap()))
@@ -180,5 +185,30 @@ class HomeBlockedTileTest {
 
         assertEquals(state.blockedCountToday, today.blockedCount)
         assertEquals(state.changedMindCountToday, today.walkedAwayCount)
+    }
+
+    /**
+     * The "Active Apps" tile next to these counts apps a rule that is on covers (spec 3.2), groups
+     * included, each app once. Pinned here, through the ViewModel, so the tile cannot drift back to
+     * counting rule rows; the cases themselves are in [ActiveAppsCountTest].
+     */
+    @Test
+    fun `the Active Apps tile counts apps a group covers, each app once`() = runTest(dispatcher) {
+        serve(emptyList())
+        every { blockRuleRepository.getEnabledRules() } returns MutableStateFlow(
+            listOf(
+                BlockRule(id = 1, packageName = "com.instagram", mode = "DELAY"),
+                BlockRule(id = 2, groupId = 1, mode = "DELAY")
+            )
+        )
+        every { blockRuleRepository.getAllGroups() } returns
+            MutableStateFlow(listOf(AppGroup(id = 1, name = "Social")))
+        every { blockRuleRepository.getAllGroupMembers() } returns MutableStateFlow(
+            listOf(AppGroupMember(1, "com.instagram"), AppGroupMember(1, "com.tiktok"))
+        )
+
+        val state = viewModel().uiState.first { it.activeAppCount > 0 }
+
+        assertEquals(2, state.activeAppCount)
     }
 }

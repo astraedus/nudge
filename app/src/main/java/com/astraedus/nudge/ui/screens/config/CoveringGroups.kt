@@ -5,7 +5,7 @@ import com.astraedus.nudge.data.db.entity.AppGroup
 import com.astraedus.nudge.data.db.entity.AppGroupMember
 import com.astraedus.nudge.data.db.entity.BlockRule
 import com.astraedus.nudge.ui.screens.groups.ownGroupRule
-import com.astraedus.nudge.ui.screens.rules.ActiveRulesViewModel
+import com.astraedus.nudge.ui.components.rule.RuleSummary
 
 /** One "Also covered by" row on App config: "Social · Delay 15s", opening that group. */
 @Immutable
@@ -21,7 +21,22 @@ fun coveringGroups(
     groups: List<AppGroup>,
     members: List<AppGroupMember>,
     rules: List<BlockRule>
-): List<CoveringGroup> {
+): List<CoveringGroup> = blockingGroupsOf(packageName, groups, members, rules)
+    .map { (group, rule) ->
+        CoveringGroup(group.id, "${group.name} · ${RuleSummary.groupSummaryText(rule)}")
+    }
+
+/**
+ * The one answer to "which groups block this app?", for every screen that says so: App config's
+ * "Also covered by" ([coveringGroups]) and Manage Apps' "In Social" line. Each group the app is a
+ * member of whose own rule is on, with that rule, sorted by name.
+ */
+fun blockingGroupsOf(
+    packageName: String,
+    groups: List<AppGroup>,
+    members: List<AppGroupMember>,
+    rules: List<BlockRule>
+): List<Pair<AppGroup, BlockRule>> {
     val memberOf = members.filter { it.packageName == packageName }.mapTo(HashSet()) { it.groupId }
     return groups
         .filter { it.id in memberOf }
@@ -30,7 +45,4 @@ fun coveringGroups(
             group to rule
         }
         .sortedBy { (group, _) -> group.name.lowercase() }
-        .map { (group, rule) ->
-            CoveringGroup(group.id, "${group.name} · ${ActiveRulesViewModel.groupSummaryText(rule)}")
-        }
 }
