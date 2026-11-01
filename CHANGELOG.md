@@ -22,6 +22,7 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
 - Block checks read your rules from memory instead of the database on every app switch; a rule edit still applies on the next app you open, with no restart.
 
 ### Fixed
+- Pressing Home to leave YouTube could bring YouTube back by itself a few seconds later. As YouTube closes its video player it sends one more event, and that event sometimes arrived just after Home. Nudge read it as YouTube opening again, put the wait screen over the home screen, and reopened YouTube when the countdown ended. That event says nothing about which app is open, and Nudge now ignores it, for every app. This was there in 1.23.2 too, and showed up on some presses but not others.
 - Opening Google Camera when it was not already running, under a Delay rule, could skip the block screen entirely. Camera bounces through its permission check while it starts, which pushed the block screen behind it before it was ever drawn, and Nudge then refused to show it again as a duplicate. A block screen that its own app hides before it is drawn is now brought back, and the tap still counts once. This applies to any app that starts through another screen this way, not just Camera. (#143)
 - On Manage Apps, an app with more than one rule (a schedule, or a Reels block) showed its switch as whichever rule happened to be last. It now shows on when any of the app's rules is on.
 - The block mode picker on an app's settings showed "Hard Block" cut to "Hard" and off-centre. It now reads "Hard", centred with the others.

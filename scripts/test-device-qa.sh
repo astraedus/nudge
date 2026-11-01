@@ -12,6 +12,8 @@
 #   (c) `all` runs ~18 minutes, more than a bounded call can hold, so there are now group1/2/3
 #       chunks: they must cover `all` exactly, and a chunked series must keep crash-check's
 #       whole-series meaning.
+# Later: home-reopen turns YouTube's picture-in-picture off for its own duration (its PiP
+# explainer stood in front of the launcher), so the save/restore of that appop is tested too.
 #
 # Everything here runs against a shimmed `adb` and a stateful fake of the config screen, with no
 # device and no lock, exactly as test-cert-guard.sh does for the install path. device-qa.sh is
@@ -199,6 +201,34 @@ check "a record from the FUTURE (clock skew) is not trusted" test "$(cb continue
 rm -f "$CBF"
 check "no mode (all, a single case): per-invocation baseline" test "$(cb - 7)" = 7
 check "  ...and it never writes the record" test ! -e "$CBF"
+
+# ─── 5. home-reopen turns YouTube's PiP off, and puts back exactly what was there ────
+echo "home-reopen YouTube PiP appop:"
+# A fake `ash` that answers `appops get` with $FAKE_PIP_GET and records every `appops set` to a
+# file (the real calls send stdout to /dev/null, so the record cannot ride on it).
+# <what appops get prints> <snippet> -> the recorded `appops set` lines, '|'-joined
+PIP_LOG="$TMP/pip.log"
+pip() {
+  : >"$PIP_LOG"
+  run_qa "$OUT" FAKE_PIP_GET="$1" PIP_LOG="$PIP_LOG" -- \
+    "ash() { case \"\$*\" in 'appops get '*) printf '%b\n' \"\$FAKE_PIP_GET\" ;; 'appops set '*) echo \"SET \$*\" >>\"\$PIP_LOG\" ;; esac; }; $2" || true
+  tr '\n' '|' <"$PIP_LOG"
+}
+Y=com.google.android.youtube
+check "never set on YouTube ('No operations.'): off, then back to default" \
+  test "$(pip 'No operations.\nDefault mode: allow' 'youtube_pip_off; youtube_pip_restore')" = \
+  "SET appops set $Y PICTURE_IN_PICTURE ignore|SET appops set $Y PICTURE_IN_PICTURE default|"
+check "a mode someone set (deny) is what goes back, not allow" \
+  test "$(pip 'PICTURE_IN_PICTURE: deny; time=+1d' 'youtube_pip_off; youtube_pip_restore')" = \
+  "SET appops set $Y PICTURE_IN_PICTURE ignore|SET appops set $Y PICTURE_IN_PICTURE deny|"
+check "restore twice (case end, then cleanup) sets it back once" \
+  test "$(pip 'PICTURE_IN_PICTURE: allow' 'youtube_pip_off; youtube_pip_restore; youtube_pip_restore')" = \
+  "SET appops set $Y PICTURE_IN_PICTURE ignore|SET appops set $Y PICTURE_IN_PICTURE allow|"
+check "a run that never reached home-reopen touches nothing at cleanup" \
+  test "$(pip 'PICTURE_IN_PICTURE: allow' 'youtube_pip_restore')" = ""
+check "a run killed mid-case: the EXIT trap's cleanup puts it back" \
+  test "$(pip 'PICTURE_IN_PICTURE: allow' 'youtube_pip_off; exit 1')" = \
+  "SET appops set $Y PICTURE_IN_PICTURE ignore|SET appops set $Y PICTURE_IN_PICTURE allow|"
 
 echo
 echo "$pass passed, $fail failed"

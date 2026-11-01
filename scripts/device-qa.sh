@@ -203,6 +203,11 @@ SAVED_A11Y_SERVICES=""
 SAVED_A11Y_ENABLED=""
 SAVED_OP_OVERLAY=""
 SAVED_OP_USAGE=""
+# YouTube's own picture-in-picture appop, switched off only for the duration of home-reopen
+# (see youtube_pip_off). Restored by cleanup too, so a run killed mid-case does not leave the
+# bench's YouTube unable to PiP.
+SAVED_YT_PIP=""
+YT_PIP_CHANGED=0
 STATE_SAVED=0
 LOCK_HELD=0
 # Overridable so a caller that ALREADY holds the Pixel lock can hand it down instead of
@@ -237,6 +242,7 @@ cleanup() {
     [[ -n "$SAVED_OP_USAGE" ]] &&
       ash appops set "$APP_ID" GET_USAGE_STATS "$SAVED_OP_USAGE" >/dev/null 2>&1
   fi
+  youtube_pip_restore
   if [[ "$LOCK_HELD" -eq 1 ]]; then
     "${HOME}/bin/device-lock.sh" release pixel --owner "$LOCK_OWNER" >/dev/null 2>&1 &&
       info "Device lock released."
@@ -288,9 +294,30 @@ save_state() {
   info "Saved: screen_off_timeout=${SAVED_TIMEOUT} overlay=${SAVED_OP_OVERLAY} usage=${SAVED_OP_USAGE}"
 }
 
-appop_mode() { # op -> allow|deny|ignore|default
-  ash appops get "$APP_ID" "$1" 2>/dev/null | head -1 |
+appop_mode() { # op [package, default Nudge] -> allow|deny|ignore|default, or "" if never set
+  ash appops get "${2:-$APP_ID}" "$1" 2>/dev/null | head -1 |
     sed -n 's/^[A-Z_]*: \([a-z]*\).*/\1/p'
+}
+
+# home-reopen presses Home on YouTube ten times a run, and YouTube enters picture-in-picture on
+# Home whenever a video is playing (it can open straight onto an autoplaying Short). The PiP
+# window brings up Nudge's PiP-escape explainer (once per package after setup's `pm clear`) in
+# front of the launcher, so `wait_fg launcher` fails on a run where the app did exactly what it
+# should. What YouTube happened to be playing is not the code under test, so the case turns
+# YouTube's PiP off for its own duration. This case is about Home revoking a grant; PiP has its
+# own classification (PipOnly) and its own tests.
+youtube_pip_off() {
+  SAVED_YT_PIP="$(appop_mode PICTURE_IN_PICTURE "$YOUTUBE_PKG")"
+  ash appops set "$YOUTUBE_PKG" PICTURE_IN_PICTURE ignore >/dev/null 2>&1
+  YT_PIP_CHANGED=1
+}
+
+youtube_pip_restore() {
+  [[ "$YT_PIP_CHANGED" -eq 1 ]] || return 0
+  # "" means the op was never set on the package (`appops get` prints "No operations."), and
+  # `default` is what puts it back to exactly that.
+  ash appops set "$YOUTUBE_PKG" PICTURE_IN_PICTURE "${SAVED_YT_PIP:-default}" >/dev/null 2>&1
+  YT_PIP_CHANGED=0
 }
 
 # Is the phone actually awake and past the keyguard RIGHT NOW?
@@ -1078,6 +1105,7 @@ case_delay_block() {
 # the per-trial log assertions rather than a single end-of-run grep.
 case_home_reopen() {
   local rc=0 trial blocks_before blocks_after
+  youtube_pip_off
   start_logcat
   for ((trial = 1; trial <= HOME_REOPEN_TRIALS; trial++)); do
     info "trial ${trial}/${HOME_REOPEN_TRIALS}"
@@ -1135,12 +1163,24 @@ case_home_reopen() {
       shot "2${trial}-reopen-overlay-missing"
       rc=1; break
     fi
-    # No cleanup tap: the next trial opens with `go_home`, which is what revokes the grant.
-    # Tapping "I changed my mind" here raced the 5s countdown and only produced noise.
+    # LET THE RE-BLOCK FINISH BEFORE THE NEXT TRIAL'S HOME. No cleanup tap (tapping "I changed
+    # my mind" raced the 5s countdown and only produced noise), so the overlay is left to count
+    # down. The next trial opens with `go_home`, and if that press lands within
+    # CompletionHandBack.WINDOW_MS (1.5s) of the countdown completing, the app reads it as the
+    # completion falling through to the launcher and correctly hands the user back to YouTube
+    # (#126), so the harness's own Home is undone and `wait_fg launcher` fails. That happened
+    # on the bench (Home 0.25s after completion). Waiting for YouTube to be in front and then
+    # past the hand-back window makes every trial start from the same settled state.
+    if ! wait_fg "$YOUTUBE_PKG" 30; then
+      fail "trial ${trial}: the re-block countdown never let ${YOUTUBE_PKG} through (got '$(foreground_package)')"
+      rc=1; break
+    fi
+    sleep 3
   done
 
   sleep 2
   stop_logcat
+  youtube_pip_restore
   cp -f "$LOGCAT_FILE" "${ALBUM}/logcat-home-reopen.txt" 2>/dev/null || true
 
   local went_home dropped redeemed

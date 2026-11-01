@@ -1540,3 +1540,11 @@ Merging Active Rules into Manage Apps made "has a rule" decide which section an 
 ## Spec PR 2/3 renamed on-screen text and the release gate broke, not the app (2026-11-02)
 **What happened:** #145 changed the Manage Apps search placeholder to "Search apps and groups" and #147 deleted Active Rules. Both lanes passed their own device QA, but the 1.24.0 release gate failed `setup` (Maestro asserted "Active Rules") and both daily-limit cases ("Search apps..." not on screen). lane-pr3 had seen the setup failure and blamed the debug APK.
 **Rule:** a PR that renames, moves or deletes any user-visible string greps `scripts/` and `.maestro/` for the old text and fixes the hits in the same PR. A device-qa failure on a string the PR changed is the PR's bug, never "the debug build".
+
+## home-reopen: one Home press and YouTube came back by itself (2026-11-02)
+
+The 1.24.0 gate failed `home-reopen`, and the A/B looked like a regression (v1.23.2 F/P/P, main F/F/F). It was not one. YouTube tears down its player PANE as the user leaves, and the platform sends that as a `TYPE_WINDOW_STATE_CHANGED` with `contentChangeTypes` = PANE_DISAPPEARED. When it landed after the launcher's Home signal, the classifier called it `AppWindow`. That started a sitting, moved the guard's foreground, launched the Delay over the launcher, and the completion hand-back then reopened YouTube. 10 of 10 such stragglers on the pre-fix bench (both builds) did this, and 6 of 6 on the fixed build did nothing. Two harness races added noise: YouTube's PiP explainer stood in front of the launcher, and the next trial's Home landed within the 1.5s hand-back window of the previous re-block's countdown.
+
+- **An event TYPE is not a meaning.** `TYPE_WINDOW_STATE_CHANGED` is also the pane event. Read `contentChangeTypes` before treating it as a window coming forward. The framework's own doc for the type says so.
+- **F/P/P against F/F/F at n=3 is not a regression signal.** Count the MECHANISM across every logcat you have, per build, before bisecting. Here the mechanism was in both builds, and every instance failed the same way.
+- **A gate case that presses a button must start from a settled state.** If the previous step leaves a timer running (a countdown, a hand-back window), wait it out, or the harness's own input becomes part of the race it is measuring.
