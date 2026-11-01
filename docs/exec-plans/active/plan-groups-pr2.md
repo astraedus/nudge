@@ -68,6 +68,10 @@ rules that name a package. A GROUP rule's daily limit is therefore enforced when
 (the evaluation counts it), not at the minute it runs out while the app stays in front. Follow-up:
 expand group rules to per-member cache entries.
 
+Also known and pre-existing, out of scope: a cold Google Camera launch opens with no overlay (5/5 on
+main, no group involved). The permission prompt in Camera's start-up bypasses the overlay before it
+shows, and the pending record then drops Camera's re-block. Tracked in #143 (its own lane).
+
 ## Device QA (device-tester, sonnet)
 
 Social with 3 apps at Delay 15s; Strict remove -> challenge; Chrome in a Hard group blocked on any
