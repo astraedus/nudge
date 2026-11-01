@@ -5,7 +5,7 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
 ## [Unreleased]
 
 ### Changed
-- Nuke Mode now also never blocks your default messaging app, your clock and alarms, emergency and personal-safety apps, any accessibility service you have turned on (such as a screen reader), or your password manager's autofill. The Nuke screen says so: "Your phone, messages, clock, launcher, keyboard and Settings are never on this list."
+- Nuke Mode now also never blocks your default messaging app, your clock and alarms, emergency and personal-safety apps, any accessibility service you have turned on (such as a screen reader), or your password manager's autofill. The Nuke screen says so: "Your phone, messages, clock, launcher, keyboard and Settings are never on this list." The dashboard's Nuke card now counts the same apps as the Nuke screen, so the two never disagree.
 - Block checks read your rules from memory instead of the database on every app switch; a rule edit still applies on the next app you open, with no restart.
 
 ## [1.23.2] - 2026-11-01

@@ -165,6 +165,13 @@ package, `NukePolicy.isNuked` refuses one even if stored, and the service's cach
 `NukePolicy.enforceable` with `isNukedNow` re-checking the static half. "Arm" counts only enforceable
 packages, so a list of only floor apps cannot be armed.
 
+**One count.** "Nuke is on · N apps" appears on the dashboard card and on the Nuke screen, and both
+are `NukePolicy.nukedCount(state, essentialApps.packages())`: the apps Nuke actually blocks. A stored
+app that is now essential (Messages listed before spec PR 1 made it essential) is left out of BOTH,
+but stays in storage, so it counts again if this phone stops treating it as essential. Before this,
+the card used only the static floor and said "3 apps" next to a screen that said "1 app" (found on
+the bench in spec PR 1; pinned by `NukeCountParityTest`).
+
 ## Export / import
 
 Nuke state is DEVICE-LOCAL, like the emergency-pass ledger. `ExportedSettings` has no Nuke field, an
@@ -203,6 +210,7 @@ What it cannot close, and does not pretend to:
 | L1 | `NukeGateTest` | key, wrong key, cancelled scan, live re-read, fresh emergency code, exact typing, cancel |
 | L1 | `EssentialAppsTest`, `EnabledAccessibilityServicesTest` | every essentials source lands on the list, a throwing source drops only itself (and is logged by label), all throwing still leaves the static floor, the production source labels are exactly the pinned set, the 5-minute cache, no camera; the accessibility-settings package parse |
 | L1 | `NukeViewModelTest` | arm needs key + list, key toggles, wrong key does not disarm, emergency disarms, remove/replace/unpair gated only while on, add free, QR saved only after the same code is scanned back, the picker never offers the floor |
+| L1 | `NukeCountParityTest` | the dashboard card and the Nuke screen show the same count through both real ViewModels: stored essentials left out of both, an app that stops being essential counts again on both, the static floor left out of both |
 | L1 | `HomeNukeToggleGateTest` | master toggle OFF waits for the key or the code while Nuke is on |
 | L4 | `NukeExportExclusionTest`, `ImportedSettingsWriteContractTest` | nothing about Nuke leaves or enters through a backup |
 | contract | `NukeWiringContractTest` | every grant sits in `grantLetsThrough`, a nuked app never consults it, nuked browser, content-change + feature paths, re-evaluate on arm, overlay flag + fingerprint, escape guard, the Nuke overlay has no pass and walks away through `navigateHome` |

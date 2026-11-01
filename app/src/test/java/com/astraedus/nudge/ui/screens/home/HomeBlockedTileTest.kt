@@ -120,6 +120,7 @@ class HomeBlockedTileTest {
         homeChartsBuilder = HomeChartsBuilder(StatsCalculator(timeTracker)),
         installedAppsRepository = installedAppsRepository,
         insightsCalculator = InsightsCalculator(),
+        essentialApps = mockk(relaxed = true),
         ioDispatcher = dispatcher
     )
 

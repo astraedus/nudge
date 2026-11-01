@@ -141,7 +141,7 @@ class NukeViewModel @Inject constructor(
             active = state.active,
             hasKey = state.hasKey,
             keyKind = state.keyKind,
-            nukedCount = NukePolicy.enforceable(state.packages, floor).size,
+            nukedCount = NukePolicy.nukedCount(state, floor),
             armBlocker = NukePolicy.armBlocker(state, floor),
             apps = rows,
             query = q,

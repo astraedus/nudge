@@ -52,6 +52,7 @@ class HomeNukeToggleGateTest {
             homeChartsBuilder = HomeChartsBuilder(StatsCalculator(timeTracker)),
             installedAppsRepository = mockk(relaxed = true),
             insightsCalculator = InsightsCalculator(),
+            essentialApps = mockk(relaxed = true),
             ioDispatcher = dispatcher
         )
     }

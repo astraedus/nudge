@@ -63,6 +63,15 @@ object NukePolicy {
         packages.filterTo(mutableSetOf()) { !isProtected(it, deviceFloor) }
 
     /**
+     * THE count every screen shows as "Nuke is on · N apps": the apps Nuke actually blocks, so an
+     * essential app that is still stored on the list is not counted. The stored list keeps it (it
+     * counts again if this phone stops treating it as essential). The dashboard card and the Nuke
+     * screen both read this with the same `EssentialApps` set, so the two can never disagree.
+     */
+    fun nukedCount(state: NukeState, deviceFloor: Set<String>): Int =
+        enforceable(state.packages, deviceFloor).size
+
+    /**
      * THE enforcement question: is [packageName] blocked by Nuke right now?
      *
      * True only while Nuke is on, the package is on the list, and the package is not on the safety
