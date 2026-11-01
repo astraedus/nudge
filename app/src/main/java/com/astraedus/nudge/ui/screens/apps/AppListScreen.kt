@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
@@ -24,6 +25,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -48,6 +50,16 @@ fun AppListScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val challenge by viewModel.challenge.collectAsStateWithLifecycle()
     val searching = state.searchQuery.isNotBlank()
+    val listState = rememberLazyListState()
+
+    // A group just saved in the editor: bring its row into view with the row above it (the header,
+    // or the group before it) for context. See AppListViewModel.newlyAddedGroupId for why.
+    LaunchedEffect(state.revealGroupId) {
+        val id = state.revealGroupId ?: return@LaunchedEffect
+        val index = AppListViewModel.groupRowIndex(state.groups, id)
+        if (index >= 0) listState.scrollToItem((index - 1).coerceAtLeast(0))
+        viewModel.onGroupRevealed()
+    }
 
     StrictModeChallengeHost(
         challenge = challenge,
@@ -83,7 +95,7 @@ fun AppListScreen(
                 singleLine = true
             )
 
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
+            LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
                 if (state.groups.isNotEmpty()) {
                     item(key = "groups_header") { ListSubheader("Groups") }
                 }

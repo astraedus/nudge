@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -47,7 +48,12 @@ data class AppListUiState(
     val groups: List<GroupRow> = emptyList(),
     val apps: List<AppWithBlockStatus> = emptyList(),
     val searchQuery: String = "",
-    val isLoading: Boolean = true
+    val isLoading: Boolean = true,
+    /**
+     * A group that appeared while this screen was away (just saved in the editor): the screen
+     * scrolls it into view, then calls [AppListViewModel.onGroupRevealed].
+     */
+    val revealGroupId: Long? = null
 )
 
 private data class GroupData(
@@ -71,18 +77,27 @@ class AppListViewModel @Inject constructor(
     private val searchQuery = MutableStateFlow("")
     private val installedApps = MutableStateFlow<List<InstalledAppsRepository.AppInfo>>(emptyList())
 
+    private val revealGroupId = MutableStateFlow<Long?>(null)
+
+    /** Group ids seen in the last emission; null before the first. Outlives a trip to the editor. */
+    private var knownGroupIds: Set<Long>? = null
+
     private val groupData = combine(
         blockRuleRepository.getAllGroups(),
         blockRuleRepository.getAllGroupMembers(),
         blockRuleRepository.getAllRules(),
         ::GroupData
-    )
+    ).onEach { data ->
+        newlyAddedGroupId(knownGroupIds, data.groups)?.let { revealGroupId.value = it }
+        knownGroupIds = data.groups.mapTo(HashSet()) { it.id }
+    }
 
     val uiState: StateFlow<AppListUiState> = combine(
         installedApps,
         groupData,
-        searchQuery
-    ) { apps, data, query ->
+        searchQuery,
+        revealGroupId
+    ) { apps, data, query, reveal ->
         val rulesByPackage = data.rules
             .filter { it.packageName != null }
             .associateBy { it.packageName }
@@ -103,7 +118,8 @@ class AppListViewModel @Inject constructor(
                 )
             },
             searchQuery = query,
-            isLoading = false
+            isLoading = false,
+            revealGroupId = reveal
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AppListUiState())
 
@@ -161,6 +177,11 @@ class AppListViewModel @Inject constructor(
         }
     }
 
+    /** The screen has scrolled [AppListUiState.revealGroupId] into view (or could not: a search hides it). */
+    fun onGroupRevealed() {
+        revealGroupId.value = null
+    }
+
     /** Called from the challenge dialog; runs the pending weakening action on exact match. */
     fun verifyChallenge(input: String) {
         viewModelScope.launch { strictModeGate.verifyAndRun(input) }
@@ -172,6 +193,25 @@ class AppListViewModel @Inject constructor(
     }
 
     companion object {
+        /**
+         * The group to bring into view after the list changes: one whose id was not there last time,
+         * first by name. Null on the first load (nothing was "added", the list just opened).
+         *
+         * Why this exists: the list keeps its first visible row in place by key. With no groups yet,
+         * that row is "Block several apps", so a group saved from it lands ABOVE the viewport and the
+         * user returns to a list that looks like it dropped what they just made (device QA, PR 2).
+         */
+        fun newlyAddedGroupId(known: Set<Long>?, groups: List<AppGroup>): Long? {
+            if (known == null) return null
+            return groups.filter { it.id !in known }.minByOrNull { it.name.lowercase() }?.id
+        }
+
+        /** The LazyColumn index of a group's row: the "Groups" header is index 0. -1 if not shown. */
+        fun groupRowIndex(rows: List<GroupRow>, groupId: Long): Int {
+            val position = rows.indexOfFirst { it.groupId == groupId }
+            return if (position < 0) -1 else position + 1
+        }
+
         /**
          * The group rows, sorted by name. A search keeps the groups whose NAME matches: a group is
          * found by what the user called it, not by the apps inside it.
