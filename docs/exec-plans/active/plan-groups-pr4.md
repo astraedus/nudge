@@ -70,4 +70,20 @@ unlock is PR 5b). Base: main at v1.24.0 (PR 3).
 
 ## Status
 
-Day-0 committed. Lanes dispatched.
+Built; PR open for the orchestrator to merge. Lanes A-E merged into the lane branch; reviewer
+rulings applied (Save off at 0 blocked apps; the Manage Apps switch-on of a Hard / All the time
+rule confirms through the same predicate as Save; wait chips for Breathing in both editors; one
+"Always allowed" column; an existing daily limit is kept on save; shared editor rows in
+`ui/components/rule/`). Screenshot-review copy fixes applied: "Also blocked by" names another All
+apps rule by its title and joins two names with "and"; the Hard sentence is plural on the group and
+All apps editors; the block screen's Rule / Until lines are readable.
+
+Known gaps (follow-ups, not in this PR):
+- First-launch escape on device QA: a covered app's first launch that is interrupted by a system
+  dialog (Firefox's default-browser role prompt; Docs' first run after a fresh install) came back
+  without a re-evaluation. Later launches were blocked. Looks like the foreground-detection class,
+  not this diff; no A/B against main yet.
+- The hard block screen prints the raw package name under the app name (pre-existing on main).
+- The "Daily pass used" line on the block screen is lighter than the footer (pre-existing).
+- Several same-mode rules: the delay comes from the first one (pre-existing engine order).
+- A target change (app/group to All apps) counts as weakening under Strict Mode.

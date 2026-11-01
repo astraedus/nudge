@@ -19,6 +19,8 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
 ### Changed
 - Importing a backup that reduces protection under Strict Mode now asks "Import a backup that reduces protection". A backup that adds apps to a group an All apps rule lets through counts as reducing it.
 - Breathing now shows its wait time in the group editor and the All apps editor alike.
+- On the group editor, Hard Block now says "Completely blocks these apps", not "the app".
+- The rule line at the bottom of a block screen is easier to read.
 
 ## [1.24.0] - 2026-11-02
 
