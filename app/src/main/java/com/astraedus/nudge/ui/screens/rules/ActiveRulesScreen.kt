@@ -53,7 +53,7 @@ import com.astraedus.nudge.ui.components.StrictModeChallengeHost
 fun ActiveRulesScreen(
     viewModel: ActiveRulesViewModel,
     onNavigateBack: () -> Unit,
-    onNavigateToRuleEditor: (String, Long) -> Unit
+    onNavigateToAppConfig: (String, Long) -> Unit
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val challenge by viewModel.challenge.collectAsStateWithLifecycle()
@@ -136,7 +136,7 @@ fun ActiveRulesScreen(
                 AppRuleCard(
                     group = group,
                     onToggle = { viewModel.toggleAppEnabled(group.packageName, group.enabled) },
-                    onClick = { onNavigateToRuleEditor(group.packageName, 0L) }
+                    onClick = { onNavigateToAppConfig(group.packageName, 0L) }
                 )
             }
 
