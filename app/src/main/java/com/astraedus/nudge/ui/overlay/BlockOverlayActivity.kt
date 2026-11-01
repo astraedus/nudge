@@ -382,13 +382,33 @@ class BlockOverlayActivity : ComponentActivity() {
             initialTarget = redirectTarget
         )
         // Tap = a walk-away to that app, through the ONE walk-away path; long-press = the picker.
-        val redirectBubble: @Composable () -> Unit = {
-            RedirectAppBubble(
-                target = redirect.target,
-                onLaunch = { navigateHome(redirectPackage = it) },
-                onEdit = redirect::openPicker
-            )
+        //
+        // An All apps block (spec 3.9) hides the bubble: its "Open an allowed app" icons take the
+        // slot, and a tap on one leaves through the SAME navigateHome(redirectPackage = ...).
+        val isAllApps = intent.hasExtra(EXTRA_ALL_APPS_EXCEPT_PACKAGES) ||
+            intent.hasExtra(EXTRA_ALL_APPS_EXCEPT_GROUPS) ||
+            intent.hasExtra(EXTRA_ALL_APPS_ALLOWED_PACKAGES)
+        val allowedApps = if (isAllApps) resolveAllowedApps(intent, blockPackages) else emptyList()
+        val redirectBubble: @Composable () -> Unit = if (OverlayBlockInfo.showRedirectBubble(isAllApps)) {
+            {
+                RedirectAppBubble(
+                    target = redirect.target,
+                    onLaunch = { navigateHome(redirectPackage = it) },
+                    onEdit = redirect::openPicker
+                )
+            }
+        } else {
+            { AllowedAppsRow(apps = allowedApps, onOpen = { navigateHome(redirectPackage = it) }) }
         }
+        val untilText = OverlayBlockInfo.untilLine(
+            untilMs = intent.getLongExtra(EXTRA_UNTIL, -1L).takeIf { it >= 0 },
+            formatClock = { android.text.format.DateFormat.getTimeFormat(this).format(java.util.Date(it)) }
+        )
+        val visibleRuleName = OverlayBlockInfo.visibleRuleName(
+            ruleName = ruleName,
+            isAllApps = isAllApps,
+            exceptNames = if (isAllApps) resolveExceptNames(intent) else emptyList()
+        )
 
         // Grant the pass and return to the blocked app. finish() brings it back to the foreground;
         // the service's isPassActive check then lets it through. NOT navigateHome and NOT a
@@ -442,7 +462,8 @@ class BlockOverlayActivity : ComponentActivity() {
                             dailyTimeRemainingMs = dailyTimeRemainingMs,
                             dailyLimitMinutes = dailyLimitMinutes,
                             onGoBack = { navigateHome() },
-                            ruleName = ruleName,
+                            ruleName = visibleRuleName,
+                            untilText = untilText,
                             messagePool = hardBlockPool,
                             canUseEmergencyPass = passState.canUse,
                             emergencyLocked = passState.locked,
@@ -460,7 +481,8 @@ class BlockOverlayActivity : ComponentActivity() {
                             dailyLimitMinutes = dailyLimitMinutes,
                             onComplete = { onTimerComplete() },
                             onCancel = { navigateHome() },
-                            ruleName = ruleName,
+                            ruleName = visibleRuleName,
+                            untilText = untilText,
                             titlePool = titlePool,
                             subtitlePool = subtitlePool,
                             canUseEmergencyPass = passState.canUse,
@@ -479,7 +501,8 @@ class BlockOverlayActivity : ComponentActivity() {
                             dailyLimitMinutes = dailyLimitMinutes,
                             onComplete = { onTimerComplete() },
                             onCancel = { navigateHome() },
-                            ruleName = ruleName,
+                            ruleName = visibleRuleName,
+                            untilText = untilText,
                             titlePool = titlePool,
                             canUseEmergencyPass = passState.canUse,
                             emergencyLocked = passState.locked,
@@ -497,7 +520,8 @@ class BlockOverlayActivity : ComponentActivity() {
                             dailyLimitMinutes = dailyLimitMinutes,
                             onComplete = { onTimerComplete() },
                             onCancel = { navigateHome() },
-                            ruleName = ruleName,
+                            ruleName = visibleRuleName,
+                            untilText = untilText,
                             subtitlePool = subtitlePool,
                             canUseEmergencyPass = passState.canUse,
                             emergencyLocked = passState.locked,
@@ -512,6 +536,47 @@ class BlockOverlayActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    /**
+     * The "Open an allowed app" apps for an All apps block: installed + launchable only, never the
+     * blocked package, capped (the rule is [OverlayBlockInfo.allowedIconPackages]).
+     */
+    private fun resolveAllowedApps(intent: Intent, blockPackages: Set<String>): List<AllowedApp> {
+        val allowed = intent.getStringArrayExtra(EXTRA_ALL_APPS_ALLOWED_PACKAGES)?.toList().orEmpty()
+        val pm = packageManager
+        return OverlayBlockInfo.allowedIconPackages(
+            allowed = allowed,
+            blockedPackages = blockPackages,
+            isLaunchable = { pkg ->
+                try {
+                    pm.getLaunchIntentForPackage(pkg) != null
+                } catch (_: Exception) {
+                    false
+                }
+            }
+        ).mapNotNull { pkg ->
+            try {
+                val info = pm.getApplicationInfo(pkg, 0)
+                AllowedApp(pkg, pm.getApplicationLabel(info).toString(), pm.getApplicationIcon(info))
+            } catch (_: Exception) {
+                null
+            }
+        }
+    }
+
+    /** Except-group names first, then the labels of the except packages that are installed. */
+    private fun resolveExceptNames(intent: Intent): List<String> {
+        val groups = intent.getStringArrayExtra(EXTRA_ALL_APPS_EXCEPT_GROUPS)?.toList().orEmpty()
+        val labels = intent.getStringArrayExtra(EXTRA_ALL_APPS_EXCEPT_PACKAGES)?.toList().orEmpty()
+            .mapNotNull { pkg ->
+                try {
+                    packageManager.getApplicationLabel(packageManager.getApplicationInfo(pkg, 0)).toString()
+                } catch (_: Exception) {
+                    null
+                }
+            }
+        return groups + labels
     }
 
     /**
