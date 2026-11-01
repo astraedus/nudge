@@ -308,6 +308,25 @@ another app) clears the flag, so a sitting that holds no such grant behaves exac
 No length picker: one window for every absence. Turning it on is a Strict Mode weakening
 (`RuleWeakening`); it travels in exports, and an older export imports it off.
 
+**A grant also records whether it was earned against the WHOLE app (spec 5.5).** A grant has a
+package, and optionally a website (`webDomain`) or an in-app feature (`featureKey`). Only an
+app-level completion (neither) is *whole*: `PassthroughManager.isGrantedWhole(pkg)` is true when
+the package is granted AND the sitting's grant was whole, and a website grant later in the same
+package keeps it whole (the user earned the browser first, then a site inside it). A website-only or
+feature-only grant is not whole; the axis ends with the grant (`clear`, any sitting end, a grant for
+another package). It matters for one case only: a browser a group rule covers as a whole app
+(`web-domain-blocking.md`, "Browsers in a group"). For such a browser the service's two grant
+checks, `grantLetsThrough` and `grantAliveFor`, both go through `passthroughEarned`, which asks
+`isGrantedWhole` instead of `shouldSkipForegroundEvaluation`, so a finished website delay cannot
+keep open a browser its group blocks. For every other package `passthroughEarned` is the plain
+`shouldSkipForegroundEvaluation`, unchanged. Pinned by `PassthroughWholeAxisTest` (L1) and
+`GroupBrowserWiringContractTest` (site 4).
+
+The same browsers route through `evaluateBrowser` on both browser paths of the dispatch: the window
+change (`evaluateForegroundPackage`) and the debounced content change (`handleWindowContentChanged`,
+skipped while `grantAliveFor` is true). `GroupBrowserCaptureReplayTest` replays
+`chrome-open-and-browse.jsonl` through the classifier and that routing.
+
 **`WENT_HOME` can arrive by two event types, and only one of them is a window change
 ([#58](https://github.com/astraedus/nudge/issues/58)).** `EventClassifier.classify` still restricts
 `ForegroundSignal.Home` to `TYPE_WINDOW_STATE_CHANGED` — launcher widget churn behind a fullscreen
@@ -588,6 +607,9 @@ fields, never from per-app knowledge**, so a stock `androidx` RecyclerView is th
 | `AccessibilityEventCodecTest` | encoder/decoder round trip, escaping, forward compatibility |
 | `EventDispatchOrderContractTest` | classify-once and sitting-once above every early return; no branch re-derives the classification; `evaluateForegroundPackage` never clears the passthrough again; a click or a scroll actually REACHES the sitting model (#64), under the synthetic-click guard and before the counter is told — a pure-model fix nobody calls is a silent no-op with a green suite |
 | `HomeScreenPassthroughContractTest` | the Home / system-surface distinction, the Strict Mode guard's position, the global toggle's position |
+| `PassthroughWholeAxisTest` | the whole-app axis of a grant: app completion is whole, website or feature alone is not, a website grant inside an earned browser stays whole, never inherited from another package, ends with the sitting, whole always implies granted |
+| `GroupBrowserCaptureReplayTest` | `chrome-open-and-browse.jsonl` with a group Hard block covering Chrome: every Chrome evaluation blocks as an app and none reaches the website path, with the counterfactual that the pre-5.5 routing never blocks |
+| `GroupBrowserWiringContractTest` | the four service sites of spec 5.5 (foreground, content change, feature detection, both grant checks) and that `evaluateBrowser` is the only way to the website path |
 
 The counterfactual tests are worth the extra lines. `the old event-rate rule really would have
 over-counted this capture` and `the old rule really would have revoked the grant on this capture`
