@@ -7,6 +7,7 @@ import com.astraedus.nudge.data.db.entity.UsageEvent
 import com.astraedus.nudge.domain.ContentFilterAllowlist
 import com.astraedus.nudge.domain.ContentFilterUserList
 import com.astraedus.nudge.domain.lock.StrictModeChallenge
+import com.astraedus.nudge.domain.nudge.PhoneNudge
 import com.astraedus.nudge.domain.model.BlockMode
 import org.json.JSONArray
 import org.json.JSONException
@@ -333,6 +334,9 @@ class RuleExporter @Inject constructor() {
         settings.strictModeChallengeLength?.let { put("strictModeChallengeLength", it) }
         settings.emergencyPassEnabled?.let { put("emergencyPassEnabled", it) }
         settings.bounceCheckInEnabled?.let { put("bounceCheckInEnabled", it) }
+        settings.phoneNudgeEnabled?.let { put("phoneNudgeEnabled", it) }
+        settings.phoneNudgeThresholdMinutes?.let { put("phoneNudgeThresholdMinutes", it) }
+        settings.phoneNudgePauseSeconds?.let { put("phoneNudgePauseSeconds", it) }
         settings.customDelayTitles?.let { put("customDelayTitles", it) }
         settings.customDelaySubtitles?.let { put("customDelaySubtitles", it) }
         settings.customHardBlockMessages?.let { put("customHardBlockMessages", it) }
@@ -487,6 +491,24 @@ class RuleExporter @Inject constructor() {
             },
             emergencyPassEnabled = obj.setting("emergencyPassEnabled", onSkip) { booleanValue(it) },
             bounceCheckInEnabled = obj.setting("bounceCheckInEnabled", onSkip) { booleanValue(it) },
+            phoneNudgeEnabled = obj.setting("phoneNudgeEnabled", onSkip) { booleanValue(it) },
+            phoneNudgeThresholdMinutes =
+                obj.setting("phoneNudgeThresholdMinutes", onSkip) { key ->
+                    intValue(key).also { minutes ->
+                        require(minutes in PhoneNudge.MIN_THRESHOLD_MINUTES..PhoneNudge.MAX_THRESHOLD_MINUTES) {
+                            "phone nudge threshold $minutes is outside " +
+                                "${PhoneNudge.MIN_THRESHOLD_MINUTES}..${PhoneNudge.MAX_THRESHOLD_MINUTES}"
+                        }
+                    }
+                },
+            phoneNudgePauseSeconds = obj.setting("phoneNudgePauseSeconds", onSkip) { key ->
+                intValue(key).also { seconds ->
+                    require(seconds in PhoneNudge.MIN_PAUSE_SECONDS..PhoneNudge.MAX_PAUSE_SECONDS) {
+                        "phone nudge pause $seconds is outside " +
+                            "${PhoneNudge.MIN_PAUSE_SECONDS}..${PhoneNudge.MAX_PAUSE_SECONDS}"
+                    }
+                }
+            },
             customDelayTitles = obj.setting("customDelayTitles", onSkip) { stringValue(it) },
             customDelaySubtitles = obj.setting("customDelaySubtitles", onSkip) { stringValue(it) },
             customHardBlockMessages =

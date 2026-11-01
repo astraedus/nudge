@@ -51,6 +51,9 @@ class SettingsExportTest {
         strictModeChallengeLength = StrictModeChallenge.LENGTH_HARD,
         emergencyPassEnabled = false,
         bounceCheckInEnabled = true,
+        phoneNudgeEnabled = true,
+        phoneNudgeThresholdMinutes = 30,
+        phoneNudgePauseSeconds = 10,
         customDelayTitles = "Pause.\nWait a moment.",
         customDelaySubtitles = "Is this what you wanted?",
         customHardBlockMessages = "Not today."
@@ -101,6 +104,8 @@ class SettingsExportTest {
         assertEquals("DELAY", settings.getString("contentFilterMode"))
         assertEquals(48, settings.getInt("strictModeChallengeLength"))
         assertEquals(true, settings.getBoolean("bounceCheckInEnabled"))
+        assertEquals(30, settings.getInt("phoneNudgeThresholdMinutes"))
+        assertEquals(10, settings.getInt("phoneNudgePauseSeconds"))
         assertEquals("Not today.", settings.getString("customHardBlockMessages"))
         // The other payloads are untouched by its presence.
         assertEquals(1, json.getJSONArray("rules").length())

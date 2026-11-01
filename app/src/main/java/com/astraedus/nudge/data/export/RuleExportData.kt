@@ -85,6 +85,12 @@ data class ExportedSettings(
      * anything, so importing it is never weakening and needs no gate.
      */
     val bounceCheckInEnabled: Boolean? = null,
+    /** Whole-phone pause (#123). Off by default; not a protection setting. */
+    val phoneNudgeEnabled: Boolean? = null,
+    /** Minutes of session time before the first pause. */
+    val phoneNudgeThresholdMinutes: Int? = null,
+    /** Length of the first pause; later ones double up to 30s. */
+    val phoneNudgePauseSeconds: Int? = null,
     /**
      * User-edited overlay message pools, one message per line. An empty string is a REAL value
      * meaning "use the built-in defaults" (see `NudgeMessages.resolvePool`), not "absent" — a user
@@ -105,6 +111,9 @@ data class ExportedSettings(
             strictModeChallengeLength == null &&
             emergencyPassEnabled == null &&
             bounceCheckInEnabled == null &&
+            phoneNudgeEnabled == null &&
+            phoneNudgeThresholdMinutes == null &&
+            phoneNudgePauseSeconds == null &&
             customDelayTitles == null &&
             customDelaySubtitles == null &&
             customHardBlockMessages == null

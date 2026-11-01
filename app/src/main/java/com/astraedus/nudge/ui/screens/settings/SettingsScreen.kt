@@ -473,6 +473,9 @@ fun SettingsScreen(
             // does not gate it in either direction.
             BounceCheckInRow(preferences)
 
+            // The whole-phone pause (#123), same reasoning: friction, not a block.
+            PhoneNudgeRow(preferences)
+
             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
             Text(

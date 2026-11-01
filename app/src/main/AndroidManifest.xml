@@ -97,6 +97,19 @@
             android:theme="@style/Theme.Nudge.Overlay"
             tools:ignore="DiscouragedApi,NonResizeableActivity" />
 
+        <!-- Phone nudge (#123): the whole-phone pause. Launched from the accessibility service on a
+             timer, never from a manifest receiver. Not a block: no UsageEvent, no passthrough. -->
+        <activity
+            android:name=".ui.overlay.PhoneNudgeActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleInstance"
+            android:resizeableActivity="false"
+            android:supportsPictureInPicture="false"
+            android:taskAffinity=""
+            android:theme="@style/Theme.Nudge.Overlay"
+            tools:ignore="DiscouragedApi,NonResizeableActivity" />
+
         <!-- Strict Mode Phase 2: full-screen unlock challenge shown over protected Settings
              escape routes (accessibility toggle, App Info / Force stop / Uninstall). -->
         <activity
