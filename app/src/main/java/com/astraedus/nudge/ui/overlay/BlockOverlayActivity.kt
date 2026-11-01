@@ -117,6 +117,22 @@ class BlockOverlayActivity : ComponentActivity() {
         const val EXTRA_KEEP_PASS_ON_SHORT_TRIPS = "keep_pass_on_short_trips"
 
         /**
+         * When the deciding rule's days-and-times window ends, epoch ms (`BlockDecision.Block.until`,
+         * spec 3.9): the footer's "Until 8:42 AM". Absent for a rule that is on all the time.
+         */
+        const val EXTRA_UNTIL = "until"
+
+        /**
+         * Present only when an All apps rule decided this block (`BlockDecision.Block.allApps`,
+         * spec 3.9). The rule's own allowed packages, its allowed groups' names, and every app it
+         * leaves open (the "Open an allowed app" icons). The overlay resolves labels and icons, and
+         * drops anything not installed or not launchable. When present, the redirect bubble hides.
+         */
+        const val EXTRA_ALL_APPS_EXCEPT_PACKAGES = "all_apps_except_packages"
+        const val EXTRA_ALL_APPS_EXCEPT_GROUPS = "all_apps_except_groups"
+        const val EXTRA_ALL_APPS_ALLOWED_PACKAGES = "all_apps_allowed_packages"
+
+        /**
          * `SystemClock.elapsedRealtime()` when THIS delivery was started by [relaunchFullscreen]
          * rather than by the service. Absent on every ordinary delivery. Read by
          * [OverlayWindowMode.decide] so a platform that keeps re-opening us windowed cannot loop.

@@ -3260,6 +3260,21 @@ class NudgeAccessibilityService : AccessibilityService() {
                     decision.dailyLimitMinutes?.let {
                         putExtra(BlockOverlayActivity.EXTRA_DAILY_LIMIT_MINUTES, it)
                     }
+                    decision.until?.let { putExtra(BlockOverlayActivity.EXTRA_UNTIL, it) }
+                    decision.allApps?.let {
+                        putExtra(
+                            BlockOverlayActivity.EXTRA_ALL_APPS_EXCEPT_PACKAGES,
+                            it.exceptPackages.toTypedArray()
+                        )
+                        putExtra(
+                            BlockOverlayActivity.EXTRA_ALL_APPS_EXCEPT_GROUPS,
+                            it.exceptGroupNames.toTypedArray()
+                        )
+                        putExtra(
+                            BlockOverlayActivity.EXTRA_ALL_APPS_ALLOWED_PACKAGES,
+                            it.allowedPackages.toTypedArray()
+                        )
+                    }
                 }
                 if (!launched) return
 

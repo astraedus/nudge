@@ -4,6 +4,7 @@ import com.astraedus.nudge.domain.model.ActiveRule
 import com.astraedus.nudge.domain.model.BlockDecision
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.domain.logging.NudgeLog
+import java.util.Calendar
 import javax.inject.Inject
 
 class BlockEngine @Inject constructor(
@@ -99,7 +100,9 @@ class BlockEngine @Inject constructor(
                 dailyTimeRemainingMs = dailyTimeRemainingMs,
                 dailyLimitMinutes = minDailyLimit,
                 tabVanish = unconditionalHardBlockRule.tabVanish,
-                feature = featureDecidedBy(unconditionalHardBlockRule, detectedFeature)
+                feature = featureDecidedBy(unconditionalHardBlockRule, detectedFeature),
+                until = untilOf(unconditionalHardBlockRule),
+                allApps = unconditionalHardBlockRule.allApps
             )
         }
 
@@ -118,7 +121,9 @@ class BlockEngine @Inject constructor(
                 dailyTimeRemainingMs = dailyTimeRemainingMs,
                 dailyLimitMinutes = minDailyLimit,
                 tabVanish = timeBudgetRule.tabVanish,
-                feature = featureDecidedBy(timeBudgetRule, detectedFeature)
+                feature = featureDecidedBy(timeBudgetRule, detectedFeature),
+                until = untilOf(timeBudgetRule),
+                allApps = timeBudgetRule.allApps
             )
         }
 
@@ -141,7 +146,9 @@ class BlockEngine @Inject constructor(
                     dailyLimitMinutes = minDailyLimit,
                     tabVanish = rule.tabVanish,
                     keepPassOnShortTrips = rule.keepPassOnShortTrips,
-                    feature = featureDecidedBy(rule, detectedFeature)
+                    feature = featureDecidedBy(rule, detectedFeature),
+                    until = untilOf(rule),
+                    allApps = rule.allApps
                 )
             }
         }
@@ -162,6 +169,14 @@ class BlockEngine @Inject constructor(
      */
     private fun featureDecidedBy(rule: ActiveRule, detectedFeature: String?): String? =
         detectedFeature?.takeIf { rule.inAppFeatures?.contains(it) == true }
+
+    /**
+     * [BlockDecision.Block.until] for the rule that decided: when its days-and-times window ends
+     * (spec 3.9), or null for a rule that is on all the time. Read off the deciding rule only, like
+     * `tabVanish`.
+     */
+    private fun untilOf(rule: ActiveRule): Long? =
+        scheduleEvaluator.windowEndAt(rule, Calendar.getInstance())
 
     companion object {
         /** What the overlay's rule footer and the logs call a Nuke block. */
