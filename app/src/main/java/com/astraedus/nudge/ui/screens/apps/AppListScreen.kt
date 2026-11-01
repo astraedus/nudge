@@ -33,7 +33,7 @@ import com.astraedus.nudge.ui.components.StrictModeChallengeHost
 fun AppListScreen(
     viewModel: AppListViewModel,
     onNavigateBack: () -> Unit,
-    onNavigateToRuleEditor: (String) -> Unit
+    onNavigateToAppConfig: (String) -> Unit
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val challenge by viewModel.challenge.collectAsStateWithLifecycle()
@@ -78,7 +78,7 @@ fun AppListScreen(
                         appName = app.appInfo.appName,
                         icon = app.appInfo.icon,
                         modifier = Modifier.clickable {
-                            onNavigateToRuleEditor(app.appInfo.packageName)
+                            onNavigateToAppConfig(app.appInfo.packageName)
                         },
                         trailingContent = {
                             Switch(

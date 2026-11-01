@@ -25,8 +25,6 @@ import com.astraedus.nudge.ui.screens.config.UnifiedAppConfigScreen
 import com.astraedus.nudge.ui.screens.config.UnifiedAppConfigViewModel
 import com.astraedus.nudge.ui.screens.rules.ActiveRulesScreen
 import com.astraedus.nudge.ui.screens.rules.ActiveRulesViewModel
-import com.astraedus.nudge.ui.screens.rules.RuleEditorScreen
-import com.astraedus.nudge.ui.screens.rules.RuleEditorViewModel
 import com.astraedus.nudge.ui.screens.settings.GrayscaleGuideScreen
 import com.astraedus.nudge.ui.screens.settings.MessagesEditorScreen
 import com.astraedus.nudge.ui.screens.settings.SettingsScreen
@@ -43,11 +41,6 @@ import kotlinx.coroutines.launch
 sealed class Screen(val route: String) {
     data object Home : Screen("home")
     data object Apps : Screen("apps")
-    data object RuleEditor : Screen("rule_editor/{packageName}?ruleId={ruleId}") {
-        fun createRoute(packageName: String) = "rule_editor/$packageName"
-        fun createRoute(packageName: String, ruleId: Long) = "rule_editor/$packageName?ruleId=$ruleId"
-        fun createNewRoute(packageName: String) = "rule_editor/$packageName?ruleId=0"
-    }
     data object Groups : Screen("groups")
     data object Stats : Screen("stats")
     data object Willpower : Screen("willpower")
@@ -171,31 +164,8 @@ fun NudgeNavGraph(
             AppListScreen(
                 viewModel = viewModel,
                 onNavigateBack = { navController.popBackStack() },
-                onNavigateToRuleEditor = { pkg ->
+                onNavigateToAppConfig = { pkg ->
                     navController.navigate(Screen.AppConfig.createRoute(pkg))
-                }
-            )
-        }
-
-        composable(
-            route = Screen.RuleEditor.route,
-            arguments = listOf(
-                navArgument("packageName") { type = NavType.StringType },
-                navArgument("ruleId") {
-                    type = NavType.LongType
-                    defaultValue = -1L
-                }
-            )
-        ) {
-            val viewModel: RuleEditorViewModel = hiltViewModel()
-            RuleEditorScreen(
-                viewModel = viewModel,
-                onNavigateBack = { navController.popBackStack() },
-                onNavigateToRuleEditor = { pkg, ruleId ->
-                    navController.navigate(Screen.RuleEditor.createRoute(pkg, ruleId))
-                },
-                onCreateNewRule = { pkg ->
-                    navController.navigate(Screen.RuleEditor.createNewRoute(pkg))
                 }
             )
         }
@@ -216,7 +186,7 @@ fun NudgeNavGraph(
             ActiveRulesScreen(
                 viewModel = viewModel,
                 onNavigateBack = { navController.popBackStack() },
-                onNavigateToRuleEditor = { pkg, _ ->
+                onNavigateToAppConfig = { pkg, _ ->
                     navController.navigate(Screen.AppConfig.createRoute(pkg))
                 }
             )

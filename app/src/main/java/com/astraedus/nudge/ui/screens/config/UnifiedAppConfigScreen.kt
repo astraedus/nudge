@@ -10,12 +10,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -29,9 +27,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -54,7 +49,6 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.ui.components.blockModeDescription
-import com.astraedus.nudge.ui.components.blockModeLabel
 import com.astraedus.nudge.domain.model.FeatureMode
 import com.astraedus.nudge.ui.components.CustomTimeDialog
 import com.astraedus.nudge.ui.components.DurationInput
@@ -62,6 +56,10 @@ import com.astraedus.nudge.ui.components.MinutesField
 import com.astraedus.nudge.ui.components.StrictModeChallengeHost
 import com.astraedus.nudge.ui.components.UsageReminderSection
 import com.astraedus.nudge.ui.components.formatMinutesDisplay
+import com.astraedus.nudge.ui.components.rule.BlockModeSegmentedRow
+import com.astraedus.nudge.ui.components.rule.InfoButton
+import com.astraedus.nudge.ui.components.rule.ScheduleSection
+import com.astraedus.nudge.ui.components.rule.WaitTimeChips
 import com.astraedus.nudge.ui.hasGrayscalePermission
 import kotlinx.coroutines.launch
 
@@ -393,20 +391,10 @@ fun UnifiedAppConfigScreen(
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Medium
                         )
-                        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                            BLOCKING_MODES.forEachIndexed { index, mode ->
-                                SegmentedButton(
-                                    selected = state.webBlockMode == mode,
-                                    onClick = { viewModel.setWebBlockMode(mode) },
-                                    shape = SegmentedButtonDefaults.itemShape(
-                                        index = index,
-                                        count = BLOCKING_MODES.size
-                                    )
-                                ) {
-                                    Text(blockModeLabel(mode))
-                                }
-                            }
-                        }
+                        BlockModeSegmentedRow(
+                            selected = state.webBlockMode,
+                            onSelect = viewModel::setWebBlockMode
+                        )
                         Text(
                             "${state.appName} opens normally; these websites are still blocked. " +
                                 blockModeDescription(state.webBlockMode),
@@ -459,24 +447,11 @@ fun UnifiedAppConfigScreen(
             // Block mode segmented button — only meaningful when the app itself is blocked.
             if (state.blocksWholeApp) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                        BLOCKING_MODES.forEachIndexed { index, mode ->
-                            SegmentedButton(
-                                selected = state.defaultMode == mode,
-                                onClick = { viewModel.setDefaultMode(mode) },
-                                shape = SegmentedButtonDefaults.itemShape(
-                                    index = index,
-                                    count = BLOCKING_MODES.size
-                                ),
-                                // No check icon: with four modes in the row its 18dp + 8dp would
-                                // cost more than a quarter of the width left for "Hard Block", and
-                                // the selected segment is already unmistakable from its colour.
-                                icon = {}
-                            ) {
-                                Text(blockModeLabel(mode), maxLines = 1)
-                            }
-                        }
-                    }
+                    BlockModeSegmentedRow(
+                        selected = state.defaultMode,
+                        onSelect = viewModel::setDefaultMode,
+                        compact = true
+                    )
 
                     Text(
                         blockModeDescription(state.defaultMode),
@@ -497,44 +472,11 @@ fun UnifiedAppConfigScreen(
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Medium
                     )
-                    val delayPresets = remember { listOf(5, 15, 30, 60) }
-                    var showDelayDialog by remember { mutableStateOf(false) }
-                    val isCustomDelay = state.defaultDelaySeconds !in delayPresets
-
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        delayPresets.forEach { seconds ->
-                            FilterChip(
-                                selected = state.defaultDelaySeconds == seconds,
-                                onClick = { viewModel.setDefaultDelaySeconds(seconds) },
-                                label = { Text("${seconds}s") }
-                            )
-                        }
-                        FilterChip(
-                            selected = isCustomDelay,
-                            onClick = { showDelayDialog = true },
-                            label = {
-                                Text(if (isCustomDelay) "${state.defaultDelaySeconds}s" else "Custom")
-                            }
-                        )
-                    }
-
-                    if (showDelayDialog) {
-                        CustomTimeDialog(
-                            title = "Custom ${state.delayDurationLabel}",
-                            unit = "seconds",
-                            currentValue = state.defaultDelaySeconds,
-                            min = 1,
-                            max = 300,
-                            onConfirm = { seconds ->
-                                viewModel.setDefaultDelaySeconds(seconds)
-                                showDelayDialog = false
-                            },
-                            onDismiss = { showDelayDialog = false }
-                        )
-                    }
+                    WaitTimeChips(
+                        seconds = state.defaultDelaySeconds,
+                        onSelect = viewModel::setDefaultDelaySeconds,
+                        customDialogTitle = "Custom ${state.delayDurationLabel}"
+                    )
                 }
             }
 
@@ -799,94 +741,20 @@ fun UnifiedAppConfigScreen(
             }
 
             if (state.scheduledOverrideEnabled) {
-                // Day selector
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        "Active days",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        val dayLabels = remember {
-                            listOf(
-                                1 to "Mon", 2 to "Tue", 3 to "Wed", 4 to "Thu",
-                                5 to "Fri", 6 to "Sat", 7 to "Sun"
-                            )
-                        }
-                        dayLabels.forEach { (day, label) ->
-                            FilterChip(
-                                selected = day in state.scheduleDays,
-                                onClick = {
-                                    val newDays = state.scheduleDays.toMutableSet()
-                                    if (day in newDays) newDays.remove(day) else newDays.add(day)
-                                    viewModel.setScheduleDays(newDays)
-                                },
-                                label = { Text(label) }
-                            )
-                        }
-                    }
-
-                    // Start time
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("Start time", style = MaterialTheme.typography.bodyMedium)
-                        TimeSelector(
-                            hour = state.scheduleStartHour,
-                            minute = state.scheduleStartMinute,
-                            onTimeSelected = { h, m -> viewModel.setScheduleStartTime(h, m) }
-                        )
-                    }
-
-                    // End time
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("End time", style = MaterialTheme.typography.bodyMedium)
-                        TimeSelector(
-                            hour = state.scheduleEndHour,
-                            minute = state.scheduleEndMinute,
-                            onTimeSelected = { h, m -> viewModel.setScheduleEndTime(h, m) }
-                        )
-                    }
-
-                    // Scheduled mode
-                    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                        BLOCKING_MODES.forEachIndexed { index, mode ->
-                            SegmentedButton(
-                                selected = state.scheduledMode == mode,
-                                onClick = { viewModel.setScheduledMode(mode) },
-                                shape = SegmentedButtonDefaults.itemShape(
-                                    index = index,
-                                    count = BLOCKING_MODES.size
-                                )
-                            ) {
-                                Text(blockModeLabel(mode))
-                            }
-                        }
-                    }
-
-                    // Scheduled delay duration
-                    if (state.scheduledMode != BlockMode.HARD_BLOCK) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            listOf(5, 15, 30, 60).forEach { seconds ->
-                                FilterChip(
-                                    selected = state.scheduledDelaySeconds == seconds,
-                                    onClick = { viewModel.setScheduledDelaySeconds(seconds) },
-                                    label = { Text("${seconds}s") }
-                                )
-                            }
-                        }
-                    }
-
+                ScheduleSection(
+                    days = state.scheduleDays,
+                    onDaysChange = viewModel::setScheduleDays,
+                    startHour = state.scheduleStartHour,
+                    startMinute = state.scheduleStartMinute,
+                    onStartTimeChange = viewModel::setScheduleStartTime,
+                    endHour = state.scheduleEndHour,
+                    endMinute = state.scheduleEndMinute,
+                    onEndTimeChange = viewModel::setScheduleEndTime,
+                    mode = state.scheduledMode,
+                    onModeChange = viewModel::setScheduledMode,
+                    waitSeconds = state.scheduledDelaySeconds,
+                    onWaitSecondsChange = viewModel::setScheduledDelaySeconds
+                ) {
                     // Scheduled feature overrides
                     if (state.supportsFeatures) {
                         Spacer(Modifier.height(8.dp))
@@ -966,40 +834,6 @@ private fun SectionHeader(title: String) {
     )
 }
 
-@Composable
-private fun InfoButton(explanation: String) {
-    var showDialog by remember { mutableStateOf(false) }
-
-    IconButton(
-        onClick = { showDialog = true },
-        modifier = Modifier.size(32.dp)
-    ) {
-        Icon(
-            Icons.AutoMirrored.Outlined.HelpOutline,
-            contentDescription = "More info",
-            modifier = Modifier.size(20.dp),
-            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-        )
-    }
-
-    if (showDialog) {
-        AlertDialog(
-            onDismissRequest = { showDialog = false },
-            confirmButton = {
-                TextButton(onClick = { showDialog = false }) {
-                    Text("Got it")
-                }
-            },
-            text = {
-                Text(
-                    explanation,
-                    style = MaterialTheme.typography.bodyMedium
-                )
-            }
-        )
-    }
-}
-
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun FeatureOverrideCard(
@@ -1042,15 +876,10 @@ private fun FeatureOverrideCard(
             // Expanded settings for every mode that spends a duration.
             if (override.mode.usesDuration) {
                 // Delay duration chips
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf(5, 15, 30, 60).forEach { s ->
-                        FilterChip(
-                            selected = override.delaySeconds == s,
-                            onClick = { onUpdate(override.copy(delaySeconds = s)) },
-                            label = { Text("${s}s") }
-                        )
-                    }
-                }
+                WaitTimeChips(
+                    seconds = override.delaySeconds,
+                    onSelect = { onUpdate(override.copy(delaySeconds = it)) }
+                )
 
                 // Auto-kick toggle
                 Row(
@@ -1087,45 +916,6 @@ private fun FeatureOverrideCard(
         }
     }
 }
-
-/**
- * Simple time selector using hour/minute FilterChips.
- * Cycles hour by +1 and minute in 15-minute increments on click.
- */
-@Composable
-private fun TimeSelector(
-    hour: Int,
-    minute: Int,
-    onTimeSelected: (Int, Int) -> Unit
-) {
-    Row(
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        FilterChip(
-            selected = true,
-            onClick = { onTimeSelected((hour + 1) % 24, minute) },
-            label = { Text(String.format("%02d", hour)) }
-        )
-        Text(":", style = MaterialTheme.typography.bodyLarge)
-        FilterChip(
-            selected = true,
-            onClick = { onTimeSelected(hour, (minute + 15) % 60) },
-            label = { Text(String.format("%02d", minute)) }
-        )
-    }
-}
-
-/**
- * The modes that actually gate an app, in ascending severity.
- *
- * Deliberately NOT `BlockMode.entries`: [BlockMode.NONE] must never appear in a mode picker.
- * At app level it is expressed by the "Block the whole app" switch, and for a SCHEDULED override
- * it would be an outright lie — a scheduled rule is additive, so a NONE scheduled rule adds
- * nothing rather than carving out an unblocked window during those hours.
- */
-private val BLOCKING_MODES =
-    listOf(BlockMode.HARD_BLOCK, BlockMode.DELAY, BlockMode.HOLD, BlockMode.BREATHING)
 
 /**
  * The words on an in-app FEATURE override chip. Separate from [blockModeLabel] only because

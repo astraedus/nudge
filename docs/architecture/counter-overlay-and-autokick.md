@@ -74,7 +74,7 @@ The auto-kick cooldown and the new minutes threshold are free-form numeric field
 - **Display rounds UP** (`cooldownSecondsToText`): the old slider was `steps = 5` over `0f..300f`, which Compose resolves to the seven stops **0/50/100/150/200/250/300** — the old code comment claiming 0/60/120/… was wrong — so 50s and 150s cooldowns exist in the wild and a minutes field can only show them rounded. Rounding down could shorten protection; 50s showing as "0" would read as off.
 - **Rounding never reaches storage.** `resolveCooldownSeconds(text, originalSeconds)` / `resolveMinutes(text, originalMinutes)` return the ORIGINAL value verbatim when the field still reads what was rendered for it, so a save that did not touch the field re-persists the exact prior value. Both editors carry `original…` fields in state for this. It matters because `RuleWeakening` treats a lowered cooldown as a weakening: without it, opening an editor and saving an unrelated change could rewrite 150s→180s and raise a spurious Strict Mode challenge later.
 - Turning auto-kick off PRESERVES the stored cooldown (it used to snap back to 60s) for the same reason.
-- `RuleEditorViewModel.buildRule` is `internal` and pure so the whole save contract is JVM-testable (`RuleEditorRuleBuilderTest`) — including the regression that this editor used to drop `webDomains` on every save.
+- The legacy `RuleEditorViewModel` (and its `buildRule` / `RuleEditorRuleBuilderTest`) was deleted as dead code; `UnifiedAppConfigViewModel` is the one save path.
 
 ## Websites get the time trigger too, v1.15.2
 
@@ -361,8 +361,8 @@ replaces an older one instead of stacking. Tap opens Nudge's home screen. A refu
 (`SecurityException`) is swallowed, as everywhere on the accessibility thread. The label is the app's
 `getApplicationLabel`, falling back to the package name.
 
-**Editors.** Both editors (`UnifiedAppConfigScreen`, the one users reach from the app list and the
-active rules list, and the legacy `RuleEditorScreen`) render one shared `ui/components/UsageReminderSection`
+**Editors.** The editor (`UnifiedAppConfigScreen`, reached from the app list and the
+active rules list) renders one shared `ui/components/UsageReminderSection`
 right under auto-kick: title + help + switch, a minutes field ("Remind me after", blank = off; switching
 on with an empty field fills 20 so the switch is never a no-op), the kick-precedence hint, and, while
 on, an error-coloured "Notifications are off" line that opens Nudge's notification settings. Turning it
@@ -386,7 +386,7 @@ bumped, same as `tabVanish`/`followingSteer`: an older importer ignores unknown 
 break re-arms, `resetSession` after a kick re-arms, kick precedence in every shape, merged-rule
 precedence, zero values, failing and backwards reads, `shouldKick` never consumes it, per-package
 isolation), `CounterCacheRefresherMergeTest` (the fourth arm, `appEntryFor` and its class test),
-`UsageReminderInputTest`, `RuleEditorRuleBuilderTest`, `UnifiedAppConfigViewModelTest`,
+`UsageReminderInputTest`, `UnifiedAppConfigViewModelTest`,
 `RuleWeakeningTest`, `RuleExporterTest`, `ImportRulesUseCaseTest`, `NudgeDatabaseMigrationTest`. L6: the
 device script in the PR body (a 1-minute reminder, then `dumpsys notification` for id 4 on
 `nudge_usage_reminders`).

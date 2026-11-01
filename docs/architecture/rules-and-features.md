@@ -22,7 +22,10 @@ Covers what a *rule* can express beyond a plain block: schedules, in-app feature
   `BlockRule.keepPassOnShortTrips` (DB 12->13), read off the rule that DECIDED the block like `tabVanish`, carried by
   the grant into the sitting. Off is the shipped behaviour exactly. Mechanism, the device capture and why it is
   per rule: `accessibility-event-pipeline.md`, "Per-rule opt-in: a launcher window as an ABSENCE".
-- **Rule editor UX** — info tooltips on all sections, block mode descriptions, per-app rules summary with enable/disable
+- **Rule editor UX** — info tooltips on all sections, block mode descriptions, per-app rules summary with enable/disable.
+  `UnifiedAppConfigScreen` is the only per-app editor (the old `RuleEditorScreen` was deleted). Its reusable, stateless
+  pieces live in `ui/components/rule/`: `InfoButton`, `TimeSelector`, `BlockModeSegmentedRow` (+ `BLOCKING_MODES`),
+  `WaitTimeChips`, `ScheduleSection`. New editors (group, All apps) reuse them; `DeadRuleEditorContractTest` pins it.
 - **Settings** — version links to GitHub repo, source code & feedback link
 - **Tab Vanish (v1.18.0)** — while a rule covering a host app's feature resolves to a HARD block, Nudge draws a
   touchable cover exactly over that feature's bottom-nav tab, so the icon is not there and the tap does nothing.
