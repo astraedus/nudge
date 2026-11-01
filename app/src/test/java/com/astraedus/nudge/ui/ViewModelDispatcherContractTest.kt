@@ -87,7 +87,9 @@ class ViewModelDispatcherContractTest {
 
     /**
      * The injection is only real if it reaches the call sites. `HomeViewModel` is the one this was
-     * found on, and both of its steps have to be on the parameter.
+     * found on, and every one of its off-main steps has to be on the parameter. It had two when
+     * this was written. The Nuke count (spec PR 1) added a third, so the test pins "all of them",
+     * not a number.
      */
     @Test
     fun `the ViewModel that shipped the defect routes its off-main work through the parameter`() {
@@ -98,11 +100,13 @@ class ViewModelDispatcherContractTest {
             "HomeViewModel must declare the injected dispatcher",
             source.contains("@IoDispatcher private val ioDispatcher: CoroutineDispatcher")
         )
+        val offMainSteps = Regex("""flowOn\(""").findAll(source).count()
+        assertTrue("HomeViewModel's off-main steps were not found", offMainSteps >= 2)
         assertEquals(
-            "both of HomeViewModel's off-main steps must use the injected dispatcher -- one of " +
-                "the two being left behind is the whole bug, since either is enough to start a " +
-                "real pool worker",
-            2,
+            "every one of HomeViewModel's off-main steps must use the injected dispatcher -- one " +
+                "being left behind is the whole bug, since any one is enough to start a real pool " +
+                "worker",
+            offMainSteps,
             Regex("""flowOn\(ioDispatcher\)""").findAll(source).count()
         )
     }
