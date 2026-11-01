@@ -33,6 +33,12 @@ import {
   manyChannels,
   subscriptionsPageHtml,
 } from './fixtures/youtubeSubscriptionsPage';
+import {
+  CAPTURED_CHANNELS,
+  CAPTURED_FEED_CHANNELS_DATA,
+  capturedEmptyData,
+  sectionListOf,
+} from './fixtures/youtubeSubscriptionsCapture';
 
 const NOW = Date.UTC(2026, 10, 1, 12, 0, 0);
 
@@ -45,6 +51,36 @@ function okPage(html: string) {
   if (page.kind !== 'ok') throw new Error(`expected ok, got ${page.kind}`);
   return page;
 }
+
+describe('parseSubscriptionsPage on the LIVE capture (2026-11-01, sanitized)', () => {
+  it('reads exactly the subscribed channels, in page order', () => {
+    const page = okPage(subscriptionsPageHtml(CAPTURED_FEED_CHANNELS_DATA));
+    expect(page.channels.map(({ channelId, handle, displayName }) => ({ channelId, handle, displayName }))).toEqual(
+      CAPTURED_CHANNELS,
+    );
+  });
+
+  it('does not follow the sort chips: their continuationCommands re-sort the list, they are not "load more"', () => {
+    const json = JSON.stringify(CAPTURED_FEED_CHANNELS_DATA);
+    // Non-vacuous: the capture really carries continuation tokens, in the header.
+    expect(json.match(/"continuationCommand"/g)?.length).toBeGreaterThanOrEqual(3);
+    expect(okPage(subscriptionsPageHtml(CAPTURED_FEED_CHANNELS_DATA)).continuation).toBeNull();
+  });
+
+  it('a signed-in account with ZERO subscriptions is ok with no channels, not unparseable', () => {
+    // Live: the zero-subscription page keeps the chip header and drops the section list's
+    // `contents` entirely. It used to read as "Couldn't read your subscriptions".
+    const page = okPage(subscriptionsPageHtml(capturedEmptyData()));
+    expect(page.channels).toEqual([]);
+    expect(page.continuation).toBeNull();
+  });
+
+  it('a section list holding something it does not recognise stays unparseable', () => {
+    const data = capturedEmptyData();
+    sectionListOf(data).contents = [{ somethingNewRenderer: { items: [] } }];
+    expect(parseSubscriptionsPage(subscriptionsPageHtml(data), NOW).kind).toBe('unparseable');
+  });
+});
 
 describe('parseSubscriptionsPage', () => {
   it('reads every subscription with its handle, id and name', () => {

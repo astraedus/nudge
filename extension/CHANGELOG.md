@@ -19,7 +19,11 @@ namespaces were already split for exactly that reason.
   YouTube. The settings show how many channels it found and when, with a "Sync now" button.
   If a sync fails (signed out, or YouTube changed its page) it keeps the last list and says
   why. Turning it on needs the unlock under Strict Mode; turning it off never does. A
-  subscribed channel behaves like any channel on your list, including after the daily limit.
+  subscribed channel behaves like any channel on your list, including after the daily limit,
+  and the block page links to your subscriptions (up to 12, after the channels you typed),
+  since YouTube's own subscriptions page is blocked too. An account with no subscriptions
+  shows "0 channels" rather than an error. With a long subscription list, only the part
+  YouTube shows on the first page is read, and the settings say some may be missing.
 
 ### Changed
 
