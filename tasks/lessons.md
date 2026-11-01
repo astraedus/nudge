@@ -1513,3 +1513,10 @@ A warm YouTube relaunch under a whole-app Delay reached `handleDecision` twice w
 - **A test harness never re-spells a production key.** If the harness builds its own fingerprint, it tests the harness.
 - **On the bench, `device-qa.sh` UI dumps (uiautomator) suppress accessibility and reconnect the service, which resets the guard.** A run-to-run difference across a dump is harness variance first; read the capture before calling it a regression.
 - Count launches by overlay `START` lines and rows by the absence of `NOT counted`, not by `handling block`: a gated (dropped) decision logs `handling block` too.
+
+## Spec PR 1 broke main through a source-scan test the lane's scoped run never picked (2026-11-02)
+
+PR 1 added a third `flowOn(ioDispatcher)` to `HomeViewModel` (the Nuke count). That was a correct change, but `ViewModelDispatcherContractTest` pinned the count at exactly 2, and it lives in the `ui` root package. The lane scoped its tests to `ui.screens.home` and friends, so the test never ran until CI on main.
+
+- **When a change touches a class, also run the source-scan contract tests that read it.** Find them with `grep -rl "<ClassName>.kt" app/src/test`. They live by concern, not next to the class.
+- **A contract test pins the invariant, not a number.** "Every `flowOn` in this file is the injected one" survives a new step. "There are exactly 2" fails on the first correct addition.
