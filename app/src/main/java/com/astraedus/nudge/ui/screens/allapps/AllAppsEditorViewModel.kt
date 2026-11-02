@@ -123,6 +123,9 @@ class AllAppsEditorViewModel @Inject constructor(
                 baseline = AllAppsDraft(form, allowedPackages, allowedGroupIds)
             )
         }
+        // The form now has a kind, so the "Starts at..." line can be right before the user touches
+        // anything: an existing first-unlock rule opened after today's unlock must already say it.
+        refreshFirstUnlockHints()
         combine(
             repository.getAllRules(),
             repository.getAllGroups(),

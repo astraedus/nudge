@@ -283,6 +283,9 @@ class GroupEditorViewModel @Inject constructor(
                 baseline = GroupDraft(group.name.trim(), membersDraft, GroupRuleForm.from(rule))
             )
         }
+        // The form now has a kind, so the "Starts at..." line can be right before the user touches
+        // anything: an existing first-unlock rule opened after today's unlock must already say it.
+        refreshFirstUnlockHints()
     }
 
     fun setName(name: String) = _state.update { it.copy(name = name) }

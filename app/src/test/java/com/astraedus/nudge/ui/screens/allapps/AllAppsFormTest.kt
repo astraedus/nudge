@@ -60,10 +60,27 @@ class AllAppsFormTest {
 
     @Test
     fun `only all the time with Hard block, while on, asks before saving`() {
-        for (mode in BlockMode.entries) for (scheduled in listOf(false, true)) for (enabled in listOf(false, true)) {
-            val form = AllAppsForm(enabled = enabled, mode = mode, scheduled = scheduled)
-            val expected = enabled && !scheduled && mode == BlockMode.HARD_BLOCK
-            assertEquals("$mode scheduled=$scheduled enabled=$enabled", expected, form.confirmsOnSave)
+        for (mode in BlockMode.entries) {
+            for (scheduled in listOf(false, true)) {
+                for (firstUnlock in listOf(false, true)) {
+                    for (enabled in listOf(false, true)) {
+                        val form = AllAppsForm(
+                            enabled = enabled,
+                            mode = mode,
+                            scheduled = scheduled,
+                            firstUnlock = firstUnlock
+                        )
+                        // A first-unlock rule is not "all the time", so that question would be a lie.
+                        val expected = enabled && !scheduled && !firstUnlock &&
+                            mode == BlockMode.HARD_BLOCK
+                        assertEquals(
+                            "$mode scheduled=$scheduled firstUnlock=$firstUnlock enabled=$enabled",
+                            expected,
+                            form.confirmsOnSave
+                        )
+                    }
+                }
+            }
         }
     }
 

@@ -316,6 +316,7 @@ class UnifiedAppConfigViewModelTest {
         }
     }
 
+
     // ── Keep the pass on short trips (#110): per app, only for pass-granting modes ──
 
     @Test

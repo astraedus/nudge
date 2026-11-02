@@ -40,10 +40,12 @@ data class AllAppsForm(
 
     /**
      * "All the time" with Hard block, while on: the one combination that asks "Block N apps all the
-     * time?" before it saves (spec 3.4). A rule that is off blocks nothing, so it asks nothing.
+     * time?" before it saves (spec 3.4). A rule that is off blocks nothing, so it asks nothing, and
+     * neither does a first-unlock rule: its window is not "all the time", so that sentence would be
+     * a lie about what is being saved.
      */
     val confirmsOnSave: Boolean
-        get() = enabled && !scheduled && mode == BlockMode.HARD_BLOCK
+        get() = enabled && !scheduled && !firstUnlock && mode == BlockMode.HARD_BLOCK
 
     companion object {
         /**
