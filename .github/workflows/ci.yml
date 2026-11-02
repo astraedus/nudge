@@ -42,8 +42,13 @@ jobs:
           validate-wrappers: false
           cache-read-only: true   # PRs read main's Gradle cache but never write to it
 
+      # The qa build type and the :qa-driver tests run only on the bench, so CI at least proves they
+      # compile; a red qa compile would otherwise surface mid-device-run. (testDebugUnitTest already
+      # includes :qa-driver's JVM parser tests and app's QaControlManifestTest release gate.)
       - name: Run tests and lint
-        run: ./gradlew testDebugUnitTest lintDebug
+        run: |
+          bash -n scripts/qa-driver.sh
+          ./gradlew testDebugUnitTest lintDebug :app:compileQaKotlin :qa-driver:compileDebugAndroidTestKotlin
 
       - name: Upload unit test reports
         if: failure()
@@ -53,6 +58,8 @@ jobs:
           path: |
             app/build/reports/tests/**
             app/build/test-results/**
+            qa-driver/build/reports/tests/**
+            qa-driver/build/test-results/**
             app/build/reports/lint-results-debug.html
           if-no-files-found: warn
           retention-days: 7

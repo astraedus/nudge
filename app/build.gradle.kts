@@ -52,6 +52,28 @@ android {
             )
             signingConfig = signingConfigs.getByName("release")
         }
+        /**
+         * The device-QA build: the RELEASE build (R8 on, `-dontobfuscate`, not debuggable, so the
+         * minified code paths and the "is this our own window" class-name check are what QA
+         * exercises), plus the DUMP-guarded control receiver in `src/qa` that the `:qa-driver`
+         * tests seed and read state through. Debug-signed, because it is bench software: it never
+         * leaves a test device, and a release-key qa APK would be one more artefact that could.
+         *
+         * No `applicationIdSuffix`: it would put the qa build next to the release one on the bench,
+         * and then the a11y component, the deep links and every `dev.astraedus.nudge` the logcat
+         * oracle greps for would differ from what ships. Installing qa over release is a key switch
+         * (scripts/qa-driver.sh handles it the way device-qa.sh does); see docs/TESTING.md.
+         *
+         * Never in a release path: CI builds `assembleRelease`/`bundleRelease`, and the qa
+         * receiver is kept out of those by `verify<Variant>NoQaControl` and `QaControlManifestTest`.
+         */
+        create("qa") {
+            initWith(getByName("release"))
+            signingConfig = signingConfigs.getByName("debug")
+            // Library modules publish debug/release only; resolve them as release, like the
+            // build type this one copies.
+            matchingFallbacks += listOf("release")
+        }
     }
 
     compileOptions {
@@ -322,7 +344,84 @@ abstract class VerifyMergedPermissionsTask : DefaultTask() {
     }
 }
 
+/**
+ * The qa control receiver must never reach a non-qa APK.
+ *
+ * It lives in `src/qa`, which AGP merges into the qa build type only, so today this can only fail
+ * if someone copies the declaration into `src/main` or `src/debug`. That is exactly the edit nobody
+ * reviews closely ("just make the receiver reachable on debug too"), and the cost would be an
+ * exported component that wipes a user's rules. Same shape as [VerifyMergedPermissionsTask]: it
+ * reads the manifest that SHIPS, so a library or an overlay cannot sneak past it either.
+ */
+abstract class VerifyNoQaControlTask : DefaultTask() {
+    @get:InputFile
+    abstract val mergedManifest: RegularFileProperty
+
+    @get:OutputFile
+    abstract val report: RegularFileProperty
+
+    @TaskAction
+    fun verify() {
+        val text = mergedManifest.get().asFile.readText()
+        val leaks = QA_CONTROL_MARKERS.filter { text.contains(it) }
+        if (leaks.isNotEmpty()) {
+            throw GradleException(
+                "A non-qa merged manifest names the qa control channel ($leaks). It belongs in " +
+                    "app/src/qa/AndroidManifest.xml only (see QaControlReceiver)."
+            )
+        }
+        report.get().asFile.writeText("clean\n")
+    }
+
+    companion object {
+        /** The receiver's class and its action, as they appear in a merged manifest. */
+        val QA_CONTROL_MARKERS = listOf("com.astraedus.nudge.qa.", "dev.astraedus.nudge.qa.")
+    }
+}
+
 androidComponents {
+    // The qa variant runs no JVM tests of its own: `./gradlew test` (CI) would otherwise run the
+    // whole suite a THIRD time against identical main code. Its one extra source file is covered by
+    // QaControlManifestTest (placement + guard) and by the :qa-driver suite on a device.
+    beforeVariants(selector().withBuildType("qa")) { it.enableUnitTest = false }
+
+    onVariants(selector().withBuildType("release")) { variant ->
+        // QaControlManifestTest reads the RELEASE merged manifest from every unit-test fork, so
+        // the gate runs on `./gradlew test`, which is what CI runs before anything ships.
+        val merged = variant.artifacts.get(com.android.build.api.artifact.SingleArtifact.MERGED_MANIFEST)
+        tasks.withType<Test>().configureEach {
+            inputs.file(merged).withPropertyName("releaseMergedManifest")
+                .withPathSensitivity(PathSensitivity.NONE)
+            jvmArgumentProviders.add(CommandLineArgumentProvider {
+                listOf("-Dnudge.releaseMergedManifest=${merged.get().asFile.absolutePath}")
+            })
+        }
+    }
+
+    onVariants(selector().withBuildType("qa")) { variant ->
+        // The positive control for the test above: the same detection must FIND the receiver in
+        // the qa manifest, or a "release is clean" pass could be a matcher that matches nothing.
+        val merged = variant.artifacts.get(com.android.build.api.artifact.SingleArtifact.MERGED_MANIFEST)
+        tasks.withType<Test>().configureEach {
+            inputs.file(merged).withPropertyName("qaMergedManifest")
+                .withPathSensitivity(PathSensitivity.NONE)
+            jvmArgumentProviders.add(CommandLineArgumentProvider {
+                listOf("-Dnudge.qaMergedManifest=${merged.get().asFile.absolutePath}")
+            })
+        }
+    }
+
+    onVariants { variant ->
+        if (variant.buildType == "qa") return@onVariants
+        val suffix = variant.name.replaceFirstChar { it.uppercase() }
+        val verifyNoQa = tasks.register<VerifyNoQaControlTask>("verify${suffix}NoQaControl") {
+            mergedManifest.set(variant.artifacts.get(com.android.build.api.artifact.SingleArtifact.MERGED_MANIFEST))
+            report.set(layout.buildDirectory.file("reports/no-qa-control/${variant.name}.txt"))
+        }
+        tasks.matching { it.name == "assemble$suffix" || it.name == "bundle$suffix" }
+            .configureEach { dependsOn(verifyNoQa) }
+    }
+
     onVariants { variant ->
         val suffix = variant.name.replaceFirstChar { it.uppercase() }
         val verify = tasks.register<VerifyMergedPermissionsTask>("verify${suffix}MergedPermissions") {

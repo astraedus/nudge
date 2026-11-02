@@ -48,9 +48,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.astraedus.nudge.ui.components.StrictModeChallengeHost
+import com.astraedus.nudge.ui.components.qaTag
 import com.astraedus.nudge.ui.nuke.NukeUnlockHost
 import com.astraedus.nudge.ui.screens.stats.charts.BlockedTrendChart
 import com.astraedus.nudge.ui.screens.stats.charts.WeeklyBarChart
+import com.astraedus.nudge.ui.testtags.UiTags
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -316,7 +318,9 @@ private fun WeekAtAGlanceCard(
     Card(
         modifier = modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick),
+            .clickable(onClick = onClick)
+            // The device-QA handle: the driver reads the week's counts from this card's text.
+            .qaTag(UiTags.WEEK_CARD),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {

@@ -196,3 +196,95 @@ release APK; on a release build the case reports **SKIP** and `APK=debug` is the
 exercises it. Exploratory judgement — does this screen *look* right, is this copy good — remains
 `device-tester`'s job, working from the screenshots the script dumps. This script covers the
 recurring checks; it does not replace taste.
+
+## L6b — The instrumented driver: `:qa-driver` + the `qa` build type
+
+`device-qa.sh` drives Nudge blind (ADB taps at coordinates read off `uiautomator dump`) because a
+driver session used to switch Nudge off. That constraint has an exit: a `UiAutomation` client that
+passes **`FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES`** leaves every other service bound. The
+`:qa-driver` module is the same cases as typed Kotlin instrumented tests with real selectors, built
+on that flag.
+
+```bash
+ALLOW_CERT_SWITCH=1 scripts/qa-driver.sh            # delay-block walkaway-count home-reopen notif-idle
+ALLOW_CERT_SWITCH=1 scripts/qa-driver.sh spike spike-control   # re-prove the flag (and its control)
+scripts/qa-driver.sh list
+APK=main ALLOW_CERT_SWITCH=1 scripts/device-qa.sh setup        # put the release build back afterwards
+```
+
+**The proof (2026-11-02, Pixel 3, API 31, `SuppressionSpikeTest`).** Flag ON: `Bound services`
+populated in 27 of 27 host samples taken while the test held its `UiAutomation`, the YouTube launch
+logged `block package=com.google.android.youtube reason=delay_rule delaySeconds=5`, the overlay
+reached the screen, and Nudge's process (same pid) never lost its connection. Flag OFF (the control,
+`-e qa.suppress true`): `{}` in 52 of 60 samples, no decision, no overlay (the Maestro result,
+reproduced), and Nudge rebound only after the test released the session. The runner keeps both
+cases so the proof re-runs whenever the bench gets a new Android version.
+
+The flag must be set before the FIRST `UiDevice.getInstance` (`QaDevice` does it in one place, and
+`NudgeCase` asserts it on every test). A test that builds its own `UiDevice` first, or a library that
+connects its own `UiAutomation` (Espresso's, Compose's test rule), silently brings the suppression
+back. The base class also fails with a `HARNESS:` message if Nudge is not bound within 10 seconds, so
+"the driver switched Nudge off" can never read as "Nudge did not block".
+
+**Why a library module, not `app/src/androidTest`.** `am instrument` force-restarts the
+instrumentation's target package, and a force-stopped Nudge stays unbound (the device fact above).
+A library module's test APK instruments itself (`dev.astraedus.qadriver`), so Nudge runs the way a
+user has it and the driver reaches it only through shell commands.
+
+**The `qa` build type** (`initWith(release)`: R8 on, the same code users run, but debug-signed)
+adds one thing in `app/src/qa/`: `QaControlReceiver`, which replaces `pm clear` + the onboarding
+walk with three commands: `reset` (every table, the in-memory passes, Strict Mode and Nuke off, onboarding done, debug logging on), `seed-rules` (base64 of
+`.maestro/fixtures/rules.json`, the one fixture both harnesses share) and `state` (JSON: rule
+count, the a11y connection, debug logging, the walk-away counters).
+
+```bash
+adb shell am broadcast -n dev.astraedus.nudge/com.astraedus.nudge.qa.QaControlReceiver \
+  -a dev.astraedus.nudge.qa.CMD --es cmd state
+```
+
+Its rules are merge gates, and `QaControlManifestTest` pins them on the JVM:
+- **Only in the qa source set.** No main, debug or release manifest or source mentions it.
+- **Exported only behind `android.permission.DUMP`**, which no installable app can hold
+  (signature|privileged|development): only `adb shell` can send it a command.
+- **Allowlisted and bounded.** One action, three commands, a 32 KB cap on the seed; it never runs a
+  shell, loads code or opens a path taken from an extra.
+- **The release manifest's exported set is pinned**, component by component, and contains no
+  DUMP-guarded component of ours. (Two androidx library receivers in release are already
+  DUMP-guarded: WorkManager's `DiagnosticsReceiver` and `ProfileInstallReceiver`. The test names
+  them, so a third one cannot hide behind them.)
+- **Never published, never release-signed.** `release.yml` builds `assembleRelease` /
+  `bundleRelease` only; the qa APK uses the debug signing config, so Play would reject it, and
+  installing it on the bench is a cert switch through `cert-guard.sh` like any `APK=debug` run.
+
+CI compiles `:app:compileQaKotlin` and `:qa-driver:compileDebugAndroidTestKotlin` and runs the
+driver's JVM parser tests (`DeviceTextTest`), so a broken driver shows up in the PR, not at the bench.
+
+The guard was checked on the bench too (2026-11-02): `am broadcast` from the shell gets the `state`
+JSON back. The same broadcast from an app uid (`run-as dev.astraedus.qadriver am broadcast --user 0
+…`) is dropped by the system with `Permission Denial: … requires android.permission.DUMP`, and
+the receiver never runs.
+
+**First bench runs (2026-11-02, qa build of 1.26.0):** `delay-block` 20s, `walkaway-count` 40s,
+`home-reopen` 121s (5/5 trials re-blocked), `notif-idle` 366s, all PASS. A case's `note(...)` lines
+land in the result bundle (`INSTRUMENTATION_RESULT: qa.note.NN=…` in `<case>.instrument.txt`), not
+only in logcat, which the waits clear. Two selector traps cost the first run:
+- **The system navigation bar's button is also `By.desc("Back")`.** Scope any Back lookup to
+  Nudge's package, or the driver presses its way out of the app.
+- **A `clickable` container merges its children's semantics, and a merged child's `testTag` is
+  dropped.** Put the tag on the clickable node itself (`UiTags.WEEK_CARD` is on the card, not on
+  the summary `Text`).
+
+**How the runner keeps a long case alive.** Each case is its own `am instrument`, started under
+`nohup` on the device and writing to a file the host polls: `notif-idle` spends five minutes with
+the screen off, and an `-w` session tied to a Wi-Fi adb connection does not reliably survive that.
+The bench PIN stays out of this public repo, so the host unlocks before every case. Evidence lands in
+`~/Pictures/screenshots/nudge/qa-driver/<run>/`: screenshots per beat, a logcat window per case and
+the raw instrumentation output.
+
+**Two shell traps the driver encodes.** `UiAutomation.executeShellCommand` splits on whitespace and
+does no quoting, so an empty argument cannot be passed (revoking the grant is `settings delete`,
+never `settings put … ''`) and base64 must be `NO_WRAP`. And each logcat wait clears the buffer
+first, then waits for a fresh line: counting across a buffer that rotated mid-case invents misses.
+
+`device-qa.sh all` stays the release gate until the driver has a run history of its own; the driver
+does not yet port `setup`, `daily-limit-refresh`, `crash-check` or `refusal-alert`.
