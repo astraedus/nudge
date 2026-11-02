@@ -2,13 +2,13 @@ package com.astraedus.nudge.service
 
 import com.astraedus.nudge.NudgeIdentity
 import com.astraedus.nudge.domain.events.A11yEventType
-import com.astraedus.nudge.domain.events.AccessibilityEventRecord
 import com.astraedus.nudge.domain.events.EventClassifier
 import com.astraedus.nudge.domain.events.ForegroundSignal
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.astraedus.nudge.testing.anAccessibilityEvent
 
 /**
  * Tests for issue #7: "occasionally app timer does not start on re-entrance of app".
@@ -67,7 +67,7 @@ class ContentChangeAppSwitchTest {
     ): ForegroundSignal? {
         if (packageName.isBlank() || packageName == lastPackage) return null
         val signal = classifier.classifyVerifiedContentChangeAsSwitch(
-            record = AccessibilityEventRecord(
+            record = anAccessibilityEvent(
                 type = A11yEventType.WINDOW_CONTENT_CHANGED,
                 packageName = packageName
             ),

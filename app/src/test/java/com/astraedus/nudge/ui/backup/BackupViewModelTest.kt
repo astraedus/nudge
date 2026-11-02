@@ -1,16 +1,13 @@
 package com.astraedus.nudge.ui.backup
 
 import com.astraedus.nudge.MainDispatcherRule
-import com.astraedus.nudge.data.preferences.NudgePreferences
-import com.astraedus.nudge.domain.lock.StrictModeChallenge
+import com.astraedus.nudge.testing.FakeNudgePreferences
 import com.astraedus.nudge.domain.usecase.ExportRulesUseCase
 import com.astraedus.nudge.domain.usecase.ImportRulesUseCase
 import io.mockk.coEvery
 import io.mockk.coVerify
-import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -39,22 +36,17 @@ class BackupViewModelTest {
 
     private lateinit var exportRulesUseCase: ExportRulesUseCase
     private lateinit var importRulesUseCase: ImportRulesUseCase
-    private lateinit var preferences: NudgePreferences
     private lateinit var viewModel: BackupViewModel
 
     @Before
     fun setUp() {
         exportRulesUseCase = mockk()
         importRulesUseCase = mockk()
-        preferences = mockk()
         coEvery { exportRulesUseCase.invoke() } returns BACKUP_JSON
-        every { preferences.isStrictModeEnabled } returns flowOf(false)
-        every { preferences.strictModeChallengeLength } returns
-            flowOf(StrictModeChallenge.DEFAULT_LENGTH)
         viewModel = BackupViewModel(
             exportRulesUseCase,
             importRulesUseCase,
-            preferences,
+            FakeNudgePreferences(),
             ioDispatcher = dispatcher
         )
     }

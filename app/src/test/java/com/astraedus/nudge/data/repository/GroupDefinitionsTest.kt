@@ -1,26 +1,26 @@
 package com.astraedus.nudge.data.repository
 
-import com.astraedus.nudge.data.db.entity.AppGroup
-import com.astraedus.nudge.data.db.entity.AppGroupMember
 import com.astraedus.nudge.domain.groups.GroupDefinition
 import com.astraedus.nudge.domain.packages.AppCategory
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.astraedus.nudge.testing.aGroupMember
+import com.astraedus.nudge.testing.anAppGroup
 
 /** L1: the group tables read as definitions. A member row is not a member. */
 class GroupDefinitionsTest {
 
     private val groups = listOf(
-        AppGroup(id = 1, name = "Social", categories = "SOCIAL,VIDEO"),
-        AppGroup(id = 2, name = "Hand-picked")
+        anAppGroup(id = 1, name = "Social", categories = "SOCIAL,VIDEO"),
+        anAppGroup(id = 2, name = "Hand-picked")
     )
     private val rows = listOf(
-        AppGroupMember(1, "com.added"),
-        AppGroupMember(1, "com.removed", excluded = true),
-        AppGroupMember(2, "com.a"),
-        AppGroupMember(9, "com.orphan")
+        aGroupMember(1, "com.added"),
+        aGroupMember(1, "com.removed", excluded = true),
+        aGroupMember(2, "com.a"),
+        aGroupMember(9, "com.orphan")
     )
 
     @Test fun `rows split into includes and removed by you, categories parsed`() {
@@ -41,7 +41,7 @@ class GroupDefinitionsTest {
     }
 
     @Test fun `a group from before categories (NULL column, no excluded rows) reads exactly as before`() {
-        val old = AppGroup(id = 3, name = "Old").definition(listOf(AppGroupMember(3, "com.x"), AppGroupMember(3, "com.y")))
+        val old = anAppGroup(id = 3, name = "Old").definition(listOf(aGroupMember(3, "com.x"), aGroupMember(3, "com.y")))
         assertEquals(GroupDefinition(3, includes = setOf("com.x", "com.y")), old)
     }
 }

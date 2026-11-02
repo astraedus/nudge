@@ -1,21 +1,18 @@
 package com.astraedus.nudge.domain.usecase
 
-import com.astraedus.nudge.data.db.dao.AppGroupDao
-import com.astraedus.nudge.data.db.dao.BlockRuleDao
-import com.astraedus.nudge.data.db.entity.AppGroup
-import com.astraedus.nudge.data.db.entity.AppGroupMember
 import com.astraedus.nudge.data.db.entity.BlockRule
 import com.astraedus.nudge.data.export.RuleExporter
-import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.data.repository.BlockRuleRepository
-import com.astraedus.nudge.data.repository.InstalledAppsRepository
-import com.astraedus.nudge.data.repository.UsageRepository
-import com.astraedus.nudge.domain.packages.EssentialPackages
 import com.astraedus.nudge.data.repository.normalizedAllAppsRule
+import com.astraedus.nudge.domain.packages.EssentialPackages
+import com.astraedus.nudge.testing.FakeInstalledAppsRepository
+import com.astraedus.nudge.testing.FakeNudgePreferences
+import com.astraedus.nudge.testing.FakeRuleDatabase
+import com.astraedus.nudge.testing.FakeUsageRepository
+import com.astraedus.nudge.testing.aBlockRule
+import com.astraedus.nudge.testing.anAppGroup
 import io.mockk.coEvery
-import io.mockk.every
 import io.mockk.mockk
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -32,81 +29,57 @@ import org.junit.Test
  */
 class ImportAllAppsRulesTest {
 
-    /** One phone's database: rules, groups and members, with ids handed out from [firstId]. */
-    private class FakeDb(firstId: Long) {
-        val rules = mutableListOf<BlockRule>()
-        val groups = mutableListOf<AppGroup>()
-        val members = mutableListOf<AppGroupMember>()
+    /**
+     * One phone's database: the shared [FakeRuleDatabase], seeded with explicit ids handed out from
+     * [firstId] (so the source phone's ids differ from ids the target assigns on import).
+     */
+    private class Phone(firstId: Long = 1) {
+        val db = FakeRuleDatabase()
+        val repository = db.repository
+        val rules get() = db.rules
+        val groups get() = db.groups
         private var nextId = firstId
-
-        val repository: BlockRuleRepository = run {
-            val ruleDao = mockk<BlockRuleDao>(relaxed = true)
-            every { ruleDao.getAll() } answers { flowOf(rules.toList()) }
-            coEvery { ruleDao.insert(any()) } answers {
-                val row = firstArg<BlockRule>().copy(id = nextId++)
-                rules += row
-                row.id
-            }
-            coEvery { ruleDao.update(any()) } answers {
-                val row = firstArg<BlockRule>()
-                rules.replaceAll { if (it.id == row.id) row else it }
-            }
-            val groupDao = mockk<AppGroupDao>(relaxed = true)
-            every { groupDao.getAll() } answers { flowOf(groups.toList()) }
-            coEvery { groupDao.insert(any()) } answers {
-                val row = firstArg<AppGroup>().copy(id = nextId++)
-                groups += row
-                row.id
-            }
-            coEvery { groupDao.addMember(any()) } answers { members += firstArg<AppGroupMember>() }
-            every { groupDao.getMembersForGroup(any()) } answers {
-                val id = firstArg<Long>()
-                flowOf(members.filter { it.groupId == id })
-            }
-            BlockRuleRepository(ruleDao, groupDao)
-        }
 
         fun group(name: String, vararg packages: String): Long {
             val id = nextId++
-            groups += AppGroup(id = id, name = name)
-            packages.forEach { members += AppGroupMember(id, it) }
+            db.seedGroup(anAppGroup(name, id = id), *packages)
             return id
         }
 
         fun rule(rule: BlockRule): Long {
             val id = nextId++
-            rules += rule.copy(id = id)
+            db.seedRule(rule.copy(id = id))
             return id
         }
 
         fun groupId(name: String): Long = groups.single { it.name == name }.id
 
-        fun export(): String = RuleExporter().exportRules(rules, groups, members.groupBy { it.groupId })
+        fun export(): String = RuleExporter().exportRules(rules, groups, db.members.groupBy { it.groupId })
     }
 
-    private fun useCase(db: FakeDb) = ImportRulesUseCase(
+    private fun useCase(db: Phone) = ImportRulesUseCase(
         db.repository,
-        mockk<UsageRepository>(relaxed = true),
-        mockk<NudgePreferences>(relaxed = true),
+        FakeUsageRepository(),
+        FakeNudgePreferences(),
         RuleExporter(),
-        mockk<InstalledAppsRepository> { coEvery { getInstalledApps() } returns emptyList() },
+        FakeInstalledAppsRepository(),
         mockk<EssentialPackages> {
             coEvery { current() } returns emptySet()
             coEvery { browsers() } returns emptySet()
         }
     )
 
-    private suspend fun import(db: FakeDb, json: String): ImportOutcome {
+    private suspend fun import(db: Phone, json: String): ImportOutcome {
         val useCase = useCase(db)
         return useCase.execute(useCase.preview(json).result)
     }
 
-    private suspend fun weakens(db: FakeDb, json: String): Boolean {
+    private suspend fun weakens(db: Phone, json: String): Boolean {
         val useCase = useCase(db)
         return useCase.weakensProtection(useCase.preview(json).result)
     }
 
-    private fun allApps(vararg except: String, groups: String? = null, enabled: Boolean = true) = BlockRule(
+    private fun allApps(vararg except: String, groups: String? = null, enabled: Boolean = true) = aBlockRule(
         mode = "HARD_BLOCK",
         allApps = true,
         exceptPackages = except.joinToString(",").ifEmpty { null },
@@ -115,11 +88,11 @@ class ImportAllAppsRulesTest {
     )
 
     /** The phone a backup is made on: two groups, an app rule, a group rule and an All apps rule. */
-    private fun sourcePhone(): FakeDb = FakeDb(firstId = 1).apply {
+    private fun sourcePhone(): Phone = Phone(firstId = 500).apply {
         val work = group("Work", "com.slack")
         val social = group("Social", "com.insta")
-        rule(BlockRule(packageName = "com.yt", mode = "DELAY", delaySeconds = 15))
-        rule(BlockRule(groupId = social, mode = "HARD_BLOCK"))
+        rule(aBlockRule(packageName = "com.yt", mode = "DELAY"))
+        rule(aBlockRule(groupId = social, mode = "HARD_BLOCK"))
         rule(
             allApps("com.maps", "com.phone", groups = "$work,999").copy(
                 scheduleDays = "1,2,3,4,5",
@@ -135,7 +108,7 @@ class ImportAllAppsRulesTest {
     @Test
     fun `an All apps rule survives a move to a phone where the group ids differ`() = runTest {
         val source = sourcePhone()
-        val target = FakeDb(firstId = 500).apply { group("Other", "com.game") }
+        val target = Phone().apply { group("Other", "com.game") }
 
         val outcome = import(target, source.export())
 
@@ -159,7 +132,7 @@ class ImportAllAppsRulesTest {
 
     @Test
     fun `an All apps rule from a hand-edited file is stored with only the options it offers`() = runTest {
-        val target = FakeDb(firstId = 1)
+        val target = Phone()
         import(
             target,
             """
@@ -185,7 +158,7 @@ class ImportAllAppsRulesTest {
 
     @Test
     fun `an allowed group with no group by that name is dropped, and a name already on this phone resolves`() = runTest {
-        val target = FakeDb(firstId = 1)
+        val target = Phone()
         val other = target.group("Other", "com.game")
 
         import(
@@ -207,7 +180,7 @@ class ImportAllAppsRulesTest {
 
     @Test
     fun `a group rule whose group is nowhere is skipped and counted, not written with no target`() = runTest {
-        val target = FakeDb(firstId = 1)
+        val target = Phone()
 
         val outcome = import(
             target,
@@ -229,7 +202,7 @@ class ImportAllAppsRulesTest {
 
     @Test
     fun `importing the same backup twice adds nothing the second time`() = runTest {
-        val target = FakeDb(firstId = 500)
+        val target = Phone()
         val file = sourcePhone().export()
 
         import(target, file)
@@ -242,11 +215,11 @@ class ImportAllAppsRulesTest {
 
     @Test
     fun `an All apps rule is a duplicate only with the same allowed apps and groups, in any order`() = runTest {
-        val target = FakeDb(firstId = 1)
+        val target = Phone()
         val work = target.group("Work", "com.slack")
         val social = target.group("Social", "com.insta")
         target.rule(allApps("com.maps", "com.phone", groups = "$work,$social"))
-        target.rule(BlockRule(packageName = "com.yt", mode = "HARD_BLOCK"))
+        target.rule(aBlockRule(packageName = "com.yt", mode = "HARD_BLOCK"))
 
         fun file(packages: String, groups: String) = """
             {"version": 1, "extendedRules": [
@@ -271,7 +244,7 @@ class ImportAllAppsRulesTest {
 
     // --- Strict Mode gate ---
 
-    private fun phoneWithAllowedSocial(enabled: Boolean = true): FakeDb = FakeDb(firstId = 1).apply {
+    private fun phoneWithAllowedSocial(enabled: Boolean = true): Phone = Phone().apply {
         val social = group("Social", "com.insta")
         rule(allApps(groups = "$social", enabled = enabled))
     }
@@ -299,9 +272,9 @@ class ImportAllAppsRulesTest {
     fun `an imported All apps rule is added for free, even one allowing a group the file grows`() = runTest {
         // Nothing here allows Social yet: the rule allowing it arrives with the file, so no app
         // that was covered before stops being covered.
-        val phone = FakeDb(firstId = 1).apply {
+        val phone = Phone().apply {
             group("Social", "com.insta")
-            rule(BlockRule(packageName = "com.yt", mode = "HARD_BLOCK"))
+            rule(aBlockRule(packageName = "com.yt", mode = "HARD_BLOCK"))
         }
         val file = """
             {"version": 1,

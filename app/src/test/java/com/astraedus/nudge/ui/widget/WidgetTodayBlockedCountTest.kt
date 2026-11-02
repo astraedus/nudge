@@ -2,12 +2,12 @@ package com.astraedus.nudge.ui.widget
 
 import com.astraedus.nudge.data.db.BlockHistoryFixture
 import com.astraedus.nudge.data.repository.ScreenTimeProvider
-import com.astraedus.nudge.data.repository.UsageRepository
 import com.astraedus.nudge.domain.engine.TimeTracker
 import com.astraedus.nudge.domain.usage.WeeklyUsage
+import com.astraedus.nudge.testing.FakeUsageEventDao
+import com.astraedus.nudge.testing.FakeUsageRepository
 import io.mockk.every
 import io.mockk.mockk
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -26,15 +26,10 @@ class WidgetTodayBlockedCountTest {
 
     private val timeTracker = TimeTracker()
     private val dayStart = timeTracker.startOfToday()
-    private val dayEnd = timeTracker.startOfDayDaysBefore(dayStart, -1)
 
     private fun deps(shown: Int, walkAways: Int): NudgeWidgetEntryPoint {
         val history = BlockHistoryFixture.day(dayStart, shown = shown, walkAways = walkAways, allowed = 6)
-        val usage = mockk<UsageRepository>(relaxed = true)
-        every { usage.getShownCountForDay(dayStart, dayEnd) } returns
-            MutableStateFlow(BlockHistoryFixture.shownCount(history, dayStart, dayEnd))
-        every { usage.getChangedMindCountForDay(dayStart, dayEnd) } returns
-            MutableStateFlow(BlockHistoryFixture.changedMindCount(history, dayStart, dayEnd))
+        val usage = FakeUsageRepository(FakeUsageEventDao(*history.toTypedArray()))
 
         val screenTime = mockk<ScreenTimeProvider>(relaxed = true)
         every { screenTime.hasPermission() } returns true

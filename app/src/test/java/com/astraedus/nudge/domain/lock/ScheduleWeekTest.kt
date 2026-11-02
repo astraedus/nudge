@@ -2,13 +2,13 @@ package com.astraedus.nudge.domain.lock
 
 import com.astraedus.nudge.domain.engine.ScheduleEvaluator
 import com.astraedus.nudge.domain.model.BlockMode
-import com.astraedus.nudge.domain.model.BlockRuleData
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.Calendar
 import java.util.TimeZone
+import com.astraedus.nudge.testing.aBlockRuleData
 
 /**
  * L1. [ScheduleWeek] is Strict Mode's own copy of "when is this rule active", so it is pinned
@@ -42,7 +42,7 @@ class ScheduleWeekTest {
         val evaluator = ScheduleEvaluator()
         for ((days, start, end) in schedules) {
             val week = ScheduleWeek.activeMinutes(days, start, end)
-            val rule = BlockRuleData(
+            val rule = aBlockRuleData(
                 id = 1, packageName = null, groupId = null, mode = BlockMode.HARD_BLOCK,
                 delaySeconds = 0, dailyLimitMinutes = null, enabled = true,
                 scheduleDays = days?.split(",")?.mapNotNull { it.trim().toIntOrNull() },

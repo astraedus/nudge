@@ -3,14 +3,14 @@ package com.astraedus.nudge.ui.screens.allapps
 import androidx.lifecycle.SavedStateHandle
 import com.astraedus.nudge.MainDispatcherRule
 import com.astraedus.nudge.data.db.entity.BlockRule
-import com.astraedus.nudge.data.preferences.NudgePreferences
-import com.astraedus.nudge.data.repository.BlockRuleRepository
-import com.astraedus.nudge.data.repository.InstalledAppsRepository
-import com.astraedus.nudge.domain.lock.StrictModeChallenge
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.domain.model.ExceptCsv
 import com.astraedus.nudge.domain.packages.FakePackageFacts
 import com.astraedus.nudge.service.EssentialApps
+import com.astraedus.nudge.testing.FakeInstalledAppsRepository
+import com.astraedus.nudge.testing.FakeNudgePreferences
+import com.astraedus.nudge.testing.FakeRuleDatabase
+import com.astraedus.nudge.testing.aBlockRule
 import com.astraedus.nudge.ui.components.PickerSelection
 import com.astraedus.nudge.ui.screens.allapps.AllAppsFixtures.CHAT
 import com.astraedus.nudge.ui.screens.allapps.AllAppsFixtures.DIALER
@@ -20,12 +20,9 @@ import com.astraedus.nudge.ui.screens.allapps.AllAppsFixtures.LAUNCHER
 import com.astraedus.nudge.ui.screens.allapps.AllAppsFixtures.SOCIAL
 import com.astraedus.nudge.ui.screens.allapps.AllAppsFixtures.WORK
 import io.mockk.coEvery
-import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
-import io.mockk.slot
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -36,7 +33,7 @@ import org.junit.Rule
 import org.junit.Test
 
 /**
- * Layer L1 (view model over a mocked repository): the editor's flows end to end. Load, the picker's
+ * Layer L1 (view model over the real repository on an in-memory database): the editor's flows end to end. Load, the picker's
  * Done, the "Block N apps all the time?" question, the one write, and the Strict Mode gate on a save
  * that allows more or a delete of a rule that is on.
  */
@@ -46,29 +43,29 @@ class AllAppsEditorViewModelTest {
     @get:Rule
     val mainDispatcherRule = MainDispatcherRule(UnconfinedTestDispatcher())
 
-    private val repository = mockk<BlockRuleRepository>(relaxed = true)
+    private var db = FakeRuleDatabase()
+
+    /** The rows in [db] as the editor opened on them: a write shows up as a difference from this. */
+    private var opened = emptyList<BlockRule>()
 
     private fun viewModel(saved: BlockRule? = null, strictOn: Boolean = false): AllAppsEditorViewModel {
-        every { repository.getAllRules() } returns flowOf(listOfNotNull(saved))
-        every { repository.getAllGroups() } returns flowOf(AllAppsFixtures.groups)
-        every { repository.getAllGroupMembers() } returns flowOf(AllAppsFixtures.members)
-        if (saved != null) coEvery { repository.getRule(saved.id) } returns saved
-        val installed = mockk<InstalledAppsRepository>()
-        coEvery { installed.getInstalledApps() } returns AllAppsFixtures.installed
-        coEvery { installed.resolveAppName(any()) } answers { firstArg<String>().substringAfterLast('.') }
-        coEvery { installed.resolveIcon(any()) } returns null
+        db = FakeRuleDatabase()
+        AllAppsFixtures.groups.forEach { db.seedGroup(it) }
+        // The fixture's member of the deleted group 9 is a stale row; the database refuses to hold one.
+        AllAppsFixtures.members.filter { m -> db.groups.any { it.id == m.groupId } }.forEach { db.seedMember(it) }
+        if (saved != null) db.seedRule(saved)
+        opened = db.rules
+        val installed = FakeInstalledAppsRepository(*AllAppsFixtures.installed.toTypedArray())
         val essentials = mockk<EssentialApps>()
         every { essentials.packages(any()) } returns setOf(DIALER, LAUNCHER)
         coEvery { essentials.browsers() } returns emptySet()
         val facts = FakePackageFacts(launchable = AllAppsFixtures.installed.mapTo(HashSet()) { it.packageName })
-        val prefs = mockk<NudgePreferences>()
-        every { prefs.isStrictModeEnabled } returns flowOf(strictOn)
-        every { prefs.strictModeChallengeLength } returns flowOf(StrictModeChallenge.DEFAULT_LENGTH)
         val handle = SavedStateHandle(
             if (saved == null) emptyMap() else mapOf(AllAppsEditorViewModel.ARG_RULE_ID to saved.id)
         )
         return AllAppsEditorViewModel(
-            handle, repository, installed, essentials, facts, prefs, UnconfinedTestDispatcher()
+            handle, db.repository, installed, essentials, facts,
+            FakeNudgePreferences { setStrictModeEnabled(strictOn) }, UnconfinedTestDispatcher()
         )
     }
 
@@ -85,11 +82,13 @@ class AllAppsEditorViewModelTest {
         enabled = enabled
     )
 
+    /** The one All apps rule the database holds after the editor wrote it. */
     private fun writtenRule(): BlockRule {
-        val written = slot<BlockRule>()
-        coVerify(exactly = 1) { repository.saveAllAppsRule(capture(written)) }
-        return written.captured
+        assertTrue("expected a write", db.rules != opened)
+        return db.rules.single { it.allApps }
     }
+
+    private fun assertNothingWritten() = assertEquals(opened, db.rules)
 
     @Test
     fun `a new rule opens on the defaults, loaded, with only launchable essentials in the sheet`() {
@@ -121,11 +120,11 @@ class AllAppsEditorViewModelTest {
         vm.updateForm { it.copy(mode = BlockMode.HARD_BLOCK) }
         vm.save()
         assertTrue(vm.s.showSaveConfirmation)
-        coVerify(exactly = 0) { repository.saveAllAppsRule(any()) }
+        assertNothingWritten()
         vm.dismissSaveConfirmation()
         assertFalse(vm.s.showSaveConfirmation)
         assertFalse(vm.s.isFinished)
-        coVerify(exactly = 0) { repository.saveAllAppsRule(any()) }
+        assertNothingWritten()
         vm.save()
         vm.confirmSave()
         assertEquals(BlockMode.HARD_BLOCK.name, writtenRule().mode)
@@ -147,7 +146,7 @@ class AllAppsEditorViewModelTest {
         vm.applyPicked(PickerSelection(packages = setOf(CHAT, GAME), groupIds = emptySet()))
         vm.save()
         assertNotNull(vm.challenge.value)
-        coVerify(exactly = 0) { repository.saveAllAppsRule(any()) }
+        assertNothingWritten()
         vm.verifyChallenge(vm.challenge.value!!.target)
         assertEquals(setOf(CHAT, GAME), ExceptCsv.packages(writtenRule().exceptPackages))
         assertTrue(vm.s.isFinished)
@@ -168,9 +167,9 @@ class AllAppsEditorViewModelTest {
         vm.requestDelete()
         vm.confirmDelete()
         assertNotNull(vm.challenge.value)
-        coVerify(exactly = 0) { repository.deleteRule(any()) }
+        assertNothingWritten()
         vm.cancelChallenge()
-        coVerify(exactly = 0) { repository.deleteRule(any()) }
+        assertNothingWritten()
         assertFalse(vm.s.isFinished)
     }
 
@@ -179,13 +178,13 @@ class AllAppsEditorViewModelTest {
         val vm = viewModel(saved(enabled = false), strictOn = true)
         vm.confirmDelete()
         assertNull(vm.challenge.value)
-        coVerify(exactly = 1) { repository.deleteRule(20) }
+        assertTrue(db.rules.none { it.id == 20L })
         assertTrue(vm.s.isFinished)
     }
 
     @Test
     fun `an id that is not an All apps rule closes the editor`() {
-        val other = BlockRule(id = 20, packageName = CHAT, mode = BlockMode.DELAY.name)
+        val other = aBlockRule(id = 20, packageName = CHAT, mode = BlockMode.DELAY.name)
         val vm = viewModel(other)
         assertTrue(vm.s.isFinished)
     }
@@ -207,6 +206,6 @@ class AllAppsEditorViewModelTest {
         edited.requestLeave()
         edited.discardChanges()
         assertTrue(edited.s.isFinished)
-        coVerify(exactly = 0) { repository.saveAllAppsRule(any()) }
+        assertNothingWritten()
     }
 }

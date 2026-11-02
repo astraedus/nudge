@@ -1,10 +1,10 @@
 package com.astraedus.nudge.domain.engine
 
 import com.astraedus.nudge.domain.logging.NudgeLog
-import com.astraedus.nudge.domain.model.ActiveRule
 import com.astraedus.nudge.domain.model.AllAppsBlock
 import com.astraedus.nudge.domain.model.BlockDecision
 import com.astraedus.nudge.domain.model.BlockMode
+import com.astraedus.nudge.testing.anActiveRule
 import java.util.Calendar
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -33,26 +33,6 @@ class BlockEngineUntilTest {
         allowedPackages = listOf("maps")
     )
 
-    private fun rule(
-        mode: BlockMode,
-        start: Int? = null,
-        end: Int? = null,
-        days: List<Int>? = null,
-        limit: Int? = null,
-        allApps: AllAppsBlock? = null,
-        name: String = mode.name
-    ) = ActiveRule(
-        mode = mode,
-        delaySeconds = 15,
-        dailyLimitMinutes = limit,
-        enabled = true,
-        scheduleDays = days,
-        scheduleStartMinute = start,
-        scheduleEndMinute = end,
-        ruleName = name,
-        allApps = allApps
-    )
-
     private fun block(decision: BlockDecision) = decision as BlockDecision.Block
 
     @Test
@@ -60,7 +40,7 @@ class BlockEngineUntilTest {
         // Wednesday 4 Nov 2026, 10:15:42.
         val now = at(4, 10, 15, 42)
         val decision = block(
-            engineAt(now).evaluate("app", listOf(rule(BlockMode.DELAY, 9 * 60, 17 * 60, allApps = allAppsLine)), 0L)
+            engineAt(now).evaluate("app", listOf(anActiveRule(mode = BlockMode.DELAY, scheduleStartMinute = 9 * 60, scheduleEndMinute = 17 * 60, allApps = allAppsLine)), 0L)
         )
         assertEquals(at(4, 17, 0).timeInMillis, decision.until)
         assertEquals(allAppsLine, decision.allApps)
@@ -69,13 +49,13 @@ class BlockEngineUntilTest {
     @Test
     fun `an overnight window ends the next morning`() {
         val now = at(4, 23, 30)
-        val decision = block(engineAt(now).evaluate("app", listOf(rule(BlockMode.HARD_BLOCK, 22 * 60, 6 * 60)), 0L))
+        val decision = block(engineAt(now).evaluate("app", listOf(anActiveRule(mode = BlockMode.HARD_BLOCK, scheduleStartMinute = 22 * 60, scheduleEndMinute = 6 * 60)), 0L))
         assertEquals(at(5, 6, 0).timeInMillis, decision.until)
     }
 
     @Test
     fun `a rule on all the time has no until`() {
-        val decision = block(engineAt(at(4, 10, 0)).evaluate("app", listOf(rule(BlockMode.BREATHING)), 0L))
+        val decision = block(engineAt(at(4, 10, 0)).evaluate("app", listOf(anActiveRule(mode = BlockMode.BREATHING)), 0L))
         assertNull(decision.until)
     }
 
@@ -86,8 +66,8 @@ class BlockEngineUntilTest {
     @Test
     fun `a non-deciding rule's until and All apps line never leak`() {
         val now = at(4, 10, 0)
-        val group = rule(BlockMode.HARD_BLOCK, name = "Social")
-        val allApps = rule(BlockMode.DELAY, 9 * 60, 17 * 60, allApps = allAppsLine, name = "All apps")
+        val group = anActiveRule(mode = BlockMode.HARD_BLOCK, ruleName = "Social")
+        val allApps = anActiveRule(mode = BlockMode.DELAY, scheduleStartMinute = 9 * 60, scheduleEndMinute = 17 * 60, allApps = allAppsLine, ruleName = "All apps")
 
         for (rules in listOf(listOf(group, allApps), listOf(allApps, group))) {
             val decision = block(engineAt(now).evaluate("app", rules, 0L))
@@ -100,7 +80,7 @@ class BlockEngineUntilTest {
 
     @Test
     fun `Nuke carries neither`() {
-        val rules = listOf(rule(BlockMode.DELAY, 9 * 60, 17 * 60, allApps = allAppsLine))
+        val rules = listOf(anActiveRule(mode = BlockMode.DELAY, scheduleStartMinute = 9 * 60, scheduleEndMinute = 17 * 60, allApps = allAppsLine))
         val decision = block(engineAt(at(4, 10, 0)).evaluate("app", rules, 0L, nuked = true))
         assertEquals(BlockEngine.NUKE_DECISION, decision)
         assertNull(decision.until)
@@ -116,7 +96,7 @@ class BlockEngineUntilTest {
     fun `a spent limit in an overnight window ends at midnight, not at the window's end`() {
         val now = at(4, 23, 30)
         val decision = block(
-            engineAt(now).evaluate("app", listOf(rule(BlockMode.DELAY, 22 * 60, 6 * 60, limit = 30)), 31 * 60_000L)
+            engineAt(now).evaluate("app", listOf(anActiveRule(mode = BlockMode.DELAY, scheduleStartMinute = 22 * 60, scheduleEndMinute = 6 * 60, dailyLimitMinutes = 30)), 31 * 60_000L)
         )
         assertEquals(BlockMode.HARD_BLOCK, decision.mode)
         assertEquals(at(5, 0, 0).timeInMillis, decision.until)
@@ -127,7 +107,7 @@ class BlockEngineUntilTest {
     fun `a spent limit in a same-day window ends with the window`() {
         val now = at(4, 10, 0)
         val decision = block(
-            engineAt(now).evaluate("app", listOf(rule(BlockMode.DELAY, 9 * 60, 17 * 60, limit = 30)), 31 * 60_000L)
+            engineAt(now).evaluate("app", listOf(anActiveRule(mode = BlockMode.DELAY, scheduleStartMinute = 9 * 60, scheduleEndMinute = 17 * 60, dailyLimitMinutes = 30)), 31 * 60_000L)
         )
         assertEquals(at(4, 17, 0).timeInMillis, decision.until)
     }
@@ -136,7 +116,7 @@ class BlockEngineUntilTest {
     @Test
     fun `a spent limit with no schedule has no until`() {
         val decision = block(
-            engineAt(at(4, 10, 0)).evaluate("app", listOf(rule(BlockMode.DELAY, limit = 30)), 31 * 60_000L)
+            engineAt(at(4, 10, 0)).evaluate("app", listOf(anActiveRule(mode = BlockMode.DELAY, dailyLimitMinutes = 30)), 31 * 60_000L)
         )
         assertNull(decision.until)
     }
@@ -148,7 +128,7 @@ class BlockEngineUntilTest {
     @Test
     fun `the overnight window itself ends at six`() {
         val now = at(4, 23, 30)
-        val rule = rule(BlockMode.DELAY, 22 * 60, 6 * 60, limit = 30)
+        val rule = anActiveRule(mode = BlockMode.DELAY, scheduleStartMinute = 22 * 60, scheduleEndMinute = 6 * 60, dailyLimitMinutes = 30)
         assertEquals(at(5, 6, 0).timeInMillis, ScheduleEvaluator().windowEndAt(rule, now))
     }
 }

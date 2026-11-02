@@ -2,11 +2,12 @@ package com.astraedus.nudge.ui.backup
 
 import com.astraedus.nudge.data.export.ExportedGroup
 import com.astraedus.nudge.data.export.ExportedHistoryEvent
-import com.astraedus.nudge.data.export.ExportedRule
 import com.astraedus.nudge.data.export.ExportedSettings
 import com.astraedus.nudge.data.export.ImportResult
 import com.astraedus.nudge.domain.usecase.ImportOutcome
 import com.astraedus.nudge.domain.usecase.ImportPreview
+import com.astraedus.nudge.testing.aBlockRule
+import com.astraedus.nudge.testing.anExportedRule
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -21,23 +22,7 @@ import org.junit.Test
  */
 class ImportMessagesTest {
 
-    private fun rule(pkg: String) = ExportedRule(
-        packageName = pkg,
-        groupName = null,
-        mode = "DELAY",
-        delaySeconds = 15,
-        dailyLimitMinutes = null,
-        enabled = true,
-        scheduleDays = null,
-        scheduleStartMinute = null,
-        scheduleEndMinute = null,
-        inAppFeatures = null,
-        grayscale = false,
-        showCounter = false,
-        autoKickAfter = null,
-        showTimeRemaining = false,
-        autoKickCooldownSeconds = 60
-    )
+    private val app1Rule = anExportedRule(aBlockRule(packageName = "com.app1"))
 
     private fun historyEvent(ts: Long) = ExportedHistoryEvent(
         packageName = "com.app1",
@@ -57,7 +42,7 @@ class ImportMessagesTest {
         val message = buildImportPreviewMessage(
             preview(
                 ImportResult(
-                    rules = listOf(rule("com.app1")),
+                    rules = listOf(app1Rule),
                     groups = emptyList(),
                     version = 1,
                     invalidCount = 2,
@@ -77,7 +62,7 @@ class ImportMessagesTest {
     @Test
     fun `preview says nothing about invalid entries when there are none`() {
         val message = buildImportPreviewMessage(
-            preview(ImportResult(rules = listOf(rule("com.app1")), groups = emptyList(), version = 1))
+            preview(ImportResult(rules = listOf(app1Rule), groups = emptyList(), version = 1))
         )
 
         assertFalse(message.contains("could not be read"))
@@ -93,7 +78,7 @@ class ImportMessagesTest {
         val message = buildImportPreviewMessage(
             preview(
                 ImportResult(
-                    rules = listOf(rule("com.app1")),
+                    rules = listOf(app1Rule),
                     groups = listOf(ExportedGroup("Social", listOf("com.instagram.android"))),
                     version = 1
                 )
@@ -111,7 +96,7 @@ class ImportMessagesTest {
         val message = buildImportPreviewMessage(
             preview(
                 ImportResult(
-                    rules = listOf(rule("com.app1")),
+                    rules = listOf(app1Rule),
                     groups = emptyList(),
                     version = 1,
                     history = (1..40L).map(::historyEvent)
@@ -131,7 +116,7 @@ class ImportMessagesTest {
     @Test
     fun `preview of a rules-only file never mentions history`() {
         val message = buildImportPreviewMessage(
-            preview(ImportResult(rules = listOf(rule("com.app1")), groups = emptyList(), version = 1))
+            preview(ImportResult(rules = listOf(app1Rule), groups = emptyList(), version = 1))
         )
 
         assertFalse(message.lowercase().contains("history"))
@@ -142,7 +127,7 @@ class ImportMessagesTest {
         val message = buildImportPreviewMessage(
             preview(
                 ImportResult(
-                    rules = listOf(rule("com.app1")),
+                    rules = listOf(app1Rule),
                     groups = emptyList(),
                     version = 1,
                     invalidCount = 1,
@@ -264,7 +249,7 @@ class ImportMessagesTest {
         val message = buildImportPreviewMessage(
             preview(
                 ImportResult(
-                    rules = listOf(rule("com.app1")),
+                    rules = listOf(app1Rule),
                     groups = emptyList(),
                     version = 1,
                     settings = ExportedSettings(strictModeEnabled = true)
@@ -280,7 +265,7 @@ class ImportMessagesTest {
     @Test
     fun `preview of a file without settings never mentions them`() {
         val message = buildImportPreviewMessage(
-            preview(ImportResult(rules = listOf(rule("com.app1")), groups = emptyList(), version = 1))
+            preview(ImportResult(rules = listOf(app1Rule), groups = emptyList(), version = 1))
         )
 
         assertFalse(message.lowercase().contains("setting"))
@@ -291,7 +276,7 @@ class ImportMessagesTest {
         val message = buildImportPreviewMessage(
             preview(
                 ImportResult(
-                    rules = listOf(rule("com.app1")),
+                    rules = listOf(app1Rule),
                     groups = emptyList(),
                     version = 1,
                     invalidCount = 1,

@@ -1,11 +1,11 @@
 package com.astraedus.nudge.domain.engine
 
-import com.astraedus.nudge.data.db.entity.AppGroup
-import com.astraedus.nudge.data.db.entity.AppGroupMember
-import com.astraedus.nudge.data.db.entity.BlockRule
 import com.astraedus.nudge.data.repository.RuleSnapshot
 import com.astraedus.nudge.domain.model.BlockMode
-import com.astraedus.nudge.domain.model.BlockRuleData
+import com.astraedus.nudge.testing.aBlockRule
+import com.astraedus.nudge.testing.aBlockRuleData
+import com.astraedus.nudge.testing.aGroupMember
+import com.astraedus.nudge.testing.anAppGroup
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -18,69 +18,55 @@ class RuleEvaluatorGroupNameTest {
 
     private val evaluator = RuleEvaluator()
 
-    private fun rule(
-        groupId: Long? = 7L,
-        groupName: String? = "Social",
-        mode: BlockMode = BlockMode.DELAY,
-        limit: Int? = null,
-        days: List<Int>? = null,
-        features: List<String>? = null
-    ) = BlockRuleData(
-        id = 1,
-        packageName = if (groupId == null) "com.instagram.android" else null,
-        groupId = groupId,
-        mode = mode,
-        delaySeconds = 15,
-        dailyLimitMinutes = limit,
-        enabled = true,
-        scheduleDays = days,
-        inAppFeatures = features,
-        groupName = groupName
-    )
+    /** The subject: a group rule (group 7, "Social"), everything else as the app ships it. */
+    private val socialRule = aBlockRuleData(id = 1, groupId = 7L, groupName = "Social")
+
+    /** The same rule aimed straight at Instagram instead of a group. */
+    private val directRule = aBlockRuleData(id = 1, packageName = "com.instagram.android")
 
     @Test
     fun `a group rule is its group's name`() {
-        assertEquals("Social", evaluator.buildRuleName(rule()))
+        assertEquals("Social", evaluator.buildRuleName(socialRule))
     }
 
     @Test
     fun `whatever the mode`() {
         for (mode in BlockMode.values()) {
-            assertEquals("mode $mode", "Social", evaluator.buildRuleName(rule(mode = mode)))
+            assertEquals("mode $mode", "Social", evaluator.buildRuleName(socialRule.copy(mode = mode)))
         }
     }
 
     @Test
     fun `the qualifiers stay`() {
-        assertEquals("Social (scheduled)", evaluator.buildRuleName(rule(days = listOf(1, 2))))
-        assertEquals("Social (30 min/day)", evaluator.buildRuleName(rule(limit = 30)))
+        assertEquals("Social (scheduled)", evaluator.buildRuleName(socialRule.copy(scheduleDays = listOf(1, 2))))
+        assertEquals("Social (30 min/day)", evaluator.buildRuleName(socialRule.copy(dailyLimitMinutes = 30)))
         assertEquals(
             "Social (scheduled, 30 min/day)",
-            evaluator.buildRuleName(rule(days = listOf(1), limit = 30))
+            evaluator.buildRuleName(socialRule.copy(scheduleDays = listOf(1), dailyLimitMinutes = 30))
         )
     }
 
     @Test
     fun `a feature group rule keeps its feature prefix`() {
-        assertEquals("Reels - Social", evaluator.buildRuleName(rule(features = listOf("reels"))))
+        assertEquals("Reels - Social", evaluator.buildRuleName(socialRule.copy(inAppFeatures = listOf("reels"))))
     }
 
     @Test
     fun `a group rule with no name is Group, never a mode name`() {
-        assertEquals(RuleEvaluator.GROUP_FALLBACK_NAME, evaluator.buildRuleName(rule(groupName = null)))
-        assertEquals(RuleEvaluator.GROUP_FALLBACK_NAME, evaluator.buildRuleName(rule(groupName = "  ")))
+        assertEquals(RuleEvaluator.GROUP_FALLBACK_NAME, evaluator.buildRuleName(socialRule.copy(groupName = null)))
+        assertEquals(RuleEvaluator.GROUP_FALLBACK_NAME, evaluator.buildRuleName(socialRule.copy(groupName = "  ")))
         assertEquals(
             "Group (30 min/day)",
-            evaluator.buildRuleName(rule(groupName = null, mode = BlockMode.HARD_BLOCK, limit = 30))
+            evaluator.buildRuleName(socialRule.copy(groupName = null, mode = BlockMode.HARD_BLOCK, dailyLimitMinutes = 30))
         )
     }
 
     @Test
     fun `a direct rule is unchanged`() {
-        assertEquals("Delay", evaluator.buildRuleName(rule(groupId = null, groupName = null)))
+        assertEquals("Delay", evaluator.buildRuleName(directRule))
         assertEquals(
             "Hard Block (30 min/day)",
-            evaluator.buildRuleName(rule(groupId = null, groupName = null, mode = BlockMode.HARD_BLOCK, limit = 30))
+            evaluator.buildRuleName(directRule.copy(mode = BlockMode.HARD_BLOCK, dailyLimitMinutes = 30))
         )
     }
 
@@ -88,7 +74,7 @@ class RuleEvaluatorGroupNameTest {
     fun `resolution carries the group name to the active rule`() {
         val resolved = evaluator.resolveRulesForPackage(
             "com.instagram.android",
-            listOf(rule()),
+            listOf(socialRule),
             membership(7L to "com.instagram.android"),
             CoverageFacts(essential = false, launchable = true, category = null, browser = false)
         )
@@ -100,12 +86,12 @@ class RuleEvaluatorGroupNameTest {
     fun `RuleSnapshot fills the group name from the groups table`() {
         val snapshot = RuleSnapshot.of(
             enabledRules = listOf(
-                BlockRule(id = 1, groupId = 7L, mode = BlockMode.DELAY.name),
-                BlockRule(id = 2, groupId = 8L, mode = BlockMode.DELAY.name),
-                BlockRule(id = 3, packageName = "com.example.app", mode = BlockMode.HARD_BLOCK.name)
+                aBlockRule(id = 1, groupId = 7L),
+                aBlockRule(id = 2, groupId = 8L),
+                aBlockRule(id = 3, packageName = "com.example.app", mode = BlockMode.HARD_BLOCK.name)
             ),
-            groups = listOf(AppGroup(id = 7L, name = "Social")),
-            members = listOf(AppGroupMember(7L, "com.instagram.android"))
+            groups = listOf(anAppGroup("Social", id = 7L)),
+            members = listOf(aGroupMember(7L, "com.instagram.android"))
         )
         val byId = snapshot.ruleData.associateBy { it.id }
         assertEquals("Social", byId.getValue(1).groupName)

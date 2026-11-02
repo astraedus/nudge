@@ -1,15 +1,10 @@
 package com.astraedus.nudge.domain.usecase
 
-import com.astraedus.nudge.data.db.entity.AppGroup
-import com.astraedus.nudge.data.db.entity.AppGroupMember
-import com.astraedus.nudge.data.db.entity.BlockRule
-import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.data.repository.BlockRuleRepository
 import com.astraedus.nudge.data.repository.ContentFilter
 import com.astraedus.nudge.data.repository.RepositoryRuleSnapshots
 import com.astraedus.nudge.data.repository.RuleSnapshotSource
 import com.astraedus.nudge.data.repository.RuleSnapshots
-import com.astraedus.nudge.data.repository.UsageRepository
 import com.astraedus.nudge.domain.engine.BlockEngine
 import com.astraedus.nudge.domain.engine.RuleEvaluator
 import com.astraedus.nudge.domain.engine.ScheduleEvaluator
@@ -17,8 +12,16 @@ import com.astraedus.nudge.domain.logging.NudgeLog
 import com.astraedus.nudge.domain.model.BlockDecision
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.domain.nuke.NukeEnforcement
+import com.astraedus.nudge.domain.packages.FakeEssentialPackages
+import com.astraedus.nudge.domain.packages.FakePackageFacts
+import com.astraedus.nudge.testing.FakeNudgePreferences
+import com.astraedus.nudge.testing.FakeUsageRepository
+import com.astraedus.nudge.testing.aBlockRule
+import com.astraedus.nudge.testing.aGroupMember
+import com.astraedus.nudge.testing.anAppGroup
 import io.mockk.every
 import io.mockk.mockk
+import java.io.IOException
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -33,9 +36,6 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.io.IOException
-import com.astraedus.nudge.domain.packages.FakeEssentialPackages
-import com.astraedus.nudge.domain.packages.FakePackageFacts
 
 /**
  * L3: block evaluation through the production [RuleSnapshotSource] (spec section 5.7).
@@ -53,8 +53,8 @@ class EvaluateBlockSnapshotTest {
     private val freePkg = "com.example.free"
     private val groupId = 7L
 
-    private val appRule = BlockRule(id = 1, packageName = appPkg, mode = BlockMode.HARD_BLOCK.name)
-    private val groupRule = BlockRule(
+    private val appRule = aBlockRule(id = 1, packageName = appPkg, mode = BlockMode.HARD_BLOCK.name)
+    private val groupRule = aBlockRule(
         id = 2,
         groupId = groupId,
         mode = BlockMode.DELAY.name,
@@ -74,10 +74,12 @@ class EvaluateBlockSnapshotTest {
     }
 
     private val rules = Table(listOf(appRule, groupRule))
-    private val groups = Table(listOf(AppGroup(id = groupId, name = "Social")))
-    private val members = Table(listOf(AppGroupMember(groupId, groupPkg)))
+    private val groups = Table(listOf(anAppGroup("Social", id = groupId)))
+    private val members = Table(listOf(aGroupMember(groupId, groupPkg)))
     private var perGroupReads = 0
 
+    // Deliberately a stub, not FakeRuleDatabase: these checks are about the table FLOWS themselves
+    // (how often each is opened, one that fails, one that never answers), which the fake does not model.
     private val repository: BlockRuleRepository = mockk {
         every { getEnabledRules() } answers { rules.flow }
         every { getAllGroups() } answers { groups.flow }
@@ -89,13 +91,9 @@ class EvaluateBlockSnapshotTest {
         }
     }
 
-    private val usageRepository: UsageRepository = mockk {
-        every { getDailyForegroundTimeMs(any()) } returns 0L
-    }
+    private val usageRepository = FakeUsageRepository()
 
-    private val preferences: NudgePreferences = mockk {
-        every { contentFilterEnabled } returns flowOf(false)
-    }
+    private val preferences = FakeNudgePreferences()
 
     private fun useCase(snapshots: RuleSnapshots) = EvaluateBlockUseCase(
         ruleSnapshots = snapshots,
@@ -143,7 +141,7 @@ class EvaluateBlockSnapshotTest {
         val useCase = useCase(source)
         assertEquals(BlockDecision.Allow, useCase.invoke(freePkg))
 
-        rules.rows.value = rules.rows.value + BlockRule(id = 3, packageName = freePkg, mode = BlockMode.HARD_BLOCK.name)
+        rules.rows.value = rules.rows.value + aBlockRule(id = 3, packageName = freePkg, mode = BlockMode.HARD_BLOCK.name)
         runCurrent()
         assertMode(BlockMode.HARD_BLOCK, useCase.invoke(freePkg))
 
@@ -194,9 +192,9 @@ class EvaluateBlockSnapshotTest {
         rules.rows.value = listOf(
             appRule,
             groupRule,
-            BlockRule(id = 4, packageName = groupPkg, mode = BlockMode.BREATHING.name, inAppFeatures = "REELS"),
-            BlockRule(id = 5, packageName = freePkg, mode = "NOT_A_MODE"),
-            BlockRule(id = 6, groupId = 99L, mode = BlockMode.HARD_BLOCK.name) // a group that does not exist
+            aBlockRule(id = 4, packageName = groupPkg, mode = BlockMode.BREATHING.name, inAppFeatures = "REELS"),
+            aBlockRule(id = 5, packageName = freePkg, mode = "NOT_A_MODE"),
+            aBlockRule(id = 6, groupId = 99L, mode = BlockMode.HARD_BLOCK.name) // a group that does not exist
         )
         runCurrent()
 

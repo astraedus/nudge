@@ -5,6 +5,7 @@ import com.astraedus.nudge.domain.groups.GroupMembershipResolver
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.domain.model.BlockRuleData
 import com.astraedus.nudge.domain.packages.AppCategory
+import com.astraedus.nudge.testing.aBlockRuleData
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -26,14 +27,10 @@ class CategoryCoverageTest {
         )
     )
 
+    private val hardBlock = aBlockRuleData(id = 1L, mode = BlockMode.HARD_BLOCK)
+
     private fun facts(category: AppCategory?, essential: Boolean = false) =
         CoverageFacts(essential = essential, launchable = true, category = category, browser = false)
-
-    private fun rule(groupId: Long? = null, allApps: Boolean = false, exceptGroups: Set<Long> = emptySet()) =
-        BlockRuleData(
-            id = 1L, packageName = null, groupId = groupId, mode = BlockMode.HARD_BLOCK, delaySeconds = 15,
-            dailyLimitMinutes = null, enabled = true, allApps = allApps, exceptGroupIds = exceptGroups
-        )
 
     private fun covers(
         rule: BlockRuleData,
@@ -44,28 +41,28 @@ class CategoryCoverageTest {
 
     @Test
     fun `a category group covers an app whose category matches`() {
-        assertTrue(covers(rule(social), "insta", facts(AppCategory.SOCIAL)))
+        assertTrue(covers(hardBlock.copy(groupId = social), "insta", facts(AppCategory.SOCIAL)))
     }
 
     @Test
     fun `a category group does not cover an app of another category`() {
-        assertFalse(covers(rule(social), "maps", facts(AppCategory.MAPS)))
+        assertFalse(covers(hardBlock.copy(groupId = social), "maps", facts(AppCategory.MAPS)))
     }
 
     @Test
     fun `UNDEFINED and an unread category never match a category group`() {
-        assertFalse(covers(rule(social), "x", facts(AppCategory.UNDEFINED)))
-        assertFalse(covers(rule(social), "x", facts(null)))
+        assertFalse(covers(hardBlock.copy(groupId = social), "x", facts(AppCategory.UNDEFINED)))
+        assertFalse(covers(hardBlock.copy(groupId = social), "x", facts(null)))
     }
 
     @Test
     fun `an unread category still matches a hand-added app`() {
-        assertTrue(covers(rule(handMade), "manual", facts(null)))
+        assertTrue(covers(hardBlock.copy(groupId = handMade), "manual", facts(null)))
     }
 
     @Test
     fun `Removed by you beats the category`() {
-        assertFalse(covers(rule(social), "removed", facts(AppCategory.SOCIAL)))
+        assertFalse(covers(hardBlock.copy(groupId = social), "removed", facts(AppCategory.SOCIAL)))
         assertEquals(emptySet<Long>(), RuleCoverage.groupIdsOf("removed", resolver, facts(AppCategory.SOCIAL)))
     }
 
@@ -75,36 +72,36 @@ class CategoryCoverageTest {
             listOf(GroupDefinition(social, categories = setOf(AppCategory.SOCIAL), includes = setOf("dialer")))
         )
         val essential = facts(AppCategory.SOCIAL, essential = true)
-        assertFalse(covers(rule(social), "dialer", essential, withInclude))
-        assertFalse(covers(rule(social), "other", essential, withInclude))
+        assertFalse(covers(hardBlock.copy(groupId = social), "dialer", essential, withInclude))
+        assertFalse(covers(hardBlock.copy(groupId = social), "other", essential, withInclude))
     }
 
     @Test
     fun `an All apps rule allowing a category group leaves that category uncovered`() {
-        val allApps = rule(allApps = true, exceptGroups = setOf(social))
+        val allApps = hardBlock.copy(allApps = true, exceptGroupIds = setOf(social))
         assertFalse(covers(allApps, "insta", facts(AppCategory.SOCIAL)))
         assertTrue(covers(allApps, "maps", facts(AppCategory.MAPS)))
     }
 
     @Test
     fun `categoryNeeded is false when no rule targets a category group`() {
-        val rules = listOf(rule(handMade), rule(allApps = true, exceptGroups = setOf(handMade)), rule(groupId = 99L))
+        val rules = listOf(hardBlock.copy(groupId = handMade), hardBlock.copy(allApps = true, exceptGroupIds = setOf(handMade)), hardBlock.copy(groupId = 99L))
         assertFalse(RuleCoverage.categoryNeeded(rules, resolver))
         assertFalse(RuleCoverage.categoryNeeded(emptyList(), resolver))
     }
 
     @Test
     fun `categoryNeeded is true when a rule targets a category group`() {
-        assertTrue(RuleCoverage.categoryNeeded(listOf(rule(social)), resolver))
+        assertTrue(RuleCoverage.categoryNeeded(listOf(hardBlock.copy(groupId = social)), resolver))
     }
 
     @Test
     fun `categoryNeeded is true for an All apps rule allowing a category group`() {
-        assertTrue(RuleCoverage.categoryNeeded(listOf(rule(allApps = true, exceptGroups = setOf(social))), resolver))
+        assertTrue(RuleCoverage.categoryNeeded(listOf(hardBlock.copy(allApps = true, exceptGroupIds = setOf(social))), resolver))
     }
 
     @Test
     fun `categoryNeeded is false when no group uses categories at all`() {
-        assertFalse(RuleCoverage.categoryNeeded(listOf(rule(handMade)), membership(handMade to "manual")))
+        assertFalse(RuleCoverage.categoryNeeded(listOf(hardBlock.copy(groupId = handMade)), membership(handMade to "manual")))
     }
 }

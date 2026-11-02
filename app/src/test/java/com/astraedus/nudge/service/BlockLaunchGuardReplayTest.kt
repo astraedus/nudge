@@ -16,6 +16,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.astraedus.nudge.testing.anAccessibilityEvent
 
 /**
  * Replays the two reported event sequences through the REAL pipeline: the real [EventClassifier]
@@ -76,7 +77,7 @@ class BlockLaunchGuardReplayTest {
         packageName: String,
         className: String? = null
     ): ForegroundSignal {
-        val record = AccessibilityEventRecord(
+        val record = anAccessibilityEvent(
             type = type,
             packageName = packageName,
             className = className,
@@ -319,13 +320,13 @@ class BlockLaunchGuardReplayTest {
             val fresh = BlockLaunchGuard().also { it.nowMs = { clock } }
             fresh.onForegroundSignal(
                 classifier.classify(
-                    AccessibilityEventRecord(A11yEventType.WINDOW_STATE_CHANGED, blocked),
+                    anAccessibilityEvent(A11yEventType.WINDOW_STATE_CHANGED, blocked),
                     ime, setOf(launcher), emptySet()
                 )
             )
             fresh.onForegroundSignal(
                 classifier.classify(
-                    AccessibilityEventRecord(A11yEventType.WINDOW_STATE_CHANGED, pkg),
+                    anAccessibilityEvent(A11yEventType.WINDOW_STATE_CHANGED, pkg),
                     ime, setOf(launcher), emptySet()
                 )
             )
@@ -467,7 +468,7 @@ class BlockLaunchGuardReplayTest {
         // NOW a real app window for the blocked app means the user got past the overlay.
         clock += 4_000
         val backIn = classify(
-            AccessibilityEventRecord(A11yEventType.WINDOW_STATE_CHANGED, keep, eventTimeMs = clock)
+            anAccessibilityEvent(A11yEventType.WINDOW_STATE_CHANGED, keep, eventTimeMs = clock)
         )
         guard.onForegroundSignal(backIn)
         assertEquals(
@@ -489,7 +490,7 @@ class BlockLaunchGuardReplayTest {
         tick(100)
         val other = "com.google.android.keep"
         val signal = classify(
-            AccessibilityEventRecord(A11yEventType.WINDOW_STATE_CHANGED, other, eventTimeMs = clock)
+            anAccessibilityEvent(A11yEventType.WINDOW_STATE_CHANGED, other, eventTimeMs = clock)
         )
         guard.onForegroundSignal(signal)
         assertEquals(true, guard.isGenuineBypass(A11yEventType.WINDOW_STATE_CHANGED, signal, floating = false))
@@ -506,14 +507,14 @@ class BlockLaunchGuardReplayTest {
 
         tick(BlockLaunchGate.OVERLAY_SETTLE_MS - 1)
         var signal = classify(
-            AccessibilityEventRecord(A11yEventType.WINDOW_STATE_CHANGED, blocked, eventTimeMs = clock)
+            anAccessibilityEvent(A11yEventType.WINDOW_STATE_CHANGED, blocked, eventTimeMs = clock)
         )
         guard.onForegroundSignal(signal)
         assertEquals(false, guard.isGenuineBypass(A11yEventType.WINDOW_STATE_CHANGED, signal, floating = false))
 
         tick(2)
         signal = classify(
-            AccessibilityEventRecord(A11yEventType.WINDOW_STATE_CHANGED, blocked, eventTimeMs = clock)
+            anAccessibilityEvent(A11yEventType.WINDOW_STATE_CHANGED, blocked, eventTimeMs = clock)
         )
         guard.onForegroundSignal(signal)
         assertEquals(true, guard.isGenuineBypass(A11yEventType.WINDOW_STATE_CHANGED, signal, floating = false))
@@ -569,7 +570,7 @@ class BlockLaunchGuardReplayTest {
         val preFix = BlockLaunchGuard().also { it.nowMs = { clock } }
         preFix.onForegroundSignal(
             preFixClassifier.classify(
-                AccessibilityEventRecord(A11yEventType.WINDOW_STATE_CHANGED, keep, eventTimeMs = clock),
+                anAccessibilityEvent(A11yEventType.WINDOW_STATE_CHANGED, keep, eventTimeMs = clock),
                 ime,
                 setOf(launcher),
                 emptySet()
@@ -579,7 +580,7 @@ class BlockLaunchGuardReplayTest {
 
         tick(30_000)
         val overlaySignal = preFixClassifier.classify(
-            AccessibilityEventRecord(
+            anAccessibilityEvent(
                 A11yEventType.WINDOW_STATE_CHANGED,
                 nudge,
                 className = AwarenessOverlayWindow.CLASS_NAME,

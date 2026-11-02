@@ -11,13 +11,13 @@ import com.astraedus.nudge.domain.events.A11yEventType
 import com.astraedus.nudge.domain.events.AccessibilityEventRecord
 import com.astraedus.nudge.domain.events.EventClassifier
 import com.astraedus.nudge.domain.events.ForegroundSignal
-import com.astraedus.nudge.domain.model.ActiveRule
 import com.astraedus.nudge.domain.model.BlockDecision
 import com.astraedus.nudge.domain.model.BlockMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.astraedus.nudge.testing.anActiveRule
 
 /**
  * A Hard block that a first launch of Google Docs got straight past: Docs' own launcher activity
@@ -60,7 +60,7 @@ class OverlayArrivalReplayTest {
 
     /** The bench fixture's rule, which "All apps" resolves to for Docs: one whole-app Hard block. */
     private val rules = listOf(
-        ActiveRule(mode = BlockMode.HARD_BLOCK, delaySeconds = 0, dailyLimitMinutes = null, enabled = true)
+        anActiveRule(mode = BlockMode.HARD_BLOCK, delaySeconds = 0, dailyLimitMinutes = null, enabled = true)
     )
 
     private val engine = BlockEngine(ScheduleEvaluator())

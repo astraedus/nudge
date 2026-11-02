@@ -5,6 +5,10 @@ import com.astraedus.nudge.data.db.entity.AppGroupMember
 import com.astraedus.nudge.data.db.entity.BlockRule
 import com.astraedus.nudge.data.repository.InstalledAppsRepository.AppInfo
 import com.astraedus.nudge.domain.packages.AppCategory
+import com.astraedus.nudge.testing.aBlockRule
+import com.astraedus.nudge.testing.aGroupMember
+import com.astraedus.nudge.testing.anApp
+import com.astraedus.nudge.testing.anAppGroup
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -16,15 +20,13 @@ import org.junit.Test
  */
 class ManageAppsSectionsTest {
 
-    private fun app(pkg: String, name: String) = AppInfo(packageName = pkg, appName = name, icon = null)
-
     private val installed = listOf(
-        app("com.android.calculator", "Calculator"),
-        app("com.android.camera", "Camera"),
-        app("com.instagram", "Instagram"),
-        app("com.reddit", "Reddit"),
-        app("com.tiktok", "TikTok"),
-        app("com.youtube", "YouTube")
+        anApp("com.android.calculator", "Calculator"),
+        anApp("com.android.camera", "Camera"),
+        anApp("com.instagram", "Instagram"),
+        anApp("com.reddit", "Reddit"),
+        anApp("com.tiktok", "TikTok"),
+        anApp("com.youtube", "YouTube")
     )
 
     private fun sections(
@@ -59,13 +61,13 @@ class ManageAppsSectionsTest {
 
     // ── Typical: 2 app rules + 1 group ─────────────────────────────────────
 
-    private val social = AppGroup(id = 1, name = "Social")
+    private val social = anAppGroup("Social", id = 1)
     private val typicalRules = listOf(
-        BlockRule(id = 1, packageName = "com.youtube", mode = "DELAY", delaySeconds = 15, dailyLimitMinutes = 30),
-        BlockRule(id = 2, packageName = "com.instagram", mode = "HARD_BLOCK", enabled = false),
-        BlockRule(id = 3, groupId = 1, mode = "DELAY", delaySeconds = 15)
+        aBlockRule(id = 1, packageName = "com.youtube", mode = "DELAY", delaySeconds = 15, dailyLimitMinutes = 30),
+        aBlockRule(id = 2, packageName = "com.instagram", mode = "HARD_BLOCK", enabled = false),
+        aBlockRule(id = 3, groupId = 1, mode = "DELAY", delaySeconds = 15)
     )
-    private val typicalMembers = listOf(AppGroupMember(1, "com.tiktok"), AppGroupMember(1, "com.reddit"))
+    private val typicalMembers = listOf(aGroupMember(1, "com.tiktok"), aGroupMember(1, "com.reddit"))
 
     @Test
     fun `typical - groups, the row, apps with rules by name, then Other apps`() {
@@ -114,18 +116,18 @@ class ManageAppsSectionsTest {
 
     @Test
     fun `two blocking groups are named, three are counted, disabled ones are not counted`() {
-        val work = AppGroup(id = 2, name = "Work")
-        val reading = AppGroup(id = 3, name = "Reading")
-        val evening = AppGroup(id = 4, name = "Evening")
+        val work = anAppGroup("Work", id = 2)
+        val reading = anAppGroup("Reading", id = 3)
+        val evening = anAppGroup("Evening", id = 4)
         val members = typicalMembers + listOf(
-            AppGroupMember(2, "com.tiktok"),
-            AppGroupMember(3, "com.reddit"), AppGroupMember(2, "com.reddit"),
-            AppGroupMember(4, "com.reddit"), AppGroupMember(4, "com.tiktok")
+            aGroupMember(2, "com.tiktok"),
+            aGroupMember(3, "com.reddit"), aGroupMember(2, "com.reddit"),
+            aGroupMember(4, "com.reddit"), aGroupMember(4, "com.tiktok")
         )
         val rules = typicalRules + listOf(
-            BlockRule(id = 20, groupId = 2, mode = "HARD_BLOCK"),
-            BlockRule(id = 21, groupId = 3, mode = "HARD_BLOCK"),
-            BlockRule(id = 22, groupId = 4, mode = "HARD_BLOCK", enabled = false)
+            aBlockRule(id = 20, groupId = 2, mode = "HARD_BLOCK"),
+            aBlockRule(id = 21, groupId = 3, mode = "HARD_BLOCK"),
+            aBlockRule(id = 22, groupId = 4, mode = "HARD_BLOCK", enabled = false)
         )
         val s = sections(listOf(social, work, reading, evening), members, rules)
 
@@ -145,7 +147,7 @@ class ManageAppsSectionsTest {
 
     @Test
     fun `an app's own rule is its line, even when a group also covers it`() {
-        val rules = typicalRules + BlockRule(id = 9, packageName = "com.tiktok", mode = "HARD_BLOCK")
+        val rules = typicalRules + aBlockRule(id = 9, packageName = "com.tiktok", mode = "HARD_BLOCK")
         val tiktok = sections(listOf(social), typicalMembers, rules).appsWithRules.single { it.appInfo.appName == "TikTok" }
         assertEquals("Hard Block", tiktok.supportingText)
         assertEquals(null, tiktok.coveredBy)
@@ -167,16 +169,16 @@ class ManageAppsSectionsTest {
 
     @Test
     fun `heavy - every rule is listed once, each app's rules read as one line`() {
-        val many = (1..8).map { app("com.heavy.app$it", "App $it") }
-        val groups = listOf(AppGroup(3, "Work"), AppGroup(1, "games"), AppGroup(2, "Social"))
+        val many = (1..8).map { anApp("com.heavy.app$it", "App $it") }
+        val groups = listOf(anAppGroup("Work", id = 3), anAppGroup("games", id = 1), anAppGroup("Social", id = 2))
         val rules = many.mapIndexed { i, a ->
-            BlockRule(id = i + 10L, packageName = a.packageName, mode = "DELAY", enabled = i % 3 != 0)
+            aBlockRule(id = i + 10L, packageName = a.packageName, mode = "DELAY", enabled = i % 3 != 0)
         } + listOf(
             // App 1 also blocks Reels and has a weekend Hard Block: still one row.
-            BlockRule(id = 30, packageName = "com.heavy.app1", mode = "HARD_BLOCK", inAppFeatures = "REELS"),
-            BlockRule(id = 31, packageName = "com.heavy.app1", mode = "HARD_BLOCK", scheduleDays = "6,7"),
-            BlockRule(id = 40, groupId = 1, mode = "HARD_BLOCK"),
-            BlockRule(id = 41, groupId = 2, mode = "DELAY", enabled = false)
+            aBlockRule(id = 30, packageName = "com.heavy.app1", mode = "HARD_BLOCK", inAppFeatures = "REELS"),
+            aBlockRule(id = 31, packageName = "com.heavy.app1", mode = "HARD_BLOCK", scheduleDays = "6,7"),
+            aBlockRule(id = 40, groupId = 1, mode = "HARD_BLOCK"),
+            aBlockRule(id = 41, groupId = 2, mode = "DELAY", enabled = false)
         )
         val s = buildManageAppsSections(installed + many, groups, emptyList(), rules, emptySet(), query = "", browsers = emptySet())
 
@@ -255,7 +257,7 @@ class ManageAppsSectionsTest {
      */
     @Test
     fun `an app switched on this visit keeps its place among the other apps`() {
-        val rules = typicalRules + BlockRule(id = 9, packageName = "com.android.camera", mode = "DELAY", delaySeconds = 15)
+        val rules = typicalRules + aBlockRule(id = 9, packageName = "com.android.camera", mode = "DELAY", delaySeconds = 15)
         val kept = sections(listOf(social), typicalMembers, rules, keepInPlace = setOf("com.android.camera"))
 
         assertEquals(listOf("Instagram", "YouTube"), kept.names(kept.appsWithRules))
@@ -271,7 +273,7 @@ class ManageAppsSectionsTest {
 
     @Test
     fun `the first app switched on keeps the first-run heading too`() {
-        val rules = listOf(BlockRule(id = 1, packageName = "com.android.camera", mode = "DELAY", delaySeconds = 15))
+        val rules = listOf(aBlockRule(id = 1, packageName = "com.android.camera", mode = "DELAY", delaySeconds = 15))
         val s = sections(rules = rules, keepInPlace = setOf("com.android.camera"))
 
         assertEquals("Apps", s.otherAppsTitle)
@@ -283,11 +285,11 @@ class ManageAppsSectionsTest {
 
     @Test
     fun `a rule for an app not in the launcher list is still listed, once it has a name`() {
-        val rules = listOf(BlockRule(id = 1, packageName = "com.gone", mode = "HARD_BLOCK"))
+        val rules = listOf(aBlockRule(id = 1, packageName = "com.gone", mode = "HARD_BLOCK"))
 
         assertTrue(sections(rules = rules).appsWithRules.isEmpty())
 
-        val s = sections(rules = rules, extraApps = mapOf("com.gone" to app("com.gone", "Gone")))
+        val s = sections(rules = rules, extraApps = mapOf("com.gone" to anApp("com.gone", "Gone")))
         assertEquals(listOf("Gone"), s.names(s.appsWithRules))
         assertEquals("Hard Block", s.appsWithRules.single().summary)
         assertTrue(s.otherApps.none { it.packageName == "com.gone" })
@@ -302,21 +304,18 @@ class ManageAppsSectionsTest {
 
     // ── Category groups (spec 5.2) ─────────────────────────────────────────
 
-    private fun categorised(pkg: String, name: String, category: AppCategory) =
-        AppInfo(packageName = pkg, appName = name, icon = null, category = category)
-
     private val phone = listOf(
-        categorised("com.insta", "Instagram", AppCategory.SOCIAL),
-        categorised("com.tiktok", "TikTok", AppCategory.SOCIAL),
-        categorised("com.dialer", "Phone", AppCategory.SOCIAL),
-        categorised("com.chess", "Chess", AppCategory.GAME)
+        anApp("com.insta", "Instagram", category = AppCategory.SOCIAL),
+        anApp("com.tiktok", "TikTok", category = AppCategory.SOCIAL),
+        anApp("com.dialer", "Phone", category = AppCategory.SOCIAL),
+        anApp("com.chess", "Chess", category = AppCategory.GAME)
     )
-    private val socialApps = AppGroup(id = 7, name = "Social apps", categories = "SOCIAL")
+    private val socialApps = anAppGroup("Social apps", id = 7, categories = "SOCIAL")
 
     @Test
     fun `a category group row counts its category apps, minus essentials and removed ones`() {
         val s = buildManageAppsSections(
-            phone, listOf(socialApps), listOf(AppGroupMember(7, "com.tiktok", excluded = true)),
+            phone, listOf(socialApps), listOf(aGroupMember(7, "com.tiktok", excluded = true)),
             emptyList(), setOf("com.dialer"), query = "", browsers = emptySet()
         )
 
@@ -325,7 +324,7 @@ class ManageAppsSectionsTest {
 
     @Test
     fun `an app covered only by a blocking category group reads In that group`() {
-        val rules = listOf(BlockRule(id = 1, groupId = 7, mode = "HARD_BLOCK"))
+        val rules = listOf(aBlockRule(id = 1, groupId = 7, mode = "HARD_BLOCK"))
         val s = buildManageAppsSections(phone, listOf(socialApps), emptyList(), rules, setOf("com.dialer"), query = "", browsers = emptySet())
         val byName = s.otherApps.associateBy { it.appInfo.appName }
 

@@ -1,12 +1,12 @@
 package com.astraedus.nudge.domain.lock
 
-import com.astraedus.nudge.data.db.entity.BlockRule
 import com.astraedus.nudge.domain.groups.GroupDefinition
 import com.astraedus.nudge.domain.packages.AppCategory
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.astraedus.nudge.testing.aBlockRule
 
 class GroupWeakeningTest {
 
@@ -49,15 +49,15 @@ class GroupWeakeningTest {
     }
 
     @Test fun `usage of an enabled rule for the group blocks`() {
-        val rules = listOf(BlockRule(id = 1, groupId = 5, mode = "DELAY", enabled = true))
+        val rules = listOf(aBlockRule(id = 1, groupId = 5, mode = "DELAY", enabled = true))
         assertEquals(GroupUsage(blocks = true, allowedBy = false), GroupUsage.of(5, rules))
     }
 
     @Test fun `a disabled rule, another group's rule and a direct app rule do not count`() {
         val rules = listOf(
-            BlockRule(id = 1, groupId = 5, mode = "DELAY", enabled = false),
-            BlockRule(id = 2, groupId = 6, mode = "DELAY", enabled = true),
-            BlockRule(id = 3, packageName = "com.x", groupId = null, mode = "DELAY", enabled = true)
+            aBlockRule(id = 1, groupId = 5, mode = "DELAY", enabled = false),
+            aBlockRule(id = 2, groupId = 6, mode = "DELAY", enabled = true),
+            aBlockRule(id = 3, packageName = "com.x", groupId = null, mode = "DELAY", enabled = true)
         )
         assertEquals(GroupUsage.UNUSED, GroupUsage.of(5, rules))
     }
@@ -86,7 +86,7 @@ class GroupWeakeningTest {
     // -- GroupUsage.of with All apps rules (L1) --
 
     private fun allApps(enabled: Boolean = true, exceptGroupIds: String?, exceptPackages: String? = null) =
-        BlockRule(
+        aBlockRule(
             id = 9, mode = "HARD_BLOCK", enabled = enabled, allApps = true,
             exceptGroupIds = exceptGroupIds, exceptPackages = exceptPackages
         )
@@ -123,7 +123,7 @@ class GroupWeakeningTest {
 
     @Test fun `a group both blocked and allowed has both uses`() {
         val rules = listOf(
-            BlockRule(id = 1, groupId = 5, mode = "DELAY", enabled = true),
+            aBlockRule(id = 1, groupId = 5, mode = "DELAY", enabled = true),
             allApps(exceptGroupIds = "5")
         )
         assertEquals(GroupUsage(blocks = true, allowedBy = true), GroupUsage.of(5, rules))
@@ -180,7 +180,7 @@ class GroupWeakeningTest {
 
     @Test fun `a corrupt row naming a group and allApps is read as the group rule, not as allowing`() {
         // RuleTarget.of reads the narrowest target, so this row blocks group 5 and allows nothing.
-        val corrupt = BlockRule(
+        val corrupt = aBlockRule(
             id = 1, groupId = 5, mode = "DELAY", enabled = true, allApps = true, exceptGroupIds = "5"
         )
         assertEquals(GroupUsage(blocks = true, allowedBy = false), GroupUsage.of(5, listOf(corrupt)))

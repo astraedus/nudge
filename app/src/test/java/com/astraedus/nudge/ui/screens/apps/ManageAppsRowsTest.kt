@@ -1,6 +1,6 @@
 package com.astraedus.nudge.ui.screens.apps
 
-import com.astraedus.nudge.data.repository.InstalledAppsRepository
+import com.astraedus.nudge.testing.anApp
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Test
@@ -15,7 +15,7 @@ import org.junit.Test
 class ManageAppsRowsTest {
 
     private fun app(pkg: String, summary: String? = null) = AppRow(
-        appInfo = InstalledAppsRepository.AppInfo(packageName = pkg, appName = pkg, icon = null),
+        appInfo = anApp(pkg),
         summary = summary,
         isOn = summary != null
     )

@@ -1,25 +1,25 @@
 package com.astraedus.nudge.domain.usecase
 
-import com.astraedus.nudge.domain.nuke.NukeEnforcement
 import com.astraedus.nudge.data.db.entity.BlockRule
-import com.astraedus.nudge.data.preferences.NudgePreferences
-import com.astraedus.nudge.data.repository.BlockRuleRepository
 import com.astraedus.nudge.data.repository.ContentFilter
-import com.astraedus.nudge.data.repository.UsageRepository
 import com.astraedus.nudge.domain.engine.BlockEngine
 import com.astraedus.nudge.domain.engine.RuleEvaluator
 import com.astraedus.nudge.domain.engine.ScheduleEvaluator
 import com.astraedus.nudge.domain.model.BlockMode
+import com.astraedus.nudge.domain.nuke.NukeEnforcement
+import com.astraedus.nudge.domain.packages.FakeEssentialPackages
+import com.astraedus.nudge.domain.packages.FakePackageFacts
+import com.astraedus.nudge.testing.FakeNudgePreferences
+import com.astraedus.nudge.testing.FakeRuleDatabase
+import com.astraedus.nudge.testing.FakeUsageRepository
+import com.astraedus.nudge.testing.aBlockRule
 import io.mockk.every
 import io.mockk.mockk
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
-import com.astraedus.nudge.domain.packages.FakeEssentialPackages
-import com.astraedus.nudge.domain.packages.FakePackageFacts
 
 /**
  * [EvaluateBlockUseCase.isFollowingSteerEnabled] — "does any rule that applies to this app right now
@@ -41,21 +41,18 @@ class FollowingSteerEnabledTest {
 
     private val pkg = "com.instagram.android"
 
-    private lateinit var blockRuleRepository: BlockRuleRepository
+    private val db = FakeRuleDatabase()
     private lateinit var useCase: EvaluateBlockUseCase
 
     @Before
     fun setUp() {
-        blockRuleRepository = mockk()
-        every { blockRuleRepository.getAllGroups() } returns flowOf(emptyList())
-
         useCase = EvaluateBlockUseCase(
-            blockRuleRepository = blockRuleRepository,
-            usageRepository = mockk<UsageRepository>(),
+            blockRuleRepository = db.repository,
+            usageRepository = FakeUsageRepository(),
             blockEngine = BlockEngine(ScheduleEvaluator()),
             ruleEvaluator = RuleEvaluator(),
             scheduleEvaluator = ScheduleEvaluator(),
-            preferences = mockk<NudgePreferences>(),
+            preferences = FakeNudgePreferences(),
             contentFilter = mockk<ContentFilter>(),
             nukeEnforcement = NukeEnforcement.NEVER,
             essentialPackages = FakeEssentialPackages(),
@@ -63,38 +60,23 @@ class FollowingSteerEnabledTest {
         )
     }
 
-    private fun rule(
-        followingSteer: Boolean,
-        enabled: Boolean = true,
-        packageName: String? = pkg,
-        scheduleDays: String? = null,
-        scheduleStartMinute: Int? = null,
-        scheduleEndMinute: Int? = null
-    ) = BlockRule(
-        id = 1L,
-        packageName = packageName,
-        mode = BlockMode.NONE.name,
-        enabled = enabled,
-        followingSteer = followingSteer,
-        scheduleDays = scheduleDays,
-        scheduleStartMinute = scheduleStartMinute,
-        scheduleEndMinute = scheduleEndMinute
-    )
+    /** A rule with the app-level mode off; each test names the field it is about. */
+    private val steerRule = aBlockRule(packageName = pkg, mode = BlockMode.NONE.name)
 
     private fun givenRules(vararg rules: BlockRule) {
-        every { blockRuleRepository.getEnabledRules() } returns flowOf(rules.toList())
+        rules.forEach { db.seedRule(it) }
     }
 
     @Test
     fun `a rule opting in enables the steer`() = runTest {
-        givenRules(rule(followingSteer = true))
+        givenRules(steerRule.copy(followingSteer = true))
 
         assertTrue(useCase.isFollowingSteerEnabled(pkg))
     }
 
     @Test
     fun `no rule opting in leaves the steer off`() = runTest {
-        givenRules(rule(followingSteer = false))
+        givenRules(steerRule.copy(followingSteer = false))
 
         assertFalse(useCase.isFollowingSteerEnabled(pkg))
     }
@@ -112,14 +94,14 @@ class FollowingSteerEnabledTest {
      */
     @Test
     fun `a rule for another app does not enable the steer here`() = runTest {
-        givenRules(rule(followingSteer = true, packageName = "com.google.android.youtube"))
+        givenRules(steerRule.copy(followingSteer = true, packageName = "com.google.android.youtube"))
 
         assertFalse(useCase.isFollowingSteerEnabled(pkg))
     }
 
     @Test
     fun `a disabled rule does not enable the steer`() = runTest {
-        givenRules(rule(followingSteer = true, enabled = false))
+        givenRules(steerRule.copy(followingSteer = true, enabled = false))
 
         assertFalse(useCase.isFollowingSteerEnabled(pkg))
     }
@@ -140,7 +122,7 @@ class FollowingSteerEnabledTest {
         val start = end - 30
 
         givenRules(
-            rule(
+            steerRule.copy(
                 followingSteer = true,
                 scheduleStartMinute = start,
                 scheduleEndMinute = end
@@ -159,7 +141,7 @@ class FollowingSteerEnabledTest {
         val nowMinute = now.get(java.util.Calendar.HOUR_OF_DAY) * 60 + now.get(java.util.Calendar.MINUTE)
 
         givenRules(
-            rule(
+            steerRule.copy(
                 followingSteer = true,
                 scheduleStartMinute = (nowMinute - 1).coerceAtLeast(0),
                 scheduleEndMinute = (nowMinute + 2).coerceAtMost(24 * 60)
@@ -177,8 +159,8 @@ class FollowingSteerEnabledTest {
     @Test
     fun `one opting-in rule is enough among several`() = runTest {
         givenRules(
-            rule(followingSteer = false),
-            rule(followingSteer = true).copy(id = 2L)
+            steerRule.copy(followingSteer = false),
+            steerRule.copy(followingSteer = true).copy(id = 2L)
         )
 
         assertTrue(useCase.isFollowingSteerEnabled(pkg))

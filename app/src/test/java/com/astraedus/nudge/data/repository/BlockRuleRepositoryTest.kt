@@ -1,13 +1,9 @@
 package com.astraedus.nudge.data.repository
 
-import com.astraedus.nudge.data.db.dao.AppGroupDao
-import com.astraedus.nudge.data.db.dao.BlockRuleDao
 import com.astraedus.nudge.data.db.entity.BlockRule
 import com.astraedus.nudge.domain.model.RuleTarget
-import io.mockk.coEvery
-import io.mockk.coVerify
-import io.mockk.mockk
-import io.mockk.slot
+import com.astraedus.nudge.testing.FakeRuleDatabase
+import com.astraedus.nudge.testing.aBlockRule
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -20,15 +16,15 @@ import org.junit.Test
  */
 class BlockRuleRepositoryTest {
 
-    private val dao = mockk<BlockRuleDao>(relaxed = true)
-    private val repo = BlockRuleRepository(dao, mockk<AppGroupDao>(relaxed = true))
+    private val db = FakeRuleDatabase()
+    private val repo = db.repository
 
     /** Every combination of the three target columns, with whether exactly one is set. */
     private val targets: List<Pair<BlockRule, Boolean>> = run {
         val out = mutableListOf<Pair<BlockRule, Boolean>>()
         for (pkg in listOf(null, "com.a")) for (group in listOf(null, 4L)) for (all in listOf(false, true)) {
             val count = listOf(pkg != null, group != null, all).count { it }
-            out += BlockRule(id = 7, mode = "DELAY", packageName = pkg, groupId = group, allApps = all) to (count == 1)
+            out += aBlockRule(id = 7, packageName = pkg, groupId = group, allApps = all) to (count == 1)
         }
         out
     }
@@ -40,31 +36,44 @@ class BlockRuleRepositoryTest {
     @Test
     fun `addRule and updateRule write exactly the well-formed targets and throw on the rest`() {
         for ((rule, wellFormed) in targets) {
-            if (wellFormed) runBlocking { repo.addRule(rule) }
-            else assertThrows("$rule", IllegalArgumentException::class.java) { runBlocking { repo.addRule(rule) } }
+            // addRule: a well-formed target is stored as given, anything else throws and stores nothing.
+            val added = FakeRuleDatabase()
+            if (wellFormed) runBlocking { added.repository.addRule(rule) }
+            else assertThrows("$rule", IllegalArgumentException::class.java) {
+                runBlocking { added.repository.addRule(rule) }
+            }
+            assertEquals("$rule", if (wellFormed) listOf(rule) else emptyList<BlockRule>(), added.rules)
 
-            if (wellFormed || isLegacyAppAndGroup(rule)) runBlocking { repo.updateRule(rule) }
-            else assertThrows("$rule", IllegalArgumentException::class.java) { runBlocking { repo.updateRule(rule) } }
+            // updateRule: over a row already stored (seeded raw, so a malformed row can exist).
+            val stored = FakeRuleDatabase().also { it.seedRule(rule) }
+            val edited = rule.copy(enabled = false)
+            if (wellFormed || isLegacyAppAndGroup(rule)) {
+                runBlocking { stored.repository.updateRule(edited) }
+                val written = if (wellFormed) edited else edited.copy(groupId = null)
+                assertEquals("$rule", listOf(written), stored.rules)
+            } else {
+                assertThrows("$rule", IllegalArgumentException::class.java) {
+                    runBlocking { stored.repository.updateRule(edited) }
+                }
+                assertEquals("$rule", listOf(rule), stored.rules)
+            }
         }
-        val wellFormedCount = targets.count { it.second }
-        coVerify(exactly = wellFormedCount) { dao.insert(any()) }
-        coVerify(exactly = wellFormedCount + 1) { dao.update(any()) }
     }
 
     @Test
     fun `updating a legacy app-and-group row writes the app rule the engine reads, instead of crashing`() = runTest {
         // A switch flipping such a row used to reach a throwing write (a crash). The engine has always
         // read it as the app (RuleTarget.of: the package wins), so the repair changes no behaviour.
-        val legacy = BlockRule(id = 3, mode = "DELAY", packageName = "com.a", groupId = 4L, enabled = false)
-        val row = slot<BlockRule>()
-        coEvery { dao.update(capture(row)) } returns Unit
+        val legacy = aBlockRule(id = 3, packageName = "com.a", groupId = 4L, enabled = false)
+        db.seedRule(legacy)
 
         repo.updateRule(legacy)
 
-        assertEquals(legacy.copy(groupId = null), row.captured)
+        val row = db.ruleWithId(3)
+        assertEquals(legacy.copy(groupId = null), row)
         assertEquals(
             RuleTarget.of(legacy.packageName, legacy.groupId, legacy.allApps, emptySet(), emptySet()),
-            RuleTarget.of(row.captured.packageName, row.captured.groupId, row.captured.allApps, emptySet(), emptySet())
+            RuleTarget.of(row.packageName, row.groupId, row.allApps, emptySet(), emptySet())
         )
     }
 
@@ -80,7 +89,7 @@ class BlockRuleRepositoryTest {
     }
 
     /** An All apps rule with every option it is never offered switched on. */
-    private val loaded = BlockRule(
+    private val loaded = aBlockRule(
         id = 0,
         mode = "HARD_BLOCK",
         delaySeconds = 30,
@@ -106,7 +115,7 @@ class BlockRuleRepositoryTest {
         followingSteer = true
     )
 
-    private val expected = BlockRule(
+    private val expected = aBlockRule(
         id = 0,
         mode = "HARD_BLOCK",
         delaySeconds = 30,
@@ -129,26 +138,27 @@ class BlockRuleRepositoryTest {
 
     @Test
     fun `every All apps write path stores the normalised row`() = runTest {
-        val inserted = mutableListOf<BlockRule>()
-        val updated = mutableListOf<BlockRule>()
-        coEvery { dao.insert(capture(inserted)) } returns 1L
-        coEvery { dao.update(capture(updated)) } returns Unit
-
+        // The two insert paths (id 0), each takes the next id.
         repo.saveAllAppsRule(loaded)
         repo.addRule(loaded)
-        repo.saveAllAppsRule(loaded.copy(id = 9))
-        repo.updateRule(loaded.copy(id = 9))
+        assertEquals(listOf(expected.copy(id = 1), expected.copy(id = 2)), db.rules)
 
-        assertEquals(listOf(expected, expected), inserted)
-        assertEquals(listOf(expected.copy(id = 9), expected.copy(id = 9)), updated)
+        // The two update paths (id 9), each over a stale stored row.
+        val writes: List<suspend (BlockRuleRepository) -> Unit> = listOf(
+            { it.saveAllAppsRule(loaded.copy(id = 9)) },
+            { it.updateRule(loaded.copy(id = 9)) }
+        )
+        for (write in writes) {
+            val stale = FakeRuleDatabase().also { it.seedRule(aBlockRule(id = 9, allApps = true)) }
+            write(stale.repository)
+            assertEquals(listOf(expected.copy(id = 9)), stale.rules)
+        }
     }
 
     @Test
     fun `an app rule is written untouched`() = runTest {
-        val row = slot<BlockRule>()
-        coEvery { dao.insert(capture(row)) } returns 1L
-        val appRule = BlockRule(packageName = "com.a", mode = "DELAY", keepPassOnShortTrips = true, dailyLimitMinutes = 30)
+        val appRule = aBlockRule(packageName = "com.a", keepPassOnShortTrips = true, dailyLimitMinutes = 30)
         repo.addRule(appRule)
-        assertEquals(appRule, row.captured)
+        assertEquals(appRule.copy(id = 1), db.rules.single())
     }
 }

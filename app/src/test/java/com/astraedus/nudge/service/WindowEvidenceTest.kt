@@ -18,6 +18,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.astraedus.nudge.testing.anAccessibilityEvent
 
 /**
  * Issues [#76](https://github.com/astraedus/nudge/issues/76) and
@@ -56,7 +57,7 @@ class WindowEvidenceTest {
     )
 
     private fun stateChange(pkg: String, windowId: Int = AccessibilityEventRecord.UNDEFINED) =
-        AccessibilityEventRecord(type = A11yEventType.WINDOW_STATE_CHANGED, packageName = pkg, windowId = windowId)
+        anAccessibilityEvent(type = A11yEventType.WINDOW_STATE_CHANGED, packageName = pkg, windowId = windowId)
 
     private fun classify(record: AccessibilityEventRecord, currentIme: String? = swiftKey) =
         classifier.classify(record, currentIme, launcherPackages = emptySet(), pipOnlyPackages = emptySet())
@@ -206,7 +207,7 @@ class WindowEvidenceTest {
         // A content change from a system overlay the user touched (it owns the active window) is
         // still not an app the user is in.
         windows = typingInInstagram(window(clipboardWindow, WindowKind.SYSTEM))
-        val record = AccessibilityEventRecord(
+        val record = anAccessibilityEvent(
             type = A11yEventType.WINDOW_CONTENT_CHANGED,
             packageName = "com.samsung.android.clipboarduiservice",
             windowId = clipboardWindow

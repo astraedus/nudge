@@ -1,25 +1,23 @@
 package com.astraedus.nudge.domain.usecase
 
-import com.astraedus.nudge.domain.nuke.NukeEnforcement
-import com.astraedus.nudge.data.db.entity.BlockRule
-import com.astraedus.nudge.data.preferences.NudgePreferences
-import com.astraedus.nudge.data.repository.BlockRuleRepository
 import com.astraedus.nudge.data.repository.ContentFilter
-import com.astraedus.nudge.data.repository.UsageRepository
 import com.astraedus.nudge.domain.engine.BlockEngine
 import com.astraedus.nudge.domain.engine.RuleEvaluator
 import com.astraedus.nudge.domain.engine.ScheduleEvaluator
 import com.astraedus.nudge.domain.model.BlockDecision
 import com.astraedus.nudge.domain.model.BlockMode
-import io.mockk.every
+import com.astraedus.nudge.domain.nuke.NukeEnforcement
+import com.astraedus.nudge.domain.packages.FakeEssentialPackages
+import com.astraedus.nudge.domain.packages.FakePackageFacts
+import com.astraedus.nudge.testing.FakeNudgePreferences
+import com.astraedus.nudge.testing.FakeRuleDatabase
+import com.astraedus.nudge.testing.FakeUsageRepository
+import com.astraedus.nudge.testing.aBlockRule
 import io.mockk.mockk
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
-import com.astraedus.nudge.domain.packages.FakeEssentialPackages
-import com.astraedus.nudge.domain.packages.FakePackageFacts
 
 /**
  * What Nudge is allowed to do to an app **no rule targets**, including in the window right after the
@@ -37,29 +35,21 @@ class EvaluateBlockAfterRestartTest {
     private val ruledPackage = "com.google.android.youtube"
     private val unruledPackage = "org.telegram.messenger"
 
-    private lateinit var blockRuleRepository: BlockRuleRepository
-    private lateinit var usageRepository: UsageRepository
-    private lateinit var preferences: NudgePreferences
+    private val db = FakeRuleDatabase()
     private lateinit var contentFilter: ContentFilter
     private lateinit var useCase: EvaluateBlockUseCase
 
     @Before
     fun setUp() {
-        blockRuleRepository = mockk()
-        usageRepository = mockk()
-        preferences = mockk()
         contentFilter = mockk()
 
-        every { blockRuleRepository.getAllGroups() } returns flowOf(emptyList())
-        every { usageRepository.getDailyForegroundTimeMs(any()) } returns 0L
-
         useCase = EvaluateBlockUseCase(
-            blockRuleRepository = blockRuleRepository,
-            usageRepository = usageRepository,
+            blockRuleRepository = db.repository,
+            usageRepository = FakeUsageRepository(),
             blockEngine = BlockEngine(ScheduleEvaluator()),
             ruleEvaluator = RuleEvaluator(),
             scheduleEvaluator = ScheduleEvaluator(),
-            preferences = preferences,
+            preferences = FakeNudgePreferences(),
             contentFilter = contentFilter,
             nukeEnforcement = NukeEnforcement.NEVER,
             essentialPackages = FakeEssentialPackages(),
@@ -68,17 +58,11 @@ class EvaluateBlockAfterRestartTest {
     }
 
     /** The exact configuration on the device that produced the report: one YouTube DELAY rule. */
-    private val youtubeDelayRule = BlockRule(
-        id = 1L,
-        packageName = ruledPackage,
-        mode = BlockMode.DELAY.name,
-        delaySeconds = 15,
-        enabled = true
-    )
+    private val youtubeDelayRule = aBlockRule(packageName = ruledPackage, mode = BlockMode.DELAY.name)
 
     @Test
     fun `an app with no rule is not blocked, even while another app has one`() = runTest {
-        every { blockRuleRepository.getEnabledRules() } returns flowOf(listOf(youtubeDelayRule))
+        db.seedRule(youtubeDelayRule)
 
         assertTrue(
             "Telegram has no rule and must be allowed",
@@ -96,7 +80,6 @@ class EvaluateBlockAfterRestartTest {
      */
     @Test
     fun `an empty rule set enforces nothing`() = runTest {
-        every { blockRuleRepository.getEnabledRules() } returns flowOf(emptyList())
 
         listOf(unruledPackage, ruledPackage, "com.android.chrome", "com.android.settings")
             .forEach { pkg ->
@@ -114,7 +97,6 @@ class EvaluateBlockAfterRestartTest {
      */
     @Test
     fun `a disabled rule blocks nothing`() = runTest {
-        every { blockRuleRepository.getEnabledRules() } returns flowOf(emptyList())
 
         assertTrue(useCase.invoke(ruledPackage) is BlockDecision.Allow)
     }

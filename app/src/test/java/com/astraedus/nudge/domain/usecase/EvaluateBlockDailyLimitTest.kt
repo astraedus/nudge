@@ -1,9 +1,6 @@
 package com.astraedus.nudge.domain.usecase
 
-import com.astraedus.nudge.domain.nuke.NukeEnforcement
 import com.astraedus.nudge.data.db.entity.BlockRule
-import com.astraedus.nudge.data.preferences.NudgePreferences
-import com.astraedus.nudge.data.repository.BlockRuleRepository
 import com.astraedus.nudge.data.repository.ContentFilter
 import com.astraedus.nudge.data.repository.UsageRepository
 import com.astraedus.nudge.domain.engine.BlockEngine
@@ -11,16 +8,20 @@ import com.astraedus.nudge.domain.engine.RuleEvaluator
 import com.astraedus.nudge.domain.engine.ScheduleEvaluator
 import com.astraedus.nudge.domain.model.BlockDecision
 import com.astraedus.nudge.domain.model.BlockMode
-import io.mockk.every
+import com.astraedus.nudge.domain.nuke.NukeEnforcement
+import com.astraedus.nudge.domain.packages.FakeEssentialPackages
+import com.astraedus.nudge.domain.packages.FakePackageFacts
+import com.astraedus.nudge.testing.FakeNudgePreferences
+import com.astraedus.nudge.testing.FakeRuleDatabase
+import com.astraedus.nudge.testing.FakeScreenTime
+import com.astraedus.nudge.testing.FakeUsageRepository
+import com.astraedus.nudge.testing.aBlockRule
 import io.mockk.mockk
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
-import com.astraedus.nudge.domain.packages.FakeEssentialPackages
-import com.astraedus.nudge.domain.packages.FakePackageFacts
 
 /**
  * Regression tests for issue #14 ("daily timer/display not working").
@@ -38,28 +39,22 @@ class EvaluateBlockDailyLimitTest {
 
     private val pkg = "com.instagram.android"
 
-    private lateinit var blockRuleRepository: BlockRuleRepository
-    private lateinit var usageRepository: UsageRepository
-    private lateinit var preferences: NudgePreferences
+    private val db = FakeRuleDatabase()
+    private val screenTime = FakeScreenTime()
     private lateinit var contentFilter: ContentFilter
     private lateinit var useCase: EvaluateBlockUseCase
 
     @Before
     fun setUp() {
-        blockRuleRepository = mockk()
-        usageRepository = mockk()
-        preferences = mockk()
         contentFilter = mockk()
 
-        every { blockRuleRepository.getAllGroups() } returns flowOf(emptyList())
-
         useCase = EvaluateBlockUseCase(
-            blockRuleRepository = blockRuleRepository,
-            usageRepository = usageRepository,
+            blockRuleRepository = db.repository,
+            usageRepository = FakeUsageRepository(screenTime = screenTime),
             blockEngine = BlockEngine(ScheduleEvaluator()),
             ruleEvaluator = RuleEvaluator(),
             scheduleEvaluator = ScheduleEvaluator(),
-            preferences = preferences,
+            preferences = FakeNudgePreferences(),
             contentFilter = contentFilter,
             nukeEnforcement = NukeEnforcement.NEVER,
             essentialPackages = FakeEssentialPackages(),
@@ -68,18 +63,15 @@ class EvaluateBlockDailyLimitTest {
     }
 
     /** A DELAY rule carrying a 30 min/day budget. */
-    private fun delayRuleWithDailyLimit(limitMinutes: Int = 30) = BlockRule(
-        id = 1L,
+    private fun delayRuleWithDailyLimit(limitMinutes: Int = 30) = aBlockRule(
         packageName = pkg,
         mode = BlockMode.DELAY.name,
-        delaySeconds = 15,
-        dailyLimitMinutes = limitMinutes,
-        enabled = true
+        dailyLimitMinutes = limitMinutes
     )
 
     private fun withUsageMinutes(rule: BlockRule, minutes: Long) {
-        every { blockRuleRepository.getEnabledRules() } returns flowOf(listOf(rule))
-        every { usageRepository.getDailyForegroundTimeMs(pkg) } returns minutes * 60_000L
+        db.seedRule(rule)
+        screenTime.todayMs[pkg] = minutes * 60_000L
     }
 
     @Test
@@ -152,22 +144,15 @@ class EvaluateBlockDailyLimitTest {
      * `getDailyForegroundTimeMs` is a binder call that pulls the whole device's event log for the
      * day and filters it in Kotlin, and it runs on the accessibility hot path. When no rule carries
      * a daily limit the engine cannot consult the number, so it must not be fetched at all. The
-     * mock is non-relaxed and that method is deliberately left unstubbed here: calling it throws.
+     * fake counts every read, so a fetch fails the `reads == 0` assertion below.
      */
     @Test
     fun `usage is not read when no rule has a daily limit`() = runTest {
-        val rule = BlockRule(
-            id = 1L,
-            packageName = pkg,
-            mode = BlockMode.DELAY.name,
-            delaySeconds = 15,
-            dailyLimitMinutes = null,
-            enabled = true
-        )
-        every { blockRuleRepository.getEnabledRules() } returns flowOf(listOf(rule))
+        db.seedRule(aBlockRule(packageName = pkg, mode = BlockMode.DELAY.name, dailyLimitMinutes = null))
 
         val decision = useCase.invoke(pkg)
 
         assertEquals(BlockMode.DELAY, (decision as BlockDecision.Block).mode)
+        assertEquals("usage must not be read without a daily limit", 0, screenTime.reads)
     }
 }

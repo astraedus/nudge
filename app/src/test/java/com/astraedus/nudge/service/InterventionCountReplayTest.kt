@@ -3,7 +3,6 @@ package com.astraedus.nudge.service
 import com.astraedus.nudge.domain.block.BlockLaunchGate
 import com.astraedus.nudge.domain.block.delayKey
 import com.astraedus.nudge.domain.events.A11yEventType
-import com.astraedus.nudge.domain.events.AccessibilityEventRecord
 import com.astraedus.nudge.domain.events.EventClassifier
 import com.astraedus.nudge.domain.events.ForegroundSignal
 import com.astraedus.nudge.domain.model.BlockDecision
@@ -14,6 +13,7 @@ import com.astraedus.nudge.domain.sitting.SittingTracker
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.astraedus.nudge.testing.anAccessibilityEvent
 
 /**
  * ISSUE [#36](https://github.com/astraedus/nudge/issues/36), "over counting interventions":
@@ -179,7 +179,7 @@ class InterventionCountReplayTest {
             event(A11yEventType.WINDOW_STATE_CHANGED, packageName, className)
 
         fun event(type: A11yEventType, packageName: String, className: String? = null) {
-            val record = AccessibilityEventRecord(
+            val record = anAccessibilityEvent(
                 type = type,
                 packageName = packageName,
                 className = className,

@@ -1,15 +1,11 @@
 package com.astraedus.nudge.domain.usecase
 
-import com.astraedus.nudge.data.db.entity.AppGroup
-import com.astraedus.nudge.data.db.entity.AppGroupMember
 import com.astraedus.nudge.data.db.entity.BlockRule
-import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.data.repository.BlockRuleRepository
 import com.astraedus.nudge.data.repository.ContentFilter
 import com.astraedus.nudge.data.repository.RuleSnapshot
 import com.astraedus.nudge.data.repository.RuleSnapshotSource
 import com.astraedus.nudge.data.repository.RuleSnapshots
-import com.astraedus.nudge.data.repository.UsageRepository
 import com.astraedus.nudge.domain.engine.BlockEngine
 import com.astraedus.nudge.domain.engine.RuleEvaluator
 import com.astraedus.nudge.domain.engine.ScheduleEvaluator
@@ -17,6 +13,13 @@ import com.astraedus.nudge.domain.logging.NudgeLog
 import com.astraedus.nudge.domain.model.BlockDecision
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.domain.nuke.NukeEnforcement
+import com.astraedus.nudge.domain.packages.FakeEssentialPackages
+import com.astraedus.nudge.domain.packages.FakePackageFacts
+import com.astraedus.nudge.testing.FakeNudgePreferences
+import com.astraedus.nudge.testing.FakeUsageRepository
+import com.astraedus.nudge.testing.aBlockRule
+import com.astraedus.nudge.testing.aGroupMember
+import com.astraedus.nudge.testing.anAppGroup
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.awaitCancellation
@@ -29,8 +32,6 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import com.astraedus.nudge.domain.packages.FakeEssentialPackages
-import com.astraedus.nudge.domain.packages.FakePackageFacts
 
 /**
  * L3: group rules through the real [EvaluateBlockUseCase] (spec PR 2).
@@ -50,12 +51,12 @@ class EvaluateBlockGroupRulesTest {
     private val chrome = "com.android.chrome"
     private val social = 7L
 
-    private val groupDelay = BlockRule(id = 1, groupId = social, mode = BlockMode.DELAY.name, delaySeconds = 15)
+    private val groupDelay = aBlockRule(id = 1, groupId = social, mode = BlockMode.DELAY.name)
 
     private fun snapshotOf(vararg rules: BlockRule) = RuleSnapshot.of(
         enabledRules = rules.toList(),
-        groups = listOf(AppGroup(id = social, name = "Social")),
-        members = listOf(AppGroupMember(social, instagram), AppGroupMember(social, chrome))
+        groups = listOf(anAppGroup("Social", id = social)),
+        members = listOf(aGroupMember(social, instagram), aGroupMember(social, chrome))
     )
 
     private fun useCase(snapshot: RuleSnapshot) = useCase(
@@ -67,11 +68,11 @@ class EvaluateBlockGroupRulesTest {
 
     private fun useCase(snapshots: RuleSnapshots) = EvaluateBlockUseCase(
         ruleSnapshots = snapshots,
-        usageRepository = mockk<UsageRepository> { every { getDailyForegroundTimeMs(any()) } returns 0L },
+        usageRepository = FakeUsageRepository(),
         blockEngine = BlockEngine(ScheduleEvaluator()),
         ruleEvaluator = RuleEvaluator(),
         scheduleEvaluator = ScheduleEvaluator(),
-        preferences = mockk<NudgePreferences> { every { contentFilterEnabled } returns flowOf(false) },
+        preferences = FakeNudgePreferences(),
         contentFilter = mockk<ContentFilter>(),
         nukeEnforcement = NukeEnforcement.NEVER,
         essentialPackages = FakeEssentialPackages(),
@@ -93,7 +94,7 @@ class EvaluateBlockGroupRulesTest {
 
     @Test
     fun `a group Delay and a direct Hard block on one app resolve to the Hard block`() = runTest {
-        val directHard = BlockRule(id = 2, packageName = instagram, mode = BlockMode.HARD_BLOCK.name)
+        val directHard = aBlockRule(id = 2, packageName = instagram, mode = BlockMode.HARD_BLOCK.name)
         val decision = useCase(snapshotOf(groupDelay, directHard)).invoke(instagram).block()
         assertEquals(BlockMode.HARD_BLOCK, decision.mode)
         assertEquals("Hard Block", decision.ruleName)
@@ -101,7 +102,7 @@ class EvaluateBlockGroupRulesTest {
 
     @Test
     fun `excludeDirectRules ignores the direct rule and keeps the group's decision`() = runTest {
-        val directHard = BlockRule(id = 2, packageName = instagram, mode = BlockMode.HARD_BLOCK.name)
+        val directHard = aBlockRule(id = 2, packageName = instagram, mode = BlockMode.HARD_BLOCK.name)
         val decision = useCase(snapshotOf(groupDelay, directHard))
             .invoke(instagram, excludeDirectRules = true)
             .block()
@@ -111,7 +112,7 @@ class EvaluateBlockGroupRulesTest {
 
     @Test
     fun `excludeDirectRules over a browser with only a direct rule allows (F5)`() = runTest {
-        val directChromeHard = BlockRule(id = 3, packageName = chrome, mode = BlockMode.HARD_BLOCK.name)
+        val directChromeHard = aBlockRule(id = 3, packageName = chrome, mode = BlockMode.HARD_BLOCK.name)
         val useCase = useCase(snapshotOf(directChromeHard))
         assertEquals(BlockDecision.Allow, useCase.invoke(chrome, excludeDirectRules = true))
     }
@@ -126,7 +127,7 @@ class EvaluateBlockGroupRulesTest {
 
     @Test
     fun `the default still includes direct rules`() = runTest {
-        val directHard = BlockRule(id = 2, packageName = instagram, mode = BlockMode.HARD_BLOCK.name)
+        val directHard = aBlockRule(id = 2, packageName = instagram, mode = BlockMode.HARD_BLOCK.name)
         assertEquals(
             BlockMode.HARD_BLOCK,
             useCase(snapshotOf(directHard)).invoke(instagram).block().mode
@@ -140,7 +141,7 @@ class EvaluateBlockGroupRulesTest {
         val groupHard = groupDelay.copy(mode = BlockMode.HARD_BLOCK.name)
         assertTrue(useCase(snapshotOf(groupHard)).isCoveredWhole(chrome))
 
-        val directChromeHard = BlockRule(id = 3, packageName = chrome, mode = BlockMode.HARD_BLOCK.name)
+        val directChromeHard = aBlockRule(id = 3, packageName = chrome, mode = BlockMode.HARD_BLOCK.name)
         assertFalse("a direct rule keeps its web-only meaning (F5)", useCase(snapshotOf(directChromeHard)).isCoveredWhole(chrome))
 
         val groupFeature = groupHard.copy(inAppFeatures = "SHORTS")
@@ -152,10 +153,12 @@ class EvaluateBlockGroupRulesTest {
         // The member table never answers, so the in-memory snapshot can never be built: the state
         // the service is in during the first moments after the process starts.
         val groupHard = groupDelay.copy(mode = BlockMode.HARD_BLOCK.name)
-        val members = listOf(AppGroupMember(social, instagram), AppGroupMember(social, chrome))
+        val members = listOf(aGroupMember(social, instagram), aGroupMember(social, chrome))
+        // Deliberately a stub, not FakeRuleDatabase: the cold start needs a member table that never
+        // answers, which the fake does not model.
         val repository = mockk<BlockRuleRepository> {
             every { getEnabledRules() } returns flowOf(listOf(groupHard))
-            every { getAllGroups() } returns flowOf(listOf(AppGroup(id = social, name = "Social")))
+            every { getAllGroups() } returns flowOf(listOf(anAppGroup("Social", id = social)))
             every { getAllGroupMembers() } returns flow { awaitCancellation() }
             every { getGroupMembers(social) } returns flowOf(members)
         }

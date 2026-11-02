@@ -3,13 +3,11 @@ package com.astraedus.nudge.domain.usecase
 import com.astraedus.nudge.data.db.entity.AppGroup
 import com.astraedus.nudge.data.db.entity.AppGroupMember
 import com.astraedus.nudge.data.db.entity.BlockRule
-import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.data.repository.BlockRuleRepository
 import com.astraedus.nudge.data.repository.ContentFilter
 import com.astraedus.nudge.data.repository.RuleSnapshot
 import com.astraedus.nudge.data.repository.RuleSnapshotSource
 import com.astraedus.nudge.data.repository.RuleSnapshots
-import com.astraedus.nudge.data.repository.UsageRepository
 import com.astraedus.nudge.domain.engine.BlockEngine
 import com.astraedus.nudge.domain.engine.RuleEvaluator
 import com.astraedus.nudge.domain.engine.ScheduleEvaluator
@@ -21,6 +19,11 @@ import com.astraedus.nudge.domain.nuke.NukePolicy
 import com.astraedus.nudge.domain.nuke.NukeState
 import com.astraedus.nudge.domain.packages.FakeEssentialPackages
 import com.astraedus.nudge.domain.packages.FakePackageFacts
+import com.astraedus.nudge.testing.FakeNudgePreferences
+import com.astraedus.nudge.testing.FakeUsageRepository
+import com.astraedus.nudge.testing.aBlockRule
+import com.astraedus.nudge.testing.aGroupMember
+import com.astraedus.nudge.testing.anAppGroup
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.flow.Flow
@@ -53,15 +56,11 @@ class EvaluateBlockAllAppsTest {
 
     private val launchable = setOf(youtube, maps, spotify, dialer, covered)
 
-    private val usageRepository: UsageRepository = mockk {
-        every { getDailyForegroundTimeMs(any()) } returns 0L
-    }
-    private val preferences: NudgePreferences = mockk {
-        every { contentFilterEnabled } returns flowOf(false)
-    }
+    private val usageRepository = FakeUsageRepository()
+    private val preferences = FakeNudgePreferences()
 
     private fun allApps(id: Long, mode: BlockMode = BlockMode.HARD_BLOCK, except: String? = null) =
-        BlockRule(id = id, allApps = true, exceptPackages = except, mode = mode.name)
+        aBlockRule(id = id, allApps = true, exceptPackages = except, mode = mode.name)
 
     private class Device(launchable: Set<String>, essentials: Set<String>) {
         val essentialPackages = FakeEssentialPackages(essentials)
@@ -110,10 +109,10 @@ class EvaluateBlockAllAppsTest {
             fixed(
                 rules = listOf(
                     allApps(1, BlockMode.DELAY, except = maps),
-                    BlockRule(id = 2, groupId = social, mode = BlockMode.HARD_BLOCK.name)
+                    aBlockRule(id = 2, groupId = social, mode = BlockMode.HARD_BLOCK.name)
                 ),
-                groups = listOf(AppGroup(id = social, name = "Social")),
-                members = listOf(AppGroupMember(social, maps))
+                groups = listOf(anAppGroup("Social", id = social)),
+                members = listOf(aGroupMember(social, maps))
             )
         )
         val decision = block(useCase.invoke(maps))
@@ -128,7 +127,7 @@ class EvaluateBlockAllAppsTest {
             fixed(
                 listOf(
                     allApps(1, except = youtube),
-                    BlockRule(id = 2, packageName = youtube, mode = BlockMode.BREATHING.name, inAppFeatures = "SHORTS")
+                    aBlockRule(id = 2, packageName = youtube, mode = BlockMode.BREATHING.name, inAppFeatures = "SHORTS")
                 )
             )
         )
@@ -163,7 +162,7 @@ class EvaluateBlockAllAppsTest {
     @Test
     fun `an essential app with its own app rule gets that rule`() = runTest {
         val useCase = useCase(
-            fixed(listOf(allApps(1), BlockRule(id = 2, packageName = dialer, mode = BlockMode.DELAY.name)))
+            fixed(listOf(allApps(1), aBlockRule(id = 2, packageName = dialer, mode = BlockMode.DELAY.name)))
         )
         val decision = block(useCase.invoke(dialer))
         assertEquals(BlockMode.DELAY, decision.mode)
@@ -199,13 +198,15 @@ class EvaluateBlockAllAppsTest {
     private val rules = Table(
         listOf(
             allApps(1, BlockMode.DELAY, except = maps).copy(exceptGroupIds = "$social"),
-            BlockRule(id = 2, packageName = youtube, mode = BlockMode.HARD_BLOCK.name)
+            aBlockRule(id = 2, packageName = youtube, mode = BlockMode.HARD_BLOCK.name)
         )
     )
-    private val groups = Table(listOf(AppGroup(id = social, name = "Music")))
-    private val members = Table(listOf(AppGroupMember(social, spotify)))
+    private val groups = Table(listOf(anAppGroup("Music", id = social)))
+    private val members = Table(listOf(aGroupMember(social, spotify)))
     private var perGroupReads = 0
 
+    // Deliberately a stub, not FakeRuleDatabase: the no-reads-once-warm check counts how often each
+    // table flow is opened, which the fake does not model.
     private val repository: BlockRuleRepository = mockk {
         every { getEnabledRules() } answers { rules.flow }
         every { getAllGroups() } answers { groups.flow }
@@ -252,11 +253,11 @@ class EvaluateBlockAllAppsTest {
         val useCase = useCase(
             fixed(
                 rules = listOf(
-                    BlockRule(id = 1, packageName = youtube, mode = BlockMode.HARD_BLOCK.name),
-                    BlockRule(id = 2, groupId = social, mode = BlockMode.HARD_BLOCK.name)
+                    aBlockRule(id = 1, packageName = youtube, mode = BlockMode.HARD_BLOCK.name),
+                    aBlockRule(id = 2, groupId = social, mode = BlockMode.HARD_BLOCK.name)
                 ),
-                groups = listOf(AppGroup(id = social, name = "Social")),
-                members = listOf(AppGroupMember(social, spotify))
+                groups = listOf(anAppGroup("Social", id = social)),
+                members = listOf(aGroupMember(social, spotify))
             ),
             device
         )

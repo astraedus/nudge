@@ -1,9 +1,9 @@
 package com.astraedus.nudge.domain.lock
 
-import com.astraedus.nudge.data.db.entity.BlockRule
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.astraedus.nudge.testing.aBlockRule
 
 /**
  * L1. [ImportedGroupsWeakening]: a backup's groups merge into this device's groups by name, and
@@ -16,9 +16,9 @@ class ImportedGroupsWeakeningTest {
     private val existing = mapOf("Social" to social)
 
     private fun allowing(groupId: Long, enabled: Boolean = true) =
-        BlockRule(id = 1, mode = "HARD_BLOCK", allApps = true, exceptGroupIds = "$groupId", enabled = enabled)
+        aBlockRule(id = 1, mode = "HARD_BLOCK", allApps = true, exceptGroupIds = "$groupId", enabled = enabled)
 
-    private fun blocking(groupId: Long) = BlockRule(id = 2, mode = "DELAY", groupId = groupId)
+    private fun blocking(groupId: Long) = aBlockRule(id = 2, mode = "DELAY", groupId = groupId)
 
     private fun merged(group: ResolvedGroup, vararg added: String, name: String = "Social") =
         mapOf(name to group.copy(members = group.members + added))

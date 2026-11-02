@@ -1,7 +1,7 @@
 package com.astraedus.nudge.domain.engine
 
 import com.astraedus.nudge.domain.model.BlockMode
-import com.astraedus.nudge.domain.model.BlockRuleData
+import com.astraedus.nudge.testing.aBlockRuleData
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -17,43 +17,25 @@ class RuleCoverageTest {
     private val essential = CoverageFacts(essential = true, launchable = true, category = null, browser = false)
     private val notLaunchable = CoverageFacts(essential = false, launchable = false, category = null, browser = false)
 
-    private fun appRule(pkg: String) = rule(packageName = pkg)
-    private fun groupRule(groupId: Long) = rule(groupId = groupId)
+    private val hardBlock = aBlockRuleData(id = 1L, mode = BlockMode.HARD_BLOCK)
+    private val groupRule = hardBlock.copy(groupId = 7L)
+    private fun appRule(pkg: String) = hardBlock.copy(packageName = pkg)
     private fun allAppsRule(except: Set<String> = emptySet(), exceptGroups: Set<Long> = emptySet()) =
-        rule(allApps = true, exceptPackages = except, exceptGroupIds = exceptGroups)
-
-    private fun rule(
-        packageName: String? = null,
-        groupId: Long? = null,
-        allApps: Boolean = false,
-        exceptPackages: Set<String> = emptySet(),
-        exceptGroupIds: Set<Long> = emptySet()
-    ) = BlockRuleData(
-        id = 1L,
-        packageName = packageName,
-        groupId = groupId,
-        mode = BlockMode.HARD_BLOCK,
-        delaySeconds = 15,
-        dailyLimitMinutes = null,
-        enabled = true,
-        allApps = allApps,
-        exceptPackages = exceptPackages,
-        exceptGroupIds = exceptGroupIds
-    )
+        hardBlock.copy(allApps = true, exceptPackages = except, exceptGroupIds = exceptGroups)
 
     @Test
     fun `each kind covers what it names`() {
         assertTrue(RuleCoverage.covers(appRule("a"), "a", emptySet(), plain))
         assertFalse(RuleCoverage.covers(appRule("a"), "b", emptySet(), plain))
-        assertTrue(RuleCoverage.covers(groupRule(7L), "a", setOf(7L), plain))
-        assertFalse(RuleCoverage.covers(groupRule(7L), "a", setOf(8L), plain))
+        assertTrue(RuleCoverage.covers(groupRule, "a", setOf(7L), plain))
+        assertFalse(RuleCoverage.covers(groupRule, "a", setOf(8L), plain))
         assertTrue(RuleCoverage.covers(allAppsRule(), "a", emptySet(), plain))
     }
 
     /** Spec 4.2: never lock the user out. An explicit app rule is the user's own choice and stands. */
     @Test
     fun `an essential app is never covered by a group or All apps rule, but its own app rule covers it`() {
-        assertFalse(RuleCoverage.covers(groupRule(7L), "dialer", setOf(7L), essential))
+        assertFalse(RuleCoverage.covers(groupRule, "dialer", setOf(7L), essential))
         assertFalse(RuleCoverage.covers(allAppsRule(), "dialer", emptySet(), essential))
         assertTrue(RuleCoverage.covers(appRule("dialer"), "dialer", emptySet(), essential))
     }
@@ -61,7 +43,7 @@ class RuleCoverageTest {
     @Test
     fun `an app with no launcher entry is never covered by All apps, but its group and app rules still cover it`() {
         assertFalse(RuleCoverage.covers(allAppsRule(), "svc", emptySet(), notLaunchable))
-        assertTrue(RuleCoverage.covers(groupRule(7L), "svc", setOf(7L), notLaunchable))
+        assertTrue(RuleCoverage.covers(groupRule, "svc", setOf(7L), notLaunchable))
         assertTrue(RuleCoverage.covers(appRule("svc"), "svc", emptySet(), notLaunchable))
     }
 
@@ -104,7 +86,7 @@ class RuleCoverageTest {
     fun `coveringRules lists only enabled covering rules, in order`() {
         val rules = listOf(
             appRule("a").copy(id = 1L),
-            groupRule(7L).copy(id = 2L),
+            groupRule.copy(id = 2L),
             allAppsRule().copy(id = 3L, enabled = false),
             allAppsRule(except = setOf("a")).copy(id = 4L),
             allAppsRule().copy(id = 5L)
@@ -118,7 +100,7 @@ class RuleCoverageTest {
     fun `factsNeeded reads nothing for app rules and groups the package is not in`() {
         val none = RuleCoverage.FactsNeeded(essential = false, launchable = false)
         assertEquals(none, RuleCoverage.factsNeeded(listOf(appRule("a"), appRule("b")), emptySet()))
-        assertEquals(none, RuleCoverage.factsNeeded(listOf(appRule("a"), groupRule(7L)), setOf(8L)))
+        assertEquals(none, RuleCoverage.factsNeeded(listOf(appRule("a"), groupRule), setOf(8L)))
         assertEquals(none, RuleCoverage.factsNeeded(emptyList(), setOf(7L)))
     }
 
@@ -126,7 +108,7 @@ class RuleCoverageTest {
     fun `factsNeeded asks for essentials under a group it is in, and both facts under All apps`() {
         assertEquals(
             RuleCoverage.FactsNeeded(essential = true, launchable = false),
-            RuleCoverage.factsNeeded(listOf(groupRule(7L)), setOf(7L))
+            RuleCoverage.factsNeeded(listOf(groupRule), setOf(7L))
         )
         assertEquals(
             RuleCoverage.FactsNeeded(essential = true, launchable = true),
@@ -144,8 +126,8 @@ class RuleCoverageTest {
         val pkgs = listOf("a", "b")
         val ruleSets = listOf(
             listOf(appRule("a")),
-            listOf(appRule("a"), groupRule(7L)),
-            listOf(groupRule(7L)),
+            listOf(appRule("a"), groupRule),
+            listOf(groupRule),
             listOf(allAppsRule(except = setOf("a"))),
             listOf(appRule("b"), allAppsRule(exceptGroups = setOf(7L)))
         )
@@ -173,6 +155,6 @@ class RuleCoverageTest {
     /** A row naming no target covers nothing, whatever the facts. */
     @Test
     fun `a rule with no target covers nothing`() {
-        assertFalse(RuleCoverage.covers(rule(), "a", setOf(7L), plain))
+        assertFalse(RuleCoverage.covers(hardBlock, "a", setOf(7L), plain))
     }
 }

@@ -1,13 +1,8 @@
 package com.astraedus.nudge.domain.events
 
-import com.astraedus.nudge.data.db.entity.AppGroup
-import com.astraedus.nudge.data.db.entity.AppGroupMember
-import com.astraedus.nudge.data.db.entity.BlockRule
-import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.data.repository.ContentFilter
 import com.astraedus.nudge.data.repository.RuleSnapshot
 import com.astraedus.nudge.data.repository.RuleSnapshots
-import com.astraedus.nudge.data.repository.UsageRepository
 import com.astraedus.nudge.domain.engine.BlockEngine
 import com.astraedus.nudge.domain.engine.BrowserRouting
 import com.astraedus.nudge.domain.engine.RuleEvaluator
@@ -19,9 +14,12 @@ import com.astraedus.nudge.domain.nuke.NukeEnforcement
 import com.astraedus.nudge.domain.usecase.EvaluateBlockUseCase
 import com.astraedus.nudge.service.AwarenessOverlayWindow
 import com.astraedus.nudge.service.WebDomainDetector
-import io.mockk.every
+import com.astraedus.nudge.testing.FakeNudgePreferences
+import com.astraedus.nudge.testing.FakeUsageRepository
+import com.astraedus.nudge.testing.aBlockRule
+import com.astraedus.nudge.testing.aGroupMember
+import com.astraedus.nudge.testing.anAppGroup
 import io.mockk.mockk
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -84,9 +82,9 @@ class GroupBrowserCaptureReplayTest {
         signal is ForegroundSignal.AppWindow || signal is ForegroundSignal.NotForeground
 
     private val snapshot = RuleSnapshot.of(
-        enabledRules = listOf(BlockRule(id = 1, groupId = social, mode = BlockMode.HARD_BLOCK.name)),
-        groups = listOf(AppGroup(id = social, name = "Social")),
-        members = listOf(AppGroupMember(social, chrome), AppGroupMember(social, "com.instagram.android"))
+        enabledRules = listOf(aBlockRule(id = 1, groupId = social, mode = BlockMode.HARD_BLOCK.name)),
+        groups = listOf(anAppGroup("Social", id = social)),
+        members = listOf(aGroupMember(social, chrome), aGroupMember(social, "com.instagram.android"))
     )
 
     private val useCase = EvaluateBlockUseCase(
@@ -94,11 +92,11 @@ class GroupBrowserCaptureReplayTest {
             override suspend fun current() = snapshot
             override suspend fun enabledRules() = snapshot.enabledRules
         },
-        usageRepository = mockk<UsageRepository> { every { getDailyForegroundTimeMs(any()) } returns 0L },
+        usageRepository = FakeUsageRepository(),
         blockEngine = BlockEngine(ScheduleEvaluator()),
         ruleEvaluator = RuleEvaluator(),
         scheduleEvaluator = ScheduleEvaluator(),
-        preferences = mockk<NudgePreferences> { every { contentFilterEnabled } returns flowOf(false) },
+        preferences = FakeNudgePreferences(),
         contentFilter = mockk<ContentFilter>(),
         nukeEnforcement = NukeEnforcement.NEVER,
         essentialPackages = FakeEssentialPackages(),

@@ -1,8 +1,5 @@
 package com.astraedus.nudge.data.export
 
-import com.astraedus.nudge.data.db.entity.AppGroup
-import com.astraedus.nudge.data.db.entity.AppGroupMember
-import com.astraedus.nudge.data.db.entity.BlockRule
 import com.astraedus.nudge.domain.model.BlockMode
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -12,6 +9,9 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import com.astraedus.nudge.testing.aBlockRule
+import com.astraedus.nudge.testing.aGroupMember
+import com.astraedus.nudge.testing.anAppGroup
 
 class RuleExporterTest {
 
@@ -38,7 +38,7 @@ class RuleExporterTest {
     fun `every block mode survives an export-import round trip`() {
         BlockMode.entries.forEach { mode ->
             val rules = listOf(
-                BlockRule(
+                aBlockRule(
                     id = 1,
                     packageName = "com.instagram.android",
                     mode = mode.name,
@@ -72,7 +72,7 @@ class RuleExporterTest {
     @Test
     fun `HOLD rule round trip preserves mode and delaySeconds`() {
         val rules = listOf(
-            BlockRule(
+            aBlockRule(
                 id = 1,
                 packageName = "com.instagram.android",
                 mode = BlockMode.HOLD.name,
@@ -99,7 +99,7 @@ class RuleExporterTest {
     @Test
     fun `an unknown block mode is still rejected`() {
         val json = exporter.exportRules(
-            listOf(BlockRule(id = 1, packageName = "com.x", mode = "TELEPORT", delaySeconds = 15)),
+            listOf(aBlockRule(id = 1, packageName = "com.x", mode = "TELEPORT", delaySeconds = 15)),
             emptyList(),
             emptyMap()
         )
@@ -115,7 +115,7 @@ class RuleExporterTest {
     @Test
     fun `export single rule produces valid JSON`() {
         val rules = listOf(
-            BlockRule(
+            aBlockRule(
                 id = 1,
                 packageName = "com.instagram.android",
                 mode = "DELAY",
@@ -143,7 +143,7 @@ class RuleExporterTest {
     @Test
     fun `export resolves groupId to group name`() {
         val rules = listOf(
-            BlockRule(
+            aBlockRule(
                 id = 1,
                 packageName = null,
                 groupId = 5,
@@ -152,10 +152,10 @@ class RuleExporterTest {
                 enabled = true
             )
         )
-        val groups = listOf(AppGroup(id = 5, name = "Social Media"))
+        val groups = listOf(anAppGroup(id = 5, name = "Social Media"))
         val members = mapOf(5L to listOf(
-            AppGroupMember(groupId = 5, packageName = "com.instagram.android"),
-            AppGroupMember(groupId = 5, packageName = "com.twitter.android")
+            aGroupMember(groupId = 5, packageName = "com.instagram.android"),
+            aGroupMember(groupId = 5, packageName = "com.twitter.android")
         ))
 
         val json = exporter.exportRules(rules, groups, members)
@@ -173,7 +173,7 @@ class RuleExporterTest {
     @Test
     fun `export handles null optional fields`() {
         val rules = listOf(
-            BlockRule(
+            aBlockRule(
                 id = 1,
                 packageName = "com.example.app",
                 mode = "BREATHING",
@@ -203,7 +203,7 @@ class RuleExporterTest {
     @Test
     fun `roundtrip preserves all fields`() {
         val rules = listOf(
-            BlockRule(
+            aBlockRule(
                 id = 42,
                 packageName = "com.instagram.android",
                 mode = "DELAY",
@@ -248,11 +248,11 @@ class RuleExporterTest {
     @Test
     fun `roundtrip with groups preserves group data`() {
         val rules = listOf(
-            BlockRule(id = 1, groupId = 3, mode = "HARD_BLOCK", enabled = true)
+            aBlockRule(id = 1, groupId = 3, mode = "HARD_BLOCK", enabled = true)
         )
-        val groups = listOf(AppGroup(id = 3, name = "Time Wasters"))
+        val groups = listOf(anAppGroup(id = 3, name = "Time Wasters"))
         val members = mapOf(3L to listOf(
-            AppGroupMember(groupId = 3, packageName = "com.tiktok.android")
+            aGroupMember(groupId = 3, packageName = "com.tiktok.android")
         ))
 
         val json = exporter.exportRules(rules, groups, members)
@@ -268,7 +268,7 @@ class RuleExporterTest {
     @Test
     fun `export produces pretty-printed JSON`() {
         val rules = listOf(
-            BlockRule(id = 1, packageName = "com.example.app", mode = "DELAY", enabled = true)
+            aBlockRule(id = 1, packageName = "com.example.app", mode = "DELAY", enabled = true)
         )
 
         val json = exporter.exportRules(rules, emptyList(), emptyMap())
@@ -281,7 +281,7 @@ class RuleExporterTest {
     @Test
     fun `roundtrip preserves webDomains field`() {
         val rules = listOf(
-            BlockRule(
+            aBlockRule(
                 id = 1,
                 packageName = "com.instagram.android",
                 mode = "DELAY",
@@ -307,7 +307,7 @@ class RuleExporterTest {
     @Test
     fun `roundtrip preserves an independent webBlockMode on a NONE-mode rule`() {
         val rules = listOf(
-            BlockRule(
+            aBlockRule(
                 id = 1,
                 packageName = "com.instagram.android",
                 mode = "NONE",
@@ -362,7 +362,7 @@ class RuleExporterTest {
     @Test
     fun `roundtrip preserves tabVanish=false and followingSteer=true`() {
         val rules = listOf(
-            BlockRule(
+            aBlockRule(
                 id = 1,
                 packageName = "com.instagram.android",
                 mode = "HARD_BLOCK",
@@ -415,7 +415,7 @@ class RuleExporterTest {
     @Test
     fun `export with null webDomains produces null in JSON`() {
         val rules = listOf(
-            BlockRule(
+            aBlockRule(
                 id = 1,
                 packageName = "com.example.app",
                 mode = "HARD_BLOCK",
@@ -469,7 +469,7 @@ class RuleExporterTest {
     @Test
     fun `roundtrip preserves autoKickAfterMinutes field`() {
         val rules = listOf(
-            BlockRule(
+            aBlockRule(
                 id = 1,
                 packageName = "com.instagram.android",
                 mode = "DELAY",
@@ -490,7 +490,7 @@ class RuleExporterTest {
     @Test
     fun `roundtrip preserves null autoKickAfterMinutes field`() {
         val rules = listOf(
-            BlockRule(
+            aBlockRule(
                 id = 1,
                 packageName = "com.example.app",
                 mode = "HARD_BLOCK",
@@ -513,7 +513,7 @@ class RuleExporterTest {
     @Test
     fun `serialized JSON contains autoKickAfterMinutes key`() {
         val rules = listOf(
-            BlockRule(id = 1, packageName = "com.example.app", mode = "DELAY", enabled = true)
+            aBlockRule(id = 1, packageName = "com.example.app", mode = "DELAY", enabled = true)
         )
 
         val json = exporter.exportRules(rules, emptyList(), emptyMap())
@@ -570,7 +570,7 @@ class RuleExporterTest {
     @Test
     fun `roundtrip preserves remindAfterMinutes field`() {
         val rules = listOf(
-            BlockRule(
+            aBlockRule(
                 id = 1,
                 packageName = "com.instagram.android",
                 mode = "DELAY",
@@ -591,7 +591,7 @@ class RuleExporterTest {
     @Test
     fun `roundtrip preserves null remindAfterMinutes field`() {
         val rules = listOf(
-            BlockRule(
+            aBlockRule(
                 id = 1,
                 packageName = "com.example.app",
                 mode = "HARD_BLOCK",
@@ -652,7 +652,7 @@ class RuleExporterTest {
     @Test
     fun `roundtrip keeps autoKickAfterMinutes and remindAfterMinutes independent`() {
         val rules = listOf(
-            BlockRule(
+            aBlockRule(
                 id = 1,
                 packageName = "com.instagram.android",
                 mode = "DELAY",
@@ -661,7 +661,7 @@ class RuleExporterTest {
                 autoKickAfterMinutes = 30,
                 remindAfterMinutes = 20
             ),
-            BlockRule(
+            aBlockRule(
                 id = 2,
                 packageName = "com.twitter.android",
                 mode = "DELAY",
@@ -686,7 +686,7 @@ class RuleExporterTest {
     @Test
     fun `roundtrip preserves keepPassOnShortTrips=true`() {
         val rules = listOf(
-            BlockRule(
+            aBlockRule(
                 id = 1,
                 packageName = "com.instagram.android",
                 mode = "DELAY",

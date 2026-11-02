@@ -9,12 +9,12 @@ import com.astraedus.nudge.domain.events.A11yEventType
 import com.astraedus.nudge.domain.events.AccessibilityEventRecord
 import com.astraedus.nudge.domain.events.EventClassifier
 import com.astraedus.nudge.domain.events.ForegroundSignal
-import com.astraedus.nudge.domain.model.ActiveRule
 import com.astraedus.nudge.domain.model.BlockDecision
 import com.astraedus.nudge.domain.model.BlockMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.astraedus.nudge.testing.anActiveRule
 
 /**
  * ISSUE [#131](https://github.com/astraedus/nudge/issues/131): *"each declined launch of a
@@ -54,7 +54,7 @@ class DuplicateBlockLaunchReplayTest {
 
     /** The bench fixture's rule: YouTube, whole app, a 5-second Delay. */
     private val rules = listOf(
-        ActiveRule(mode = BlockMode.DELAY, delaySeconds = 5, dailyLimitMinutes = null, enabled = true)
+        anActiveRule(mode = BlockMode.DELAY, delaySeconds = 5, dailyLimitMinutes = null, enabled = true)
     )
 
     private val engine = BlockEngine(ScheduleEvaluator())
@@ -233,7 +233,7 @@ class DuplicateBlockLaunchReplayTest {
      */
     @Test
     fun `a real Shorts rule is still its own block`() {
-        val shortsRule = ActiveRule(
+        val shortsRule = anActiveRule(
             mode = BlockMode.HARD_BLOCK,
             delaySeconds = 0,
             dailyLimitMinutes = null,

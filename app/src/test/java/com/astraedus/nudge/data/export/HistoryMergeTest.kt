@@ -1,10 +1,10 @@
 package com.astraedus.nudge.data.export
 
-import com.astraedus.nudge.data.db.entity.UsageEvent
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.astraedus.nudge.testing.aUsageEvent
 
 /**
  * The merge policy for imported history, in isolation.
@@ -27,7 +27,7 @@ class HistoryMergeTest {
 
     @Test
     fun `an exported event and the row it came from share a key`() {
-        val row = UsageEvent(
+        val row = aUsageEvent(
             id = 4242,
             packageName = "com.app1",
             timestamp = 1_700_000_000_000,
@@ -45,7 +45,7 @@ class HistoryMergeTest {
      */
     @Test
     fun `the row id is not part of the key`() {
-        val a = UsageEvent(id = 1, packageName = "com.app1", timestamp = 100, wasBlocked = true)
+        val a = aUsageEvent(id = 1, packageName = "com.app1", timestamp = 100, wasBlocked = true)
         val b = a.copy(id = 999)
 
         assertEquals(HistoryMerge.keyOf(a), HistoryMerge.keyOf(b))
@@ -181,7 +181,7 @@ class HistoryMergeTest {
 
     @Test
     fun `a row survives a round trip through the export shape`() {
-        val row = UsageEvent(
+        val row = aUsageEvent(
             id = 7,
             packageName = "com.app1",
             timestamp = 12345,

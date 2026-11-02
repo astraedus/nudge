@@ -1,10 +1,12 @@
 package com.astraedus.nudge.ui.screens.config
 
-import com.astraedus.nudge.data.db.entity.AppGroup
 import com.astraedus.nudge.data.db.entity.AppGroupMember
 import com.astraedus.nudge.data.db.entity.BlockRule
 import com.astraedus.nudge.domain.engine.CoverageFacts
 import com.astraedus.nudge.domain.packages.AppCategory
+import com.astraedus.nudge.testing.aBlockRule
+import com.astraedus.nudge.testing.aGroupMember
+import com.astraedus.nudge.testing.anAppGroup
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -19,7 +21,7 @@ class CoveringAllAppsTest {
 
     private val app = "com.instagram.android"
     private val normal = CoverageFacts(essential = false, launchable = true, category = AppCategory.UNDEFINED, browser = false)
-    private val work = AppGroup(id = 1, name = "Work")
+    private val work = anAppGroup("Work", id = 1)
     private val groups = listOf(work)
     private val labels = mapOf("com.spotify" to "Spotify", app to "Instagram")
 
@@ -35,7 +37,7 @@ class CoveringAllAppsTest {
         mode: String = "HARD_BLOCK",
         exceptPackages: String? = null,
         exceptGroupIds: String? = null
-    ) = BlockRule(
+    ) = aBlockRule(
         id = id, allApps = true, mode = mode, enabled = enabled,
         exceptPackages = exceptPackages, exceptGroupIds = exceptGroupIds
     )
@@ -71,7 +73,7 @@ class CoveringAllAppsTest {
     fun `an app in a group the rule allows is not covered by it`() {
         val rules = listOf(allApps(1, exceptGroupIds = "1"))
 
-        assertTrue(cover(rules, members = listOf(AppGroupMember(1, app))).isEmpty())
+        assertTrue(cover(rules, members = listOf(aGroupMember(1, app))).isEmpty())
         // The same rule does cover the app once it is not in that group.
         assertEquals(listOf(1L), cover(rules).map { it.ruleId })
     }
@@ -89,16 +91,16 @@ class CoveringAllAppsTest {
     @Test
     fun `app rules and group rules are not All apps rules`() {
         val rules = listOf(
-            BlockRule(id = 1, packageName = app, mode = "HARD_BLOCK"),
-            BlockRule(id = 2, groupId = 1, mode = "HARD_BLOCK")
+            aBlockRule(id = 1, packageName = app, mode = "HARD_BLOCK"),
+            aBlockRule(id = 2, groupId = 1, mode = "HARD_BLOCK")
         )
 
-        assertTrue(cover(rules, members = listOf(AppGroupMember(1, app))).isEmpty())
+        assertTrue(cover(rules, members = listOf(aGroupMember(1, app))).isEmpty())
     }
 
     @Test
     fun `an app in an allowed group by its category is not covered`() {
-        val social = AppGroup(id = 2, name = "Social", categories = "SOCIAL")
+        val social = anAppGroup("Social", id = 2, categories = "SOCIAL")
         val rules = listOf(allApps(1, exceptGroupIds = "2"))
         val socialApp = normal.copy(category = AppCategory.SOCIAL)
 

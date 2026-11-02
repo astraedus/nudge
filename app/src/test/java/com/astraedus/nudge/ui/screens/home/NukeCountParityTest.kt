@@ -2,12 +2,14 @@ package com.astraedus.nudge.ui.screens.home
 
 import android.content.Context
 import com.astraedus.nudge.MainDispatcherRule
-import com.astraedus.nudge.data.preferences.NudgePreferences
-import com.astraedus.nudge.data.repository.InstalledAppsRepository
 import com.astraedus.nudge.domain.engine.TimeTracker
 import com.astraedus.nudge.domain.nuke.NukeKey
-import com.astraedus.nudge.domain.nuke.NukeState
+import com.astraedus.nudge.domain.nuke.NukeKeyKind
 import com.astraedus.nudge.service.EssentialApps
+import com.astraedus.nudge.testing.FakeInstalledAppsRepository
+import com.astraedus.nudge.testing.FakeNudgePreferences
+import com.astraedus.nudge.testing.FakeRuleDatabase
+import com.astraedus.nudge.testing.FakeUsageRepository
 import com.astraedus.nudge.ui.screens.nuke.NukeViewModel
 import com.astraedus.nudge.ui.screens.stats.InsightsCalculator
 import com.astraedus.nudge.ui.screens.stats.StatsCalculator
@@ -15,7 +17,6 @@ import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -46,19 +47,11 @@ class NukeCountParityTest {
     private val messages = "com.google.android.apps.messaging"
     private val clock = "com.google.android.deskclock"
 
-    private val stored = MutableStateFlow(
-        NukeState(
-            active = true,
-            packages = setOf(instagram, messages, clock),
-            keyHash = NukeKey.hashOrNull(NukeKey.generateToken())
-        )
-    )
-
-    private val preferences: NudgePreferences = mockk(relaxed = true) {
-        every { isGlobalEnabled } returns MutableStateFlow(true)
-        every { isStrictModeEnabled } returns MutableStateFlow(false)
-        every { nukeState } returns stored
-        every { nukeIntroSeen } returns MutableStateFlow(true)
+    private val preferences = FakeNudgePreferences {
+        setNukeKey(NukeKey.hashOrNull(NukeKey.generateToken())!!, NukeKeyKind.GENERATED_QR)
+        addNukePackages(setOf(instagram, messages, clock))
+        setNukeActive(true)
+        setNukeIntroSeen()
     }
 
     private fun essentials(vararg packages: String): EssentialApps = mockk {
@@ -71,13 +64,12 @@ class NukeCountParityTest {
         return HomeViewModel(
             context = mockk<Context>(relaxed = true),
             nudgePreferences = preferences,
-            usageRepository = mockk(relaxed = true),
-            blockRuleRepository = mockk(relaxed = true),
+            usageRepository = FakeUsageRepository(),
+            blockRuleRepository = FakeRuleDatabase().repository,
             screenTimeProvider = mockk(relaxed = true),
             timeTracker = timeTracker,
             homeChartsBuilder = HomeChartsBuilder(StatsCalculator(timeTracker)),
-            installedAppsRepository = mockk<InstalledAppsRepository>(relaxed = true)
-                .also { every { it.changes } returns MutableStateFlow(0L) },
+            installedAppsRepository = FakeInstalledAppsRepository(),
             insightsCalculator = InsightsCalculator(),
             essentialApps = essentials,
             ioDispatcher = dispatcher
@@ -85,9 +77,7 @@ class NukeCountParityTest {
     }
 
     private fun nukeScreen(essentials: EssentialApps): NukeViewModel {
-        val apps: InstalledAppsRepository = mockk()
-        coEvery { apps.getInstalledApps() } returns emptyList()
-        return NukeViewModel(preferences, apps, essentials, dispatcher)
+        return NukeViewModel(preferences, FakeInstalledAppsRepository(), essentials, dispatcher)
     }
 
     /** (dashboard card count, Nuke screen header count), both read live. */
@@ -115,7 +105,7 @@ class NukeCountParityTest {
 
     @Test
     fun `the static floor is left out of both counts too`() = runTest(dispatcher) {
-        stored.value = stored.value.copy(packages = stored.value.packages + "com.google.android.dialer")
+        preferences.addNukePackages(setOf("com.google.android.dialer"))
         val (card, screen) = counts(essentials())
         assertEquals(3, screen)
         assertEquals(screen, card)

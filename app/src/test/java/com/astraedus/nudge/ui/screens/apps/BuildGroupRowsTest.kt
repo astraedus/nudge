@@ -5,6 +5,9 @@ import com.astraedus.nudge.data.db.entity.AppGroupMember
 import com.astraedus.nudge.data.db.entity.BlockRule
 import com.astraedus.nudge.data.repository.groupResolverOf
 import com.astraedus.nudge.domain.packages.AppCategory
+import com.astraedus.nudge.testing.aBlockRule
+import com.astraedus.nudge.testing.aGroupMember
+import com.astraedus.nudge.testing.anAppGroup
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -14,16 +17,16 @@ import org.junit.Test
 /** The group rows on Manage Apps: title, one summary line, the switch state, search. */
 class BuildGroupRowsTest {
 
-    private val social = AppGroup(id = 1, name = "Social")
-    private val games = AppGroup(id = 2, name = "games")
+    private val social = anAppGroup("Social", id = 1)
+    private val games = anAppGroup("games", id = 2)
     private val members = listOf(
-        AppGroupMember(1, "com.a"), AppGroupMember(1, "com.b"), AppGroupMember(1, "com.c"),
-        AppGroupMember(2, "com.d")
+        aGroupMember(1, "com.a"), aGroupMember(1, "com.b"), aGroupMember(1, "com.c"),
+        aGroupMember(2, "com.d")
     )
     private val rules = listOf(
-        BlockRule(id = 10, groupId = 1, mode = "DELAY", delaySeconds = 15, dailyLimitMinutes = 30),
-        BlockRule(id = 11, groupId = 2, mode = "HARD_BLOCK", enabled = false),
-        BlockRule(id = 12, packageName = "com.a", mode = "HARD_BLOCK")
+        aBlockRule(id = 10, groupId = 1, mode = "DELAY", delaySeconds = 15, dailyLimitMinutes = 30),
+        aBlockRule(id = 11, groupId = 2, mode = "HARD_BLOCK", enabled = false),
+        aBlockRule(id = 12, packageName = "com.a", mode = "HARD_BLOCK")
     )
 
     private val installed = mapOf(
@@ -68,11 +71,11 @@ class BuildGroupRowsTest {
 
     @Test
     fun `a category group counts installed apps in the category minus essentials minus removed`() {
-        val cat = AppGroup(id = 3, name = "Social apps", categories = "SOCIAL")
+        val cat = anAppGroup("Social apps", id = 3, categories = "SOCIAL")
         val apps = installed + ("com.e" to AppCategory.SOCIAL) + ("com.f" to AppCategory.SOCIAL)
         val rows = rows(
             listOf(cat),
-            members = listOf(AppGroupMember(3, "com.b", excluded = true)),
+            members = listOf(aGroupMember(3, "com.b", excluded = true)),
             rules = emptyList(),
             installed = apps,
             essentials = setOf("com.c")
@@ -83,10 +86,10 @@ class BuildGroupRowsTest {
 
     @Test
     fun `a category group also counts a hand-added app of another category once`() {
-        val cat = AppGroup(id = 3, name = "Mixed", categories = "SOCIAL")
+        val cat = anAppGroup("Mixed", id = 3, categories = "SOCIAL")
         val rows = rows(
             listOf(cat),
-            members = listOf(AppGroupMember(3, "com.d"), AppGroupMember(3, "com.a")),
+            members = listOf(aGroupMember(3, "com.d"), aGroupMember(3, "com.a")),
             rules = emptyList()
         )
         // a, b, c by category; d by hand; a is both and counts once.
@@ -95,7 +98,7 @@ class BuildGroupRowsTest {
 
     @Test
     fun `a category with no installed apps gives an empty group`() {
-        val cat = AppGroup(id = 3, name = "News", categories = "NEWS")
+        val cat = anAppGroup("News", id = 3, categories = "NEWS")
         assertEquals("News · 0 apps", rows(listOf(cat), emptyList(), emptyList()).single().title)
     }
 }

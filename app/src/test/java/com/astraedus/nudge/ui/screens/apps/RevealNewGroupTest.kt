@@ -1,20 +1,12 @@
 package com.astraedus.nudge.ui.screens.apps
 
 import com.astraedus.nudge.MainDispatcherRule
-import com.astraedus.nudge.data.db.entity.AppGroup
-import com.astraedus.nudge.data.db.entity.AppGroupMember
-import com.astraedus.nudge.data.db.entity.BlockRule
-import com.astraedus.nudge.data.preferences.NudgePreferences
-import com.astraedus.nudge.data.repository.BlockRuleRepository
-import com.astraedus.nudge.data.repository.InstalledAppsRepository
-import com.astraedus.nudge.domain.lock.StrictModeChallenge
 import com.astraedus.nudge.domain.packages.FakeEssentialPackages
-import io.mockk.coEvery
-import io.mockk.every
-import io.mockk.mockk
+import com.astraedus.nudge.testing.FakeInstalledAppsRepository
+import com.astraedus.nudge.testing.FakeNudgePreferences
+import com.astraedus.nudge.testing.FakeRuleDatabase
+import com.astraedus.nudge.testing.anAppGroup
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
@@ -36,9 +28,9 @@ class RevealNewGroupTest {
     @get:Rule
     val mainDispatcherRule = MainDispatcherRule(UnconfinedTestDispatcher())
 
-    private val social = AppGroup(id = 1, name = "Social")
-    private val browsers = AppGroup(id = 2, name = "Browsers")
-    private val games = AppGroup(id = 3, name = "games")
+    private val social = anAppGroup("Social", id = 1)
+    private val browsers = anAppGroup("Browsers", id = 2)
+    private val games = anAppGroup("games", id = 3)
 
     // ── L1: the pure decision ──────────────────────────────────────────────
 
@@ -66,21 +58,10 @@ class RevealNewGroupTest {
 
     // ── The ViewModel: survives the trip to the editor ─────────────────────
 
-    private val groups = MutableStateFlow<List<AppGroup>>(emptyList())
+    private val db = FakeRuleDatabase()
 
-    private fun viewModel(): AppListViewModel {
-        val repository = mockk<BlockRuleRepository>(relaxed = true)
-        every { repository.getAllGroups() } returns groups
-        every { repository.getAllGroupMembers() } returns flowOf(emptyList<AppGroupMember>())
-        every { repository.getAllRules() } returns flowOf(emptyList<BlockRule>())
-        val prefs = mockk<NudgePreferences>()
-        every { prefs.isStrictModeEnabled } returns flowOf(false)
-        every { prefs.strictModeChallengeLength } returns flowOf(StrictModeChallenge.DEFAULT_LENGTH)
-        val installed = mockk<InstalledAppsRepository>()
-        coEvery { installed.getInstalledApps() } returns emptyList()
-        io.mockk.every { installed.changes } returns kotlinx.coroutines.flow.MutableStateFlow(0L)
-        return AppListViewModel(installed, repository, prefs, FakeEssentialPackages())
-    }
+    private fun viewModel(): AppListViewModel =
+        AppListViewModel(FakeInstalledAppsRepository(), db.repository, FakeNudgePreferences(), FakeEssentialPackages())
 
     @Test
     fun `the first group saved is revealed, once`() = runTest {
@@ -88,7 +69,7 @@ class RevealNewGroupTest {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.uiState.collect {} }
         assertNull(vm.uiState.value.revealGroupId)
 
-        groups.value = listOf(social) // saved in the editor
+        db.seedGroup(social) // saved in the editor
 
         assertEquals(1L, vm.uiState.value.revealGroupId)
         vm.onGroupRevealed()
@@ -97,7 +78,8 @@ class RevealNewGroupTest {
 
     @Test
     fun `opening Manage Apps with groups already there reveals nothing`() = runTest {
-        groups.value = listOf(social, browsers)
+        db.seedGroup(social)
+        db.seedGroup(browsers)
         val vm = viewModel()
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.uiState.collect {} }
 
@@ -112,7 +94,7 @@ class RevealNewGroupTest {
         first.cancel() // the editor is on top; collection stops
         testScheduler.advanceTimeBy(10_000) // past WhileSubscribed(5000): upstream stops too
 
-        groups.value = listOf(social)
+        db.seedGroup(social)
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.uiState.collect {} }
 
         assertEquals(1L, vm.uiState.value.revealGroupId)

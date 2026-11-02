@@ -1,5 +1,9 @@
 package com.astraedus.nudge.ui.screens.allapps
 
+import com.astraedus.nudge.testing.aGroupMember
+import com.astraedus.nudge.testing.aGroupRule
+import com.astraedus.nudge.testing.anApp
+import com.astraedus.nudge.testing.anAppGroup
 import com.astraedus.nudge.ui.screens.allapps.AllAppsFixtures.CHAT
 import com.astraedus.nudge.ui.screens.allapps.AllAppsFixtures.DELETED
 import com.astraedus.nudge.ui.screens.allapps.AllAppsFixtures.DIALER
@@ -13,11 +17,7 @@ import com.astraedus.nudge.ui.screens.allapps.AllAppsFixtures.WORK
 import com.astraedus.nudge.ui.screens.allapps.AllAppsFixtures.allAppsRule
 import com.astraedus.nudge.ui.screens.allapps.AllAppsFixtures.appRule
 import com.astraedus.nudge.ui.screens.allapps.AllAppsFixtures.device
-import com.astraedus.nudge.ui.screens.allapps.AllAppsFixtures.groupRule
 import com.astraedus.nudge.ui.screens.allapps.AllAppsFixtures.tables
-import com.astraedus.nudge.data.db.entity.AppGroup
-import com.astraedus.nudge.data.db.entity.AppGroupMember
-import com.astraedus.nudge.data.repository.InstalledAppsRepository
 import com.astraedus.nudge.domain.packages.AppCategory
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -84,7 +84,7 @@ class AllAppsCoverageTest {
     fun `other rules are named the way the user knows them`() {
         val rules = listOf(
             appRule(id = 10, pkg = FEED),
-            groupRule(id = 11, groupId = SOCIAL),
+            aGroupRule(SOCIAL).copy(id = 11),
             allAppsRule(id = 12, allowedPackages = listOf(GAME), allowedGroupIds = listOf(WORK))
         )
         val t = tables(rules)
@@ -215,22 +215,19 @@ class AllAppsCoverageTest {
 
     // --- Category groups (spec 5.2) ---
 
-    private fun categorised(pkg: String, category: AppCategory) =
-        InstalledAppsRepository.AppInfo(pkg, pkg, null, category)
-
     @Test
     fun `a category group counts installed apps of the category minus essentials and removed ones`() {
         val phone = DeviceApps(
             installed = listOf(
-                categorised(CHAT, AppCategory.SOCIAL),
-                categorised(FEED, AppCategory.SOCIAL),
-                categorised(DIALER, AppCategory.SOCIAL),
-                categorised(GAME, AppCategory.GAME)
+                anApp(CHAT, category = AppCategory.SOCIAL),
+                anApp(FEED, category = AppCategory.SOCIAL),
+                anApp(DIALER, category = AppCategory.SOCIAL),
+                anApp(GAME, category = AppCategory.GAME)
             ),
             essentials = setOf(DIALER)
         )
-        val cat = AppGroup(id = 5, name = "Social apps", categories = "SOCIAL")
-        val t = RuleTables(emptyList(), listOf(cat), listOf(AppGroupMember(5, FEED, excluded = true)))
+        val cat = anAppGroup("Social apps", id = 5, categories = "SOCIAL")
+        val t = RuleTables(emptyList(), listOf(cat), listOf(aGroupMember(5, FEED, excluded = true)))
 
         // chat only: feed was removed by the user, the dialer is essential, the game is not social.
         assertEquals(1, t.memberCount(5, phone))
@@ -242,12 +239,12 @@ class AllAppsCoverageTest {
     fun `an allowed category group takes its category apps off the blocks count`() {
         val phone = DeviceApps(
             installed = listOf(
-                categorised(CHAT, AppCategory.SOCIAL),
-                categorised(FEED, AppCategory.SOCIAL),
-                categorised(GAME, AppCategory.GAME)
+                anApp(CHAT, category = AppCategory.SOCIAL),
+                anApp(FEED, category = AppCategory.SOCIAL),
+                anApp(GAME, category = AppCategory.GAME)
             )
         )
-        val cat = AppGroup(id = 5, name = "Social apps", categories = "SOCIAL")
+        val cat = anAppGroup("Social apps", id = 5, categories = "SOCIAL")
         val t = RuleTables(emptyList(), listOf(cat), emptyList())
 
         assertEquals(3, blockedCount(allAppsRule(), t, phone))
