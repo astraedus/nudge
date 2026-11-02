@@ -204,6 +204,36 @@ afterEvaluate {
 }
 
 /**
+ * Paparazzi's screenshot tests and the rest of the JVM suite never share a test JVM.
+ *
+ * Paparazzi renders with layoutlib, whose jar is the real Android framework (native calls and all)
+ * rather than the android.jar stubs. On one classpath, every test that mocks a framework class
+ * (PackageManager, AccessibilityNodeInfo, WindowManager) runs that class's real static initialiser,
+ * which dies in `SystemProperties.native_get`; and a framework class that failed to initialise
+ * stays broken for the gallery tests that run later in the same fork. 83 tests failed that way.
+ *
+ * So a run that includes a Paparazzi task (`verifyPaparazziDebug`, `recordPaparazziDebug`) runs the
+ * screenshot gallery and nothing else, and every other run leaves the gallery out and takes
+ * layoutlib off the classpath, so the suite sees exactly the classpath it had before Paparazzi.
+ * Run the two in separate Gradle invocations, as CI does (ci.yml, screenshots.yml).
+ */
+val screenshotPackage = "com.astraedus.nudge.ui.gallery"
+gradle.taskGraph.whenReady {
+    // Not any "Paparazzi" task: testDebugUnitTest itself depends on its resources task.
+    val paparazziRun = allTasks.any {
+        it.project == project && it.name.matches(Regex("(record|verify|cleanRecord)Paparazzi.*"))
+    }
+    tasks.withType<Test>().forEach { test ->
+        if (paparazziRun) {
+            test.filter.includeTestsMatching("$screenshotPackage.*")
+        } else {
+            test.filter.excludeTestsMatching("$screenshotPackage.*")
+            test.classpath = test.classpath.filter { !it.name.matches(Regex("layoutlib-[0-9].*\\.jar")) }
+        }
+    }
+}
+
+/**
  * Unit-test JVM forks: make a process-global coroutine leak NAME ITSELF.
  *
  * Issue [#53](https://github.com/astraedus/nudge/issues/53) cost two investigations and shipped
