@@ -70,7 +70,6 @@ fun HomeScreen(
     val nukeSummary by viewModel.nukeSummary.collectAsStateWithLifecycle()
     val lockCard by viewModel.lockCard.collectAsStateWithLifecycle()
     val nukeUnlock by viewModel.nukeUnlock.collectAsStateWithLifecycle()
-    val context = LocalContext.current
 
     StrictModeChallengeHost(
         challenge = challenge,
@@ -87,6 +86,44 @@ fun HomeScreen(
         onCancel = viewModel::cancelNukeUnlock
     )
 
+    HomeContent(
+        state = state,
+        nukeSummary = nukeSummary,
+        lockCard = lockCard,
+        onToggleGlobalEnabled = { viewModel.toggleGlobalEnabled() },
+        onNavigateToApps = onNavigateToApps,
+        onNavigateToStats = onNavigateToStats,
+        onNavigateToSettings = onNavigateToSettings,
+        onNavigateToWillpower = onNavigateToWillpower,
+        onNavigateToInterventions = onNavigateToInterventions,
+        onNavigateToAppDetail = onNavigateToAppDetail,
+        onNavigateToNuke = onNavigateToNuke,
+        onOpenAllAppsRule = onOpenAllAppsRule
+    )
+}
+
+/**
+ * The dashboard drawn from plain state: no ViewModel, no flows. [HomeScreen] collects and passes
+ * in; the screenshot gallery (`ui/gallery/`) renders this directly from fixture state.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun HomeContent(
+    state: HomeUiState,
+    nukeSummary: NukeSummary,
+    lockCard: LockCard?,
+    onToggleGlobalEnabled: () -> Unit,
+    onNavigateToApps: () -> Unit,
+    onNavigateToStats: () -> Unit,
+    onNavigateToSettings: () -> Unit,
+    onNavigateToWillpower: () -> Unit,
+    onNavigateToInterventions: () -> Unit,
+    onNavigateToAppDetail: (String) -> Unit,
+    onNavigateToNuke: () -> Unit,
+    onOpenAllAppsRule: (Long) -> Unit
+) {
+    val context = LocalContext.current
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -102,7 +139,7 @@ fun HomeScreen(
                     // 16dp gutter, so the extra 12dp lines the switch up with them.
                     Switch(
                         checked = state.isGlobalEnabled,
-                        onCheckedChange = { viewModel.toggleGlobalEnabled() },
+                        onCheckedChange = { onToggleGlobalEnabled() },
                         modifier = Modifier.padding(end = 12.dp)
                     )
                 },

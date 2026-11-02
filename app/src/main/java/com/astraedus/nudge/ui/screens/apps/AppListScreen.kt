@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
@@ -60,7 +61,6 @@ fun AppListScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val challenge by viewModel.challenge.collectAsStateWithLifecycle()
     val allAppsSwitchOn by viewModel.allAppsSwitchOn.collectAsStateWithLifecycle()
-    val searching = state.searchQuery.isNotBlank()
     val listState = rememberLazyListState()
     var showBlockSeveral by rememberSaveable { mutableStateOf(false) }
 
@@ -98,6 +98,43 @@ fun AppListScreen(
         )
     }
 
+    AppListContent(
+        state = state,
+        listState = listState,
+        onSearchQueryChange = { viewModel.updateSearchQuery(it) },
+        onNavigateBack = onNavigateBack,
+        onNavigateToAppConfig = onNavigateToAppConfig,
+        onOpenGroup = onOpenGroup,
+        onOpenAllAppsRule = onOpenAllAppsRule,
+        onToggleAllApps = viewModel::toggleAllApps,
+        onToggleGroup = viewModel::toggleGroup,
+        onToggleApp = { viewModel.toggleApp(it) },
+        onBlockSeveral = { showBlockSeveral = true }
+    )
+}
+
+/**
+ * Manage Apps drawn from plain state: no ViewModel, no dialogs. [AppListScreen] owns the dialogs,
+ * the sheet and the scroll-to-new-group effect, and passes the list state in; the screenshot
+ * gallery (`ui/gallery/`) renders this directly from fixture state.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AppListContent(
+    state: AppListUiState,
+    onSearchQueryChange: (String) -> Unit,
+    onNavigateBack: () -> Unit,
+    onNavigateToAppConfig: (String) -> Unit,
+    onOpenGroup: (Long?) -> Unit,
+    onOpenAllAppsRule: (Long?) -> Unit,
+    onToggleAllApps: (AllAppsRuleItem) -> Unit,
+    onToggleGroup: (GroupRow) -> Unit,
+    onToggleApp: (AppRow) -> Unit,
+    onBlockSeveral: () -> Unit,
+    listState: LazyListState = rememberLazyListState()
+) {
+    val searching = state.searchQuery.isNotBlank()
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -117,7 +154,7 @@ fun AppListScreen(
         ) {
             OutlinedTextField(
                 value = state.searchQuery,
-                onValueChange = { viewModel.updateSearchQuery(it) },
+                onValueChange = onSearchQueryChange,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 8.dp),
@@ -140,11 +177,11 @@ fun AppListScreen(
                             allApps = state.sections.allApps,
                             groups = state.sections.groups,
                             showNewGroup = state.sections.showNewGroup,
-                            onToggleAllApps = viewModel::toggleAllApps,
+                            onToggleAllApps = onToggleAllApps,
                             onOpenAllAppsRule = onOpenAllAppsRule,
-                            onToggleGroup = viewModel::toggleGroup,
+                            onToggleGroup = onToggleGroup,
                             onOpenGroup = onOpenGroup,
-                            onBlockSeveral = { showBlockSeveral = true }
+                            onBlockSeveral = onBlockSeveral
                         )
                         is ManageAppsRow.Header -> ListSubheader(row.title)
                         is ManageAppsRow.App -> {
@@ -157,7 +194,7 @@ fun AppListScreen(
                                 trailingContent = {
                                     Switch(
                                         checked = app.isOn,
-                                        onCheckedChange = { viewModel.toggleApp(app) }
+                                        onCheckedChange = { onToggleApp(app) }
                                     )
                                 }
                             )
