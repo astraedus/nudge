@@ -1039,4 +1039,154 @@ object BlockLaunchGate {
     fun pendingOverlayAfterDismissal(pending: PendingOverlay?, id: Long): PendingOverlay? =
         if (pending == null || pending.id == id) null else pending
 
+    // --------------------------------------------- the block that never reached the screen
+
+    /**
+     * How long after a launch (or a re-show) the service looks at the screen to confirm the
+     * overlay is the thing in front of the blocked app.
+     *
+     * ## Why there is a timer here at all
+     *
+     * Every other rule in this file is redeemed by an EVENT, and [DeferredLaunch] explains why a
+     * timer is the wrong shape for issue #58. This case has no event to wait for. A first launch of
+     * an app whose launcher activity trampolines into a second activity of its OWN (Google Docs'
+     * `NewMainProxyActivity` starting `HomescreenActivity`, Firefox's `App` starting
+     * `HomeActivity`) brings the app's task back in front of an overlay we already started:
+     *
+     * - **before the overlay reached the screen**, the app's second window is the app "still
+     *   starting up underneath" ([isGenuineBypass] answers no, correctly, inside
+     *   [OVERLAY_SETTLE_MS]), and every event after it is swallowed under the live overlay flag or
+     *   refused as [Decision.DROP_ALREADY_PENDING]. Nothing else arrives, and the user is in the app.
+     * - **after it reached the screen**, the bypass IS read and the service re-launches the
+     *   overlay, but that `startActivity` is delivered (`wm_new_intent`) to the SAME instance the
+     *   platform has just stopped, whose queued `onStop` then runs `OverlayLifecycle.onStopped` and
+     *   finishes it (issue #8's abandonment rule doing exactly its job, on the wrong delivery).
+     *   Measured on the bench: `wm_new_intent` at +1509ms, `wm_finish_activity` at +1522ms, and the
+     *   app sat in front with no further window event for as long as anyone watched.
+     *
+     * In both, the last thing the platform says is "the blocked app is in front"; the stream has
+     * already spent that sentence. So the question is asked once per launch, at a fixed delay, and
+     * answered from the screen itself (the package that owns the active window), never from our own
+     * bookkeeping: an unreadable window is never a rescue.
+     *
+     * 1500ms: the overlay resumes ~230ms after `startActivity` on the Pixel 3 and the trampolines
+     * measured put the app back in front inside 1.1s, so the check comes after both. A rescue is a
+     * fresh EVALUATION, not a replay, so a block the user has legitimately finished by then (a
+     * completed Delay, the daily pass) is answered by its grant like any other re-entry.
+     */
+    const val OVERLAY_ARRIVAL_CHECK_MS = 1_500L
+
+    /**
+     * How many times one stay in an app may have its block re-asserted by the arrival check. A cap,
+     * not a tuning knob: an app that re-fronts itself over every overlay forever must cost a few
+     * launches and a loud log line, not a launch every [OVERLAY_ARRIVAL_CHECK_MS] for the rest of
+     * the day. Re-armed by a departure, like [Arrival].
+     */
+    const val MAX_ARRIVAL_RESCUES = 2
+
+    /**
+     * The block most recently put on screen for [targetPackage]: which launch the next check
+     * belongs to ([launchSeq]) and how many rescues this stay has already spent.
+     */
+    data class ArrivalWatch(
+        val targetPackage: String,
+        val launchSeq: Long,
+        val rescues: Int = 0
+    )
+
+    /** What the arrival check found. Only [RESCUE] does anything. */
+    enum class ArrivalVerdict {
+        /** The blocked app owns the screen and no overlay is in front of it: re-assert the block. */
+        RESCUE,
+
+        /** Something other than the blocked app is in front, our overlay included: nothing to do. */
+        NOT_BURIED,
+
+        /** The active window could not be read. Never a rescue, exactly like #7's fallback. */
+        UNVERIFIED,
+
+        /** A later launch owns the question; its own check will ask it. */
+        SUPERSEDED,
+
+        /** The user left the app since the launch (Home, another app). */
+        MOVED_ON,
+
+        /** This stay has used [MAX_ARRIVAL_RESCUES]. Logged, never acted on. */
+        SPENT
+    }
+
+    /** The watch after a launch or re-show for [target] numbered [launchSeq]. */
+    fun arrivalWatchAfterLaunch(watch: ArrivalWatch?, target: String, launchSeq: Long): ArrivalWatch =
+        if (watch != null && watch.targetPackage == target) {
+            watch.copy(launchSeq = launchSeq)
+        } else {
+            ArrivalWatch(targetPackage = target, launchSeq = launchSeq)
+        }
+
+    /**
+     * The watch after [signal]: gone once the user is visibly somewhere else, on the same evidence
+     * [arrivalAfterSignal] uses, so the rescue budget is per stay and a genuine re-entry starts
+     * with a full one.
+     */
+    fun arrivalWatchAfterSignal(signal: ForegroundSignal, watch: ArrivalWatch?): ArrivalWatch? {
+        if (watch == null) return null
+        return when (signal) {
+            is ForegroundSignal.Home -> null
+            is ForegroundSignal.AppWindow ->
+                if (signal.packageName == watch.targetPackage) watch else null
+
+            is ForegroundSignal.OwnUi,
+            is ForegroundSignal.AwarenessOverlay,
+            is ForegroundSignal.SystemSurface,
+            is ForegroundSignal.Transient,
+            is ForegroundSignal.PipOnly,
+            is ForegroundSignal.NotForeground -> watch
+        }
+    }
+
+    /**
+     * The arrival check for the launch numbered [checkSeq] against [target].
+     *
+     * @param activeWindowPackage the package owning the ACTIVE window right now, or null when it
+     *   could not be read. This is the whole of the evidence: the overlay in front reads as our own
+     *   package, the launcher or another app as itself, and only the blocked app itself reads as
+     *   a block that is not there.
+     */
+    fun arrivalVerdict(
+        watch: ArrivalWatch?,
+        checkSeq: Long,
+        target: String,
+        activeWindowPackage: String?
+    ): ArrivalVerdict = when {
+        watch == null || watch.targetPackage != target -> ArrivalVerdict.MOVED_ON
+        watch.launchSeq != checkSeq -> ArrivalVerdict.SUPERSEDED
+        activeWindowPackage == null -> ArrivalVerdict.UNVERIFIED
+        activeWindowPackage != target -> ArrivalVerdict.NOT_BURIED
+        watch.rescues >= MAX_ARRIVAL_RESCUES -> ArrivalVerdict.SPENT
+        else -> ArrivalVerdict.RESCUE
+    }
+
+    /**
+     * The pending overlay once a rescue has found [target] in front of it.
+     *
+     * An overlay that never reached the screen is [PendingOverlay.displaced] now, on the
+     * screen's own evidence rather than another app's window (#143's evidence, which a SAME-app
+     * trampoline never supplies), so [decide] answers [Decision.RESHOW_HIDDEN] instead of refusing
+     * the re-block as already pending. One that did reach the screen and was finished is already
+     * gone ([pendingOverlayAfterDismissal]); one that reached it and is still alive but buried is
+     * the ordinary [Decision.LAUNCH] re-delivery. Both are left alone.
+     */
+    fun pendingOverlayAfterRescue(
+        pending: PendingOverlay?,
+        target: String,
+        arrival: Arrival?
+    ): PendingOverlay? {
+        if (pending == null || pending.packageName != target) return pending
+        if (pending.windowShown || pending.displaced) return pending
+        return pending.copy(
+            displaced = true,
+            displacedArrival = arrival?.takeIf { it.targetPackage == target }
+        )
+    }
+
 }
