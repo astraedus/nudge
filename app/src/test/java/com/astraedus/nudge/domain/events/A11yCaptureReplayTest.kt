@@ -17,6 +17,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import com.astraedus.nudge.domain.engine.CoverageFacts
+import com.astraedus.nudge.domain.groups.GroupMembershipResolver
 
 /**
  * Replays REAL device event streams through the real pipeline.
@@ -437,7 +438,7 @@ class A11yCaptureReplayTest {
         val engine = BlockEngine(ScheduleEvaluator())
         fun decide(pkg: String) = engine.evaluate(
             packageName = pkg,
-            activeRules = evaluator.resolveRulesForPackage(pkg, rules, emptyList(), CoverageFacts(essential = false, launchable = true)),
+            activeRules = evaluator.resolveRulesForPackage(pkg, rules, GroupMembershipResolver.NONE, CoverageFacts(essential = false, launchable = true, category = null)),
             dailyUsageMs = 0L
         ) as BlockDecision.Block
 

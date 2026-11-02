@@ -1,8 +1,8 @@
 package com.astraedus.nudge.domain.engine
 
+import com.astraedus.nudge.domain.packages.AppCategory
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.domain.model.BlockRuleData
-import com.astraedus.nudge.domain.model.GroupMembership
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -16,7 +16,7 @@ class CoveredAppsAllAppsTest {
     private val launchable = setOf("youtube", "maps", "spotify", "dialer", "chrome")
     private val essentials = setOf("dialer", "launcher")
     private val music = 3L
-    private val memberships = listOf(GroupMembership(music, "spotify"))
+    private val memberships = membership(music to "spotify")
 
     private fun rule(
         id: Long,
@@ -40,7 +40,7 @@ class CoveredAppsAllAppsTest {
     )
 
     private fun covered(rules: List<BlockRuleData>) =
-        CoveredApps.packages(rules, memberships, launchable, essentials)
+        CoveredApps.packages(rules, memberships, launchable.associateWith { AppCategory.UNDEFINED }, essentials)
 
     @Test
     fun `All apps covers launchable minus essentials, allowed apps and allowed groups' members`() {

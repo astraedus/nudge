@@ -141,8 +141,8 @@ class GroupBrowserCaptureReplayTest {
         WholeAppCoverage.coversNow(
             pkg,
             snapshot.ruleData,
-            snapshot.memberships,
-            CoverageFacts(essential = false, launchable = true)
+            snapshot.membership,
+            CoverageFacts(essential = false, launchable = true, category = null)
         ) { schedule.isActiveNow(it) }
 
     @Test
