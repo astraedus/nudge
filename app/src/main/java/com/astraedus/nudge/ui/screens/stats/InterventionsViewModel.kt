@@ -40,11 +40,20 @@ data class InterventionsUiState(
  * gets blocked), as opposed to [StatsViewModel]'s raw screen-time view.
  */
 @HiltViewModel
-class InterventionsViewModel @Inject constructor(
+class InterventionsViewModel internal constructor(
     private val usageRepository: UsageRepository,
     private val installedAppsRepository: InstalledAppsRepository,
-    val calculator: InsightsCalculator
+    val calculator: InsightsCalculator,
+    private val clock: () -> Long
 ) : ViewModel() {
+
+    /** Hilt's constructor: the real wall clock. Tests use the primary one with a fake clock. */
+    @Inject
+    constructor(
+        usageRepository: UsageRepository,
+        installedAppsRepository: InstalledAppsRepository,
+        calculator: InsightsCalculator
+    ) : this(usageRepository, installedAppsRepository, calculator, System::currentTimeMillis)
 
     private val _range = MutableStateFlow(InsightsRange.THIRTY_DAYS)
 
@@ -52,7 +61,7 @@ class InterventionsViewModel @Inject constructor(
     // same list via the calculator rather than re-querying Room, so flipping 7d/30d never
     // touches the DB.
     private val windowStartMs: Long = calculator.rangeStartMs(
-        System.currentTimeMillis(),
+        clock(),
         ZoneId.systemDefault(),
         InsightsRange.THIRTY_DAYS
     )
@@ -86,7 +95,7 @@ class InterventionsViewModel @Inject constructor(
         range: InsightsRange,
         allTimeShown: Int
     ): InterventionsUiState {
-        val now = System.currentTimeMillis()
+        val now = clock()
         val zone = ZoneId.systemDefault()
         val insights = calculator.interventions(events, now, zone, range)
 

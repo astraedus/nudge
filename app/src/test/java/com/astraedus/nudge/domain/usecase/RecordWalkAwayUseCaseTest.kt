@@ -3,10 +3,13 @@ package com.astraedus.nudge.domain.usecase
 import com.astraedus.nudge.data.db.entity.UsageEvent
 import com.astraedus.nudge.data.repository.UsageRepository
 import com.astraedus.nudge.domain.logging.NudgeLog
+import com.astraedus.nudge.testing.TestClock
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
 import io.mockk.slot
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -72,13 +75,12 @@ class RecordWalkAwayUseCaseTest {
 
     @Test
     fun `timestamp is stamped so the row lands in today's bucket`() {
-        val before = System.currentTimeMillis()
-        val event = RecordWalkAwayUseCase.buildEvent(pkg, "DELAY")
-        val after = System.currentTimeMillis()
+        val clock = TestClock()
+        val event = RecordWalkAwayUseCase.buildEvent(pkg, "DELAY", nowMs = clock.now)
 
         // getChangedMindCount filters `timestamp >= dayStart AND < dayEnd`; a zero/default stamp
         // would silently drop the walk-away out of the "Today" tile.
-        assertTrue(event.timestamp in before..after)
+        assertEquals(clock.now, event.timestamp)
     }
 
     // --- the write ----------------------------------------------------------------------------
@@ -110,12 +112,13 @@ class RecordWalkAwayUseCaseTest {
         coEvery { repo.logEvent(any()) } throws IllegalStateException("db closed")
         val logger = RecordingLog()
 
-        val useCase = RecordWalkAwayUseCase(repo, logger)
+        val useCase = RecordWalkAwayUseCase(repo, logger, StandardTestDispatcher(testScheduler))
         useCase.record(pkg, "DELAY")
 
-        // `record` hands off to the singleton scope; give it a moment to run and fail.
-        val deadline = System.currentTimeMillis() + 2_000
-        while (logger.errors.isEmpty() && System.currentTimeMillis() < deadline) Thread.sleep(10)
+        // `record` hands off to the singleton scope, which runs on the test dispatcher: nothing
+        // happens until the scheduler is driven, then the insert fails and the handler logs it.
+        assertTrue(logger.errors.isEmpty())
+        advanceUntilIdle()
 
         assertEquals(1, logger.errors.size)
         assertTrue(logger.errors.single().contains("walk-away"))
