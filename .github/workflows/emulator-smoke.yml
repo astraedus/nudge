@@ -1,0 +1,122 @@
+name: Emulator smoke
+
+# Boots stock Android emulators on GitHub's free hosted Linux runners and proves Nudge's blocking
+# works there: install, grant, enable the accessibility service, seed one Hard-block rule, launch the
+# blocked app, assert BlockEngine's decision line AND that BlockOverlayActivity is in front.
+#
+# NOT a required check. It exists so Android 8 / 12 / 15 behaviour can be seen without queueing for
+# the one bench Pixel (scripts/device-qa.sh stays the release gate for physical-only cases).
+# The emulator is NEVER run on the laptop; CI is the only place this executes.
+#
+# Triggers are deliberately narrow: this is a PUBLIC repo, so there is no pull_request trigger (a
+# fork PR must have no path to a runner), no secrets, and `contents: read` only. workflow_dispatch
+# is owner-only; push-to-main is our own merged code.
+#
+# Every third-party action is pinned to a full commit SHA, not a tag (a moved tag is a supply-chain
+# hole on a public repo). The tag each SHA was resolved from is in the comment beside it.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - 'extension/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: emulator-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@48b5f213c81028ace310571dc5ec0fbbca0b2947 # v4
+        with:
+          validate-wrappers: false
+      # Built ONCE and shared: three emulator jobs rebuilding the same APK would triple the minutes
+      # (free tier is 2,000/month) for no information.
+      - run: ./gradlew assembleDebug
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 1
+
+  smoke:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false # one API level going red must not hide the other two
+      matrix:
+        # 26 = minSdk, 31 = bench Pixel parity, 35 = current.
+        api-level: [26, 31, 35]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: debug-apk
+
+      - name: Start timer
+        run: echo "JOB_T0=$(date +%s)" >> "$GITHUB_ENV"
+
+      # Per android-emulator-runner's README: without this the emulator cannot open /dev/kvm on
+      # the ubuntu runners and falls back to software emulation (unusably slow).
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Mark emulator step start
+        run: echo "EMU_T0=$(date +%s)" >> "$GITHUB_ENV"
+
+      - name: Emulator smoke (API ${{ matrix.api-level }})
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        env:
+          SMOKE_OUT: emulator-smoke-out
+        with:
+          api-level: ${{ matrix.api-level }}
+          arch: x86_64
+          target: google_apis
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          script: bash scripts/emulator-smoke.sh app-debug.apk
+
+      # Runs on failure too: the table row is how a red API level shows up at a glance.
+      - name: Summary
+        if: always()
+        run: |
+          total=$(( $(date +%s) - JOB_T0 ))
+          f=emulator-smoke-out/result.env
+          res=$(sed -n 's/^RESULT=//p' "$f" 2>/dev/null); res=${res:-no-result}
+          boot=$(sed -n 's/^BOOT_S=//p' "$f" 2>/dev/null)
+          target=$(sed -n 's/^TARGET=//p' "$f" 2>/dev/null)
+          reason=$(sed -n 's/^REASON=//p' "$f" 2>/dev/null)
+          {
+            echo "| API | result | block target | ready (s)* | job (s) | note |"
+            echo "|---|---|---|---|---|---|"
+            echo "| ${{ matrix.api-level }} | ${res} | ${target:-n/a} | ${boot:-n/a} | ${total} | ${reason} |"
+            echo
+            echo "*seconds from emulator-step start to adb-ready; includes system-image download and AVD creation."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload logcat and screenshots
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: emulator-smoke-api${{ matrix.api-level }}
+          path: emulator-smoke-out/
+          if-no-files-found: warn
+          retention-days: 7
