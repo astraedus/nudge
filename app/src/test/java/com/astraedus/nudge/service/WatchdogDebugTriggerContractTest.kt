@@ -101,7 +101,7 @@ class WatchdogDebugTriggerContractTest {
             text.contains("recordProtectionCheck(")
         )
         // The trigger is useless to the next person if the invocation only exists in this file.
-        val doc = SourceScan.appFile("../docs/architecture/service-lifecycle-and-watchdog.md")
+        val doc = SourceScan.rootFile("docs/architecture/service-lifecycle-and-watchdog.md")
         assertTrue(
             "${doc.name} must document the ADB invocation, or the trigger is undiscoverable",
             doc.readText().contains("dev.astraedus.nudge.debug.RUN_WATCHDOG")

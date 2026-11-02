@@ -21,16 +21,32 @@ object SourceScan {
             ?: error("settings.gradle.kts not found above ${File("").absolutePath}")
     }
 
+    /**
+     * [relative] resolved under [root]. An absolute path, or one that climbs out of [root] via
+     * `..` (or a symlink), is rejected: a scan test reads repo source and nothing else.
+     */
+    internal fun resolveInside(root: File, relative: String): File {
+        require(!File(relative).isAbsolute && !relative.startsWith("/") && !relative.startsWith("\\")) {
+            "absolute path rejected: $relative"
+        }
+        val canonicalRoot = root.canonicalFile
+        val file = File(canonicalRoot, relative).canonicalFile
+        require(file == canonicalRoot || file.path.startsWith(canonicalRoot.path + File.separator)) {
+            "path escapes ${canonicalRoot.path}: $relative"
+        }
+        return file
+    }
+
     /** A file or directory relative to the repo root, e.g. `scripts/a11y-capture.sh`. */
     fun rootFile(relative: String): File {
-        val file = File(projectRoot, relative)
+        val file = resolveInside(projectRoot, relative)
         assertTrue("$relative must exist under the repo root (looked at ${file.path})", file.exists())
         return file
     }
 
     /** A file or directory relative to the `app` module, e.g. `src/main/AndroidManifest.xml`. */
     fun appFile(relative: String): File {
-        val file = File(File(projectRoot, "app"), relative)
+        val file = resolveInside(File(projectRoot, "app"), relative)
         assertTrue("$relative must exist under app/ (looked at ${file.path})", file.exists())
         return file
     }
@@ -44,7 +60,7 @@ object SourceScan {
      * an existing directory and has no `.kt` suffix gets `.kt` appended.
      */
     fun kotlinFile(relative: String): File {
-        val asGiven = File(projectRoot, "app/src/main/java/$relative")
+        val asGiven = resolveInside(File(projectRoot, "app/src/main/java"), relative)
         return if (asGiven.isDirectory || relative.endsWith(".kt")) mainFile("java/$relative")
         else mainFile("java/$relative.kt")
     }
