@@ -230,6 +230,23 @@ check "a run killed mid-case: the EXIT trap's cleanup puts it back" \
   test "$(pip 'PICTURE_IN_PICTURE: allow' 'youtube_pip_off; exit 1')" = \
   "SET appops set $Y PICTURE_IN_PICTURE ignore|SET appops set $Y PICTURE_IN_PICTURE allow|"
 
+# ─── 6. a11y_is_bound reads the Bound services line, never the Enabled line under it ────
+echo "a11y_is_bound:"
+ENABLED='Enabled services:{{dev.astraedus.nudge/com.astraedus.nudge.service.NudgeAccessibilityService}}'
+bound() { # <dumpsys accessibility text> -> "bound" / "unbound"
+  run_qa "$OUT" FAKE_A11Y="$1" -- \
+    "ash() { printf '%b\\n' \"\$FAKE_A11Y\"; }; if a11y_is_bound; then echo bound; else echo unbound; fi" || true
+  tail -n1 "$OUT"
+}
+check "suppressed (Bound empty, grant still enabled): unbound" \
+  test "$(bound "    Bound services:{}\r\n    $ENABLED")" = unbound
+check "bound: Nudge's label on the Bound line" \
+  test "$(bound "    Bound services:{Service[label=Nudge - App Blocker, feedbackType[FEEDBACK_GENERIC]]}\n    $ENABLED")" = bound
+check "another service bound, Nudge only enabled: unbound" \
+  test "$(bound "    Bound services:{Service[label=TalkBack, feedbackType[FEEDBACK_SPOKEN]]}\n    $ENABLED")" = unbound
+check "grant off entirely: unbound" \
+  test "$(bound "    Bound services:{}\n    Enabled services:{}")" = unbound
+
 echo
 echo "$pass passed, $fail failed"
 [[ "$fail" -eq 0 ]]
