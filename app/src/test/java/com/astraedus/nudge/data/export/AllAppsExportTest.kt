@@ -1,7 +1,5 @@
 package com.astraedus.nudge.data.export
 
-import com.astraedus.nudge.data.db.entity.AppGroup
-import com.astraedus.nudge.data.db.entity.AppGroupMember
 import com.astraedus.nudge.data.db.entity.BlockRule
 import org.json.JSONArray
 import org.json.JSONObject
@@ -10,6 +8,9 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.astraedus.nudge.testing.aBlockRule
+import com.astraedus.nudge.testing.aGroupMember
+import com.astraedus.nudge.testing.anAppGroup
 
 /**
  * L4. The backup format for All apps rules (spec 5.8): they ride in their own top-level
@@ -20,16 +21,16 @@ class AllAppsExportTest {
 
     private val exporter = RuleExporter()
 
-    private val work = AppGroup(id = 1, name = "Work")
-    private val social = AppGroup(id = 2, name = "Social")
+    private val work = anAppGroup(id = 1, name = "Work")
+    private val social = anAppGroup(id = 2, name = "Social")
     private val members = mapOf(
-        1L to listOf(AppGroupMember(1, "com.slack")),
-        2L to listOf(AppGroupMember(2, "com.insta"))
+        1L to listOf(aGroupMember(1, "com.slack")),
+        2L to listOf(aGroupMember(2, "com.insta"))
     )
 
-    private val appRule = BlockRule(id = 10, packageName = "com.yt", mode = "DELAY", delaySeconds = 15)
-    private val groupRule = BlockRule(id = 11, groupId = 2, mode = "HARD_BLOCK")
-    private val allAppsRule = BlockRule(
+    private val appRule = aBlockRule(id = 10, packageName = "com.yt", mode = "DELAY", delaySeconds = 15)
+    private val groupRule = aBlockRule(id = 11, groupId = 2, mode = "HARD_BLOCK")
+    private val allAppsRule = aBlockRule(
         id = 12,
         mode = "HARD_BLOCK",
         allApps = true,

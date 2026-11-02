@@ -1,12 +1,12 @@
 package com.astraedus.nudge.data.db
 
-import com.astraedus.nudge.data.db.entity.UsageEvent
 import com.astraedus.nudge.data.db.entity.isShownConfrontation
 import com.astraedus.nudge.domain.usecase.RecordWalkAwayUseCase
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.astraedus.nudge.testing.aUsageEvent
 
 /**
  * What the number under the word "Blocked" means: confrontations the user was shown, each
@@ -83,7 +83,7 @@ class BlockedCountSemanticsTest {
         )
         assertFalse(
             "an allowed open was never blocked",
-            UsageEvent(packageName = BlockHistoryFixture.PACKAGE, timestamp = dayStart).isShownConfrontation
+            aUsageEvent(packageName = BlockHistoryFixture.PACKAGE, timestamp = dayStart).isShownConfrontation
         )
     }
 }

@@ -1,7 +1,6 @@
 package com.astraedus.nudge.data.repository
 
 import com.astraedus.nudge.data.db.dao.AppGroupDao
-import com.astraedus.nudge.data.db.dao.BlockRuleDao
 import com.astraedus.nudge.data.db.dao.exceptGroupIdsWithout
 import com.astraedus.nudge.data.db.dao.memberRowChanges
 import com.astraedus.nudge.data.db.dao.memberRows
@@ -9,7 +8,10 @@ import com.astraedus.nudge.data.db.entity.AppGroup
 import com.astraedus.nudge.data.db.entity.AppGroupMember
 import com.astraedus.nudge.data.db.entity.BlockRule
 import com.astraedus.nudge.domain.packages.AppCategory
-import io.mockk.mockk
+import com.astraedus.nudge.testing.FakeRuleDatabase
+import com.astraedus.nudge.testing.aBlockRule
+import com.astraedus.nudge.testing.aGroupMember
+import com.astraedus.nudge.testing.anAppGroup
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
@@ -26,24 +28,24 @@ private class FakeGroupDao : AppGroupDao() {
     val rules = mutableMapOf<Long, BlockRule>()
     var nextId = 1L
 
-    override fun getAll(): Flow<List<AppGroup>> = flowOf(groups.map { AppGroup(it.key, it.value) })
-    override fun getById(id: Long): Flow<AppGroup?> = flowOf(groups[id]?.let { AppGroup(id, it) })
+    override fun getAll(): Flow<List<AppGroup>> = flowOf(groups.map { anAppGroup(it.value, id = it.key) })
+    override fun getById(id: Long): Flow<AppGroup?> = flowOf(groups[id]?.let { anAppGroup(it, id = id) })
     override suspend fun insert(group: AppGroup): Long {
         groups[nextId] = group.name; categories[nextId] = group.categories; return nextId++
     }
     override suspend fun update(group: AppGroup) { groups[group.id] = group.name }
     override suspend fun delete(group: AppGroup) { groups.remove(group.id) }
     override fun getMembersForGroup(groupId: Long): Flow<List<AppGroupMember>> =
-        flowOf(members.filter { it.key.first == groupId }.map { AppGroupMember(it.key.first, it.key.second, it.value) })
+        flowOf(members.filter { it.key.first == groupId }.map { aGroupMember(it.key.first, it.key.second, it.value) })
     override fun getAllMembers(): Flow<List<AppGroupMember>> =
-        flowOf(members.map { AppGroupMember(it.key.first, it.key.second, it.value) })
+        flowOf(members.map { aGroupMember(it.key.first, it.key.second, it.value) })
     override suspend fun addMember(member: AppGroupMember) {
         members[member.groupId to member.packageName] = member.excluded
     }
     override suspend fun removeMember(groupId: Long, packageName: String) { members.remove(groupId to packageName) }
     override fun getGroupsForPackage(packageName: String): Flow<List<AppGroup>> = flowOf(emptyList())
     override suspend fun getMemberRows(groupId: Long) =
-        members.filter { it.key.first == groupId }.map { AppGroupMember(groupId, it.key.second, it.value) }
+        members.filter { it.key.first == groupId }.map { aGroupMember(groupId, it.key.second, it.value) }
     override suspend fun setCategories(groupId: Long, categories: String?) { this.categories[groupId] = categories }
     override suspend fun renameGroup(groupId: Long, name: String) { groups[groupId] = name }
     override suspend fun deleteMembersOfGroup(groupId: Long) { members.keys.removeAll { it.first == groupId } }
@@ -62,8 +64,8 @@ private class FakeGroupDao : AppGroupDao() {
 class GroupSaveTest {
 
     private val dao = FakeGroupDao()
-    private val repo = BlockRuleRepository(mockk<BlockRuleDao>(relaxed = true), dao)
-    private val rule = BlockRule(mode = "DELAY", packageName = "ignored")
+    private val repo = BlockRuleRepository(FakeRuleDatabase().ruleDao, dao)
+    private val rule = aBlockRule(packageName = "ignored")
 
     // saveGroup(groupId, name, categories, includes, excludes, rule)
     private suspend fun BlockRuleRepository.save(
@@ -143,7 +145,7 @@ class GroupSaveTest {
     // -- an allowed group's id leaves every All apps rule with the group (L1 on the fake DAO) --
 
     private fun allAppsRule(exceptGroupIds: String?) =
-        BlockRule(mode = "HARD_BLOCK", allApps = true, exceptGroupIds = exceptGroupIds)
+        aBlockRule(mode = "HARD_BLOCK", allApps = true, exceptGroupIds = exceptGroupIds)
 
     private fun putRule(rule: BlockRule): Long {
         val id = dao.nextId++
@@ -187,7 +189,7 @@ class GroupSaveTest {
     fun `saving a group with an All apps rule throws instead of writing a two-target row`() {
         assertThrows(IllegalArgumentException::class.java) {
             kotlinx.coroutines.runBlocking {
-                repo.save(null, "A", emptySet(), BlockRule(mode = "DELAY", allApps = true))
+                repo.save(null, "A", emptySet(), aBlockRule(allApps = true))
             }
         }
         assertEquals(emptyMap<Long, String>(), dao.groups)

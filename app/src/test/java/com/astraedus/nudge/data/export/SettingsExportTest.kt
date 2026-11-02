@@ -12,6 +12,8 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import com.astraedus.nudge.testing.aBlockRule
+import com.astraedus.nudge.testing.aUsageEvent
 
 /**
  * The FILE FORMAT contract for app settings.
@@ -60,7 +62,7 @@ class SettingsExportTest {
         settings: ExportedSettings? = settings(),
         history: List<UsageEvent> = emptyList(),
         rules: List<BlockRule> = listOf(
-            BlockRule(id = 1, packageName = "com.instagram.android", mode = "DELAY")
+            aBlockRule(id = 1, packageName = "com.instagram.android", mode = "DELAY")
         )
     ): String = exporter.exportRules(
         rules = rules,
@@ -111,7 +113,7 @@ class SettingsExportTest {
     fun `settings, rules and history all survive the same file`() {
         val json = export(
             history = listOf(
-                UsageEvent(
+                aUsageEvent(
                     id = 7,
                     packageName = "com.instagram.android",
                     timestamp = 1_700_000_000_000,
@@ -157,7 +159,7 @@ class SettingsExportTest {
                 customHardBlockMessages = "{ not now }"
             ),
             history = listOf(
-                UsageEvent(
+                aUsageEvent(
                     id = 1,
                     packageName = "com.app.with}brace",
                     timestamp = 1000,

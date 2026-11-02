@@ -1,14 +1,11 @@
 package com.astraedus.nudge.data.repository
 
-import android.content.Context
-import com.astraedus.nudge.data.db.dao.UsageEventDao
-import com.astraedus.nudge.data.db.entity.UsageEvent
-import com.astraedus.nudge.domain.engine.TimeTracker
-import io.mockk.coEvery
-import io.mockk.coVerify
-import io.mockk.mockk
+import com.astraedus.nudge.testing.FakeUsageEventDao
+import com.astraedus.nudge.testing.FakeUsageRepository
+import com.astraedus.nudge.testing.aUsageEvent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -22,38 +19,29 @@ import org.junit.Test
  */
 class UsageRepositoryInsertEventsTest {
 
-    private val dao = mockk<UsageEventDao>()
-    private val repository = UsageRepository(
-        context = mockk<Context>(relaxed = true),
-        usageEventDao = dao,
-        timeTracker = mockk<TimeTracker>(relaxed = true),
-        screenTimeProvider = mockk<ScreenTimeProvider>(relaxed = true)
-    )
+    private val dao = FakeUsageEventDao()
+    private val repository = FakeUsageRepository(events = dao)
 
-    private fun event(i: Int) = UsageEvent(
+    private fun importedEvent(i: Int) = aUsageEvent(
         packageName = "app.$i",
         timestamp = 1_000L + i,
         wasBlocked = true,
-        blockMode = "DELAY",
-        userChangedMind = false
+        blockMode = "DELAY"
     )
 
     @Test
     fun `a large import is a single DAO call, never chunked`() = runTest {
-        val captured = mutableListOf<List<UsageEvent>>()
-        coEvery { dao.insertAll(capture(captured)) } returns Unit
+        repository.insertEvents((1..1_200).map { importedEvent(it) })
 
-        val events = (1..1_200).map { event(it) }
-        repository.insertEvents(events)
-
-        coVerify(exactly = 1) { dao.insertAll(any()) }
-        assertEquals(1_200, captured.single().size)
+        assertEquals(1, dao.insertAllBatches.size)
+        assertEquals(1_200, dao.insertAllBatches.single().size)
+        assertEquals(1_200, dao.events.size)
     }
 
     @Test
     fun `an empty import makes no DAO call at all`() = runTest {
         repository.insertEvents(emptyList())
 
-        coVerify(exactly = 0) { dao.insertAll(any()) }
+        assertTrue(dao.insertAllBatches.isEmpty())
     }
 }
