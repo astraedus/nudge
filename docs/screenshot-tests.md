@@ -34,11 +34,13 @@ Goldens come from the CI image, never from a laptop. Fonts rasterise differently
 machine, so a golden recorded locally can fail on CI with no UI change at all.
 
 1. Push your branch.
-2. Actions > Screenshots > Run workflow, choose your branch, tick **record**.
-   CLI: `gh workflow run screenshots.yml --ref <branch> -f record=true`
+2. Either add the **`record-screenshots`** label to the PR (`gh pr edit <n> --add-label
+   record-screenshots`), or run Actions > Screenshots > Run workflow on your branch with
+   **record** ticked (`gh workflow run screenshots.yml --ref <branch> -f record=true`). A
+   label-triggered run ends red on purpose: it recorded, it did not verify.
 3. Download the `paparazzi-goldens` artifact
    (`gh run download <run-id> -n paparazzi-goldens -D app/src/test/snapshots`), check the images
-   look right, and commit them.
+   look right, and commit them. Remove the label, so the next push verifies against them.
 
 Locally, `./gradlew recordPaparazziDebug --tests 'com.astraedus.nudge.ui.gallery.*'` is fine for
 looking at a render while you iterate. Don't commit what it writes.

@@ -5,14 +5,19 @@ name: Screenshots
 # app/src/test/snapshots/. A failed comparison uploads the diff images as an artifact.
 #
 # Goldens are recorded HERE, never on a laptop: font rasterisation differs between machines, so a
-# golden from one box can fail on another for no UI reason. Run this workflow by hand with
-# "record" ticked on your branch, download the `paparazzi-goldens` artifact, commit the PNGs.
+# golden from one box can fail on another for no UI reason. Two ways to record:
+#   - Actions > Screenshots > Run workflow on your branch with "record" ticked
+#     (workflow_dispatch; works once this file is on main), or
+#   - add the `record-screenshots` label to the PR (works for any PR, forks included).
+# Then download the `paparazzi-goldens` artifact and commit the PNGs. A label-triggered record run
+# ends red on purpose: it recorded, it did not verify. Remove the label once the goldens are in.
 #
 # Same trust model as ci.yml: `pull_request` (never `pull_request_target`), read-only token, no
 # secrets, so a fork's PR runs here without reaching anything sensitive.
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, labeled]
     paths-ignore:
       - 'extension/**'   # extension-ci.yml covers the Chrome extension
   push:
@@ -35,6 +40,8 @@ jobs:
   paparazzi:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      RECORD: ${{ inputs.record || contains(github.event.pull_request.labels.*.name, 'record-screenshots') }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -49,11 +56,11 @@ jobs:
 
       # Scoped to the gallery package: the rest of the unit suite is ci.yml's job, not this one's.
       - name: Verify goldens
-        if: ${{ !inputs.record }}
+        if: env.RECORD != 'true'
         run: ./gradlew verifyPaparazziDebug --tests 'com.astraedus.nudge.ui.gallery.*'
 
       - name: Upload screenshot diffs
-        if: ${{ failure() && !inputs.record }}
+        if: failure() && env.RECORD != 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: paparazzi-diffs
@@ -64,14 +71,20 @@ jobs:
           retention-days: 14
 
       - name: Record goldens
-        if: ${{ inputs.record }}
+        if: env.RECORD == 'true'
         run: ./gradlew recordPaparazziDebug --tests 'com.astraedus.nudge.ui.gallery.*'
 
       - name: Upload recorded goldens
-        if: ${{ inputs.record }}
+        if: env.RECORD == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: paparazzi-goldens
           path: app/src/test/snapshots/**
           if-no-files-found: error
           retention-days: 14
+
+      - name: Recorded, not verified
+        if: env.RECORD == 'true' && github.event_name == 'pull_request'
+        run: |
+          echo "::error::This run recorded goldens instead of verifying them. Commit the paparazzi-goldens artifact and remove the record-screenshots label."
+          exit 1
