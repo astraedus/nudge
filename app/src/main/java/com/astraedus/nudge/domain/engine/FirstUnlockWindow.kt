@@ -51,6 +51,9 @@ object FirstUnlockWindow {
     /** The default logical day start, 4:00 AM (spec 5.1). */
     const val DEFAULT_DAY_START_MINUTE: Int = 4 * 60
 
+    /** The window length an editor offers first: 30 minutes (spec 3.5). */
+    const val DEFAULT_FIRST_UNLOCK_MINUTES: Int = 30
+
     private const val MINUTES_PER_DAY = 24 * 60
     private const val MILLIS_PER_MINUTE = 60_000L
 
@@ -141,6 +144,17 @@ object FirstUnlockWindow {
         if (stampMs > nowMs) return true
         return stampMs < logicalDayStart(nowMs, dayStartMinute, zone)
     }
+
+    /**
+     * The editor's one honest sentence (spec 5.3, owner decision 2): true when today's first unlock
+     * is already recorded, so a rule saved now arms after it and waits for tomorrow's.
+     *
+     * Saving stamps `armedAt = now`, and a window needs `stamp >= armedAt`. So with a fresh stamp
+     * today the new window cannot open until the next unlock; with no stamp yet (or a stale one) the
+     * very next unlock opens it, and the editor stays quiet.
+     */
+    fun startsAtNextUnlock(nowMs: Long, stampMs: Long, dayStartMinute: Int, zone: ZoneId): Boolean =
+        !shouldStamp(nowMs, stampMs, dayStartMinute, zone)
 
     private fun logicalDayDate(nowMs: Long, dayStartMinute: Int, zone: ZoneId): LocalDate {
         val local = Instant.ofEpochMilli(nowMs).atZone(zone)

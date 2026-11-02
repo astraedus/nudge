@@ -315,6 +315,29 @@ class FirstUnlockWindowTest {
     }
 
     @Test
+    fun `the editor promises tomorrow only when today's unlock has already happened`() {
+        val now = at(newYork, "2026-06-06", 8, 0)
+
+        assertTrue(
+            "an 08:00 unlock means a rule saved at 08:00 starts tomorrow",
+            FirstUnlockWindow.startsAtNextUnlock(now, at(newYork, "2026-06-06", 8, 0), 240, newYork)
+        )
+        assertFalse(
+            "no unlock yet today, so the next one starts the window",
+            FirstUnlockWindow.startsAtNextUnlock(now, FirstUnlockWindow.NO_STAMP, 240, newYork)
+        )
+        assertFalse(
+            "yesterday's stamp is stale, so the next unlock starts the window",
+            FirstUnlockWindow.startsAtNextUnlock(
+                now,
+                at(newYork, "2026-06-05", 8, 0),
+                240,
+                newYork
+            )
+        )
+    }
+
+    @Test
     fun `a corrupt day start is clamped, not thrown`() {
         val now = at(newYork, "2026-06-06", 12, 0)
 
