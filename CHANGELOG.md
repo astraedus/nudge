@@ -4,6 +4,9 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+### Fixed
+- The on/off switch at the top of the dashboard no longer runs off the edge of the screen.
+
 ## [1.26.0] - 2026-11-02
 
 ### Added
@@ -16,9 +19,6 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
 ### Changed
 - With Strict Mode on, unchecking a category that brings apps into a blocking group, or removing one of its apps, asks for the challenge. A category with no apps on your phone can be unchecked freely.
 - Backups keep a group's categories and the apps you removed from it. An older Nudge restoring the same backup gets the group's apps as a plain list.
-
-### Fixed
-- The on/off switch at the top of the dashboard no longer runs off the edge of the screen.
 
 ## [1.25.0] - 2026-11-02
 
