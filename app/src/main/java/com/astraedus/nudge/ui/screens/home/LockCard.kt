@@ -68,7 +68,7 @@ fun lockCardFor(
     rules: List<BlockRuleData>,
     now: Calendar,
     appLabels: Map<String, String>,
-    scheduler: ScheduleEvaluator = ScheduleEvaluator()
+    scheduler: ScheduleEvaluator
 ): LockCard? {
     val endOf = HashMap<Long, Long?>()
     val winner = rules

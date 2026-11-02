@@ -17,13 +17,6 @@ class ScheduleEvaluator @Inject constructor(
 ) {
 
     /**
-     * No anchor: every first-unlock rule reads as inactive. Kept so the dozens of existing tests and
-     * hand-built call sites that only exercise days-and-times keep compiling unchanged; production
-     * always goes through the Hilt constructor above.
-     */
-    constructor() : this(FirstUnlockState.NONE)
-
-    /**
      * Returns true if the rule should be active right now.
      * If no schedule fields are set (all null), the rule is always active.
      */
@@ -41,15 +34,7 @@ class ScheduleEvaluator @Inject constructor(
     fun isActiveAt(rule: ActiveRule, now: Calendar): Boolean {
         val minutes = rule.firstUnlockMinutes
         if (minutes != null) {
-            return FirstUnlockWindow.isActive(
-                nowMs = now.timeInMillis,
-                stampMs = firstUnlock.firstUnlockAt(),
-                dayStartMinute = firstUnlock.dayStartMinute(),
-                minutes = minutes,
-                days = rule.scheduleDays,
-                armedAt = rule.armedAt,
-                zone = firstUnlock.zoneId()
-            )
+            return firstUnlockActive(minutes, rule.scheduleDays, rule.armedAt, now)
         }
         return isScheduledAt(rule.scheduleDays, rule.scheduleStartMinute, rule.scheduleEndMinute, now)
     }
@@ -65,15 +50,7 @@ class ScheduleEvaluator @Inject constructor(
     fun isActiveAt(rule: BlockRuleData, now: Calendar): Boolean {
         val minutes = rule.firstUnlockMinutes
         if (minutes != null) {
-            return FirstUnlockWindow.isActive(
-                nowMs = now.timeInMillis,
-                stampMs = firstUnlock.firstUnlockAt(),
-                dayStartMinute = firstUnlock.dayStartMinute(),
-                minutes = minutes,
-                days = rule.scheduleDays,
-                armedAt = rule.armedAt,
-                zone = firstUnlock.zoneId()
-            )
+            return firstUnlockActive(minutes, rule.scheduleDays, rule.armedAt, now)
         }
         return isScheduledAt(rule.scheduleDays, rule.scheduleStartMinute, rule.scheduleEndMinute, now)
     }
@@ -90,42 +67,55 @@ class ScheduleEvaluator @Inject constructor(
      */
     fun windowEndAt(rule: ActiveRule, now: Calendar): Long? {
         val minutes = rule.firstUnlockMinutes
-        if (minutes != null) return firstUnlockEnd(rule, minutes, now)
+        if (minutes != null) return firstUnlockEnd(minutes, rule.scheduleDays, rule.armedAt, now)
         return windowEndAt(rule.scheduleDays, rule.scheduleStartMinute, rule.scheduleEndMinute, now)
     }
 
     /** [windowEndAt] for a rule not yet resolved for a package (the Home lock card). */
     fun windowEndAt(rule: BlockRuleData, now: Calendar): Long? {
         val minutes = rule.firstUnlockMinutes
-        if (minutes != null) return firstUnlockEnd(rule, minutes, now)
+        if (minutes != null) return firstUnlockEnd(minutes, rule.scheduleDays, rule.armedAt, now)
         return windowEndAt(rule.scheduleDays, rule.scheduleStartMinute, rule.scheduleEndMinute, now)
     }
+
+    /**
+     * The first-unlock branch, in one place: the anchor is the evaluator's, the window the rule's.
+     * [ActiveRule] and [BlockRuleData] carry the same three fields, and duplicating the call twice
+     * (then twice again for the end) was four chances to pass one of them wrong.
+     */
+    private fun firstUnlockActive(
+        minutes: Int,
+        days: List<Int>?,
+        armedAt: Long,
+        now: Calendar
+    ): Boolean = FirstUnlockWindow.isActive(
+        nowMs = now.timeInMillis,
+        stampMs = firstUnlock.firstUnlockAt(),
+        dayStartMinute = firstUnlock.dayStartMinute(),
+        minutes = minutes,
+        days = days,
+        armedAt = armedAt,
+        zone = firstUnlock.zoneId()
+    )
 
     /**
      * The first-unlock window's end for the block screen's "Until 8:42 AM". The day boundary can end
      * it before the rule's own minutes do, and [FirstUnlockWindow.endsAt] returns whichever is first.
      */
-    private fun firstUnlockEnd(rule: ActiveRule, minutes: Int, now: Calendar): Long? =
-        FirstUnlockWindow.endsAt(
-            nowMs = now.timeInMillis,
-            stampMs = firstUnlock.firstUnlockAt(),
-            dayStartMinute = firstUnlock.dayStartMinute(),
-            minutes = minutes,
-            days = rule.scheduleDays,
-            armedAt = rule.armedAt,
-            zone = firstUnlock.zoneId()
-        )
-
-    private fun firstUnlockEnd(rule: BlockRuleData, minutes: Int, now: Calendar): Long? =
-        FirstUnlockWindow.endsAt(
-            nowMs = now.timeInMillis,
-            stampMs = firstUnlock.firstUnlockAt(),
-            dayStartMinute = firstUnlock.dayStartMinute(),
-            minutes = minutes,
-            days = rule.scheduleDays,
-            armedAt = rule.armedAt,
-            zone = firstUnlock.zoneId()
-        )
+    private fun firstUnlockEnd(
+        minutes: Int,
+        days: List<Int>?,
+        armedAt: Long,
+        now: Calendar
+    ): Long? = FirstUnlockWindow.endsAt(
+        nowMs = now.timeInMillis,
+        stampMs = firstUnlock.firstUnlockAt(),
+        dayStartMinute = firstUnlock.dayStartMinute(),
+        minutes = minutes,
+        days = days,
+        armedAt = armedAt,
+        zone = firstUnlock.zoneId()
+    )
 
     private fun windowEndAt(days: List<Int>?, startMinute: Int?, endMinute: Int?, now: Calendar): Long? {
         if (days == null && startMinute == null && endMinute == null) return null

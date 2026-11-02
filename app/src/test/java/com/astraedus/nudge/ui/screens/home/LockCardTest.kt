@@ -1,6 +1,8 @@
 package com.astraedus.nudge.ui.screens.home
 
 import com.astraedus.nudge.domain.model.BlockMode
+import com.astraedus.nudge.domain.engine.ScheduleEvaluator
+import com.astraedus.nudge.domain.engine.FirstUnlockState
 import com.astraedus.nudge.domain.model.BlockRuleData
 import java.util.Calendar
 import java.util.GregorianCalendar
@@ -47,7 +49,8 @@ class LockCardTest {
 
     private val labels = mapOf("com.spotify" to "Spotify", "com.maps" to "Maps")
 
-    private fun card(rules: List<BlockRuleData>, now: Calendar) = lockCardFor(rules, now, labels)
+    private fun card(rules: List<BlockRuleData>, now: Calendar) =
+        lockCardFor(rules, now, labels, ScheduleEvaluator(FirstUnlockState.NONE))
 
     // -- Shown only while an enabled All apps rule is active ---------------------------------
 

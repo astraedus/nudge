@@ -10,8 +10,9 @@ import java.time.ZoneId
  * fact, not a rule's property), it is needed deep inside [ScheduleEvaluator] where no call site has
  * a context to thread, and the hottest reader is the accessibility event path, which must not touch
  * DataStore. Production binds `FirstUnlockStateCache`, which keeps all three in memory and updates
- * them from `NudgePreferences`; `NONE` is the default a bare `ScheduleEvaluator()` gets, and it
- * means "no first-unlock window is ever active", which is the fail-open reading.
+ * them from `NudgePreferences`. `NONE` is for callers with no anchor at all (a pure test that only
+ * exercises days-and-times), and it means "no first-unlock window is ever active", the fail-open
+ * reading. Nothing in the app uses it: Hilt always supplies the cache.
  */
 interface FirstUnlockState {
 

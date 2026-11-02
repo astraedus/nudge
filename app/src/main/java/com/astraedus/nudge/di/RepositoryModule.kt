@@ -64,9 +64,6 @@ object RepositoryModule {
     ): InstalledAppsRepository = InstalledAppsRepository(context)
 
     @Provides
-    fun provideScheduleEvaluator(): ScheduleEvaluator = ScheduleEvaluator()
-
-    @Provides
     fun provideBlockEngine(
         scheduleEvaluator: ScheduleEvaluator,
         nudgeLog: NudgeLog
