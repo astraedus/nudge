@@ -98,9 +98,12 @@ fun HomeScreen(
                     )
                 },
                 actions = {
+                    // TopAppBar leaves only 4dp after its last action; the cards below sit in a
+                    // 16dp gutter, so the extra 12dp lines the switch up with them.
                     Switch(
                         checked = state.isGlobalEnabled,
-                        onCheckedChange = { viewModel.toggleGlobalEnabled() }
+                        onCheckedChange = { viewModel.toggleGlobalEnabled() },
+                        modifier = Modifier.padding(end = 12.dp)
                     )
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
