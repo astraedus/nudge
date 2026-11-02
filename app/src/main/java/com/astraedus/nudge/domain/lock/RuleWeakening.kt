@@ -168,7 +168,22 @@ object RuleWeakening {
         if (scheduleKind(old) != scheduleKind(new)) return true
         val oldMinutes = old.firstUnlockMinutes ?: return false
         val newMinutes = new.firstUnlockMinutes ?: return false
-        return newMinutes < oldMinutes
+        if (newMinutes < oldMinutes) return true
+        // A first-unlock rule's days pick which logical days the window opens on, so dropping one
+        // un-covers that day: taking today off during a window ends it with no challenge. Cheap to
+        // judge here, where the axis already lives.
+        return (daysOf(old.scheduleDays) - daysOf(new.scheduleDays)).isNotEmpty()
+    }
+
+    /** The days a rule is on, as a set: null or empty means every day, as the engine reads it. */
+    private fun daysOf(csv: String?): Set<Int> {
+        val picked = csv
+            ?.split(",")
+            ?.mapNotNull { it.trim().toIntOrNull() }
+            ?.filter { it in 1..7 }
+            ?.toSet()
+            .orEmpty()
+        return if (picked.isEmpty()) ALL_DAYS else picked
     }
 
     /**
@@ -179,6 +194,8 @@ object RuleWeakening {
      * not narrow the window, they only pick days).
      */
     private enum class ScheduleKind { FIRST_UNLOCK, DAYS_TIMES, ALL_TIME }
+
+    private val ALL_DAYS: Set<Int> = setOf(1, 2, 3, 4, 5, 6, 7)
 
     private fun scheduleKind(rule: BlockRule): ScheduleKind = when {
         rule.firstUnlockMinutes != null -> ScheduleKind.FIRST_UNLOCK

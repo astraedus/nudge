@@ -790,6 +790,50 @@ class RuleWeakeningTest {
      * without changing the spec first.
      */
     @Test
+    fun `taking a day off a first-unlock rule is weakening, adding one is free`() {
+        // The days pick which logical days the window opens on, so dropping today ends a running
+        // window with no challenge (review, spec 5.6).
+        assertTrue(
+            "dropping Friday from a Mon-Fri window",
+            RuleWeakening.isWeakening(
+                rule(firstUnlockMinutes = 30, scheduleDays = "1,2,3,4,5"),
+                rule(firstUnlockMinutes = 30, scheduleDays = "1,2,3,4")
+            )
+        )
+        assertFalse(
+            "adding a day only blocks more",
+            RuleWeakening.isWeakening(
+                rule(firstUnlockMinutes = 30, scheduleDays = "1,2,3,4"),
+                rule(firstUnlockMinutes = 30, scheduleDays = "1,2,3,4,5")
+            )
+        )
+        assertTrue(
+            "every day to one day",
+            RuleWeakening.isWeakening(
+                rule(firstUnlockMinutes = 30, scheduleDays = null),
+                rule(firstUnlockMinutes = 30, scheduleDays = "1")
+            )
+        )
+        assertFalse(
+            "one day to every day",
+            RuleWeakening.isWeakening(
+                rule(firstUnlockMinutes = 30, scheduleDays = "1"),
+                rule(firstUnlockMinutes = 30, scheduleDays = null)
+            )
+        )
+    }
+
+    @Test
+    fun `a days edit on a days-and-times rule stays free`() {
+        assertFalse(
+            RuleWeakening.isWeakening(
+                rule(scheduleDays = "1,2,3,4,5"),
+                rule(scheduleDays = "1,2")
+            )
+        )
+    }
+
+    @Test
     fun `a first-unlock window to all the time is weakening under the literal schedule-kind reading`() {
         assertTrue(
             RuleWeakening.isWeakening(
