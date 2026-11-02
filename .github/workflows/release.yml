@@ -64,8 +64,11 @@ jobs:
       # main before this existed, one on the accessibility hot path. Gates BOTH paths below, since
       # the tag release and the rolling main-latest build share this job.
       # `lint { abortOnError = true }` in app/build.gradle.kts is what gives it teeth.
+      # testDebugUnitTest, not `test`: `test` also runs testReleaseUnitTest, the same JVM tests a
+      # second time against R8-minified code. No unit test reads release-only config; release is
+      # covered by assembleRelease below plus the release-APK device gate.
       - name: Run tests and lint
-        run: ./gradlew test lintDebug
+        run: ./gradlew testDebugUnitTest lintDebug
 
       # A unit-test failure that only happens on a CI runner is only diagnosable from the report.
       # Issue #53 fired twice on this step and both times the console line was all that survived:
@@ -148,7 +151,7 @@ jobs:
       #     signed APK, so every merge to main yields an installable dev build at a stable
       #     URL (…/releases/tag/main-latest). NOT a versioned release — the gradle version
       #     isn't bumped between releases; this is the bleeding-edge build for testers
-      #     (already tests-gated by the `./gradlew test` step above). Real installs use a
+      #     (already tests-gated by the `./gradlew testDebugUnitTest` step above). Real installs use a
       #     v* release / Play. The rolling tag is deleted+recreated so it always points at
       #     the newest main. ---
       - name: Publish rolling dev build (main)
