@@ -20,7 +20,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -31,24 +33,47 @@ import androidx.compose.ui.unit.dp
 import com.astraedus.nudge.ui.theme.NudgeTheme
 import kotlinx.coroutines.delay
 
+/** What the pause screen shows, mapped from the launch intent. Pure, so the mapping is tested. */
+internal data class PhoneNudgeArgs(val minutes: Int, val seconds: Int)
+
+/**
+ * The one mapping from two raw intent values to what the screen shows. Clamps rather than trusting
+ * the sender: a negative countdown is nonsense, and a zero-minute pause has nothing to say.
+ */
+internal fun phoneNudgeArgs(minutes: Int, seconds: Int): PhoneNudgeArgs = PhoneNudgeArgs(
+    minutes = minutes.coerceAtLeast(1),
+    seconds = seconds.coerceAtLeast(0)
+)
+
 /**
  * The whole-phone pause (issue #123): a full-screen question with a countdown.
  *
  * Not a block. It writes no `UsageEvent`, has no passthrough and no escape hatch beyond its two
  * buttons. "I'm done" goes Home, which is the answer the feature is hoping for. "Keep going" only
  * becomes available once the countdown ends, so the pause cannot be dismissed on reflex.
+ *
+ * ## One instance, always the current pause
+ *
+ * The activity is `singleInstance`, so a pause left behind with Home is the instance the next pause
+ * reuses. [onNewIntent] therefore re-reads the extras and replaces [args]; the content is keyed on
+ * those args, so the countdown and the minutes restart instead of showing the previous pause's
+ * finished countdown (#136 review, item 6). Chosen over `finish()` in `onStop` because the pause
+ * stays one window with no finish/re-create flicker, and there is only one path to reason about.
  */
 class PhoneNudgeActivity : ComponentActivity() {
 
     companion object {
         const val EXTRA_MINUTES = "phone_nudge_minutes"
         const val EXTRA_PAUSE_SECONDS = "phone_nudge_pause_seconds"
+        const val DEFAULT_MINUTES = 20
+        const val DEFAULT_PAUSE_SECONDS = 5
     }
+
+    private val args = mutableStateOf(PhoneNudgeArgs(DEFAULT_MINUTES, DEFAULT_PAUSE_SECONDS))
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val minutes = intent.getIntExtra(EXTRA_MINUTES, 20)
-        val pauseSeconds = intent.getIntExtra(EXTRA_PAUSE_SECONDS, 5).coerceAtLeast(0)
+        args.value = argsFrom(intent)
 
         // Back is not a way out: the two buttons are. Swallowing it keeps the countdown honest
         // without a custom dialog, and matches the block overlay's discipline.
@@ -58,18 +83,35 @@ class PhoneNudgeActivity : ComponentActivity() {
 
         setContent {
             NudgeTheme {
-                PhoneNudgeContent(
-                    minutes = minutes,
-                    pauseSeconds = pauseSeconds,
-                    onKeepGoing = { finish() },
-                    onDone = {
-                        goHome()
-                        finish()
-                    }
-                )
+                val current = args.value
+                // Keying the content on the args is what resets the remember/LaunchedEffect
+                // countdown for a re-delivered pause.
+                key(current) {
+                    PhoneNudgeContent(
+                        minutes = current.minutes,
+                        pauseSeconds = current.seconds,
+                        onKeepGoing = { finish() },
+                        onDone = {
+                            goHome()
+                            finish()
+                        }
+                    )
+                }
             }
         }
     }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        args.value = argsFrom(intent)
+    }
+
+    private fun argsFrom(intent: Intent?): PhoneNudgeArgs = phoneNudgeArgs(
+        minutes = intent?.getIntExtra(EXTRA_MINUTES, DEFAULT_MINUTES) ?: DEFAULT_MINUTES,
+        seconds = intent?.getIntExtra(EXTRA_PAUSE_SECONDS, DEFAULT_PAUSE_SECONDS)
+            ?: DEFAULT_PAUSE_SECONDS
+    )
 
     private fun goHome() {
         startActivity(
