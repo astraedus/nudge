@@ -9,7 +9,9 @@ import com.astraedus.nudge.data.export.HistoryMerge
 import com.astraedus.nudge.data.export.RuleExporter
 import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.data.repository.BlockRuleRepository
+import com.astraedus.nudge.data.repository.InstalledAppsRepository
 import com.astraedus.nudge.data.repository.UsageRepository
+import com.astraedus.nudge.domain.packages.EssentialPackages
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -37,6 +39,8 @@ class ImportRulesUseCaseTest {
 
     private lateinit var repository: BlockRuleRepository
     private lateinit var usageRepository: UsageRepository
+    private lateinit var installedApps: InstalledAppsRepository
+    private lateinit var essentials: EssentialPackages
     private lateinit var useCase: ImportRulesUseCase
     private lateinit var addedRules: MutableList<BlockRule>
     private lateinit var createdGroups: MutableList<AppGroup>
@@ -98,7 +102,12 @@ class ImportRulesUseCaseTest {
         }
         coEvery { repository.addToGroup(any()) } answers { addedMembers.add(firstArg()); Unit }
 
-        useCase = ImportRulesUseCase(repository, usageRepository, preferences, RuleExporter())
+        installedApps = mockk()
+        essentials = mockk()
+        coEvery { installedApps.getInstalledApps() } returns emptyList()
+        coEvery { essentials.current() } returns emptySet()
+
+        useCase = ImportRulesUseCase(repository, usageRepository, preferences, RuleExporter(), installedApps, essentials)
     }
 
     private suspend fun import(json: String): ImportOutcome =

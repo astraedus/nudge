@@ -7,7 +7,9 @@ import com.astraedus.nudge.data.export.ExportedSettings
 import com.astraedus.nudge.data.export.RuleExporter
 import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.data.repository.BlockRuleRepository
+import com.astraedus.nudge.data.repository.InstalledAppsRepository
 import com.astraedus.nudge.data.repository.UsageRepository
+import com.astraedus.nudge.domain.packages.EssentialPackages
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
@@ -35,6 +37,8 @@ class ExportRulesUseCaseTest {
     private lateinit var repository: BlockRuleRepository
     private lateinit var usageRepository: UsageRepository
     private lateinit var preferences: NudgePreferences
+    private lateinit var installedApps: InstalledAppsRepository
+    private lateinit var essentials: EssentialPackages
     private lateinit var useCase: ExportRulesUseCase
 
     @Before
@@ -48,7 +52,12 @@ class ExportRulesUseCaseTest {
         coEvery { usageRepository.getAllEventsForExport() } returns emptyList()
         coEvery { preferences.exportableSettings() } returns ExportedSettings()
 
-        useCase = ExportRulesUseCase(repository, usageRepository, preferences, RuleExporter())
+        installedApps = mockk()
+        essentials = mockk()
+        coEvery { installedApps.getInstalledApps() } returns emptyList()
+        coEvery { essentials.current() } returns emptySet()
+
+        useCase = ExportRulesUseCase(repository, usageRepository, preferences, RuleExporter(), installedApps, essentials)
     }
 
     private fun withRules(vararg rules: BlockRule) {
