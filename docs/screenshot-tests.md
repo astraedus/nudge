@@ -49,8 +49,12 @@ like a switch losing its end padding, fails the comparison and produces a diff i
 
 ## Record goldens (on CI only)
 
-Goldens come from the CI image, never from a laptop. Fonts rasterise differently from machine to
-machine, so a golden recorded locally can fail on CI with no UI change at all.
+Goldens come from the CI image, never from a laptop. The CI image is the reference the gate runs
+on. layoutlib renders in software with its own bundled fonts, and the first goldens were
+byte-identical to a laptop render, but a different JDK or OS on someone's machine is a variable
+the gate does not need. The comparison has zero tolerance (`maxPercentDifference = 0.0` in
+`ScreenGalleryTest`), because #154's lost 12dp switch inset changes only 0.22% of the Home frame
+and Paparazzi's default lets 0.1% through.
 
 1. Push your branch.
 2. Either add the **`record-screenshots`** label to the PR (`gh pr edit <n> --add-label
@@ -74,8 +78,9 @@ side, with the changed pixels highlighted in the middle panel. Open it and decid
 - **Intended change**: re-record on CI and commit the new goldens.
 
 Locally: `./gradlew verifyPaparazziDebug --tests 'com.astraedus.nudge.ui.gallery.*'`, then open
-`app/build/paparazzi/failures/`. Small anti-aliasing differences against CI goldens are expected
-on a laptop, so judge by the diff image, not the pass/fail.
+`app/build/paparazzi/failures/`. On a Linux laptop with JDK 17 this has matched CI exactly. If
+it fails locally with no UI change, look at the diff image before believing it, and trust the CI
+run.
 
 ## Rule: a PR that changes goldens explains why
 

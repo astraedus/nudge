@@ -4,8 +4,8 @@ name: Screenshots
 # (layoutlib: no emulator, no device) and compares each frame against the PNGs committed under
 # app/src/test/snapshots/. A failed comparison uploads the diff images as an artifact.
 #
-# Goldens are recorded HERE, never on a laptop: font rasterisation differs between machines, so a
-# golden from one box can fail on another for no UI reason. Two ways to record:
+# Goldens are recorded HERE, never on a laptop: this image is the reference the zero-tolerance
+# comparison runs on, and a golden from another box could differ for no UI reason. Two ways to record:
 #   - Actions > Screenshots > Run workflow on your branch with "record" ticked
 #     (workflow_dispatch; works once this file is on main), or
 #   - add the `record-screenshots` label to the PR (works for any PR, forks included).

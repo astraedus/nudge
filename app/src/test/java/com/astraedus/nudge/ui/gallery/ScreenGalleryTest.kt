@@ -27,8 +27,14 @@ import org.junit.Test
  */
 class ScreenGalleryTest {
 
+    /**
+     * `maxPercentDifference = 0.0`: any changed pixel fails. Paparazzi's default lets 0.1% through,
+     * and #154's lost 12dp switch inset changes only 0.22% of the Home frame, so a 4dp slip would
+     * pass unseen. layoutlib renders in software with its own bundled fonts, and the CI goldens
+     * were byte-identical to a laptop render, so zero tolerance does not make the gate flaky.
+     */
     @get:Rule
-    val paparazzi = Paparazzi(deviceConfig = DeviceConfig.PIXEL_3)
+    val paparazzi = Paparazzi(deviceConfig = DeviceConfig.PIXEL_3, maxPercentDifference = 0.0)
 
     @Test
     fun home_light() = snapshot(dark = false) { home() }
