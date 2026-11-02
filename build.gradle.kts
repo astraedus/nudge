@@ -4,5 +4,5 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose") version "2.0.21" apply false
     id("com.google.devtools.ksp") version "2.0.21-1.0.28" apply false
     id("com.google.dagger.hilt.android") version "2.52" apply false
-    id("app.cash.paparazzi") version "2.0.0-alpha02" apply false
+    id("app.cash.paparazzi") version "1.3.5" apply false
 }
