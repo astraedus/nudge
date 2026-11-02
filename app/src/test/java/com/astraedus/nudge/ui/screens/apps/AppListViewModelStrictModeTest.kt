@@ -75,7 +75,7 @@ class AppListViewModelStrictModeTest {
         vm.toggleApp(appRow(hasRule = true, on = true))
 
         assertNotNull(vm.challenge.value)
-        assertEquals(listOf(rule), db.rules)
+        assertEquals(listOf(rule).withoutArming(), db.rules.withoutArming())
     }
 
     @Test
@@ -86,7 +86,7 @@ class AppListViewModelStrictModeTest {
 
         vm.verifyChallenge(vm.challenge.value!!.target)
 
-        assertEquals(listOf(rule.copy(enabled = false)), db.rules)
+        assertEquals(listOf(rule.copy(enabled = false)).withoutArming(), db.rules.withoutArming())
         assertNull(vm.challenge.value)
     }
 
@@ -97,11 +97,11 @@ class AppListViewModelStrictModeTest {
         vm.toggleApp(appRow(hasRule = true, on = true))
 
         vm.verifyChallenge("not-the-code")
-        assertEquals(listOf(rule), db.rules)
+        assertEquals(listOf(rule).withoutArming(), db.rules.withoutArming())
 
         vm.cancelChallenge()
         assertNull(vm.challenge.value)
-        assertEquals(listOf(rule), db.rules)
+        assertEquals(listOf(rule).withoutArming(), db.rules.withoutArming())
     }
 
     @Test
@@ -112,7 +112,7 @@ class AppListViewModelStrictModeTest {
         vm.toggleApp(appRow(hasRule = true, on = true))
 
         assertNull(vm.challenge.value)
-        assertEquals(listOf(rule.copy(enabled = false)), db.rules)
+        assertEquals(listOf(rule.copy(enabled = false)).withoutArming(), db.rules.withoutArming())
     }
 
     @Test
@@ -123,7 +123,7 @@ class AppListViewModelStrictModeTest {
         vm.toggleApp(appRow(hasRule = true, on = false))
 
         assertNull(vm.challenge.value)
-        assertEquals(listOf(rule.copy(enabled = true)), db.rules)
+        assertEquals(listOf(rule.copy(enabled = true)).withoutArming(), db.rules.withoutArming())
     }
 
     @Test
@@ -190,7 +190,10 @@ class AppListViewModelStrictModeTest {
         vm.toggleGroup(groupRow(groupRule.copy(enabled = false)))
 
         assertNull(vm.challenge.value)
-        assertEquals(groupRule.copy(enabled = true), db.ruleWithId(9L))
+        assertEquals(
+            groupRule.copy(enabled = true),
+            db.ruleWithId(9L).copy(armedAt = groupRule.armedAt)
+        )
     }
 
     @Test
@@ -223,9 +226,9 @@ class AppListViewModelStrictModeTest {
         vm.toggleAllApps(allAppsRow(allAppsRule))
 
         assertNotNull(vm.challenge.value)
-        assertEquals(listOf(allAppsRule), db.rules)
+        assertEquals(listOf(allAppsRule).withoutArming(), db.rules.withoutArming())
         vm.verifyChallenge(vm.challenge.value!!.target)
-        assertEquals(listOf(allAppsRule.copy(enabled = false)), db.rules)
+        assertEquals(listOf(allAppsRule.copy(enabled = false)).withoutArming(), db.rules.withoutArming())
     }
 
     @Test
@@ -236,7 +239,7 @@ class AppListViewModelStrictModeTest {
         vm.toggleAllApps(allAppsRow(allAppsRule))
 
         assertNull(vm.challenge.value)
-        assertEquals(listOf(allAppsRule.copy(enabled = false)), db.rules)
+        assertEquals(listOf(allAppsRule.copy(enabled = false)).withoutArming(), db.rules.withoutArming())
     }
 
     @Test
@@ -249,8 +252,15 @@ class AppListViewModelStrictModeTest {
 
         assertNull(vm.challenge.value)
         assertNull(vm.allAppsSwitchOn.value)
-        assertEquals(listOf(delayRule), db.rules)
+        assertEquals(listOf(delayRule).withoutArming(), db.rules.withoutArming())
     }
+
+    /**
+     * Rows are stored with the arming stamp of the write that stored them (spec 5.3). These tests
+     * are about the switch turning a rule on or off, so the stamp is normalised away on both sides;
+     * `BlockRuleRepositoryTest` is where the stamp itself is pinned.
+     */
+    private fun List<BlockRule>.withoutArming(): List<BlockRule> = map { it.copy(armedAt = 0L) }
 
     // -- The switch asks what the editor's Save asks (orchestrator ruling, spec 3.4) -----------
 
@@ -267,7 +277,7 @@ class AppListViewModelStrictModeTest {
         // Same count the editor shows: launcher apps minus essentials.
         assertEquals(AllAppsSwitchOn(allAppsRule.copy(enabled = false), blockedCount = 2), vm.allAppsSwitchOn.value)
         assertNull(vm.challenge.value)
-        assertEquals(listOf(allAppsRule.copy(enabled = false)), db.rules)
+        assertEquals(listOf(allAppsRule.copy(enabled = false)).withoutArming(), db.rules.withoutArming())
     }
 
     @Test
@@ -279,7 +289,7 @@ class AppListViewModelStrictModeTest {
         vm.confirmAllAppsSwitchOn()
 
         assertNull(vm.allAppsSwitchOn.value)
-        assertEquals(listOf(allAppsRule), db.rules)
+        assertEquals(listOf(allAppsRule).withoutArming(), db.rules.withoutArming())
     }
 
     @Test
@@ -292,7 +302,7 @@ class AppListViewModelStrictModeTest {
         vm.confirmAllAppsSwitchOn() // a late second tap after Cancel does nothing either
 
         assertNull(vm.allAppsSwitchOn.value)
-        assertEquals(listOf(allAppsRule.copy(enabled = false)), db.rules)
+        assertEquals(listOf(allAppsRule.copy(enabled = false)).withoutArming(), db.rules.withoutArming())
     }
 
     @Test
@@ -304,7 +314,7 @@ class AppListViewModelStrictModeTest {
         vm.toggleAllApps(allAppsRow(scheduled))
 
         assertNull(vm.allAppsSwitchOn.value)
-        assertEquals(listOf(scheduled.copy(enabled = true)), db.rules)
+        assertEquals(listOf(scheduled.copy(enabled = true)).withoutArming(), db.rules.withoutArming())
     }
 
     @Test

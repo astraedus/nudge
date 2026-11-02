@@ -21,7 +21,7 @@ import kotlinx.coroutines.sync.withLock
  *
  * 1. **Cost.** `ScheduleEvaluator` runs on every foreground-app event. A DataStore read there would
  *    be a suspension point on the hottest path this app has, for a value that changes twice a day.
- * 2. **Ordering.** [record] is called from the unlock broadcast. The app window that follows may
+ * 2. **Ordering.** The unlock broadcast calls [stampIfStale]. The app window that follows may
  *    arrive before DataStore has emitted the write, and the first app opened after an unlock is
  *    exactly the one the window is for. Writing the volatile FIRST and persisting afterwards makes
  *    the in-memory answer right immediately, with DataStore as the durable copy.

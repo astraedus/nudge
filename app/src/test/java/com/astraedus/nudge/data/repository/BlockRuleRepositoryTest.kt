@@ -155,7 +155,6 @@ class BlockRuleRepositoryTest {
         // The two insert paths (id 0), each takes the next id.
         repo.saveAllAppsRule(loaded)
         repo.addRule(loaded)
-        assertEquals(listOf(expected.copy(id = 1), expected.copy(id = 2)), db.rules)
 
         // Armed on write (spec 5.3): the row differs from the input by exactly that stamp.
         assertEquals(
@@ -187,7 +186,7 @@ class BlockRuleRepositoryTest {
         repo.addRule(appRule)
         val stored = db.rules.single()
         // Untouched apart from the arming stamp every enabled write gets.
-        assertEquals(appRule.withArmingFrom(stored), stored)
+        assertEquals(appRule.copy(id = 1).withArmingFrom(stored), stored)
         assertTrue(stored.armedAt > 0)
     }
 
@@ -195,7 +194,8 @@ class BlockRuleRepositoryTest {
     fun `a disabled write keeps its old arming stamp`() = runTest {
         db.seedRule(aBlockRule(id = 3, packageName = "com.a", enabled = false, armedAt = 1_000L))
 
-        repo.updateRule(aBlockRule(id = 3, packageName = "com.a", enabled = false, mode = "HARD_BLOCK"))
+        // A real caller copies the stored row, so the stamp it carries is the old one.
+        repo.updateRule(db.ruleWithId(3).copy(mode = "HARD_BLOCK"))
 
         // Nothing reads armedAt until the rule is enabled, and enabling stamps again. Re-arming a
         // disabled row would be harmless, but keeping it makes "save = re-arm" mean what it says.
