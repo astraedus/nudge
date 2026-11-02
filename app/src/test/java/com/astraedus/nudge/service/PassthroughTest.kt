@@ -4,7 +4,6 @@ import android.view.accessibility.AccessibilityEvent
 import com.astraedus.nudge.NudgeIdentity
 import com.astraedus.nudge.domain.block.BlockLaunchGate
 import com.astraedus.nudge.domain.events.A11yEventType
-import com.astraedus.nudge.domain.events.AccessibilityEventRecord
 import com.astraedus.nudge.domain.events.EventClassifier
 import com.astraedus.nudge.domain.events.ForegroundSignal
 import com.astraedus.nudge.domain.sitting.SittingTracker
@@ -13,6 +12,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import com.astraedus.nudge.testing.anAccessibilityEvent
 
 class PassthroughTest {
 
@@ -42,7 +42,7 @@ class PassthroughTest {
         currentImePackage: String? = null,
         launcherPackages: Set<String> = emptySet()
     ): ForegroundSignal = classifier.classify(
-        AccessibilityEventRecord(type = type, packageName = packageName),
+        anAccessibilityEvent(type = type, packageName = packageName),
         currentImePackage = currentImePackage,
         launcherPackages = launcherPackages,
         pipOnlyPackages = emptySet()

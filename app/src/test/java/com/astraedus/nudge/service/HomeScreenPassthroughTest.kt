@@ -6,11 +6,11 @@ import com.astraedus.nudge.domain.sitting.SittingTracker
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
-import com.astraedus.nudge.domain.events.AccessibilityEventRecord
 import com.astraedus.nudge.domain.events.EventClassifier
 import com.astraedus.nudge.domain.events.ForegroundSignal
 import com.astraedus.nudge.domain.sitting.SittingEvent
 import org.junit.Test
+import com.astraedus.nudge.testing.anAccessibilityEvent
 
 /**
  * Going HOME after completing a delay must re-arm the block.
@@ -55,7 +55,7 @@ class HomeScreenPassthroughTest {
         launcherPackages: Set<String> = launchers,
         currentImePackage: String? = null
     ): Boolean = classifier.classify(
-        record = AccessibilityEventRecord(
+        record = anAccessibilityEvent(
             type = AccessibilityEventRecordFactory.eventType(eventType),
             packageName = packageName
         ),

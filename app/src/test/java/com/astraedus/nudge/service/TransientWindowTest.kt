@@ -3,12 +3,12 @@ package com.astraedus.nudge.service
 import com.astraedus.nudge.NudgeIdentity
 import com.astraedus.nudge.domain.block.BlockLaunchGate
 import com.astraedus.nudge.domain.events.A11yEventType
-import com.astraedus.nudge.domain.events.AccessibilityEventRecord
 import com.astraedus.nudge.domain.events.EventClassifier
 import com.astraedus.nudge.domain.events.ForegroundSignal
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.astraedus.nudge.testing.anAccessibilityEvent
 
 /**
  * Regression tests for issue #5: keyboards and paste/long-press popups re-triggering the block.
@@ -50,7 +50,7 @@ class TransientWindowTest {
         type: A11yEventType,
         currentImePackage: String? = null
     ): ForegroundSignal = classifier.classify(
-        AccessibilityEventRecord(type = type, packageName = packageName),
+        anAccessibilityEvent(type = type, packageName = packageName),
         currentImePackage = currentImePackage,
         launcherPackages = emptySet(),
         pipOnlyPackages = emptySet()
@@ -99,7 +99,7 @@ class TransientWindowTest {
             windows = { null }
         )
         val signal = live.classify(
-            AccessibilityEventRecord(type = A11yEventType.WINDOW_STATE_CHANGED, packageName = swiftKey),
+            anAccessibilityEvent(type = A11yEventType.WINDOW_STATE_CHANGED, packageName = swiftKey),
             currentImePackage = gboard,
             launcherPackages = emptySet(),
             pipOnlyPackages = emptySet()

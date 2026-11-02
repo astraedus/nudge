@@ -1,11 +1,11 @@
 package com.astraedus.nudge.service
 
-import com.astraedus.nudge.data.db.entity.BlockRule
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.astraedus.nudge.testing.aBlockRule
 
 class CounterCacheRefresherMergeTest {
 
@@ -315,30 +315,14 @@ class CounterCacheRefresherMergeTest {
 
     // ── appEntryFor: which rules put a package in the cache ──
 
-    private fun rule(
-        packageName: String? = "com.example.alpha",
-        showCounter: Boolean = false,
-        showTimeRemaining: Boolean = false,
-        autoKickAfter: Int? = null,
-        autoKickAfterMinutes: Int? = null,
-        dailyLimitMinutes: Int? = null,
-        remindAfterMinutes: Int? = null
-    ) = BlockRule(
-        packageName = packageName,
-        mode = "DELAY",
-        showCounter = showCounter,
-        showTimeRemaining = showTimeRemaining,
-        autoKickAfter = autoKickAfter,
-        autoKickAfterMinutes = autoKickAfterMinutes,
-        dailyLimitMinutes = dailyLimitMinutes,
-        remindAfterMinutes = remindAfterMinutes
-    )
+    /** The shipped rule row aimed at one app. Each test overrides only the field it is about. */
+    private val alpha = aBlockRule(packageName = "com.example.alpha")
 
     @Test
     fun `a reminder-only rule enters the cache and starts the clock`() {
         // The #77 wiring hole: without this the 30s tick never runs for a rule that has only a
         // reminder, and the reminder silently never fires.
-        val (pkg, entry) = CounterCacheRefresher.appEntryFor(rule(remindAfterMinutes = 20))!!
+        val (pkg, entry) = CounterCacheRefresher.appEntryFor(alpha.copy(remindAfterMinutes = 20))!!
         assertEquals("com.example.alpha", pkg)
         assertEquals(20, entry.remindAfterMinutes)
         assertTrue(entry.needsForegroundTimeTick)
@@ -350,9 +334,9 @@ class CounterCacheRefresherMergeTest {
         // package in the cache by itself, because the admission predicate is DERIVED from
         // needsForegroundTimeTick rather than listed by hand.
         val clockRules = mapOf(
-            "autoKickAfterMinutes" to rule(autoKickAfterMinutes = 30),
-            "dailyLimitMinutes" to rule(dailyLimitMinutes = 30),
-            "remindAfterMinutes" to rule(remindAfterMinutes = 30),
+            "autoKickAfterMinutes" to alpha.copy(autoKickAfterMinutes = 30),
+            "dailyLimitMinutes" to alpha.copy(dailyLimitMinutes = 30),
+            "remindAfterMinutes" to alpha.copy(remindAfterMinutes = 30),
         )
         clockRules.forEach { (field, rule) ->
             val entry = CounterCacheRefresher.appEntryFor(rule)?.second
@@ -363,26 +347,26 @@ class CounterCacheRefresherMergeTest {
 
     @Test
     fun `an overlay alone admits the rule without starting the clock`() {
-        val counter = CounterCacheRefresher.appEntryFor(rule(showCounter = true))!!.second
+        val counter = CounterCacheRefresher.appEntryFor(alpha.copy(showCounter = true))!!.second
         assertFalse(counter.needsForegroundTimeTick)
-        assertTrue(CounterCacheRefresher.appEntryFor(rule(showTimeRemaining = true)) != null)
+        assertTrue(CounterCacheRefresher.appEntryFor(alpha.copy(showTimeRemaining = true)) != null)
     }
 
     @Test
     fun `a rule that wants nothing, or only a counter-fed kick with no counter, stays out`() {
-        assertNull(CounterCacheRefresher.appEntryFor(rule()))
-        assertNull(CounterCacheRefresher.appEntryFor(rule(autoKickAfter = 30)))
+        assertNull(CounterCacheRefresher.appEntryFor(alpha))
+        assertNull(CounterCacheRefresher.appEntryFor(alpha.copy(autoKickAfter = 30)))
     }
 
     @Test
     fun `a group rule has no package and contributes no app entry`() {
-        assertNull(CounterCacheRefresher.appEntryFor(rule(packageName = null, remindAfterMinutes = 20)))
+        assertNull(CounterCacheRefresher.appEntryFor(alpha.copy(packageName = null, remindAfterMinutes = 20)))
     }
 
     @Test
     fun `appEntryFor carries every awareness field off the rule`() {
         val entry = CounterCacheRefresher.appEntryFor(
-            rule(
+            alpha.copy(
                 showCounter = true,
                 showTimeRemaining = true,
                 autoKickAfter = 25,

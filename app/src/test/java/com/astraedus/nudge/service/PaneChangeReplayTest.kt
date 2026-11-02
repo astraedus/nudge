@@ -10,7 +10,6 @@ import com.astraedus.nudge.domain.events.A11yEventType
 import com.astraedus.nudge.domain.events.AccessibilityEventRecord
 import com.astraedus.nudge.domain.events.EventClassifier
 import com.astraedus.nudge.domain.events.ForegroundSignal
-import com.astraedus.nudge.domain.model.ActiveRule
 import com.astraedus.nudge.domain.model.BlockDecision
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.domain.sitting.SittingEndCause
@@ -20,6 +19,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.astraedus.nudge.testing.anAccessibilityEvent
+import com.astraedus.nudge.testing.anActiveRule
 
 /**
  * The `home-reopen` release-gate flake: one Home press, and YouTube came back by itself.
@@ -54,7 +55,7 @@ class PaneChangeReplayTest {
 
     /** The bench fixture's rule (`device-qa.sh` setup): YouTube, whole app, a 5-second Delay. */
     private val rules = listOf(
-        ActiveRule(mode = BlockMode.DELAY, delaySeconds = 5, dailyLimitMinutes = null, enabled = true)
+        anActiveRule(mode = BlockMode.DELAY, delaySeconds = 5, dailyLimitMinutes = null, enabled = true)
     )
 
     private val engine = BlockEngine(ScheduleEvaluator())
@@ -252,7 +253,7 @@ class PaneChangeReplayTest {
     fun `only a window STATE change carrying a pane type is a pane change`() {
         val pane = AccessibilityEvent.CONTENT_CHANGE_TYPE_PANE_DISAPPEARED
         fun record(type: A11yEventType, cct: Int) =
-            AccessibilityEventRecord(type = type, packageName = youtube, contentChangeTypes = cct)
+            anAccessibilityEvent(type = type, packageName = youtube, contentChangeTypes = cct)
 
         assertTrue(record(A11yEventType.WINDOW_STATE_CHANGED, pane).isPaneChange)
         assertTrue(
@@ -282,7 +283,7 @@ class PaneChangeReplayTest {
      */
     @Test
     fun `a pane change is not Home even from the launcher`() {
-        val record = AccessibilityEventRecord(
+        val record = anAccessibilityEvent(
             type = A11yEventType.WINDOW_STATE_CHANGED,
             packageName = launcher,
             className = "android.view.ViewGroup",
