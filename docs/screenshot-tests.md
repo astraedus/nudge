@@ -10,8 +10,11 @@ like a switch losing its end padding, fails the comparison and produces a diff i
 - Fixtures: `GalleryFixtures.kt` in the same package
 - Goldens: `app/src/test/snapshots/images/`
 - CI: `.github/workflows/screenshots.yml` (verifies on every PR and every push to main)
-- Plugin: `app.cash.paparazzi` 1.3.5, pinned in the root `build.gradle.kts`. It is the last
-  release that supports our AGP 8.x / Kotlin 2.0 toolchain; 2.x needs newer Kotlin and Java.
+- Plugin: `app.cash.paparazzi` 2.0.0-alpha02, pinned in the root `build.gradle.kts`. Why this
+  version: 1.3.5 (the last stable) crashes on compileSdk 36 (cashapp/paparazzi#1877: its API 34
+  layoutlib has no `Build.VERSION_CODES_FULL`). alpha02 is the first release with API 36 layoutlib.
+  alpha04 and later need Java 21 and Kotlin 2.3. Re-check this pin before any compileSdk, AGP or
+  Kotlin bump.
 
 ## Add a screen
 
