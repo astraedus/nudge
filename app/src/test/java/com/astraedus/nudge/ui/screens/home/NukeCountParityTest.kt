@@ -75,7 +75,8 @@ class NukeCountParityTest {
             screenTimeProvider = mockk(relaxed = true),
             timeTracker = timeTracker,
             homeChartsBuilder = HomeChartsBuilder(StatsCalculator(timeTracker)),
-            installedAppsRepository = mockk(relaxed = true),
+            installedAppsRepository = mockk<InstalledAppsRepository>(relaxed = true)
+                .also { every { it.changes } returns MutableStateFlow(0L) },
             insightsCalculator = InsightsCalculator(),
             essentialApps = essentials,
             ioDispatcher = dispatcher

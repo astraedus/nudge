@@ -67,6 +67,7 @@ class HomeBlockedTileTest {
         screenTimeProvider = mockk(relaxed = true)
         blockRuleRepository = mockk(relaxed = true)
         installedAppsRepository = mockk(relaxed = true)
+        every { installedAppsRepository.changes } returns MutableStateFlow(0L)
         preferences = mockk(relaxed = true)
         context = mockk(relaxed = true)
 

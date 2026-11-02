@@ -65,6 +65,7 @@ class AppListViewModelStrictModeTest {
         every { prefs.strictModeChallengeLength } returns flowOf(StrictModeChallenge.DEFAULT_LENGTH)
         val installed = mockk<InstalledAppsRepository>()
         coEvery { installed.getInstalledApps() } returns installedApps
+        io.mockk.every { installed.changes } returns kotlinx.coroutines.flow.MutableStateFlow(0L)
         return AppListViewModel(installed, repository, prefs, FakeEssentialPackages(essentials))
     }
 

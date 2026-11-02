@@ -21,6 +21,7 @@ import com.astraedus.nudge.ui.screens.allapps.blockedCount
 import com.astraedus.nudge.ui.screens.allapps.confirmsSwitchOn
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -165,7 +166,10 @@ class AppListViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
-            installedApps.value = installedAppsRepository.getInstalledApps()
+            // Re-read when a package is added/removed/changed, so a new app joins its category.
+            installedAppsRepository.changes.collectLatest {
+                installedApps.value = installedAppsRepository.getInstalledApps()
+            }
         }
     }
 
