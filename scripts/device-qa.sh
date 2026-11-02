@@ -379,9 +379,15 @@ pin_screen() {
 # surface and the `setup` flow still walks them, but a Maestro flow cannot drive the
 # system accessibility Settings list reliably, so the grant itself is set here.
 
+# Bound means Nudge is on the `Bound services:` line ITSELF. That line names a service by its
+# label (`Service[label=Nudge - App Blocker, ...]`), never by class; the class name is on the
+# `Enabled services:` line just below it. The old `grep -A3 'Bound services' | grep
+# NudgeAccessibilityService` therefore matched the ENABLED line, so it said "bound" whenever the
+# grant was on, including while a UiAutomation session had suppressed the service (the exact
+# state it was meant to catch). Same rule as qa-driver's DeviceText.isNudgeBound.
 a11y_is_bound() {
   ash dumpsys accessibility 2>/dev/null |
-    tr -d '\r' | grep -A3 'Bound services' | grep 'NudgeAccessibilityService' >/dev/null
+    tr -d '\r' | grep -m1 'Bound services:' | grep -q 'label=Nudge'
 }
 
 # Turns the accessibility grant OFF, and PROVES it went off. Returns 1 if it could not.
