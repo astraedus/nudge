@@ -101,7 +101,7 @@ class UserPresentReceiverContractTest {
         // receiver the anchor. What survives is the ordering that kept the spike readable — the
         // evidence line describes the delivery whether or not it stamps.
         val evidence = receiverBody.indexOf("logFirstUnlockEvidence(source = \"user_present\")")
-        val decision = receiverBody.indexOf("FirstUnlockWindow.shouldStamp")
+        val decision = receiverBody.indexOf("stampIfStale(")
 
         assertTrue("the delivery must still be logged", evidence >= 0)
         assertTrue("the evidence must be logged before the stamp decision", evidence < decision)
@@ -112,58 +112,36 @@ class UserPresentReceiverContractTest {
     }
 
     @Test
-    fun `the receiver stamps through the shared shouldStamp decision`() {
-        assertTrue("the receiver body must be findable", receiverBody.isNotEmpty())
-        val decision = receiverBody.indexOf("FirstUnlockWindow.shouldStamp")
-        val record = receiverBody.indexOf("firstUnlockState.record(")
-        assertTrue(
-            "the receiver must ask FirstUnlockWindow.shouldStamp before writing (spec 5.3)",
-            decision >= 0
-        )
-        assertTrue(
-            "the receiver must record through FirstUnlockStateCache.record",
-            record >= 0
-        )
-        assertTrue(
-            "the stamp decision must come before the write",
-            decision in 0 until record
-        )
-        assertTrue(
-            "a second unlock in the same logical day must not restart the window",
-            receiverBody.contains("if (shouldStamp)")
-        )
+    fun `both sites stamp through the cache's persisted-anchor decision`() {
+        listOf("receiver" to receiverBody, "fallback" to fallbackBody).forEach { (label, body) ->
+            assertTrue("the $label body must be findable", body.isNotEmpty())
+            assertTrue(
+                "the $label must ask the cache to decide (spec 5.3)",
+                body.contains(".stampIfStale(")
+            )
+            assertEquals(
+                "one stampIfStale call in the $label: a second could double-stamp",
+                1,
+                Regex("\\.stampIfStale\\(").findAll(body).count()
+            )
+            assertTrue(
+                "the $label must not write the anchor itself: the decision needs the persisted value",
+                !body.contains("record(")
+            )
+        }
     }
 
     @Test
-    fun `the receiver records exactly once`() {
-        assertEquals(
-            "one .record( call in the receiver: a second would double-stamp an unlock",
-            1,
-            Regex("\\.record\\(").findAll(receiverBody).count()
-        )
-    }
-
-    @Test
-    fun `the fallback stamps under the same condition`() {
-        assertTrue("the fallback body must be findable", fallbackBody.isNotEmpty())
+    fun `the fallback keeps its cheap exit before the keyguard call`() {
+        // Device QA found the cold-cache bug this guards: the in-memory stamp reads 0 for the first
+        // moments of a process. The cheap check must stay (it keeps the binder call off app
+        // switches), and the cache must be what writes, against the persisted value.
         val decision = fallbackBody.indexOf("FirstUnlockWindow.shouldStamp")
-        val record = fallbackBody.indexOf("firstUnlockState.record(")
-        assertTrue(
-            "the app-window fallback must ask the same shouldStamp question",
-            decision >= 0
-        )
-        assertTrue(
-            "the fallback must record through FirstUnlockStateCache.record",
-            record >= 0
-        )
-        assertTrue(
-            "the fallback's stamp decision must also come before the write",
-            decision in 0 until record
-        )
-        assertEquals(
-            "one .record( call in the fallback: a second would double-stamp a window",
-            1,
-            Regex("\\.record\\(").findAll(fallbackBody).count()
-        )
+        val keyguard = fallbackBody.indexOf("KeyguardManager::class.java")
+        val stamp = fallbackBody.indexOf("stampIfStale(")
+
+        assertTrue("the fallback must keep the in-memory fast path", decision >= 0)
+        assertTrue("the binding decision must come after the fast path", decision < stamp)
+        assertTrue("the keyguard check stays out of the hot path's way", keyguard in 0 until stamp)
     }
 }

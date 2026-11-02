@@ -962,7 +962,10 @@ class NudgeAccessibilityService : AccessibilityService() {
      *   (a small value) and a wall-clock change cannot fake one.
      *
      * `stamped=<ms>` on the line after the evidence says whether this delivery wrote the anchor
-     * (`0` means a fresh stamp already existed and was kept).
+     * (`0` means a fresh stamp already existed and was kept). The decision is the cache's
+     * [com.astraedus.nudge.data.repository.FirstUnlockStateCache.stampIfStale], taken against the
+     * PERSISTED anchor: the in-memory copy is empty for the first moments of a process, and device
+     * QA found that a re-stamp there moved the window's end later.
      */
     private val firstUnlockState by lazy { entryPoint.firstUnlockStateCache() }
 
@@ -972,18 +975,13 @@ class NudgeAccessibilityService : AccessibilityService() {
                 if (intent?.action != Intent.ACTION_USER_PRESENT) return
                 logFirstUnlockEvidence(source = "user_present")
                 val now = System.currentTimeMillis()
-                val state = firstUnlockState
-                val shouldStamp = FirstUnlockWindow.shouldStamp(
-                    nowMs = now,
-                    stampMs = state.firstUnlockAt(),
-                    dayStartMinute = state.dayStartMinute(),
-                    zone = state.zoneId()
-                )
-                if (shouldStamp) serviceScope.launch { firstUnlockState.record(now) }
-                log.i(
-                    "first-unlock stamp source=user_present " +
-                        "stamped=${if (shouldStamp) now else FirstUnlockWindow.NO_STAMP}"
-                )
+                // The decision that writes is the cache's, against the PERSISTED anchor: the
+                // in-memory one is empty for the first few milliseconds of a process, and a
+                // re-stamp there would move the window's end later (found on the bench phone).
+                serviceScope.launch {
+                    val stamped = firstUnlockState.stampIfStale(now)
+                    log.i("first-unlock stamp source=user_present stamped=$stamped")
+                }
             }
         }
     }
@@ -993,22 +991,21 @@ class NudgeAccessibilityService : AccessibilityService() {
      * means the user got past it even though no USER_PRESENT reached us. Covers devices with no
      * secure lock and a broadcast an OEM dropped.
      *
-     * The stamp decision is the same [FirstUnlockWindow.shouldStamp] the receiver uses, so the two
-     * sites converge on one anchor and neither restarts a fresh one. It is deliberately NOT gated by
-     * the once-per-day log below: the log stays throttled so a bench log is readable, while a stamp
-     * that is still missing is written by whichever app window happens to come first.
+     * The write goes through the same `FirstUnlockStateCache.stampIfStale` the receiver uses, so the
+     * two sites converge on one anchor and neither restarts a fresh one. The cheap check above is
+     * only the hot-path exit that keeps the keyguard binder call off every app switch; the decision
+     * that writes is taken against the persisted stamp.
      *
-     * [fallbackEvidenceLoggedAt] is therefore only the diagnostic gate. The real "already stamped
-     * today" question is answered by the persisted stamp itself, which survives the process death
-     * this in-memory value does not.
+     * It logs only when it actually stamped, so the bench log is naturally at most one line per
+     * logical day: after that, the anchor is fresh and the early return fires first.
      */
-    private val fallbackEvidenceLoggedAt = java.util.concurrent.atomic.AtomicLong(0L)
-
     private fun logFirstUnlockFallback(packageName: String) {
         val now = System.currentTimeMillis()
         val state = firstUnlockState
         // Cheapest exit first, on the app-switch hot path: with a fresh anchor there is nothing to
         // do, and `KeyguardManager.isDeviceLocked` is a binder call this must not spend per event.
+        // On a cold cache this reads `0` and falls through once; [stampIfStale] then re-checks the
+        // persisted anchor and writes nothing if there is one.
         if (!FirstUnlockWindow.shouldStamp(
                 nowMs = now,
                 stampMs = state.firstUnlockAt(),
@@ -1020,14 +1017,14 @@ class NudgeAccessibilityService : AccessibilityService() {
         }
         val keyguard = getSystemService(android.app.KeyguardManager::class.java) ?: return
         if (keyguard.isDeviceLocked) return
-        serviceScope.launch { firstUnlockState.record(now) }
-
-        // The log stays throttled to one line per logical day; the stamp above is what matters and
-        // is already decided. The throttle is the service session's, which is all a bench log needs.
-        val dayStart = FirstUnlockWindow.logicalDayStart(now, state.dayStartMinute(), state.zoneId())
-        if (fallbackEvidenceLoggedAt.get() >= dayStart) return
-        if (!fallbackEvidenceLoggedAt.compareAndSet(fallbackEvidenceLoggedAt.get(), now)) return
-        logFirstUnlockEvidence(source = "app_window_fallback package=$packageName stamped=$now")
+        serviceScope.launch {
+            // Log only a stamp that was actually written: a kept anchor needs no second line, so
+            // the log is naturally at most one per logical day without a throttle of its own.
+            val stamped = state.stampIfStale(now)
+            if (stamped != FirstUnlockWindow.NO_STAMP) {
+                logFirstUnlockEvidence(source = "app_window_fallback package=$packageName stamped=$stamped")
+            }
+        }
     }
 
     /** One log line, every field the first-unlock decision (spec 5.3) needs. Never throws: it is a log. */
