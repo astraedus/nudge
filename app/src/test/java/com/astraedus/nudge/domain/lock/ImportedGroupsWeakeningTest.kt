@@ -12,7 +12,7 @@ import org.junit.Test
  */
 class ImportedGroupsWeakeningTest {
 
-    private val social = GroupDefinition(id = 5, members = setOf("com.insta"))
+    private val social = ResolvedGroup(id = 5, members = setOf("com.insta"))
     private val existing = mapOf("Social" to social)
 
     private fun allowing(groupId: Long, enabled: Boolean = true) =
@@ -62,7 +62,7 @@ class ImportedGroupsWeakeningTest {
 
     @Test
     fun `one weakening group among free ones is enough`() {
-        val work = GroupDefinition(id = 7, members = setOf("com.slack"))
+        val work = ResolvedGroup(id = 7, members = setOf("com.slack"))
         val incoming = file("Work" to listOf("com.slack"), "Games" to listOf("com.game"), "Social" to listOf("com.tiktok"))
         assertTrue(
             ImportedGroupsWeakening.isWeakening(mapOf("Social" to social, "Work" to work), incoming, listOf(allowing(5)))

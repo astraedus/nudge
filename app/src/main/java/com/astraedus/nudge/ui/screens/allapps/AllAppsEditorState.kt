@@ -62,7 +62,7 @@ data class AllAppsEditorState(
     val pickerGroups: List<PickerGroup>
         get() = tables.groups
             .sortedBy { it.name.lowercase() }
-            .map { PickerGroup(id = it.id, name = it.name, memberCount = tables.memberCount(it.id)) }
+            .map { PickerGroup(id = it.id, name = it.name, memberCount = tables.memberCount(it.id, device)) }
 }
 
 /** One allowed group in "Except these": "Work · 6 apps", and "2 still blocked by other rules" when so. */
@@ -95,7 +95,7 @@ fun exceptRows(state: AllAppsEditorState): ExceptRows {
         .map { id ->
             AllowedGroupRow(
                 groupId = id,
-                title = RuleSummary.groupTitle(tables.groupNames.getValue(id), tables.memberCount(id)),
+                title = RuleSummary.groupTitle(tables.groupNames.getValue(id), tables.memberCount(id, device)),
                 stillBlocked = stillBlockedText(stillBlockedCount(id, otherRules, tables, device))
             )
         }

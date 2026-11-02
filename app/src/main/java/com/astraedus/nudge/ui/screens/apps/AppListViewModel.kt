@@ -26,6 +26,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
@@ -53,7 +54,9 @@ data class AllAppsSwitchOn(val rule: BlockRule, val blockedCount: Int)
 private data class GroupData(
     val groups: List<AppGroup>,
     val members: List<AppGroupMember>,
-    val rules: List<BlockRule>
+    val rules: List<BlockRule>,
+    /** The one essentials list: never a group member, so never counted or "In Social". */
+    val essentials: Set<String>
 )
 
 /**
@@ -104,6 +107,7 @@ class AppListViewModel @Inject constructor(
         blockRuleRepository.getAllGroups(),
         blockRuleRepository.getAllGroupMembers(),
         blockRuleRepository.getAllRules(),
+        flow { emit(essentialPackages.current()) },
         ::GroupData
     ).onEach { data ->
         newlyAddedGroupId(knownGroupIds, data.groups)?.let { revealGroupId.value = it }
@@ -148,6 +152,7 @@ class AppListViewModel @Inject constructor(
                 groups = data.groups,
                 members = data.members,
                 rules = data.rules,
+                essentials = data.essentials,
                 query = query,
                 extraApps = extras,
                 keepInPlace = keepInPlace

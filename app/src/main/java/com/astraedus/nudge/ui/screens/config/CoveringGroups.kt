@@ -4,11 +4,12 @@ import androidx.compose.runtime.Immutable
 import com.astraedus.nudge.data.db.entity.AppGroup
 import com.astraedus.nudge.data.db.entity.AppGroupMember
 import com.astraedus.nudge.data.db.entity.BlockRule
+import com.astraedus.nudge.data.repository.groupResolverOf
 import com.astraedus.nudge.data.repository.target
 import com.astraedus.nudge.data.repository.toRuleData
 import com.astraedus.nudge.domain.engine.CoverageFacts
 import com.astraedus.nudge.domain.engine.RuleCoverage
-import com.astraedus.nudge.domain.model.GroupMembership
+import com.astraedus.nudge.domain.groups.GroupMembershipResolver
 import com.astraedus.nudge.domain.model.RuleTarget
 import com.astraedus.nudge.ui.screens.groups.ownGroupRule
 import com.astraedus.nudge.ui.components.rule.RuleSummary
@@ -21,13 +22,16 @@ data class CoveringGroup(val groupId: Long, val label: String)
  * The groups that cover [packageName] right now (spec 3.7): it is a member, and the group's own rule
  * is on. A group whose rule is off, or that has none, blocks nothing, so it is not listed: the
  * section answers "why is this app still blocked?", and only when that applies. Sorted by name.
+ * [facts] are this package's device facts: its category (a category group's members) and whether
+ * it is essential (never a member).
  */
 fun coveringGroups(
     packageName: String,
+    facts: CoverageFacts,
     groups: List<AppGroup>,
     members: List<AppGroupMember>,
     rules: List<BlockRule>
-): List<CoveringGroup> = blockingGroupsOf(packageName, groups, members, rules)
+): List<CoveringGroup> = blockingGroupsOf(packageName, facts, groups, groupResolverOf(groups, members), rules)
     .map { (group, rule) ->
         CoveringGroup(group.id, "${group.name} · ${RuleSummary.groupSummaryText(rule)}")
     }
@@ -57,7 +61,7 @@ fun coveringAllApps(
     return RuleCoverage.coveringRules(
         packageName = packageName,
         rules = allApps.map { it.toRuleData(groupNames = groupNames) },
-        memberships = members.map { GroupMembership(it.groupId, it.packageName) },
+        membership = groupResolverOf(groups, members),
         facts = facts
     ).mapNotNull { data ->
         val rule = rowById[data.id] ?: return@mapNotNull null
@@ -72,15 +76,18 @@ fun coveringAllApps(
 /**
  * The one answer to "which groups block this app?", for every screen that says so: App config's
  * "Also covered by" ([coveringGroups]) and Manage Apps' "In Social" line. Each group the app is a
- * member of whose own rule is on, with that rule, sorted by name.
+ * member of ([GroupMembershipResolver], so by hand or by category, never "Removed by you", never an
+ * essential app) whose own rule is on, with that rule, sorted by name.
  */
 fun blockingGroupsOf(
     packageName: String,
+    facts: CoverageFacts,
     groups: List<AppGroup>,
-    members: List<AppGroupMember>,
+    membership: GroupMembershipResolver,
     rules: List<BlockRule>
 ): List<Pair<AppGroup, BlockRule>> {
-    val memberOf = members.filter { it.packageName == packageName }.mapTo(HashSet()) { it.groupId }
+    if (facts.essential) return emptyList()
+    val memberOf = membership.groupIdsOf(packageName, facts.category)
     return groups
         .filter { it.id in memberOf }
         .mapNotNull { group ->

@@ -19,6 +19,8 @@ import com.astraedus.nudge.data.repository.UsageRepository
 import com.astraedus.nudge.domain.WebDomainMatcher
 import com.astraedus.nudge.domain.engine.BrowserRouting
 import com.astraedus.nudge.domain.engine.CoverageFacts
+import com.astraedus.nudge.domain.engine.RuleCoverage
+import com.astraedus.nudge.domain.packages.PackageFacts
 import com.astraedus.nudge.domain.engine.ScheduleEvaluator
 import com.astraedus.nudge.domain.engine.WholeAppCoverage
 import com.astraedus.nudge.domain.block.BlockLaunchGate
@@ -106,6 +108,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         fun essentialApps(): EssentialApps
         fun ruleSnapshotSource(): RuleSnapshotSource
         fun scheduleEvaluator(): ScheduleEvaluator
+        fun packageFacts(): PackageFacts
     }
 
     /**
@@ -616,11 +619,22 @@ class NudgeAccessibilityService : AccessibilityService() {
         // Fail closed on both facts: a browser is treated as launchable, and an essentials list not
         // resolved yet as empty. Either only sends the browser to the real (suspending) evaluation.
         val essentials = entryPoint.essentialApps().cachedOrNull() ?: emptySet()
+        // A category group needs the browser's category, and this site must not read PackageManager:
+        // a category not cached yet also fails closed (spec 5.2, "the snapshot is the only hot-path
+        // read").
+        val category = entryPoint.packageFacts().cachedOrNull(packageName)?.category
+        if (category == null && RuleCoverage.categoryNeeded(snapshot.ruleData, snapshot.membership)) {
+            return true
+        }
         return WholeAppCoverage.coversNow(
             packageName = packageName,
             rules = snapshot.ruleData,
-            memberships = snapshot.memberships,
-            facts = CoverageFacts(essential = packageName in essentials, launchable = true)
+            membership = snapshot.membership,
+            facts = CoverageFacts(
+                essential = packageName in essentials,
+                launchable = true,
+                category = category
+            )
         ) { rule -> schedule.isActiveNow(rule) }
     }
 

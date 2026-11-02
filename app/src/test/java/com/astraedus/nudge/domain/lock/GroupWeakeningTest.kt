@@ -12,7 +12,7 @@ class GroupWeakeningTest {
     private val allowed = GroupUsage(blocks = false, allowedBy = true)
     private val both = GroupUsage(blocks = true, allowedBy = true)
 
-    private fun g(vararg m: String) = GroupDefinition(1, m.toSet())
+    private fun g(vararg m: String) = ResolvedGroup(1, m.toSet())
 
     @Test fun `removing a member while blocking is weakening`() =
         assertTrue(GroupWeakening.isWeakening(g("a", "b"), g("a"), blocks))

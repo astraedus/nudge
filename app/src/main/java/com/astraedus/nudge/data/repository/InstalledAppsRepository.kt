@@ -5,6 +5,8 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ResolveInfo
 import android.graphics.drawable.Drawable
+import com.astraedus.nudge.domain.packages.AppCategory
+import com.astraedus.nudge.service.categoryOf
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
@@ -36,7 +38,13 @@ class InstalledAppsRepository @Inject constructor(
     data class AppInfo(
         val packageName: String,
         val appName: String,
-        val icon: Drawable?
+        val icon: Drawable?,
+        /**
+         * `ApplicationInfo.category`, mapped (spec 5.2): what a category group matches. UNDEFINED
+         * for a row that is not an installed app (a placeholder for an uninstalled member), which
+         * matches no category.
+         */
+        val category: AppCategory = AppCategory.UNDEFINED
     )
 
     @Volatile
@@ -102,7 +110,9 @@ class InstalledAppsRepository @Inject constructor(
                 AppInfo(
                     packageName = packageName,
                     appName = appName,
-                    icon = icon
+                    icon = icon,
+                    // Already on the ResolveInfo: no extra PackageManager call per app.
+                    category = categoryOf(activityInfo.applicationInfo?.category ?: -1)
                 )
             }
             .distinctBy { it.packageName }

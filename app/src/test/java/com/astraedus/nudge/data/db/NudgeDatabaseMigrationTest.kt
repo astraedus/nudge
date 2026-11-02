@@ -233,6 +233,45 @@ class NudgeDatabaseMigrationTest {
     }
 
     @Test
+    fun `MIGRATION_14_15 adds group categories and the removed-by-you flag, inert for every existing group`() {
+        val db = RecordingDatabase()
+
+        NudgeDatabase.MIGRATION_14_15.migrate(db.proxy)
+
+        // categories NULL and excluded DEFAULT 0: an upgraded group stays hand-picked and every
+        // existing member row stays an include. A default of 1 on `excluded` would empty every group.
+        assertEquals(
+            listOf(
+                "ALTER TABLE app_groups ADD COLUMN categories TEXT DEFAULT NULL",
+                "ALTER TABLE app_group_members ADD COLUMN excluded INTEGER NOT NULL DEFAULT 0"
+            ),
+            db.sql
+        )
+    }
+
+    @Test
+    fun `every migration NudgeDatabase declares is registered in DatabaseModule`() {
+        // The list in the test below is hand-kept, so it cannot see DatabaseModule. This reads both
+        // sources: a migration declared but not passed to addMigrations() is a crash on upgrade
+        // (Room finds no path) that no JVM test of the migration body would notice.
+        fun source(relative: String): String =
+            listOf(java.io.File("src/main/java/com/astraedus/nudge/$relative"),
+                java.io.File("app/src/main/java/com/astraedus/nudge/$relative"))
+                .first { it.exists() }
+                .readText()
+        val declared = Regex("""val (MIGRATION_\d+_\d+)\s*=""")
+            .findAll(source("data/db/NudgeDatabase.kt")).map { it.groupValues[1] }.toList()
+        val module = source("di/DatabaseModule.kt")
+
+        assertEquals("one migration per version gap", NUDGE_DB_VERSION - 1, declared.size)
+        declared.forEach { name ->
+            assert(Regex("""NudgeDatabase\.$name\b""").containsMatchIn(module)) {
+                "$name is declared in NudgeDatabase but not registered in DatabaseModule.addMigrations"
+            }
+        }
+    }
+
+    @Test
     fun `all migrations registered from version 1 to current`() {
         val allMigrations = listOf(
             NudgeDatabase.MIGRATION_1_2,
@@ -247,7 +286,8 @@ class NudgeDatabaseMigrationTest {
             NudgeDatabase.MIGRATION_10_11,
             NudgeDatabase.MIGRATION_11_12,
             NudgeDatabase.MIGRATION_12_13,
-            NudgeDatabase.MIGRATION_13_14
+            NudgeDatabase.MIGRATION_13_14,
+            NudgeDatabase.MIGRATION_14_15
         )
 
         // Read from production, not hand-typed: a hand-kept constant here is exactly the

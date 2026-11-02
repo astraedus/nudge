@@ -12,7 +12,7 @@ import com.astraedus.nudge.data.export.RuleExporter
 import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.data.repository.BlockRuleRepository
 import com.astraedus.nudge.data.repository.UsageRepository
-import com.astraedus.nudge.domain.lock.GroupDefinition
+import com.astraedus.nudge.domain.lock.ResolvedGroup
 import com.astraedus.nudge.domain.lock.ImportedGroupsWeakening
 import com.astraedus.nudge.domain.lock.ImportedSettingsWeakening
 import com.astraedus.nudge.domain.model.ExceptCsv
@@ -104,7 +104,7 @@ class ImportRulesUseCase @Inject constructor(
         if (byName.isEmpty()) return false
         val existing = byName.mapValues { (_, id) ->
             val members = repository.getGroupMembers(id).firstOrNull() ?: emptyList()
-            GroupDefinition(id, members.mapTo(HashSet()) { it.packageName })
+            ResolvedGroup(id, members.mapTo(HashSet()) { it.packageName })
         }
         val rules = repository.getAllRules().firstOrNull() ?: emptyList()
         return ImportedGroupsWeakening.isWeakening(existing, incoming, rules)

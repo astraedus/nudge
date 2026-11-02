@@ -27,7 +27,7 @@ object ImportedGroupsWeakening {
      * @param rules every rule on this device, enabled or not ([GroupUsage.of] filters).
      */
     fun isWeakening(
-        existing: Map<String, GroupDefinition>,
+        existing: Map<String, ResolvedGroup>,
         incoming: List<ExportedGroup>,
         rules: List<BlockRule>
     ): Boolean =

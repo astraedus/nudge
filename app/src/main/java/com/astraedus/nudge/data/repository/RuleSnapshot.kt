@@ -7,13 +7,14 @@ import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.domain.model.BlockRuleData
 import com.astraedus.nudge.domain.model.ExceptCsv
 import com.astraedus.nudge.domain.model.RuleTarget
-import com.astraedus.nudge.domain.model.GroupMembership
+import com.astraedus.nudge.domain.groups.GroupMembershipResolver
 import kotlinx.coroutines.flow.first
 
 /**
  * Every rule table one block evaluation reads, as one immutable value: the enabled rules (as rows,
  * for website evaluation, and already mapped to [BlockRuleData], for app evaluation), the groups,
- * and every group's members.
+ * and who is in each group ([membership], resolved from each group's categories, includes and
+ * "Removed by you" rows, spec 5.2).
  *
  * Built ONCE per table change by [RuleSnapshotSource], not once per accessibility event: the entity
  * to domain mapping (schedule-day parsing, feature splitting, mode parsing) used to run on every
@@ -29,8 +30,8 @@ class RuleSnapshot private constructor(
     val groups: List<AppGroup>,
     /** [enabledRules] mapped once, same order. */
     val ruleData: List<BlockRuleData>,
-    /** Members of groups that exist. */
-    val memberships: List<GroupMembership>
+    /** Group membership, for groups that exist (spec 5.2). */
+    val membership: GroupMembershipResolver
 ) {
     companion object {
         fun of(
@@ -38,10 +39,6 @@ class RuleSnapshot private constructor(
             groups: List<AppGroup>,
             members: List<AppGroupMember>
         ): RuleSnapshot {
-            // The foreign key cascades member rows away with their group, so this filter is a
-            // no-op on a healthy database. It keeps the old per-group read's exact semantics (only
-            // members of groups that exist) whatever the member table holds.
-            val groupIds = groups.mapTo(HashSet()) { it.id }
             val groupNames = groups.associate { it.id to it.name }
             return RuleSnapshot(
                 enabledRules = enabledRules,
@@ -52,9 +49,9 @@ class RuleSnapshot private constructor(
                         groupNames = groupNames
                     )
                 },
-                memberships = members
-                    .filter { it.groupId in groupIds }
-                    .map { GroupMembership(groupId = it.groupId, packageName = it.packageName) }
+                // Only groups that exist get a definition, so a member row of a deleted group
+                // (the foreign key cascades those away anyway) belongs to nothing.
+                membership = groupResolverOf(groups, members)
             )
         }
     }

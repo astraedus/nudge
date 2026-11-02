@@ -1,5 +1,7 @@
 package com.astraedus.nudge.data.repository
 
+import com.astraedus.nudge.domain.groups.AppCategoryCsv
+import com.astraedus.nudge.domain.packages.AppCategory
 import com.astraedus.nudge.data.db.dao.AppGroupDao
 import com.astraedus.nudge.data.db.dao.BlockRuleDao
 import com.astraedus.nudge.data.db.entity.AppGroup
@@ -23,7 +25,9 @@ class BlockRuleRepository @Inject constructor(
     fun getEnabledRules(): Flow<List<BlockRule>> = blockRuleDao.getEnabled()
 
     /**
-     * Returns rules for a package: direct rules AND rules from groups containing this package.
+     * Returns rules for a package: direct rules AND rules from groups the app was added to by hand.
+     * A group's category members have no row, so this misses them: anything that needs "which
+     * groups is this app in" resolves membership with [groupResolverOf] instead.
      */
     fun getRulesForPackage(packageName: String): Flow<List<BlockRule>> {
         val directRules = blockRuleDao.getByPackage(packageName)
@@ -111,20 +115,30 @@ class BlockRuleRepository @Inject constructor(
     fun getGroupRules(groupId: Long): Flow<List<BlockRule>> = blockRuleDao.getByGroupId(groupId)
 
     /**
-     * Create (groupId == null) or update one group, its full member set and its own rule,
-     * atomically. Returns the group id. The rule is written with groupId = that id and
-     * packageName = null; rule.id == 0L inserts, otherwise updates. Members are replaced as a set.
+     * Create (groupId == null) or update one group and its own rule, atomically: its name, its
+     * checked [categories], the apps added by hand ([includes]) and "Removed by you" ([excludes]),
+     * each replaced as a whole (spec 5.2). Returns the group id. The rule is written with groupId =
+     * that id and packageName = null; rule.id == 0L inserts, otherwise updates.
      */
     suspend fun saveGroup(
         groupId: Long?,
         name: String,
-        members: Set<String>,
+        categories: Set<AppCategory>,
+        includes: Set<String>,
+        excludes: Set<String>,
         rule: BlockRule
     ): Long {
         // The DAO sets groupId and clears packageName, so the one way this row could target two
         // things is the All apps flag.
         require(!rule.allApps) { "saveGroup needs a group rule, not an All apps rule" }
-        return appGroupDao.saveGroupWithRule(groupId, name.trim(), members, rule)
+        return appGroupDao.saveGroupWithRule(
+            groupId = groupId,
+            name = name.trim(),
+            categories = AppCategoryCsv.format(categories),
+            includes = includes,
+            excludes = excludes,
+            rule = rule
+        )
     }
 
     /** Delete the group, every member row and every rule that targets it, in one transaction. */

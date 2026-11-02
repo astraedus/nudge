@@ -5,12 +5,16 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.text.KeyboardOptions
@@ -18,10 +22,15 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
@@ -39,16 +48,21 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.astraedus.nudge.data.repository.InstalledAppsRepository
+import com.astraedus.nudge.domain.packages.AppCategory
 import com.astraedus.nudge.ui.components.AppListItem
 import com.astraedus.nudge.ui.components.AppPicker
 import com.astraedus.nudge.ui.components.StrictModeChallengeHost
 import com.astraedus.nudge.ui.components.TonalIcon
 import com.astraedus.nudge.ui.components.blockModeDescription
+import com.astraedus.nudge.ui.components.rememberCategoryTitle
 import com.astraedus.nudge.ui.components.rule.AllAppsIcon
 import com.astraedus.nudge.ui.components.rule.AllAppsRuleItem
 import com.astraedus.nudge.ui.components.rule.BlockModeSegmentedRow
@@ -64,8 +78,13 @@ import com.astraedus.nudge.ui.components.rule.showsWaitTime
 /**
  * The group editor (spec 3.3), laid out in the user's question order: which apps, then what happens
  * to them. "Block these apps" heads How and When; with it off they fold away and the group is just a
- * named set. "Allowed during" lists the All apps rules that let the group through. Category chips
- * (PR 6) are not here yet.
+ * named set. "Allowed during" lists the All apps rules that let the group through.
+ *
+ * Which apps: category chips (each with how many apps it brings in), the members (a category app
+ * shows its category as trailing text), "Add apps", and "Removed by you" for category apps the user
+ * took out. Every edit is a [GroupMembersDraft] function; the Strict Mode check runs on Save over
+ * the resolved members, so unchecking a category that brings in apps is challenged and one that
+ * brings in none is free.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -168,22 +187,23 @@ fun GroupEditorScreen(
                     .padding(horizontal = 16.dp, vertical = 8.dp)
             )
 
+            val members = state.members
             Spacer(Modifier.height(16.dp))
-            EditorSectionTitle(
-                if (state.members.isEmpty()) "Apps" else "Apps · ${state.members.size}"
+            EditorSectionTitle(if (members.isEmpty()) "Apps" else "Apps · ${members.size}")
+            CategoryChips(
+                chips = state.chips,
+                onToggle = viewModel::toggleCategory
             )
-            state.members.forEach { app ->
-                AppListItem(
-                    appName = app.appName,
-                    icon = app.icon,
-                    trailingContent = {
-                        IconButton(onClick = { viewModel.removeMember(app.packageName) }) {
-                            Icon(Icons.Default.Close, contentDescription = "Remove ${app.appName}")
-                        }
-                    }
-                )
+            members.forEach { row ->
+                MemberRow(row = row, onRemove = { viewModel.removeMember(row.app.packageName) })
             }
             EditorAddRow("Add apps", onClick = viewModel::openPicker)
+            RemovedByYouSection(
+                removed = state.removed,
+                expanded = state.showRemoved,
+                onToggle = viewModel::toggleRemoved,
+                onAddBack = viewModel::addBack
+            )
 
             Spacer(Modifier.height(16.dp))
             BlockSwitchRow(
@@ -213,6 +233,129 @@ fun GroupEditorScreen(
                 ) { Text("Delete group") }
             }
             Spacer(Modifier.height(24.dp))
+        }
+    }
+}
+
+/**
+ * The category chips above the member list (spec 3.3): each offered category with an app on this
+ * phone, named as Android names it, with how many apps it brings in. While one is checked, one line
+ * says what that means for apps installed later.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun CategoryChips(chips: List<CategoryChip>, onToggle: (AppCategory) -> Unit) {
+    if (chips.isEmpty()) return
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(0.dp),
+        modifier = Modifier.padding(horizontal = 16.dp)
+    ) {
+        chips.forEach { chip ->
+            val title = rememberCategoryTitle(chip.category)
+            FilterChip(
+                selected = chip.checked,
+                onClick = { onToggle(chip.category) },
+                label = {
+                    Text(title)
+                    Text(
+                        "  ${chip.count}",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                },
+                leadingIcon = if (chip.checked) {
+                    { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(FilterChipDefaults.IconSize)) }
+                } else {
+                    null
+                },
+                modifier = Modifier.semantics {
+                    contentDescription = "$title, ${chip.count} ${if (chip.count == 1) "app" else "apps"}"
+                }
+            )
+        }
+    }
+    if (chips.any { it.checked }) {
+        Text(
+            "New apps in these categories join automatically.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 4.dp)
+        )
+    }
+}
+
+/**
+ * One member: the app, the category that brings it in (when one does) as quiet trailing text, and
+ * its ✕. On a category app the ✕ moves it to "Removed by you"; on an app added by hand it just goes.
+ */
+@Composable
+private fun MemberRow(row: GroupMemberRow, onRemove: () -> Unit) {
+    AppListItem(
+        appName = row.app.appName,
+        icon = row.app.icon,
+        trailingContent = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                row.category?.let { category ->
+                    Text(
+                        rememberCategoryTitle(category),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.widthIn(max = 120.dp)
+                    )
+                }
+                IconButton(onClick = onRemove) {
+                    Icon(Icons.Default.Close, contentDescription = "Remove ${row.app.appName}")
+                }
+            }
+        }
+    )
+}
+
+/**
+ * "Removed by you": category apps the user took out, which stay out when their category is checked.
+ * Collapsed by default (a count and a chevron); each row has "Add back". Hidden when empty.
+ */
+@Composable
+private fun RemovedByYouSection(
+    removed: List<InstalledAppsRepository.AppInfo>,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    onAddBack: (String) -> Unit
+) {
+    if (removed.isEmpty()) return
+    ListItem(
+        headlineContent = {
+            Text(
+                "Removed by you · ${removed.size}",
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        },
+        trailingContent = {
+            Icon(
+                if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        },
+        modifier = Modifier.clickable(
+            role = Role.Button,
+            onClickLabel = if (expanded) "Hide" else "Show",
+            onClick = onToggle
+        )
+    )
+    AnimatedVisibility(visible = expanded) {
+        Column {
+            removed.forEach { app ->
+                AppListItem(
+                    appName = app.appName,
+                    icon = app.icon,
+                    trailingContent = {
+                        TextButton(onClick = { onAddBack(app.packageName) }) { Text("Add back") }
+                    }
+                )
+            }
         }
     }
 }

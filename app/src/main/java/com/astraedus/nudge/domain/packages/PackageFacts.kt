@@ -25,6 +25,14 @@ data class PackageFact(val category: AppCategory, val launchable: Boolean) {
  */
 interface PackageFacts {
     suspend fun factsFor(packageName: String): PackageFact
+
+    /**
+     * The cached facts for [packageName], or null if they have not been read since the last
+     * invalidation. Never reads PackageManager: it is for the synchronous hot-path checks, which
+     * must fail closed on null. The default (no cache) is always null, which is that safe side.
+     */
+    fun cachedOrNull(packageName: String): PackageFact? = null
+
     fun invalidate(packageName: String)
     fun invalidateAll()
 }

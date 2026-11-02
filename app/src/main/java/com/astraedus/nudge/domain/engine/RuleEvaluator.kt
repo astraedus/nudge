@@ -4,7 +4,7 @@ import com.astraedus.nudge.domain.model.ActiveRule
 import com.astraedus.nudge.domain.model.AllAppsBlock
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.domain.model.BlockRuleData
-import com.astraedus.nudge.domain.model.GroupMembership
+import com.astraedus.nudge.domain.groups.GroupMembershipResolver
 import com.astraedus.nudge.domain.model.RuleTarget
 import javax.inject.Inject
 
@@ -21,10 +21,10 @@ class RuleEvaluator @Inject constructor() {
     fun resolveRulesForPackage(
         packageName: String,
         allRules: List<BlockRuleData>,
-        groupMemberships: List<GroupMembership>,
+        membership: GroupMembershipResolver,
         facts: CoverageFacts
     ): List<ActiveRule> {
-        val groupIdsForPackage = RuleCoverage.groupIdsOf(packageName, groupMemberships)
+        val groupIdsForPackage = RuleCoverage.groupIdsOf(packageName, membership, facts)
 
         return allRules.filter { rule ->
             RuleCoverage.covers(rule, packageName, groupIdsForPackage, facts)
@@ -43,20 +43,28 @@ class RuleEvaluator @Inject constructor() {
                 tabVanish = rule.tabVanish,
                 followingSteer = rule.followingSteer,
                 keepPassOnShortTrips = rule.keepPassOnShortTrips,
-                allApps = allAppsBlockOf(rule, groupMemberships)
+                allApps = allAppsBlockOf(rule, membership)
             )
         }
     }
 
-    /** What an All apps rule's block screen shows; null for any other rule. */
+    /**
+     * What an All apps rule's block screen shows; null for any other rule.
+     *
+     * An allowed group contributes its hand-added apps (minus "Removed by you"). Its CATEGORY members
+     * are not listed: the engine holds no installed-app list (nothing per app is stored, spec 5.2),
+     * and the block screen offers a few allowed apps to open, not the whole set. Coverage itself is
+     * unaffected: a category member of an allowed group is not covered, through [RuleCoverage].
+     */
     private fun allAppsBlockOf(
         rule: BlockRuleData,
-        groupMemberships: List<GroupMembership>
+        membership: GroupMembershipResolver
     ): AllAppsBlock? {
         val target = RuleTarget.of(rule) as? RuleTarget.AllApps ?: return null
-        val groupMembers = groupMemberships
-            .filter { it.groupId in target.exceptGroupIds }
-            .map { it.packageName }
+        val groupMembers = target.exceptGroupIds.flatMap { id ->
+            val definition = membership.definitions[id] ?: return@flatMap emptyList()
+            definition.includes.filter { it !in definition.excludes }
+        }
         return AllAppsBlock(
             exceptPackages = target.exceptPackages.toList(),
             exceptGroupNames = rule.exceptGroupNames,
