@@ -1,0 +1,93 @@
+name: Screenshots
+
+# Paparazzi golden-image tests (docs/screenshot-tests.md). Renders the screen gallery on the JVM
+# (layoutlib: no emulator, no device) and compares each frame against the PNGs committed under
+# app/src/test/snapshots/. A failed comparison uploads the diff images as an artifact.
+#
+# Goldens are recorded HERE, never on a laptop: this image is the reference the zero-tolerance
+# comparison runs on, and a golden from another box could differ for no UI reason. Two ways to record:
+#   - Actions > Screenshots > Run workflow on your branch with "record" ticked
+#     (workflow_dispatch; works once this file is on main), or
+#   - add the `record-screenshots` label to the PR (works for any PR, forks included).
+# Then download the `paparazzi-goldens` artifact and commit the PNGs. A label-triggered record run
+# ends red on purpose: it recorded, it did not verify. Remove the label once the goldens are in.
+#
+# Same trust model as ci.yml: `pull_request` (never `pull_request_target`), read-only token, no
+# secrets, so a fork's PR runs here without reaching anything sensitive.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+    paths-ignore:
+      - 'extension/**'   # extension-ci.yml covers the Chrome extension
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      record:
+        description: 'Record new goldens (uploads them as an artifact) instead of verifying'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: screenshots-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  paparazzi:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      RECORD: ${{ inputs.record || contains(github.event.pull_request.labels.*.name, 'record-screenshots') }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@48b5f213c81028ace310571dc5ec0fbbca0b2947 # v4
+        with:
+          validate-wrappers: false
+          # A PR reads main's Gradle cache but never writes to it (as in ci.yml); main's push run
+          # is the one that refreshes it.
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
+
+      # Scoped to the gallery package: the rest of the unit suite is ci.yml's job, not this one's.
+      - name: Verify goldens
+        if: env.RECORD != 'true'
+        run: ./gradlew verifyPaparazziDebug --tests 'com.astraedus.nudge.ui.gallery.*'
+
+      - name: Upload screenshot diffs
+        if: failure() && env.RECORD != 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: paparazzi-diffs
+          path: |
+            app/build/paparazzi/failures/**
+            app/build/reports/tests/**
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Record goldens
+        if: env.RECORD == 'true'
+        run: ./gradlew recordPaparazziDebug --tests 'com.astraedus.nudge.ui.gallery.*'
+
+      - name: Upload recorded goldens
+        if: env.RECORD == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: paparazzi-goldens
+          path: app/src/test/snapshots/**
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Recorded, not verified
+        if: env.RECORD == 'true' && github.event_name == 'pull_request'
+        run: |
+          echo "::error::This run recorded goldens instead of verifying them. Commit the paparazzi-goldens artifact and remove the record-screenshots label."
+          exit 1

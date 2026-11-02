@@ -4,6 +4,7 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
     id("com.google.devtools.ksp")
     id("com.google.dagger.hilt.android")
+    id("app.cash.paparazzi")
 }
 
 import java.util.Properties
@@ -175,6 +176,61 @@ dependencies {
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+}
+
+/**
+ * The JVM unit tests run against the library versions the app ships.
+ *
+ * Paparazzi (docs/screenshot-tests.md) adds its runtime to every unit-test classpath, and that
+ * runtime asks for newer kotlin-stdlib and kotlinx-coroutines than the app is built with. Left to
+ * Gradle's "highest wins", the whole suite would quietly run on coroutines-test 1.10 while the app
+ * ships 1.9, which is the library #53's leak detection leans on. Consistent resolution takes the
+ * app's resolved version for every module the two classpaths share; modules only Paparazzi uses
+ * resolve as normal, except Kotlin's own artifacts (kotlin-reflect, which mockk and Paparazzi
+ * load), held at the Kotlin this build compiles with so they match the stdlib beside them.
+ */
+afterEvaluate {
+    val kotlinVersion = org.jetbrains.kotlin.gradle.plugin.getKotlinPluginVersion(logger)
+    for (variant in listOf("debug", "release")) {
+        for (kind in listOf("Compile", "Runtime")) {
+            configurations.getByName("${variant}UnitTest${kind}Classpath").apply {
+                shouldResolveConsistentlyWith(configurations.getByName("${variant}${kind}Classpath"))
+                resolutionStrategy.eachDependency {
+                    if (requested.group == "org.jetbrains.kotlin") useVersion(kotlinVersion)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Paparazzi's screenshot tests and the rest of the JVM suite never share a test JVM.
+ *
+ * Paparazzi renders with layoutlib, whose jar is the real Android framework (native calls and all)
+ * rather than the android.jar stubs. On one classpath, every test that mocks a framework class
+ * (PackageManager, AccessibilityNodeInfo, WindowManager) runs that class's real static initialiser,
+ * which dies in `SystemProperties.native_get`; and a framework class that failed to initialise
+ * stays broken for the gallery tests that run later in the same fork. 83 tests failed that way.
+ *
+ * So a run that includes a Paparazzi task (`verifyPaparazziDebug`, `recordPaparazziDebug`) runs the
+ * screenshot gallery and nothing else, and every other run leaves the gallery out and takes
+ * layoutlib off the classpath, so the suite sees exactly the classpath it had before Paparazzi.
+ * Run the two in separate Gradle invocations, as CI does (ci.yml, screenshots.yml).
+ */
+val screenshotPackage = "com.astraedus.nudge.ui.gallery"
+gradle.taskGraph.whenReady {
+    // Not any "Paparazzi" task: testDebugUnitTest itself depends on its resources task.
+    val paparazziRun = allTasks.any {
+        it.project == project && it.name.matches(Regex("(record|verify|cleanRecord)Paparazzi.*"))
+    }
+    tasks.withType<Test>().forEach { test ->
+        if (paparazziRun) {
+            test.filter.includeTestsMatching("$screenshotPackage.*")
+        } else {
+            test.filter.excludeTestsMatching("$screenshotPackage.*")
+            test.classpath = test.classpath.filter { !it.name.matches(Regex("layoutlib-[0-9].*\\.jar")) }
+        }
+    }
 }
 
 /**
