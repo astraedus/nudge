@@ -11,12 +11,20 @@ import com.astraedus.nudge.data.export.ImportResult
 import com.astraedus.nudge.data.export.RuleExporter
 import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.data.repository.BlockRuleRepository
+import com.astraedus.nudge.data.repository.InstalledAppsRepository
+import com.astraedus.nudge.data.repository.definition
 import com.astraedus.nudge.data.repository.UsageRepository
+import com.astraedus.nudge.domain.groups.AppCategoryCsv
+import com.astraedus.nudge.domain.groups.GroupDefinition
+import com.astraedus.nudge.domain.groups.GroupMembershipResolver
+import com.astraedus.nudge.domain.lock.ImportedGroupMerge
 import com.astraedus.nudge.domain.lock.ResolvedGroup
 import com.astraedus.nudge.domain.lock.ImportedGroupsWeakening
 import com.astraedus.nudge.domain.lock.ImportedSettingsWeakening
 import com.astraedus.nudge.domain.model.ExceptCsv
 import com.astraedus.nudge.domain.model.RuleTarget
+import com.astraedus.nudge.domain.packages.AppCategory
+import com.astraedus.nudge.domain.packages.EssentialPackages
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.withContext
@@ -67,7 +75,9 @@ class ImportRulesUseCase @Inject constructor(
     private val repository: BlockRuleRepository,
     private val usageRepository: UsageRepository,
     private val preferences: NudgePreferences,
-    private val exporter: RuleExporter
+    private val exporter: RuleExporter,
+    private val installedApps: InstalledAppsRepository,
+    private val essentialPackages: EssentialPackages
 ) {
 
     /**
@@ -89,26 +99,49 @@ class ImportRulesUseCase @Inject constructor(
     }
 
     /**
-     * The group half of [weakensProtection]: merging the file's members into a group here that an
-     * enabled All apps rule allows takes those apps out of that rule ([ImportedGroupsWeakening]).
-     * Rules in the file never weaken (an import only adds rules), so they are not asked about.
+     * The group half of [weakensProtection]: merging the file's groups into a group here that an
+     * enabled All apps rule allows takes the apps that join it out of that rule
+     * ([ImportedGroupsWeakening]). Rules in the file never weaken (an import only adds rules), so
+     * they are not asked about.
      *
-     * Only the groups the file names are read back, through the same [groupIdsByName] map
-     * [execute] merges into, so the gate judges exactly the groups the write would touch.
+     * Existing and merged membership are RESOLVED on this device (installed apps + essentials), so a
+     * category the group gains counts for the apps it brings in here, not for the setting. Only the
+     * groups the file names are read back, through the same [groupIdsByName] map [execute] merges
+     * into, and merged by the same [ImportedGroupMerge], so the gate judges exactly what the write does.
      */
     private suspend fun groupMergeWeakens(incoming: List<ExportedGroup>): Boolean {
         if (incoming.isEmpty()) return false
-        val names = incoming.mapTo(HashSet()) { it.name }
-        val byName = groupIdsByName(repository.getAllGroups().firstOrNull() ?: emptyList())
-            .filterKeys { it in names }
-        if (byName.isEmpty()) return false
-        val existing = byName.mapValues { (_, id) ->
-            val members = repository.getGroupMembers(id).firstOrNull() ?: emptyList()
-            ResolvedGroup(id, members.mapTo(HashSet()) { it.packageName })
+        val entriesByName = incoming.groupBy { it.name }
+        val allGroups = repository.getAllGroups().firstOrNull() ?: emptyList()
+        val idsByName = groupIdsByName(allGroups)
+        val existingGroups = allGroups.filter { it.name in entriesByName && idsByName[it.name] == it.id }
+        if (existingGroups.isEmpty()) return false
+        val (installed, essentials) = deviceFacts()
+        val existing = HashMap<String, ResolvedGroup>()
+        val merged = HashMap<String, ResolvedGroup>()
+        for (group in existingGroups) {
+            val current = definitionOf(group)
+            val after = ImportedGroupMerge.merge(current, entriesByName.getValue(group.name), installed)
+            existing[group.name] = resolved(current, installed, essentials)
+            merged[group.name] = resolved(after, installed, essentials)
         }
         val rules = repository.getAllRules().firstOrNull() ?: emptyList()
-        return ImportedGroupsWeakening.isWeakening(existing, incoming, rules)
+        return ImportedGroupsWeakening.isWeakening(existing, merged, rules)
     }
+
+    /** Installed app -> category, and the essentials: what group membership resolves against here. */
+    private suspend fun deviceFacts(): Pair<Map<String, AppCategory>, Set<String>> =
+        installedApps.getInstalledApps().associate { it.packageName to it.category } to
+            essentialPackages.current()
+
+    private suspend fun definitionOf(group: AppGroup): GroupDefinition =
+        group.definition(repository.getGroupMembers(group.id).firstOrNull() ?: emptyList())
+
+    private fun resolved(
+        definition: GroupDefinition,
+        installed: Map<String, AppCategory>,
+        essentials: Set<String>
+    ) = ResolvedGroup(definition.id, GroupMembershipResolver.membersOf(definition, installed, essentials))
 
     /**
      * Parses and validates JSON without inserting, and asks the DB how much of the file's history
@@ -152,26 +185,35 @@ class ImportRulesUseCase @Inject constructor(
             )
         }
 
-        // Step 1: Resolve groups - find existing by name or create new ones
+        // Step 1: Resolve groups - find existing by name or create new ones, merging the file's
+        // definition in ([ImportedGroupMerge]: rules only add, so nothing here removes a member).
         val existingGroups = repository.getAllGroups().firstOrNull() ?: emptyList()
         val groupNameToId = groupIdsByName(existingGroups).toMutableMap()
+        val existingById = existingGroups.associateBy { it.id }
         var groupsCreated = 0
+        val installed = if (result.groups.isEmpty()) emptyMap() else deviceFacts().first
 
-        for (exportedGroup in result.groups) {
-            if (exportedGroup.name !in groupNameToId) {
-                val newId = repository.createGroup(AppGroup(name = exportedGroup.name))
-                groupNameToId[exportedGroup.name] = newId
-                groupsCreated++
-            }
-            // Add members to group
-            val groupId = groupNameToId[exportedGroup.name]!!
-            val existingMembers = repository.getGroupMembers(groupId).firstOrNull()
-                ?.map { it.packageName }?.toSet() ?: emptySet()
+        for ((name, entries) in result.groups.groupBy { it.name }) {
+            val existing = groupNameToId[name]?.let { existingById[it] }
+            val current = existing?.let { definitionOf(it) } ?: GroupDefinition(id = 0)
+            val merged = ImportedGroupMerge.merge(current, entries, installed)
+            val categories = AppCategoryCsv.format(merged.categories)
 
-            for (memberPkg in exportedGroup.members) {
-                if (memberPkg !in existingMembers) {
-                    repository.addToGroup(AppGroupMember(groupId = groupId, packageName = memberPkg))
+            val groupId = existing?.id
+                ?: repository.createGroup(AppGroup(name = name, categories = categories)).also {
+                    groupNameToId[name] = it
+                    groupsCreated++
                 }
+            if (existing != null && categories != existing.categories) {
+                repository.setGroupCategories(groupId, categories)
+            }
+            // A row written over an existing one replaces it, which is how an include flips a
+            // "Removed by you" row. Rows already as wanted are not rewritten.
+            for (pkg in merged.includes - current.includes) {
+                repository.addToGroup(AppGroupMember(groupId = groupId, packageName = pkg))
+            }
+            for (pkg in merged.excludes - current.excludes) {
+                repository.addToGroup(AppGroupMember(groupId = groupId, packageName = pkg, excluded = true))
             }
         }
 

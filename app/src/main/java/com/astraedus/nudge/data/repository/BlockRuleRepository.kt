@@ -103,6 +103,10 @@ class BlockRuleRepository @Inject constructor(
 
     suspend fun addToGroup(member: AppGroupMember) = appGroupDao.addMember(member)
 
+    /** Replaces the group's checked categories (CSV via `AppCategoryCsv`, null for none). */
+    suspend fun setGroupCategories(groupId: Long, categories: String?) =
+        appGroupDao.setCategories(groupId, categories)
+
     suspend fun removeFromGroup(groupId: Long, packageName: String) =
         appGroupDao.removeMember(groupId, packageName)
 

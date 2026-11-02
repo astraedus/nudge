@@ -6,7 +6,11 @@ import com.astraedus.nudge.data.db.entity.BlockRule
 import com.astraedus.nudge.data.db.entity.UsageEvent
 import com.astraedus.nudge.domain.ContentFilterAllowlist
 import com.astraedus.nudge.domain.ContentFilterUserList
+import com.astraedus.nudge.data.repository.definition
+import com.astraedus.nudge.domain.groups.GroupMembershipResolver
+import com.astraedus.nudge.domain.groups.OFFERED_CATEGORIES
 import com.astraedus.nudge.domain.lock.StrictModeChallenge
+import com.astraedus.nudge.domain.packages.AppCategory
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.domain.model.ExceptCsv
 import com.astraedus.nudge.domain.model.RuleTarget
@@ -107,7 +111,9 @@ class RuleExporter @Inject constructor() {
         groups: List<AppGroup>,
         groupMembers: Map<Long, List<AppGroupMember>>,
         history: List<UsageEvent> = emptyList(),
-        settings: ExportedSettings? = null
+        settings: ExportedSettings? = null,
+        installed: Map<String, AppCategory> = emptyMap(),
+        essentials: Set<String> = emptySet()
     ): String {
         val groupIdToName = groups.associateBy({ it.id }, { it.name })
 
@@ -121,8 +127,15 @@ class RuleExporter @Inject constructor() {
         val export = NudgeExport(
             rules = targetedRules.map { exportedRule(it, groupIdToName) },
             groups = groups.map { group ->
-                val members = groupMembers[group.id]?.map { it.packageName } ?: emptyList()
-                ExportedGroup(name = group.name, members = members)
+                val definition = group.definition(groupMembers[group.id].orEmpty())
+                ExportedGroup(
+                    name = group.name,
+                    members = GroupMembershipResolver.membersOf(definition, installed, essentials).toList(),
+                    categories = OFFERED_CATEGORIES.filter { it in definition.categories }.map { it.name },
+                    includes = definition.includes.toList(),
+                    excluded = definition.excludes.toList(),
+                    hasDefinition = true
+                )
             },
             extendedRules = allAppsRules.map { rule ->
                 exportedRule(rule, groupIdToName).copy(
@@ -307,6 +320,11 @@ class RuleExporter @Inject constructor() {
             val membersArr = JSONArray()
             group.members.forEach { membersArr.put(it) }
             obj.put("members", membersArr)
+            if (group.hasDefinition) {
+                obj.put("categories", JSONArray(group.categories))
+                obj.put("includes", JSONArray(group.includes))
+                obj.put("excluded", JSONArray(group.excluded))
+            }
             groupsArray.put(obj)
         }
         root.put("groups", groupsArray)
@@ -668,7 +686,14 @@ class RuleExporter @Inject constructor() {
         require(name.isNotBlank()) { "Group name is blank" }
         val membersArr = obj.optJSONArray("members") ?: JSONArray()
         val members = (0 until membersArr.length()).map { membersArr.getString(it) }
-        return ExportedGroup(name = name, members = members)
+        return ExportedGroup(
+            name = name,
+            members = members,
+            categories = obj.textList("categories"),
+            includes = obj.textList("includes"),
+            excluded = obj.textList("excluded"),
+            hasDefinition = listOf("categories", "includes", "excluded").any { obj.has(it) }
+        )
     }
 
     /**
