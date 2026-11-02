@@ -279,17 +279,3 @@ androidComponents {
             .configureEach { dependsOn(verify) }
     }
 }
-
-// Screenshot tests (docs/screenshot-tests.md). Paparazzi 1.3.5 ships API 34 layoutlib, which
-// crashes on compileSdk 36 before drawing a frame (cashapp/paparazzi#1877: no
-// Build.VERSION_CODES_FULL). 15.2.3 is the API 36 layoutlib Paparazzi 2.0.0-alpha02 ships. 2.x
-// itself is out: its plugin puts Kotlin 2.1 on the build classpath and breaks compileDebugKotlin
-// on our Kotlin 2.0.21. Only the screenshot tests resolve this group.
-configurations.configureEach {
-    resolutionStrategy.eachDependency {
-        if (requested.group == "com.android.tools.layoutlib" && requested.name != "layoutlib-api") {
-            useVersion("15.2.3")
-            because("API 36 layoutlib for compileSdk 36 (cashapp/paparazzi#1877)")
-        }
-    }
-}
