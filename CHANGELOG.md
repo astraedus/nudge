@@ -14,6 +14,7 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
 - Backups include All apps rules. The groups they let through are matched by name on the phone you restore to.
 
 ### Fixed
+- Opening an app for the first time after installing it (Google Docs, for one) could get past an All apps Hard block: the app's own start-up screen covered the block screen and closed it. Nudge now checks the block screen actually came up, and puts it back if the blocked app is in front instead.
 - Firefox, and any other browser that fills in passwords, was treated as an essential app, so Nuke Mode and groups could not block it. Browsers are now never essential.
 
 ### Changed

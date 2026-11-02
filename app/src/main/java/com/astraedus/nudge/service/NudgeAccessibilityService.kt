@@ -3186,8 +3186,58 @@ class NudgeAccessibilityService : AccessibilityService() {
             // whose trailing window events must not be mistaken for the user getting past it.
             guard.onOverlayLaunched(targetPackage, decisionKey)
         }
+        // ...and confirm it actually ARRIVED. A same-app trampoline can put the blocked app back in
+        // front of this overlay with no event left to notice it by; see
+        // [BlockLaunchGate.OVERLAY_ARRIVAL_CHECK_MS] for the two measured shapes.
+        val checkSeq = guard.armArrivalCheck(targetPackage)
+        windowReadHandler.postDelayed(
+            { checkOverlayArrived(targetPackage, checkSeq) },
+            BlockLaunchGate.OVERLAY_ARRIVAL_CHECK_MS
+        )
         applicationContext.startActivity(overlayIntent)
         return true
+    }
+
+    /**
+     * The arrival check for the launch numbered [checkSeq]: if the blocked app itself owns the
+     * active window, the block we launched is not in front of it, so re-assert it.
+     *
+     * The re-assertion is an EVALUATION, never a replay of the launched decision (issue #50's
+     * stale overlay): a Delay the user has since completed, an emergency pass, a rule switched off
+     * all answer it the ordinary way. It mirrors the bypass branch in [onAccessibilityEvent], whose
+     * event this case never gets: the overlay flag is dropped, and the foreground claim is set from
+     * the window the screen just reported, as #7's verified content-change switch sets it.
+     *
+     * The tap is not counted twice: the arrival never ended, so the caller's `claimConfrontation`
+     * finds it already counted (and a re-show restores it, #143).
+     */
+    private fun checkOverlayArrived(targetPackage: String, checkSeq: Long) {
+        val guard = entryPoint.blockLaunchGuard()
+        val activeWindowPackage = activeWindowPackageOrNull()
+        when (guard.arrivalVerdict(targetPackage, checkSeq, activeWindowPackage)) {
+            BlockLaunchGate.ArrivalVerdict.RESCUE -> {
+                log.i(
+                    "block overlay not in front of its target, re-evaluating package=$targetPackage " +
+                        "reason=buried_by_target ${guard.stateDescription()}"
+                )
+                guard.onArrivalRescue(targetPackage)
+                applyForegroundSignal(ForegroundSignal.AppWindow(targetPackage))
+                markOverlayInactive()
+                lastEvalTime = 0L
+                evaluateForegroundPackage(targetPackage)
+            }
+            BlockLaunchGate.ArrivalVerdict.SPENT -> log.w(
+                "block overlay still not in front of its target after " +
+                    "${BlockLaunchGate.MAX_ARRIVAL_RESCUES} re-evaluations, giving up " +
+                    "package=$targetPackage ${guard.stateDescription()}"
+            )
+            BlockLaunchGate.ArrivalVerdict.UNVERIFIED -> log.i(
+                "block overlay arrival unverified package=$targetPackage reason=no_active_window"
+            )
+            BlockLaunchGate.ArrivalVerdict.NOT_BURIED,
+            BlockLaunchGate.ArrivalVerdict.SUPERSEDED,
+            BlockLaunchGate.ArrivalVerdict.MOVED_ON -> Unit
+        }
     }
 
     /**

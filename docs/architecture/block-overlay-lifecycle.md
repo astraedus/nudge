@@ -134,6 +134,24 @@ Walk-away and Delay completion are untouched: both act on an overlay that reache
 
 Tests: `TrampolineLaunchReplayTest` (L2, `camera-cold-trampoline-pending-drop.jsonl` through the real classifier, guard, gate and engine; asserts a re-show after the permission dialog and one row in both claim orders, with the pre-fix gate on the same events as the counterfactual) and `BlockLaunchGateTest` (the displacement, decide and re-show functions branch by branch, including the class test that nothing but another app's window displaces).
 
+### A block buried by its OWN app is re-asserted by the arrival check (2026-11-02)
+
+#143's displacement needs ANOTHER app's window. Google Docs' first launch after an install buries the Hard block with its own: `NewMainProxyActivity` (the trampoline) starts `HomescreenActivity` in the same task, after our `startActivity`. Measured on the bench Pixel 3 under an All apps Hard rule, main-latest 97ad2e4: 3 escapes in 9 first launches, later launches blocked every time. Two shapes, both proven by the `wm_*` events in the same run's logcat (header of `docs-first-launch-trampoline-buries-overlay.jsonl`):
+
+- **M2, the overlay was shown, then finished under the re-block.** The overlay resumes at +0.42 s, Docs' trampoline fronts `HomescreenActivity` at +0.43 s, the server stops the overlay at +1.46 s, and the bypass branch reads Homescreen and re-launches at +1.51 s. `singleInstance` delivers that START as `wm_new_intent` to the SAME instance, whose queued `onStop` then finishes it (+1.52 s, `OverlayLifecycle.onStopped`). The re-block reached an instance on its way out.
+- **M1, the overlay never resumed.** The trampoline's window is the target's own, so it is neither a bypass nor a displacement; the re-block is swallowed under `isOverlayActive` or refused as `DROP_ALREADY_PENDING` for an overlay nobody will draw.
+
+Both end the same way: no further `TYPE_WINDOW_STATE_CHANGED` ever says "Docs is in front", so no event-driven rule can catch it. That is why this one IS a timer, gated on evidence:
+
+- Every launch and re-show arms a numbered check (`BlockLaunchGuard.armArrivalCheck`), posted `OVERLAY_ARRIVAL_CHECK_MS` (1.5 s) later on the main handler. The overlay resumes about 230 ms after START and the trampoline lands inside 1.1 s, so 1.5 s is after both.
+- The check reads `rootInActiveWindow`'s package. Only the blocked app itself in front is a rescue (`ArrivalVerdict.RESCUE`). Our overlay, the launcher, another app or a dialog is `NOT_BURIED`; an unreadable window is `UNVERIFIED` and never acts; a check for a launch a later one replaced is `SUPERSEDED`; Home or another app's window ends the watch (`MOVED_ON`).
+- A rescue is a FRESH evaluation, never a replay: it marks an unshown pending overlay displaced (`pendingOverlayAfterRescue`, so the gate answers `RESHOW_HIDDEN`, not `DROP_ALREADY_PENDING`), applies `AppWindow(target)`, drops `isOverlayActive`, resets the debounce and calls `evaluateForegroundPackage`. A completed Delay or a pass is answered by its grant, so a rescue never re-blocks an app the user was let into.
+- At most `MAX_ARRIVAL_RESCUES` (2) per stay, then one `log.w` and nothing more: a device where the check is wrong costs two launches, not a loop. `claimConfrontation` keeps it one row.
+
+Tests: `OverlayArrivalCheckTest` (L1: the verdict matrix, the watch lifecycle with a class test over every `ForegroundSignal`, and the rescue turning a refused re-block into a re-show) and `OverlayArrivalReplayTest` (L2: the committed capture through the real classifier, guard, gate and engine with the platform's effects scripted; the counterfactual without the check ends with nothing on screen, the M1 shape with the overlay window withheld, the reversed order where the overlay lands after Homescreen and the check stands down, and the cap).
+
+Not covered: the QA report's Firefox case (the default-browser role dialog). The dialog is another app's window and IS read as a bypass; its dismissal sends no window-state event, so nothing re-evaluates Firefox. It did not reproduce on the bench (8/8 blocked, 4 under CPU load) and is tracked as foreground detection, not overlay arrival.
+
 Tests: `InterventionCountReplayTest` (every mechanism above replayed through the real classifier, guard and gate, each asserting ROWS — with the launch count on the same run as the counterfactual, since one row per allowed launch is literally what the old code did; plus the arrival matrix over every departure kind × every block kind, and the dated 100-iteration regression), `ArrivalAndStormGateTest` (the pure functions, branch by branch), `BlockOverlayLaunchContractTest` (the claim's position, the single row writer, the two reported departures, the storm log, the fail-safe re-arm).
 
 ## The redirect app — one better app on every block screen (v1.20.0)

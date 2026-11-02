@@ -1,0 +1,86 @@
+# a11y capture: docs-first-launch-trampoline-buries-overlay
+# device: Pixel 3 (192.168.1.68:5555), Android 12 / API 31. Captured 2026-11-02T00:16:01Z, 22s window.
+# HOW: main-latest 97ad2e4 (release key) with Debug Logging on, scripts/a11y-capture.sh running.
+#      ONE rule: All apps, HARD_BLOCK, created through the UI. Google Docs uninstalled, re-installed
+#      (adb install-multiple of the Play splits), then its FIRST launch from Home
+#      (am start NewMainProxyActivity). Logcat -b main,system,events recorded alongside.
+# EXPECTED (test oracle): one first launch -> the Hard block is the focused window and STAYS in
+#      front; ONE Blocked row. It did not: Docs held focus 12s later, no overlay anywhere.
+# MEASURED: 3 escapes in 9 first-launch trials on main-latest (the QA report's case); later
+#      launches blocked every time.
+# WHAT IT PROVES, from the same run's logcat (T0 = the shell's START of NewMainProxyActivity):
+#      +0.175 EV Docs FrameLayout -> foreground evaluation, handling block HARD_BLOCK
+#      +0.193 START BlockOverlayActivity (instance 249216603)
+#      +0.423 wm_on_resume_called overlay                  (the overlay is ON SCREEN)
+#      +0.425 Docs' own NewMainProxyActivity STARTs HomescreenActivity, bringingFoundTaskToFront
+#      +1.016 EV Docs HomescreenActivity                    (the overlay is buried by its target)
+#      +1.455 wm_stop_activity overlay                      (server side; client onStop now queued)
+#      +1.500 "block overlay bypassed by foreground switch, re-evaluating" (main thread was busy)
+#      +1.509 START overlay -> wm_new_intent to the SAME instance 249216603
+#      +1.516 "block shown but NOT counted ... already_counted_this_arrival"
+#      +1.522 wm_finish_activity overlay app-request       (its queued onStop -> OverlayLifecycle.onStopped)
+#      +1.540 wm_on_destroy_called overlay
+#      then nothing: no further WINDOW_STATE_CHANGED, and Docs' content changes come from lastPackage.
+#      The re-block was delivered to an instance already on its way out, and the stream never says
+#      "Docs is in front" again. OverlayArrivalReplayTest replays this through the guard.
+{"t":"WINDOW_STATE_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.widget.FrameLayout","w":11158,"ts":2407947125,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":0}
+{"t":"WINDOW_STATE_CHANGED","p":"dev.astraedus.nudge","c":"android.widget.FrameLayout","w":11159,"ts":2407947284,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":0}
+{"t":"WINDOW_STATE_CHANGED","p":"dev.astraedus.nudge","c":"com.astraedus.nudge.ui.overlay.BlockOverlayActivity","w":11161,"ts":2407947543,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":0}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.widget.FrameLayout","w":11162,"ts":2407947972,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_STATE_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"com.google.android.apps.docs.editors.homescreen.HomescreenActivity","w":11162,"ts":2407947972,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":0}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.view.ViewGroup","w":11162,"ts":2407948488,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.view.View","w":11162,"ts":2407948489,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.view.View","w":11162,"ts":2407948489,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.view.View","w":11162,"ts":2407948489,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.view.View","w":11162,"ts":2407948490,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.view.View","w":11162,"ts":2407948492,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.view.View","w":11162,"ts":2407948492,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.view.View","w":11162,"ts":2407948492,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.view.View","w":11162,"ts":2407948492,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.view.View","w":11162,"ts":2407948492,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.view.View","w":11162,"ts":2407948492,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.view.View","w":11162,"ts":2407948492,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.view.View","w":11162,"ts":2407948594,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.view.View","w":11162,"ts":2407948595,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.view.View","w":11162,"ts":2407948595,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.view.View","w":11162,"ts":2407948595,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.view.View","w":11162,"ts":2407948595,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.view.View","w":11162,"ts":2407948595,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.view.View","w":11162,"ts":2407948602,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":0}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.widget.FrameLayout","w":11162,"ts":2407948610,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":7}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.widget.FrameLayout","w":11162,"ts":2407948673,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":0}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.view.View","w":11162,"ts":2407948696,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.view.View","w":11162,"ts":2407948697,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.widget.FrameLayout","w":11162,"ts":2407948713,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.view.View","w":11162,"ts":2407949743,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.view.View","w":11162,"ts":2407949743,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.view.View","w":11162,"ts":2407949743,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.view.View","w":11162,"ts":2407949743,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.view.View","w":11162,"ts":2407949743,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.view.View","w":11162,"ts":2407949743,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.view.View","w":11162,"ts":2407949743,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.view.View","w":11162,"ts":2407949743,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.view.View","w":11162,"ts":2407949743,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.view.View","w":11162,"ts":2407949743,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.view.View","w":11162,"ts":2407949744,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.view.View","w":11162,"ts":2407949744,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.view.View","w":11162,"ts":2407949744,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.view.View","w":11162,"ts":2407949744,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.view.View","w":11162,"ts":2407949744,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.view.View","w":11162,"ts":2407949744,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.view.View","w":11162,"ts":2407949744,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.view.View","w":11162,"ts":2407949744,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.view.View","w":11162,"ts":2407949744,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.view.View","w":11162,"ts":2407949744,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.view.View","w":11162,"ts":2407949849,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.view.View","w":11162,"ts":2407949849,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.view.View","w":11162,"ts":2407949951,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.widget.FrameLayout","w":11162,"ts":2407950193,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.view.View","w":11162,"ts":2407950239,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":0}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.view.View","w":11162,"ts":2407950239,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":0}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.view.View","w":11162,"ts":2407950239,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":0}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.view.View","w":11162,"ts":2407950240,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":0}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.view.View","w":11162,"ts":2407950240,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":0}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.google.android.apps.docs.editors.docs","c":"android.widget.FrameLayout","w":11162,"ts":2407950293,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":1}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.android.systemui","c":"android.widget.TextView","w":11084,"ts":2407964555,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":2}
+{"t":"WINDOW_CONTENT_CHANGED","p":"com.android.systemui","c":"android.widget.TextView","w":11084,"ts":2407964853,"fi":-1,"ti":-1,"ci":-1,"n":-1,"dx":-1,"dy":-1,"sx":0,"sy":0,"mx":0,"my":0,"cct":4}
