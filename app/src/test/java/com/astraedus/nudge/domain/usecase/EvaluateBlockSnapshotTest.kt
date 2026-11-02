@@ -78,8 +78,8 @@ class EvaluateBlockSnapshotTest {
     private val members = Table(listOf(aGroupMember(groupId, groupPkg)))
     private var perGroupReads = 0
 
-    // TODO(lane-fixtures): fake needs per-table open counts, a failing table and a never-answering table;
-    // this repository stays on a mock.
+    // Deliberately a stub, not FakeRuleDatabase: these checks are about the table FLOWS themselves
+    // (how often each is opened, one that fails, one that never answers), which the fake does not model.
     private val repository: BlockRuleRepository = mockk {
         every { getEnabledRules() } answers { rules.flow }
         every { getAllGroups() } answers { groups.flow }

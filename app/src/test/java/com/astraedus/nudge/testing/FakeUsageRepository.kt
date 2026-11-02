@@ -58,6 +58,7 @@ class FakeScreenTime {
 /**
  * [UsageEventDao] over an in-memory table. Ids autoincrement like Room's. Every `insertAll` call
  * is also kept whole in [insertAllBatches], for tests that pin how a write is batched.
+ * [failWritesWith] makes every insert throw, as a closed or full database does.
  */
 class FakeUsageEventDao(vararg seed: UsageEvent) : UsageEventDao {
     private val table = MutableStateFlow<List<UsageEvent>>(emptyList())
@@ -69,11 +70,22 @@ class FakeUsageEventDao(vararg seed: UsageEvent) : UsageEventDao {
     /** Each `insertAll` call's argument, in call order. */
     val insertAllBatches: MutableList<List<UsageEvent>> = mutableListOf()
 
+    /** When set, every insert throws this instead of writing a row. */
+    var failWritesWith: Throwable? = null
+
+    /**
+     * How many times anything asked for [getEventsSince]: for a "fetched once, sliced in memory"
+     * check, which a mock expressed as `verify(exactly = 1)`.
+     */
+    var eventsSinceQueries: Int = 0
+        private set
+
     init {
         seed.forEach { put(it) }
     }
 
     private fun put(event: UsageEvent) {
+        failWritesWith?.let { throw it }
         val id = if (event.id == 0L) lastId + 1 else event.id
         check(table.value.none { it.id == id }) { "UNIQUE constraint failed: usage_events.id ($id)" }
         lastId = maxOf(lastId, id)
@@ -106,8 +118,10 @@ class FakeUsageEventDao(vararg seed: UsageEvent) : UsageEventDao {
             rows.count { it.wasBlocked && !it.userChangedMind && it.timestamp >= since && it.timestamp < until }
         }
 
-    override fun getEventsSince(since: Long): Flow<List<UsageEvent>> =
-        query { rows -> rows.filter { it.timestamp >= since } }
+    override fun getEventsSince(since: Long): Flow<List<UsageEvent>> {
+        eventsSinceQueries++
+        return query { rows -> rows.filter { it.timestamp >= since } }
+    }
 
     override fun observeLatestEventId(): Flow<Long?> = query { rows -> rows.maxOfOrNull { it.id } }
 

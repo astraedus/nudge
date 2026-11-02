@@ -154,7 +154,8 @@ class EvaluateBlockGroupRulesTest {
         // the service is in during the first moments after the process starts.
         val groupHard = groupDelay.copy(mode = BlockMode.HARD_BLOCK.name)
         val members = listOf(aGroupMember(social, instagram), aGroupMember(social, chrome))
-        // TODO(lane-fixtures): fake needs a member table that never answers (cold start); stays on a mock.
+        // Deliberately a stub, not FakeRuleDatabase: the cold start needs a member table that never
+        // answers, which the fake does not model.
         val repository = mockk<BlockRuleRepository> {
             every { getEnabledRules() } returns flowOf(listOf(groupHard))
             every { getAllGroups() } returns flowOf(listOf(anAppGroup("Social", id = social)))

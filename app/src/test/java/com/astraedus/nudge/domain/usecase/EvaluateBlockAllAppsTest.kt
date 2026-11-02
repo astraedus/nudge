@@ -205,7 +205,8 @@ class EvaluateBlockAllAppsTest {
     private val members = Table(listOf(aGroupMember(social, spotify)))
     private var perGroupReads = 0
 
-    // TODO(lane-fixtures): fake needs per-table open counts (the no-reads-once-warm check); stays on a mock.
+    // Deliberately a stub, not FakeRuleDatabase: the no-reads-once-warm check counts how often each
+    // table flow is opened, which the fake does not model.
     private val repository: BlockRuleRepository = mockk {
         every { getEnabledRules() } answers { rules.flow }
         every { getAllGroups() } answers { groups.flow }

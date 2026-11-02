@@ -152,6 +152,21 @@ class FakesTest {
     }
 
     @Test
+    fun `a failing usage table writes nothing, and range queries are counted`() = runTest {
+        val dao = FakeUsageEventDao()
+        val usage = FakeUsageRepository(events = dao)
+        dao.failWritesWith = IllegalStateException("db closed")
+
+        val failure = runCatching { usage.logEvent(aUsageEvent("a.pkg")) }.exceptionOrNull()
+        assertTrue(failure is IllegalStateException)
+        assertTrue(dao.events.isEmpty())
+
+        usage.getEventsSince(0L)
+        usage.getEventsSince(0L)
+        assertEquals(2, dao.eventsSinceQueries)
+    }
+
+    @Test
     fun `foreground time comes from the screen-time source and reads are counted`() {
         val screenTime = FakeScreenTime().apply { todayMs["a.pkg"] = 90_000L }
         val usage = FakeUsageRepository(screenTime = screenTime)
