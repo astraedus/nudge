@@ -36,7 +36,7 @@ internal const val PHONE_NUDGE_THRESHOLD_LABEL = "Pause after"
 internal const val PHONE_NUDGE_PAUSE_LABEL = "First pause length"
 
 /** The thresholds the picker offers, in minutes. Bounds live in [PhoneNudge]. */
-private val THRESHOLD_CHOICES = listOf(10, 15, 20, 30, 45, 60, 90)
+private val THRESHOLD_CHOICES = listOf(10, 15, 20, 30, 40, 45, 60, 90)
 
 /** First-pause lengths the picker offers, in seconds. Later pauses double to a 30 s cap. */
 private val PAUSE_CHOICES = listOf(5, 10, 20, 30)
