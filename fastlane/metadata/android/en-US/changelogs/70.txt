@@ -1,0 +1,4 @@
+• New: All apps except a few. Block every app except the ones you pick, all the time or on a schedule. Your phone, messages and other essentials always stay open.
+• Block screens now say when the block ends, and show the apps you're allowed to open instead.
+• Firefox and other browsers that fill in passwords can now be blocked by groups and Nuke Mode.
+• Fixed a newly installed app sometimes getting past a block the first time you opened it.

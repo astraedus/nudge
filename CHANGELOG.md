@@ -4,6 +4,8 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+## [1.25.0] - 2026-11-02
+
 ### Added
 - "All apps except a few": "Block several apps" on Manage Apps now also offers a rule that blocks every app except the ones you choose. Pick the apps that stay open (Spotify, Maps), or whole groups (Work), then how it blocks and when: all the time, or on chosen days and times. The editor says how many apps it blocks. Your essentials (phone, messages, clock, launcher, keyboard, Settings and Nudge itself) are never blocked by it, whatever the list says; "Always allowed" shows exactly which apps those are on your phone. An app you allow can still be blocked by its own rule or a group's. Saving Hard block, all the time asks first ("Block 84 apps all the time?"), and so does switching such a rule on from Manage Apps.
 - All apps rules show on Manage Apps in their own section, with a switch. An app's settings say "Also covered by" the All apps rule that blocks it, and a group's editor lists the All apps rules that leave it open.
