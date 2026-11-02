@@ -5,6 +5,7 @@ import com.astraedus.nudge.data.db.BlockHistoryFixture
 import com.astraedus.nudge.data.db.entity.UsageEvent
 import com.astraedus.nudge.data.repository.InstalledAppsRepository
 import com.astraedus.nudge.data.repository.UsageRepository
+import com.astraedus.nudge.testing.TestClock
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
@@ -31,6 +32,7 @@ import org.junit.Test
 class InterventionsViewModelTest {
 
     private val dispatcher = StandardTestDispatcher()
+    private val clock = TestClock()
 
     @get:Rule
     val mainDispatcherRule = MainDispatcherRule(dispatcher)
@@ -83,7 +85,7 @@ class InterventionsViewModelTest {
     @Test
     fun `flipping the range re-slices the loaded events instead of re-querying Room`() =
         runTest(dispatcher) {
-            val now = System.currentTimeMillis()
+            val now = clock.now
             val dayMs = 24L * 60L * 60L * 1000L
             events.value = listOf(
                 blockedEvent(now - 2 * dayMs),   // inside 7d and 30d
@@ -111,7 +113,8 @@ class InterventionsViewModelTest {
     private fun viewModel() = InterventionsViewModel(
         usageRepository = usageRepository,
         installedAppsRepository = installedAppsRepository,
-        calculator = InsightsCalculator()
+        calculator = InsightsCalculator(),
+        clock = clock.asSource()
     )
 
     private fun blockedEvent(timestamp: Long) = UsageEvent(
