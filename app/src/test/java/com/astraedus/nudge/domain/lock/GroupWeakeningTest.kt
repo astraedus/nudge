@@ -1,6 +1,8 @@
 package com.astraedus.nudge.domain.lock
 
 import com.astraedus.nudge.data.db.entity.BlockRule
+import com.astraedus.nudge.domain.groups.GroupDefinition
+import com.astraedus.nudge.domain.packages.AppCategory
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -126,6 +128,54 @@ class GroupWeakeningTest {
         )
         assertEquals(GroupUsage(blocks = true, allowedBy = true), GroupUsage.of(5, rules))
     }
+
+    // ---- Category groups: judged on RESOLVED members (spec 5.6) ----
+
+    private val fiveSocial = (1..5).associate { "com.social$it" to AppCategory.SOCIAL } +
+        mapOf("com.dialer" to AppCategory.SOCIAL, "com.game" to AppCategory.GAME)
+    private val essentials = setOf("com.dialer")
+
+    private fun def(vararg categories: AppCategory, includes: Set<String> = emptySet(), excludes: Set<String> = emptySet()) =
+        GroupDefinition(1, categories.toSet(), includes, excludes)
+
+    @Test fun `unchecking a category no installed app is in is free`() =
+        assertFalse(
+            GroupWeakening.isWeakening(def(AppCategory.SOCIAL, AppCategory.NEWS), def(AppCategory.SOCIAL), blocks, fiveSocial, essentials)
+        )
+
+    @Test fun `unchecking a category that brings in five apps is weakening`() =
+        assertTrue(GroupWeakening.isWeakening(def(AppCategory.SOCIAL), def(), blocks, fiveSocial, essentials))
+
+    @Test fun `unchecking a category whose only app is essential is free`() =
+        assertFalse(
+            GroupWeakening.isWeakening(def(AppCategory.SOCIAL), def(), blocks, mapOf("com.dialer" to AppCategory.SOCIAL), essentials)
+        )
+
+    @Test fun `removed by you on a category app is weakening`() =
+        assertTrue(
+            GroupWeakening.isWeakening(def(AppCategory.SOCIAL), def(AppCategory.SOCIAL, excludes = setOf("com.social1")), blocks, fiveSocial, essentials)
+        )
+
+    @Test fun `add back is free while blocking`() =
+        assertFalse(
+            GroupWeakening.isWeakening(def(AppCategory.SOCIAL, excludes = setOf("com.social1")), def(AppCategory.SOCIAL), blocks, fiveSocial, essentials)
+        )
+
+    @Test fun `checking a category is free while blocking and weakening while an All apps rule allows the group`() {
+        assertFalse(GroupWeakening.isWeakening(def(), def(AppCategory.GAME), blocks, fiveSocial, essentials))
+        assertTrue(GroupWeakening.isWeakening(def(), def(AppCategory.GAME), allowed, fiveSocial, essentials))
+    }
+
+    @Test fun `swapping a hand-picked app for its category is free when the members are the same`() =
+        assertFalse(
+            GroupWeakening.isWeakening(
+                def(includes = (1..5).map { "com.social$it" }.toSet()),
+                def(AppCategory.SOCIAL),
+                both,
+                fiveSocial,
+                essentials
+            )
+        )
 
     @Test fun `a corrupt row naming a group and allApps is read as the group rule, not as allowing`() {
         // RuleTarget.of reads the narrowest target, so this row blocks group 5 and allows nothing.
