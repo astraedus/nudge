@@ -5,7 +5,7 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
 ## [Unreleased]
 
 ### Added
-- Groups can include whole categories. The group editor shows chips for the kinds of apps on your phone (Social & Communication, Video, Games, News and more), each with how many apps it brings in. Check one and its apps join the group, including apps you install later, which are blocked the first time you open them. Your essentials never join.
+- Groups can include whole categories. The group editor shows a chip for each kind of app (Social & Communication, Movies & Video, Games, News and more), each with how many of your apps it brings in. Check one and its apps join the group, including apps you install later, which are blocked the first time you open them. A category you have no apps in yet can be checked too, so you can block games before you install one. Your essentials never join.
 - Take one app out of a checked category with its ✕: it moves to "Removed by you" at the bottom of the list and stays out. "Add back" puts it back in, and so does picking it again under "Add apps".
 - Apps in a group because of their category show the category's name next to them, and Manage Apps counts them in the group.
 
