@@ -17,6 +17,7 @@ import com.astraedus.nudge.domain.model.FeatureMode
 import com.astraedus.nudge.ui.components.DurationInput
 import com.astraedus.nudge.ui.components.UsageReminderInput
 import com.astraedus.nudge.ui.lock.StrictModeGate
+import com.astraedus.nudge.data.repository.RuleArming
 import com.astraedus.nudge.domain.engine.FirstUnlockWindow
 import com.astraedus.nudge.domain.usecase.SetDayStartMinuteUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -177,13 +178,15 @@ class UnifiedAppConfigViewModel @Inject constructor(
 
             // Separate into categories
             // A scheduled rule is either a days-and-times window or a first-unlock one (spec 3.5).
-            // A first-unlock rule carries days but NO times, so the old `scheduleDays != null` test
-            // would still classify it here; the time/null tests are added because an imported rule
-            // can carry no days at all, and it must not be mistaken for the always-on default.
+            // `scheduleDays != null` stays in the test on purpose: a days-only rule (days set, no
+            // times) used to count as the scheduled override, and treating it as the default would
+            // have a save rewrite it as always-on. A first-unlock rule always carries days too, and
+            // an imported one may carry none, which the other two checks catch.
             fun isScheduled(rule: BlockRule): Boolean =
                 rule.firstUnlockMinutes != null ||
                     rule.scheduleStartMinute != null ||
-                    rule.scheduleEndMinute != null
+                    rule.scheduleEndMinute != null ||
+                    rule.scheduleDays != null
 
             val defaultAppRule = directRules.firstOrNull {
                 it.inAppFeatures.isNullOrEmpty() && !isScheduled(it)
@@ -351,6 +354,18 @@ class UnifiedAppConfigViewModel @Inject constructor(
         } else {
             null
         }
+        // `performSave` deletes and re-adds this row, so the repository sees it as new and honours
+        // whatever stamp is carried here (RuleArming). Carrying is what lets a stronger edit keep a
+        // running window; a rule that only NOW becomes a first-unlock one carries NEVER_ARMED, so
+        // the repository arms it for the next unlock.
+        val wasFirstUnlock = existingScheduledRule?.firstUnlockMinutes != null
+        val armedAt = if (firstUnlockMinutes != null && wasFirstUnlock) {
+            existingScheduledRule?.armedAt ?: RuleArming.NEVER_ARMED
+        } else if (firstUnlockMinutes == null) {
+            existingScheduledRule?.armedAt ?: RuleArming.NEVER_ARMED
+        } else {
+            RuleArming.NEVER_ARMED
+        }
         return BlockRule(
             packageName = packageName,
             mode = state.scheduledMode.name,
@@ -360,6 +375,7 @@ class UnifiedAppConfigViewModel @Inject constructor(
             scheduleStartMinute = if (firstUnlockMinutes != null) null else startMin,
             scheduleEndMinute = if (firstUnlockMinutes != null) null else endMin,
             firstUnlockMinutes = firstUnlockMinutes,
+            armedAt = armedAt,
             tabVanish = state.tabVanish,
             keepPassOnShortTrips = state.effectiveKeepPassOnShortTrips
         )
@@ -414,7 +430,11 @@ class UnifiedAppConfigViewModel @Inject constructor(
             followingSteer = state.followingSteer,
             // Unlike followingSteer, also copied onto every other rule in performSave: the engine
             // reads it off whichever rule DECIDED the block, exactly like tabVanish.
-            keepPassOnShortTrips = state.effectiveKeepPassOnShortTrips
+            keepPassOnShortTrips = state.effectiveKeepPassOnShortTrips,
+            // Carried across the delete and re-add in performSave, so an ordinary save does not
+            // re-arm the package's rules (RuleArming). The default rule is never a first-unlock
+            // rule, so it can only ever keep the stamp it had.
+            armedAt = existingDefaultRule?.armedAt ?: RuleArming.NEVER_ARMED
         )
     }
 

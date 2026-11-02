@@ -37,11 +37,13 @@ class FakeBlockRuleDao internal constructor(private val db: FakeRuleDatabase) : 
         db.deleteRuleRows { it.packageName == packageName }
 
     /**
-     * The production query's `CASE`: a disable keeps the old arming stamp, an enable takes [now]
-     * (spec 5.3). Kept here so the fake cannot quietly disagree with the SQL it stands in for.
+     * The production query's `CASE`: a disable keeps the old arming stamp, and so does an enable of
+     * a rule that is already on; only an off-to-on transition takes [now] (spec 5.3). Kept here so
+     * the fake cannot quietly disagree with the SQL it stands in for.
      */
     override suspend fun setEnabledForPackage(packageName: String, enabled: Boolean, now: Long) =
         db.updateRuleRows({ it.packageName == packageName }) {
-            it.copy(enabled = enabled, armedAt = if (enabled) now else it.armedAt)
+            val armsNow = enabled && !it.enabled
+            it.copy(enabled = enabled, armedAt = if (armsNow) now else it.armedAt)
         }
 }

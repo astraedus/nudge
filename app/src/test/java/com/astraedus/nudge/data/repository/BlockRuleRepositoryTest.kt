@@ -164,19 +164,19 @@ class BlockRuleRepositoryTest {
         )
         assertTrue("an enabled write is armed now", db.rules.all { it.armedAt > 0 })
 
-        // The two update paths (id 9), each over a stale stored row.
+        // The two update paths (id 9), each over a stale stored row. An update of a rule that was
+        // already on KEEPS its arming stamp (review: re-arming on every save ended a running
+        // window), so the seeded stamp is what must survive.
         val writes: List<suspend (BlockRuleRepository) -> Unit> = listOf(
             { it.saveAllAppsRule(loaded.copy(id = 9)) },
             { it.updateRule(loaded.copy(id = 9)) }
         )
         for (write in writes) {
-            val stale = FakeRuleDatabase().also { it.seedRule(aBlockRule(id = 9, allApps = true)) }
+            val stale = FakeRuleDatabase().also {
+                it.seedRule(aBlockRule(id = 9, allApps = true, armedAt = 4_000L))
+            }
             write(stale.repository)
-            assertEquals(
-                listOf(expected.copy(id = 9).withArmingFrom(stale.rules.single())),
-                stale.rules
-            )
-            assertTrue("an enabled write is armed now", stale.rules.all { it.armedAt > 0 })
+            assertEquals(listOf(expected.copy(id = 9, armedAt = 4_000L)), stale.rules)
         }
     }
 
@@ -200,6 +200,31 @@ class BlockRuleRepositoryTest {
         // Nothing reads armedAt until the rule is enabled, and enabling stamps again. Re-arming a
         // disabled row would be harmless, but keeping it makes "save = re-arm" mean what it says.
         assertEquals(1_000L, db.ruleWithId(3).armedAt)
+    }
+
+    @Test
+    fun `a rule that becomes a first-unlock rule is re-armed`() = runTest {
+        // A days-and-times rule switched to a first-unlock one opens a NEW window, so it must wait
+        // for the next unlock even though its row was already on.
+        db.seedRule(aBlockRule(id = 5, packageName = "com.a", armedAt = 1_000L))
+
+        repo.updateRule(
+            db.ruleWithId(5).copy(
+                scheduleDays = "1,2,3,4,5",
+                firstUnlockMinutes = 30
+            )
+        )
+
+        assertTrue("a new first-unlock window arms now", db.ruleWithId(5).armedAt > 1_000L)
+    }
+
+    @Test
+    fun `switching a rule on re-arms it`() = runTest {
+        db.seedRule(aBlockRule(id = 6, packageName = "com.a", enabled = false, armedAt = 9_000L))
+
+        repo.updateRule(db.ruleWithId(6).copy(enabled = true))
+
+        assertTrue("off to on arms now", db.ruleWithId(6).armedAt > 9_000L)
     }
 
     @Test

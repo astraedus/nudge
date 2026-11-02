@@ -7,6 +7,7 @@ import com.astraedus.nudge.data.db.entity.BlockRule
 import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.data.repository.RuleSnapshot
 import com.astraedus.nudge.data.repository.RuleSnapshots
+import com.astraedus.nudge.domain.engine.FirstUnlockWindow
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.domain.model.FeatureMode
 import com.astraedus.nudge.domain.usecase.SetDayStartMinuteUseCase
@@ -19,6 +20,8 @@ import com.astraedus.nudge.testing.aBlockRule
 import com.astraedus.nudge.testing.anApp
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
+import java.time.LocalDate
+import java.time.ZoneId
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -511,6 +514,47 @@ class UnifiedAppConfigViewModelTest {
             "a save now arms after today's unlock, so it cannot open until tomorrow",
             vm.uiState.value.startsAtNextUnlock
         )
+    }
+
+    @Test
+    fun `a stronger save during the window keeps the window running`() = runTest {
+        // Review blocker: re-arming on every save meant 30 -> 60 minutes, or a save with nothing
+        // changed, ended this morning's block. The row must keep its stamp across App config's
+        // delete and re-add, and the window must still be active afterwards.
+        val stamp = LocalDate.now(ZoneId.systemDefault()).atTime(8, 0)
+            .atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        val vm = viewModel(listOf(firstUnlockRule(minutes = 30).copy(armedAt = stamp)))
+
+        vm.setFirstUnlockMinutes(60)
+        vm.save()
+
+        val stored = db.rules.single { it.scheduleDays != null }
+        assertEquals("the save must not re-arm", stamp, stored.armedAt)
+        assertTrue(
+            "the window is still running ten minutes after the unlock",
+            FirstUnlockWindow.isActive(
+                nowMs = stamp + 10 * 60_000L,
+                stampMs = stamp,
+                dayStartMinute = FirstUnlockWindow.DEFAULT_DAY_START_MINUTE,
+                minutes = 60,
+                days = listOf(1, 2, 3, 4, 5),
+                armedAt = stored.armedAt,
+                zone = ZoneId.systemDefault()
+            )
+        )
+    }
+
+    @Test
+    fun `a days-only rule still counts as the scheduled override, not the default rule`() = runTest {
+        // Review: dropping `scheduleDays != null` from the classification made a days-only rule
+        // look like the always-on default, so saving rewrote it as always-on.
+        val vm = viewModel(
+            listOf(aBlockRule(packageName = packageName, mode = "HARD_BLOCK", scheduleDays = "1,2,3"))
+        )
+
+        assertTrue(vm.uiState.value.scheduledOverrideEnabled)
+        assertFalse(vm.uiState.value.scheduledOverrideFirstUnlock)
+        assertEquals(setOf(1, 2, 3), vm.uiState.value.scheduleDays)
     }
 
     @Test
