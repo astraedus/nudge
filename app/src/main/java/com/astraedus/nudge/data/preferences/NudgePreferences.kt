@@ -317,18 +317,18 @@ class NudgePreferences internal constructor(
      * the first pause. Not a protection setting, so neither direction is gated by Strict Mode.
      * Carried by a backup with the other settings.
      */
-    val phoneNudgeEnabled: Flow<Boolean> = context.dataStore.data
+    val phoneNudgeEnabled: Flow<Boolean> = dataStore.data
         .map { prefs -> prefs[Keys.PHONE_NUDGE_ENABLED] ?: false }
         .distinctUntilChanged()
 
-    val phoneNudgeThresholdMinutes: Flow<Int> = context.dataStore.data
+    val phoneNudgeThresholdMinutes: Flow<Int> = dataStore.data
         .map {
             (it[Keys.PHONE_NUDGE_THRESHOLD_MINUTES] ?: PhoneNudge.DEFAULT_THRESHOLD_MINUTES)
                 .coerceIn(PhoneNudge.MIN_THRESHOLD_MINUTES, PhoneNudge.MAX_THRESHOLD_MINUTES)
         }
         .distinctUntilChanged()
 
-    val phoneNudgePauseSeconds: Flow<Int> = context.dataStore.data
+    val phoneNudgePauseSeconds: Flow<Int> = dataStore.data
         .map {
             (it[Keys.PHONE_NUDGE_PAUSE_SECONDS] ?: PhoneNudge.DEFAULT_FIRST_PAUSE_SECONDS)
                 .coerceIn(PhoneNudge.MIN_PAUSE_SECONDS, PhoneNudge.MAX_PAUSE_SECONDS)
@@ -336,11 +336,11 @@ class NudgePreferences internal constructor(
         .distinctUntilChanged()
 
     suspend fun setPhoneNudgeEnabled(enabled: Boolean) {
-        context.dataStore.edit { prefs -> prefs[Keys.PHONE_NUDGE_ENABLED] = enabled }
+        dataStore.edit { prefs -> prefs[Keys.PHONE_NUDGE_ENABLED] = enabled }
     }
 
     suspend fun setPhoneNudgeThresholdMinutes(minutes: Int) {
-        context.dataStore.edit { prefs ->
+        dataStore.edit { prefs ->
             prefs[Keys.PHONE_NUDGE_THRESHOLD_MINUTES] = minutes.coerceIn(
                 PhoneNudge.MIN_THRESHOLD_MINUTES,
                 PhoneNudge.MAX_THRESHOLD_MINUTES
@@ -349,7 +349,7 @@ class NudgePreferences internal constructor(
     }
 
     suspend fun setPhoneNudgePauseSeconds(seconds: Int) {
-        context.dataStore.edit { prefs ->
+        dataStore.edit { prefs ->
             prefs[Keys.PHONE_NUDGE_PAUSE_SECONDS] = seconds.coerceIn(
                 PhoneNudge.MIN_PAUSE_SECONDS,
                 PhoneNudge.MAX_PAUSE_SECONDS
