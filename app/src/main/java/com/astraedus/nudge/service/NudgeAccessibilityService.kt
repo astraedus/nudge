@@ -21,6 +21,7 @@ import com.astraedus.nudge.domain.engine.BrowserRouting
 import com.astraedus.nudge.domain.engine.CoverageFacts
 import com.astraedus.nudge.domain.packages.PackageFacts
 import com.astraedus.nudge.domain.engine.ScheduleEvaluator
+import com.astraedus.nudge.domain.engine.FirstUnlockWindow
 import com.astraedus.nudge.domain.engine.WholeAppCoverage
 import com.astraedus.nudge.domain.block.BlockLaunchGate
 import com.astraedus.nudge.domain.autokick.UseReminder
@@ -934,6 +935,71 @@ class NudgeAccessibilityService : AccessibilityService() {
         }
     }
 
+    /**
+     * The first-unlock anchor (spec 5.3, from #109): the log-only spike of PR 5a.
+     *
+     * `ACTION_USER_PRESENT` is the platform's "the user is past the keyguard and looking at the
+     * phone" broadcast. It is runtime-registered for the same reason as [screenOffReceiver]: the
+     * system only delivers these to registered receivers, never to a manifest entry.
+     *
+     * This receiver records NOTHING and changes NO behaviour. It logs what actually arrived, so the
+     * mechanism can be checked on a bench device (PR 5a's decision point) before PR 5b makes a
+     * block depend on it: a PIN unlock, a swipe unlock, a reboot-then-unlock, and a locked screen
+     * woken without unlocking are four different deliveries, and only the last one should be absent.
+     *
+     * The fields name what the answer depends on:
+     * - `screenOn` — `isInteractive`, because a delivery while the screen is off would be suspicious;
+     * - `keyguardLocked` — `isDeviceLocked`, which must be false by the time USER_PRESENT arrives;
+     * - `secureLock` — `isKeyguardSecure`, "swipe only" vs "PIN/pattern/biometric";
+     * - `sinceBootMs` — `elapsedRealtime`, monotonic and jump-proof, so a reboot is obvious in the log
+     *   (a small value) and a wall-clock change cannot fake one.
+     */
+    private val userPresentReceiver by lazy {
+        object : android.content.BroadcastReceiver() {
+            override fun onReceive(context: android.content.Context?, intent: Intent?) {
+                if (intent?.action != Intent.ACTION_USER_PRESENT) return
+                logFirstUnlockEvidence(source = "user_present")
+            }
+        }
+    }
+
+    /**
+     * The fallback anchor's evidence (spec 5.3, PR 5a): an app window in front while the keyguard is
+     * unlocked means the user got past it even though no USER_PRESENT reached us. Covers devices with
+     * no secure lock and a broadcast an OEM dropped.
+     *
+     * Logged at most once per logical day, and only that: no stamp is stored in PR 5a, so the
+     * "already logged today" memory is this service session's. PR 5b replaces it with the real
+     * stamp. Keeping the gate here rather than logging every app window is what makes the spike's
+     * log readable, and `logicalDayStart` is pure and needs no preference read.
+     */
+    private val fallbackEvidenceLoggedAt = java.util.concurrent.atomic.AtomicLong(0L)
+
+    private fun logFirstUnlockFallback(packageName: String) {
+        val now = System.currentTimeMillis()
+        val dayStart = FirstUnlockWindow.logicalDayStart(
+            now,
+            FirstUnlockWindow.DEFAULT_DAY_START_MINUTE,
+            java.time.ZoneId.systemDefault()
+        )
+        if (fallbackEvidenceLoggedAt.get() >= dayStart) return
+        val keyguard = getSystemService(android.app.KeyguardManager::class.java) ?: return
+        if (keyguard.isDeviceLocked) return
+        if (!fallbackEvidenceLoggedAt.compareAndSet(fallbackEvidenceLoggedAt.get(), now)) return
+        logFirstUnlockEvidence(source = "app_window_fallback package=$packageName")
+    }
+
+    /** One log line, every field the PR 5a decision point needs. Never throws: it is a log. */
+    private fun logFirstUnlockEvidence(source: String) {
+        val power = getSystemService(android.os.PowerManager::class.java)
+        val keyguard = getSystemService(android.app.KeyguardManager::class.java)
+        log.i(
+            "first-unlock evidence source=$source screenOn=${power?.isInteractive} " +
+                "keyguardLocked=${keyguard?.isDeviceLocked} secureLock=${keyguard?.isKeyguardSecure} " +
+                "sinceBootMs=${android.os.SystemClock.elapsedRealtime()}"
+        )
+    }
+
     /** Refreshes [currentImePackage] whenever the default keyboard changes. */
     private val imeSettingObserver by lazy {
         object : ContentObserver(Handler(Looper.getMainLooper())) {
@@ -1534,6 +1600,17 @@ class NudgeAccessibilityService : AccessibilityService() {
             log.w("failed to register camera availability callback", e)
         }
 
+        // PR 5a's spike: the first-unlock anchor, log-only, registered beside screen-off for the
+        // same reason (a protected broadcast the system delivers only to registered receivers).
+        try {
+            registerReceiver(
+                userPresentReceiver,
+                android.content.IntentFilter(Intent.ACTION_USER_PRESENT)
+            )
+        } catch (e: Exception) {
+            log.w("failed to register user-present receiver", e)
+        }
+
         // Keep Strict Mode state cached so the hot accessibility-event path can read it without
         // blocking on DataStore.
         serviceScope.launch {
@@ -2011,6 +2088,9 @@ class NudgeAccessibilityService : AccessibilityService() {
      * one somewhere else -- and the third one did arrive, right here.
      */
     private fun applyForegroundSignal(signal: ForegroundSignal) {
+        // PR 5a's other half: observe the fallback anchor before anything can return early. Log
+        // only; the decision path below is untouched.
+        if (signal is ForegroundSignal.AppWindow) logFirstUnlockFallback(signal.packageName)
         entryPoint.blockLaunchGuard().onForegroundSignal(signal)
         entryPoint.passthroughManager().onForegroundSignal(signal, sittingClock())
         entryPoint.tabCoverOverlayManager().onForegroundSignal(signal)
@@ -3820,6 +3900,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         }
         teardown.step("unregister_screen_off_receiver") { unregisterReceiver(screenOffReceiver) }
         teardown.step("unregister_screen_on_receiver") { unregisterReceiver(screenOnReceiver) }
+        teardown.step("unregister_user_present_receiver") { unregisterReceiver(userPresentReceiver) }
         teardown.step("phone_nudge_stop") {
             phoneNudgeHandler.removeCallbacks(phoneNudgeRunnable)
             phoneNudge.reset()
