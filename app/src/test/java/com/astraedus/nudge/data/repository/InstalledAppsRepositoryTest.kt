@@ -7,6 +7,7 @@ import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.content.pm.ResolveInfo
 import com.astraedus.nudge.NudgeIdentity
+import com.astraedus.nudge.domain.packages.AppCategory
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkConstructor
@@ -33,9 +34,12 @@ class InstalledAppsRepositoryTest {
         unmockkConstructor(Intent::class)
     }
 
-    private fun resolveInfo(pkg: String, label: String): ResolveInfo {
+    private fun resolveInfo(pkg: String, label: String, category: Int? = null): ResolveInfo {
         val info = mockk<ResolveInfo>(relaxed = true)
-        info.activityInfo = ActivityInfo().apply { packageName = pkg }
+        info.activityInfo = ActivityInfo().apply {
+            packageName = pkg
+            if (category != null) applicationInfo = ApplicationInfo().apply { this.category = category }
+        }
         every { info.loadLabel(any()) } returns label
         return info
     }
@@ -138,5 +142,45 @@ class InstalledAppsRepositoryTest {
         val repo = newRepo(pm)
 
         assertEquals("com.missing.app", repo.resolveAppName("com.missing.app"))
+    }
+
+    @Test
+    fun `ApplicationInfo category maps to AppInfo category, undefined and missing to UNDEFINED`() = runTest {
+        val pm = mockk<PackageManager>(relaxed = true)
+        every { pm.queryIntentActivities(any<Intent>(), any<Int>()) } returns listOf(
+            resolveInfo("com.example.a", "A", ApplicationInfo.CATEGORY_SOCIAL),
+            resolveInfo("com.example.b", "B", ApplicationInfo.CATEGORY_UNDEFINED),
+            resolveInfo("com.example.c", "C") // no ApplicationInfo on the activity
+        )
+        every { pm.getApplicationIcon(any<String>()) } returns mockk(relaxed = true)
+
+        val byPackage = newRepo(pm).getInstalledApps().associate { it.packageName to it.category }
+
+        assertEquals(AppCategory.SOCIAL, byPackage["com.example.a"])
+        assertEquals(AppCategory.UNDEFINED, byPackage["com.example.b"])
+        assertEquals(AppCategory.UNDEFINED, byPackage["com.example.c"])
+    }
+
+    @Test
+    fun `after refresh a newly installed app appears and changes bumps`() = runTest {
+        val pm = mockk<PackageManager>(relaxed = true)
+        every { pm.queryIntentActivities(any<Intent>(), any<Int>()) } returns listOf(
+            resolveInfo("com.example.one", "One")
+        )
+        every { pm.getApplicationIcon(any<String>()) } returns mockk(relaxed = true)
+        val repo = newRepo(pm)
+        assertEquals(listOf("com.example.one"), repo.getInstalledApps().map { it.packageName })
+        val before = repo.changes.value
+
+        every { pm.queryIntentActivities(any<Intent>(), any<Int>()) } returns listOf(
+            resolveInfo("com.example.one", "One"),
+            resolveInfo("com.example.new", "New", ApplicationInfo.CATEGORY_VIDEO)
+        )
+        repo.refresh()
+
+        assertEquals(before + 1, repo.changes.value)
+        val apps = repo.getInstalledApps()
+        assertEquals(listOf("com.example.new", "com.example.one"), apps.map { it.packageName }.sorted())
+        assertEquals(AppCategory.VIDEO, apps.first { it.packageName == "com.example.new" }.category)
     }
 }

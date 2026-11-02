@@ -1,6 +1,8 @@
 package com.astraedus.nudge.domain.lock
 
-import com.astraedus.nudge.data.db.entity.BlockRule
+import com.astraedus.nudge.testing.aBlockRule
+import com.astraedus.nudge.testing.aGroupRule
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -12,69 +14,41 @@ import org.junit.Test
  */
 class RuleWeakeningTest {
 
-    private fun rule(
-        mode: String = "DELAY",
-        delaySeconds: Int = 15,
-        dailyLimitMinutes: Int? = null,
-        enabled: Boolean = true,
-        autoKickAfter: Int? = null,
-        autoKickAfterMinutes: Int? = null,
-        autoKickCooldownSeconds: Int = 60,
-        webDomains: String? = null,
-        webBlockMode: String? = null,
-        tabVanish: Boolean = true,
-        followingSteer: Boolean = false,
-        remindAfterMinutes: Int? = null,
-        keepPassOnShortTrips: Boolean = false
-    ) = BlockRule(
-        packageName = "com.example",
-        mode = mode,
-        delaySeconds = delaySeconds,
-        dailyLimitMinutes = dailyLimitMinutes,
-        enabled = enabled,
-        autoKickAfter = autoKickAfter,
-        autoKickAfterMinutes = autoKickAfterMinutes,
-        autoKickCooldownSeconds = autoKickCooldownSeconds,
-        webDomains = webDomains,
-        webBlockMode = webBlockMode,
-        tabVanish = tabVanish,
-        followingSteer = followingSteer,
-        remindAfterMinutes = remindAfterMinutes,
-        keepPassOnShortTrips = keepPassOnShortTrips
-    )
+    /** The shipped rule row, aimed at one app. Each test overrides only what it is about. */
+    private val example = aBlockRule(packageName = "com.example")
 
     // ── delay ──
 
     @Test
     fun `shorter delay is weakening`() {
-        assertTrue(RuleWeakening.isWeakening(rule(delaySeconds = 30), rule(delaySeconds = 15)))
+        assertTrue(RuleWeakening.isWeakening(example.copy(delaySeconds = 30), example.copy(delaySeconds = 15)))
     }
 
     @Test
     fun `longer delay is not weakening`() {
-        assertFalse(RuleWeakening.isWeakening(rule(delaySeconds = 15), rule(delaySeconds = 30)))
+        assertFalse(RuleWeakening.isWeakening(example.copy(delaySeconds = 15), example.copy(delaySeconds = 30)))
     }
 
     // ── mode ──
 
     @Test
     fun `mode HARD_BLOCK to DELAY is weakening`() {
-        assertTrue(RuleWeakening.isWeakening(rule(mode = "HARD_BLOCK"), rule(mode = "DELAY")))
+        assertTrue(RuleWeakening.isWeakening(example.copy(mode = "HARD_BLOCK"), example.copy(mode = "DELAY")))
     }
 
     @Test
     fun `mode DELAY to HARD_BLOCK is not weakening`() {
-        assertFalse(RuleWeakening.isWeakening(rule(mode = "DELAY"), rule(mode = "HARD_BLOCK")))
+        assertFalse(RuleWeakening.isWeakening(example.copy(mode = "DELAY"), example.copy(mode = "HARD_BLOCK")))
     }
 
     @Test
     fun `mode DELAY to BREATHING is weakening`() {
-        assertTrue(RuleWeakening.isWeakening(rule(mode = "DELAY"), rule(mode = "BREATHING")))
+        assertTrue(RuleWeakening.isWeakening(example.copy(mode = "DELAY"), example.copy(mode = "BREATHING")))
     }
 
     @Test
     fun `mode BREATHING to DELAY is not weakening`() {
-        assertFalse(RuleWeakening.isWeakening(rule(mode = "BREATHING"), rule(mode = "DELAY")))
+        assertFalse(RuleWeakening.isWeakening(example.copy(mode = "BREATHING"), example.copy(mode = "DELAY")))
     }
 
     // ── mode HOLD (ranks EQUAL to DELAY -- same wall-clock wait, so switching between the two
@@ -84,8 +58,8 @@ class RuleWeakeningTest {
     fun `mode DELAY to HOLD at the same delaySeconds is not weakening`() {
         assertFalse(
             RuleWeakening.isWeakening(
-                rule(mode = "DELAY", delaySeconds = 15),
-                rule(mode = "HOLD", delaySeconds = 15)
+                example.copy(mode = "DELAY", delaySeconds = 15),
+                example.copy(mode = "HOLD", delaySeconds = 15)
             )
         )
     }
@@ -94,43 +68,43 @@ class RuleWeakeningTest {
     fun `mode HOLD to DELAY at the same delaySeconds is not weakening`() {
         assertFalse(
             RuleWeakening.isWeakening(
-                rule(mode = "HOLD", delaySeconds = 15),
-                rule(mode = "DELAY", delaySeconds = 15)
+                example.copy(mode = "HOLD", delaySeconds = 15),
+                example.copy(mode = "DELAY", delaySeconds = 15)
             )
         )
     }
 
     @Test
     fun `mode HARD_BLOCK to HOLD is weakening`() {
-        assertTrue(RuleWeakening.isWeakening(rule(mode = "HARD_BLOCK"), rule(mode = "HOLD")))
+        assertTrue(RuleWeakening.isWeakening(example.copy(mode = "HARD_BLOCK"), example.copy(mode = "HOLD")))
     }
 
     @Test
     fun `mode HOLD to HARD_BLOCK is not weakening`() {
-        assertFalse(RuleWeakening.isWeakening(rule(mode = "HOLD"), rule(mode = "HARD_BLOCK")))
+        assertFalse(RuleWeakening.isWeakening(example.copy(mode = "HOLD"), example.copy(mode = "HARD_BLOCK")))
     }
 
     @Test
     fun `mode HOLD to BREATHING is weakening`() {
-        assertTrue(RuleWeakening.isWeakening(rule(mode = "HOLD"), rule(mode = "BREATHING")))
+        assertTrue(RuleWeakening.isWeakening(example.copy(mode = "HOLD"), example.copy(mode = "BREATHING")))
     }
 
     @Test
     fun `mode BREATHING to HOLD is not weakening`() {
-        assertFalse(RuleWeakening.isWeakening(rule(mode = "BREATHING"), rule(mode = "HOLD")))
+        assertFalse(RuleWeakening.isWeakening(example.copy(mode = "BREATHING"), example.copy(mode = "HOLD")))
     }
 
     @Test
     fun `mode HOLD to NONE is weakening`() {
-        assertTrue(RuleWeakening.isWeakening(rule(mode = "HOLD"), rule(mode = "NONE")))
+        assertTrue(RuleWeakening.isWeakening(example.copy(mode = "HOLD"), example.copy(mode = "NONE")))
     }
 
     @Test
     fun `shortening delaySeconds on a HOLD rule is weakening`() {
         assertTrue(
             RuleWeakening.isWeakening(
-                rule(mode = "HOLD", delaySeconds = 30),
-                rule(mode = "HOLD", delaySeconds = 15)
+                example.copy(mode = "HOLD", delaySeconds = 30),
+                example.copy(mode = "HOLD", delaySeconds = 15)
             )
         )
     }
@@ -139,23 +113,23 @@ class RuleWeakeningTest {
     fun `lengthening delaySeconds on a HOLD rule is not weakening`() {
         assertFalse(
             RuleWeakening.isWeakening(
-                rule(mode = "HOLD", delaySeconds = 15),
-                rule(mode = "HOLD", delaySeconds = 30)
+                example.copy(mode = "HOLD", delaySeconds = 15),
+                example.copy(mode = "HOLD", delaySeconds = 30)
             )
         )
     }
 
     @Test
     fun `softening a HOLD website block mode to BREATHING is weakening`() {
-        val old = rule(mode = "NONE", webDomains = "instagram.com", webBlockMode = "HOLD")
-        val new = rule(mode = "NONE", webDomains = "instagram.com", webBlockMode = "BREATHING")
+        val old = example.copy(mode = "NONE", webDomains = "instagram.com", webBlockMode = "HOLD")
+        val new = example.copy(mode = "NONE", webDomains = "instagram.com", webBlockMode = "BREATHING")
         assertTrue(RuleWeakening.isWeakening(old, new))
     }
 
     @Test
     fun `changing a HOLD website block mode to DELAY is not weakening`() {
-        val old = rule(mode = "NONE", webDomains = "instagram.com", webBlockMode = "HOLD")
-        val new = rule(mode = "NONE", webDomains = "instagram.com", webBlockMode = "DELAY")
+        val old = example.copy(mode = "NONE", webDomains = "instagram.com", webBlockMode = "HOLD")
+        val new = example.copy(mode = "NONE", webDomains = "instagram.com", webBlockMode = "DELAY")
         assertFalse(RuleWeakening.isWeakening(old, new))
     }
 
@@ -165,22 +139,22 @@ class RuleWeakeningTest {
 
     @Test
     fun `mode BREATHING to NONE is weakening`() {
-        assertTrue(RuleWeakening.isWeakening(rule(mode = "BREATHING"), rule(mode = "NONE")))
+        assertTrue(RuleWeakening.isWeakening(example.copy(mode = "BREATHING"), example.copy(mode = "NONE")))
     }
 
     @Test
     fun `mode HARD_BLOCK to NONE is weakening`() {
-        assertTrue(RuleWeakening.isWeakening(rule(mode = "HARD_BLOCK"), rule(mode = "NONE")))
+        assertTrue(RuleWeakening.isWeakening(example.copy(mode = "HARD_BLOCK"), example.copy(mode = "NONE")))
     }
 
     @Test
     fun `mode NONE to DELAY is not weakening`() {
-        assertFalse(RuleWeakening.isWeakening(rule(mode = "NONE"), rule(mode = "DELAY")))
+        assertFalse(RuleWeakening.isWeakening(example.copy(mode = "NONE"), example.copy(mode = "DELAY")))
     }
 
     @Test
     fun `mode NONE to NONE is not weakening`() {
-        assertFalse(RuleWeakening.isWeakening(rule(mode = "NONE"), rule(mode = "NONE")))
+        assertFalse(RuleWeakening.isWeakening(example.copy(mode = "NONE"), example.copy(mode = "NONE")))
     }
 
     // ── daily limit ──
@@ -189,8 +163,8 @@ class RuleWeakeningTest {
     fun `lower daily limit is not weakening`() {
         assertFalse(
             RuleWeakening.isWeakening(
-                rule(dailyLimitMinutes = 60),
-                rule(dailyLimitMinutes = 30)
+                example.copy(dailyLimitMinutes = 60),
+                example.copy(dailyLimitMinutes = 30)
             )
         )
     }
@@ -199,8 +173,8 @@ class RuleWeakeningTest {
     fun `higher daily limit is weakening`() {
         assertTrue(
             RuleWeakening.isWeakening(
-                rule(dailyLimitMinutes = 30),
-                rule(dailyLimitMinutes = 60)
+                example.copy(dailyLimitMinutes = 30),
+                example.copy(dailyLimitMinutes = 60)
             )
         )
     }
@@ -209,8 +183,8 @@ class RuleWeakeningTest {
     fun `removing an existing daily limit is weakening`() {
         assertTrue(
             RuleWeakening.isWeakening(
-                rule(dailyLimitMinutes = 30),
-                rule(dailyLimitMinutes = null)
+                example.copy(dailyLimitMinutes = 30),
+                example.copy(dailyLimitMinutes = null)
             )
         )
     }
@@ -219,8 +193,8 @@ class RuleWeakeningTest {
     fun `adding a daily limit where none existed is not weakening`() {
         assertFalse(
             RuleWeakening.isWeakening(
-                rule(dailyLimitMinutes = null),
-                rule(dailyLimitMinutes = 30)
+                example.copy(dailyLimitMinutes = null),
+                example.copy(dailyLimitMinutes = 30)
             )
         )
     }
@@ -229,12 +203,12 @@ class RuleWeakeningTest {
 
     @Test
     fun `disabling is weakening`() {
-        assertTrue(RuleWeakening.isWeakening(rule(enabled = true), rule(enabled = false)))
+        assertTrue(RuleWeakening.isWeakening(example.copy(enabled = true), example.copy(enabled = false)))
     }
 
     @Test
     fun `enabling is not weakening`() {
-        assertFalse(RuleWeakening.isWeakening(rule(enabled = false), rule(enabled = true)))
+        assertFalse(RuleWeakening.isWeakening(example.copy(enabled = false), example.copy(enabled = true)))
     }
 
     // ── auto-kick after (interaction count) ──
@@ -243,8 +217,8 @@ class RuleWeakeningTest {
     fun `raised autoKickAfter is weakening`() {
         assertTrue(
             RuleWeakening.isWeakening(
-                rule(autoKickAfter = 20),
-                rule(autoKickAfter = 40)
+                example.copy(autoKickAfter = 20),
+                example.copy(autoKickAfter = 40)
             )
         )
     }
@@ -253,8 +227,8 @@ class RuleWeakeningTest {
     fun `lowered autoKickAfter is not weakening`() {
         assertFalse(
             RuleWeakening.isWeakening(
-                rule(autoKickAfter = 40),
-                rule(autoKickAfter = 20)
+                example.copy(autoKickAfter = 40),
+                example.copy(autoKickAfter = 20)
             )
         )
     }
@@ -263,8 +237,8 @@ class RuleWeakeningTest {
     fun `removing an existing autoKickAfter is weakening`() {
         assertTrue(
             RuleWeakening.isWeakening(
-                rule(autoKickAfter = 20),
-                rule(autoKickAfter = null)
+                example.copy(autoKickAfter = 20),
+                example.copy(autoKickAfter = null)
             )
         )
     }
@@ -273,8 +247,8 @@ class RuleWeakeningTest {
     fun `adding autoKickAfter where none existed is not weakening`() {
         assertFalse(
             RuleWeakening.isWeakening(
-                rule(autoKickAfter = null),
-                rule(autoKickAfter = 20)
+                example.copy(autoKickAfter = null),
+                example.copy(autoKickAfter = 20)
             )
         )
     }
@@ -283,8 +257,8 @@ class RuleWeakeningTest {
     fun `autoKickAfter unset on both sides is not weakening`() {
         assertFalse(
             RuleWeakening.isWeakening(
-                rule(autoKickAfter = null),
-                rule(autoKickAfter = null)
+                example.copy(autoKickAfter = null),
+                example.copy(autoKickAfter = null)
             )
         )
     }
@@ -295,8 +269,8 @@ class RuleWeakeningTest {
     fun `raised autoKickAfterMinutes is weakening`() {
         assertTrue(
             RuleWeakening.isWeakening(
-                rule(autoKickAfterMinutes = 10),
-                rule(autoKickAfterMinutes = 20)
+                example.copy(autoKickAfterMinutes = 10),
+                example.copy(autoKickAfterMinutes = 20)
             )
         )
     }
@@ -305,8 +279,8 @@ class RuleWeakeningTest {
     fun `lowered autoKickAfterMinutes is not weakening`() {
         assertFalse(
             RuleWeakening.isWeakening(
-                rule(autoKickAfterMinutes = 20),
-                rule(autoKickAfterMinutes = 10)
+                example.copy(autoKickAfterMinutes = 20),
+                example.copy(autoKickAfterMinutes = 10)
             )
         )
     }
@@ -315,8 +289,8 @@ class RuleWeakeningTest {
     fun `removing an existing autoKickAfterMinutes is weakening`() {
         assertTrue(
             RuleWeakening.isWeakening(
-                rule(autoKickAfterMinutes = 10),
-                rule(autoKickAfterMinutes = null)
+                example.copy(autoKickAfterMinutes = 10),
+                example.copy(autoKickAfterMinutes = null)
             )
         )
     }
@@ -325,8 +299,8 @@ class RuleWeakeningTest {
     fun `adding autoKickAfterMinutes where none existed is not weakening`() {
         assertFalse(
             RuleWeakening.isWeakening(
-                rule(autoKickAfterMinutes = null),
-                rule(autoKickAfterMinutes = 10)
+                example.copy(autoKickAfterMinutes = null),
+                example.copy(autoKickAfterMinutes = 10)
             )
         )
     }
@@ -335,8 +309,8 @@ class RuleWeakeningTest {
     fun `autoKickAfterMinutes unset on both sides is not weakening`() {
         assertFalse(
             RuleWeakening.isWeakening(
-                rule(autoKickAfterMinutes = null),
-                rule(autoKickAfterMinutes = null)
+                example.copy(autoKickAfterMinutes = null),
+                example.copy(autoKickAfterMinutes = null)
             )
         )
     }
@@ -347,8 +321,8 @@ class RuleWeakeningTest {
     fun `lowered autoKickCooldownSeconds is weakening`() {
         assertTrue(
             RuleWeakening.isWeakening(
-                rule(autoKickCooldownSeconds = 60),
-                rule(autoKickCooldownSeconds = 30)
+                example.copy(autoKickCooldownSeconds = 60),
+                example.copy(autoKickCooldownSeconds = 30)
             )
         )
     }
@@ -357,8 +331,8 @@ class RuleWeakeningTest {
     fun `raised autoKickCooldownSeconds is not weakening`() {
         assertFalse(
             RuleWeakening.isWeakening(
-                rule(autoKickCooldownSeconds = 30),
-                rule(autoKickCooldownSeconds = 60)
+                example.copy(autoKickCooldownSeconds = 30),
+                example.copy(autoKickCooldownSeconds = 60)
             )
         )
     }
@@ -367,8 +341,8 @@ class RuleWeakeningTest {
     fun `unchanged autoKickCooldownSeconds is not weakening`() {
         assertFalse(
             RuleWeakening.isWeakening(
-                rule(autoKickCooldownSeconds = 60),
-                rule(autoKickCooldownSeconds = 60)
+                example.copy(autoKickCooldownSeconds = 60),
+                example.copy(autoKickCooldownSeconds = 60)
             )
         )
     }
@@ -377,8 +351,8 @@ class RuleWeakeningTest {
     fun `lowering autoKickCooldownSeconds to zero is weakening`() {
         assertTrue(
             RuleWeakening.isWeakening(
-                rule(autoKickCooldownSeconds = 60),
-                rule(autoKickCooldownSeconds = 0)
+                example.copy(autoKickCooldownSeconds = 60),
+                example.copy(autoKickCooldownSeconds = 0)
             )
         )
     }
@@ -387,22 +361,22 @@ class RuleWeakeningTest {
 
     @Test
     fun `identical rule is not weakening`() {
-        assertFalse(RuleWeakening.isWeakening(rule(), rule()))
+        assertFalse(RuleWeakening.isWeakening(example, example))
     }
 
     @Test
     fun `weakening on one axis while strengthening another still counts as weakening`() {
         // Stronger mode (DELAY -> HARD_BLOCK) but shorter delay (30 -> 5).
-        val old = rule(mode = "DELAY", delaySeconds = 30)
-        val new = rule(mode = "HARD_BLOCK", delaySeconds = 5)
+        val old = example.copy(mode = "DELAY", delaySeconds = 30)
+        val new = example.copy(mode = "HARD_BLOCK", delaySeconds = 5)
         assertTrue(RuleWeakening.isWeakening(old, new))
     }
 
     @Test
     fun `strengthening one auto-kick axis while weakening another still counts as weakening`() {
         // Lower autoKickAfter (60 -> 20, strengthening) but lower cooldown too (60 -> 10, weakening).
-        val old = rule(autoKickAfter = 60, autoKickCooldownSeconds = 60)
-        val new = rule(autoKickAfter = 20, autoKickCooldownSeconds = 10)
+        val old = example.copy(autoKickAfter = 60, autoKickCooldownSeconds = 60)
+        val new = example.copy(autoKickAfter = 20, autoKickCooldownSeconds = 10)
         assertTrue(RuleWeakening.isWeakening(old, new))
     }
 
@@ -410,15 +384,15 @@ class RuleWeakeningTest {
 
     @Test
     fun `softening the website block mode is weakening`() {
-        val old = rule(mode = "NONE", webDomains = "instagram.com", webBlockMode = "HARD_BLOCK")
-        val new = rule(mode = "NONE", webDomains = "instagram.com", webBlockMode = "BREATHING")
+        val old = example.copy(mode = "NONE", webDomains = "instagram.com", webBlockMode = "HARD_BLOCK")
+        val new = example.copy(mode = "NONE", webDomains = "instagram.com", webBlockMode = "BREATHING")
         assertTrue(RuleWeakening.isWeakening(old, new))
     }
 
     @Test
     fun `strengthening the website block mode is not weakening`() {
-        val old = rule(mode = "NONE", webDomains = "instagram.com", webBlockMode = "DELAY")
-        val new = rule(mode = "NONE", webDomains = "instagram.com", webBlockMode = "HARD_BLOCK")
+        val old = example.copy(mode = "NONE", webDomains = "instagram.com", webBlockMode = "DELAY")
+        val new = example.copy(mode = "NONE", webDomains = "instagram.com", webBlockMode = "HARD_BLOCK")
         assertFalse(RuleWeakening.isWeakening(old, new))
     }
 
@@ -428,29 +402,29 @@ class RuleWeakeningTest {
      */
     @Test
     fun `dropping an independent website mode back to an unblocking app mode is weakening`() {
-        val old = rule(mode = "NONE", webDomains = "instagram.com", webBlockMode = "HARD_BLOCK")
-        val new = rule(mode = "NONE", webDomains = "instagram.com", webBlockMode = null)
+        val old = example.copy(mode = "NONE", webDomains = "instagram.com", webBlockMode = "HARD_BLOCK")
+        val new = example.copy(mode = "NONE", webDomains = "instagram.com", webBlockMode = null)
         assertTrue(RuleWeakening.isWeakening(old, new))
     }
 
     @Test
     fun `removing configured web domains is weakening`() {
-        val old = rule(mode = "DELAY", webDomains = "instagram.com")
-        val new = rule(mode = "DELAY", webDomains = null)
+        val old = example.copy(mode = "DELAY", webDomains = "instagram.com")
+        val new = example.copy(mode = "DELAY", webDomains = null)
         assertTrue(RuleWeakening.isWeakening(old, new))
     }
 
     @Test
     fun `adding web domains where there were none is not weakening`() {
-        val old = rule(mode = "DELAY", webDomains = null)
-        val new = rule(mode = "DELAY", webDomains = "instagram.com")
+        val old = example.copy(mode = "DELAY", webDomains = null)
+        val new = example.copy(mode = "DELAY", webDomains = "instagram.com")
         assertFalse(RuleWeakening.isWeakening(old, new))
     }
 
     @Test
     fun `inheriting web mode follows the app mode, so leaving both alone is not weakening`() {
-        val old = rule(mode = "HARD_BLOCK", webDomains = "instagram.com", webBlockMode = null)
-        val new = rule(mode = "HARD_BLOCK", webDomains = "instagram.com", webBlockMode = null)
+        val old = example.copy(mode = "HARD_BLOCK", webDomains = "instagram.com", webBlockMode = null)
+        val new = example.copy(mode = "HARD_BLOCK", webDomains = "instagram.com", webBlockMode = null)
         assertFalse(RuleWeakening.isWeakening(old, new))
     }
 
@@ -461,12 +435,12 @@ class RuleWeakeningTest {
      */
     @Test
     fun `pinning the inherited mode when whole-app blocking goes off keeps web enforcement equal`() {
-        val old = rule(mode = "HARD_BLOCK", webDomains = "instagram.com", webBlockMode = null)
-        val new = rule(mode = "NONE", webDomains = "instagram.com", webBlockMode = "HARD_BLOCK")
+        val old = example.copy(mode = "HARD_BLOCK", webDomains = "instagram.com", webBlockMode = null)
+        val new = example.copy(mode = "NONE", webDomains = "instagram.com", webBlockMode = "HARD_BLOCK")
         assertTrue("app-level mode softened", RuleWeakening.isWeakening(old, new))
 
         // …and with the app-level mode held constant, the same web pinning is a no-op.
-        val oldNone = rule(mode = "NONE", webDomains = "instagram.com", webBlockMode = "HARD_BLOCK")
+        val oldNone = example.copy(mode = "NONE", webDomains = "instagram.com", webBlockMode = "HARD_BLOCK")
         assertFalse(RuleWeakening.isWeakening(oldNone, new))
     }
 
@@ -477,34 +451,34 @@ class RuleWeakeningTest {
     @Test
     fun `turning tabVanish off is weakening`() {
         assertTrue(
-            RuleWeakening.isWeakening(rule(tabVanish = true), rule(tabVanish = false))
+            RuleWeakening.isWeakening(example.copy(tabVanish = true), example.copy(tabVanish = false))
         )
     }
 
     @Test
     fun `turning tabVanish on is not weakening`() {
         assertFalse(
-            RuleWeakening.isWeakening(rule(tabVanish = false), rule(tabVanish = true))
+            RuleWeakening.isWeakening(example.copy(tabVanish = false), example.copy(tabVanish = true))
         )
     }
 
     @Test
     fun `leaving tabVanish unchanged is not weakening`() {
-        assertFalse(RuleWeakening.isWeakening(rule(tabVanish = true), rule(tabVanish = true)))
-        assertFalse(RuleWeakening.isWeakening(rule(tabVanish = false), rule(tabVanish = false)))
+        assertFalse(RuleWeakening.isWeakening(example.copy(tabVanish = true), example.copy(tabVanish = true)))
+        assertFalse(RuleWeakening.isWeakening(example.copy(tabVanish = false), example.copy(tabVanish = false)))
     }
 
     @Test
     fun `turning followingSteer on is not weakening`() {
         assertFalse(
-            RuleWeakening.isWeakening(rule(followingSteer = false), rule(followingSteer = true))
+            RuleWeakening.isWeakening(example.copy(followingSteer = false), example.copy(followingSteer = true))
         )
     }
 
     @Test
     fun `turning followingSteer off is not weakening`() {
         assertFalse(
-            RuleWeakening.isWeakening(rule(followingSteer = true), rule(followingSteer = false))
+            RuleWeakening.isWeakening(example.copy(followingSteer = true), example.copy(followingSteer = false))
         )
     }
 
@@ -513,35 +487,35 @@ class RuleWeakeningTest {
     @Test
     fun `adding a reminder is not weakening`() {
         assertFalse(
-            RuleWeakening.isWeakening(rule(remindAfterMinutes = null), rule(remindAfterMinutes = 20))
+            RuleWeakening.isWeakening(example.copy(remindAfterMinutes = null), example.copy(remindAfterMinutes = 20))
         )
     }
 
     @Test
     fun `lowering a reminder is not weakening`() {
         assertFalse(
-            RuleWeakening.isWeakening(rule(remindAfterMinutes = 30), rule(remindAfterMinutes = 10))
+            RuleWeakening.isWeakening(example.copy(remindAfterMinutes = 30), example.copy(remindAfterMinutes = 10))
         )
     }
 
     @Test
     fun `raising a reminder is not weakening`() {
         assertFalse(
-            RuleWeakening.isWeakening(rule(remindAfterMinutes = 10), rule(remindAfterMinutes = 30))
+            RuleWeakening.isWeakening(example.copy(remindAfterMinutes = 10), example.copy(remindAfterMinutes = 30))
         )
     }
 
     @Test
     fun `removing a reminder is not weakening`() {
         assertFalse(
-            RuleWeakening.isWeakening(rule(remindAfterMinutes = 20), rule(remindAfterMinutes = null))
+            RuleWeakening.isWeakening(example.copy(remindAfterMinutes = 20), example.copy(remindAfterMinutes = null))
         )
     }
 
     @Test
     fun `removing a reminder from an otherwise unchanged strict rule is not weakening`() {
-        val before = rule(mode = "HARD_BLOCK", dailyLimitMinutes = 30, autoKickAfterMinutes = 20, remindAfterMinutes = 10)
-        val after = rule(mode = "HARD_BLOCK", dailyLimitMinutes = 30, autoKickAfterMinutes = 20, remindAfterMinutes = null)
+        val before = example.copy(mode = "HARD_BLOCK", dailyLimitMinutes = 30, autoKickAfterMinutes = 20, remindAfterMinutes = 10)
+        val after = example.copy(mode = "HARD_BLOCK", dailyLimitMinutes = 30, autoKickAfterMinutes = 20, remindAfterMinutes = null)
 
         assertFalse(RuleWeakening.isWeakening(before, after))
     }
@@ -549,8 +523,8 @@ class RuleWeakeningTest {
     @Test
     fun `removing a reminder while raising the time kick is still weakening`() {
         // The kick axis still bites; the reminder is simply invisible to the check.
-        val before = rule(autoKickAfterMinutes = 20, remindAfterMinutes = 10)
-        val after = rule(autoKickAfterMinutes = 40, remindAfterMinutes = null)
+        val before = example.copy(autoKickAfterMinutes = 20, remindAfterMinutes = 10)
+        val after = example.copy(autoKickAfterMinutes = 40, remindAfterMinutes = null)
 
         assertTrue(RuleWeakening.isWeakening(before, after))
     }
@@ -561,29 +535,174 @@ class RuleWeakeningTest {
     @Test
     fun `turning keepPassOnShortTrips on is weakening`() {
         assertTrue(
-            RuleWeakening.isWeakening(rule(keepPassOnShortTrips = false), rule(keepPassOnShortTrips = true))
+            RuleWeakening.isWeakening(example.copy(keepPassOnShortTrips = false), example.copy(keepPassOnShortTrips = true))
         )
     }
 
     @Test
     fun `turning keepPassOnShortTrips off is not weakening`() {
         assertFalse(
-            RuleWeakening.isWeakening(rule(keepPassOnShortTrips = true), rule(keepPassOnShortTrips = false))
+            RuleWeakening.isWeakening(example.copy(keepPassOnShortTrips = true), example.copy(keepPassOnShortTrips = false))
         )
     }
 
     @Test
     fun `leaving keepPassOnShortTrips unchanged is not weakening`() {
-        assertFalse(RuleWeakening.isWeakening(rule(keepPassOnShortTrips = true), rule(keepPassOnShortTrips = true)))
-        assertFalse(RuleWeakening.isWeakening(rule(keepPassOnShortTrips = false), rule(keepPassOnShortTrips = false)))
+        assertFalse(RuleWeakening.isWeakening(example.copy(keepPassOnShortTrips = true), example.copy(keepPassOnShortTrips = true)))
+        assertFalse(RuleWeakening.isWeakening(example.copy(keepPassOnShortTrips = false), example.copy(keepPassOnShortTrips = false)))
     }
 
     @Test
     fun `turning keepPassOnShortTrips on is weakening even while strengthening the delay`() {
         assertTrue(
             RuleWeakening.isWeakening(
-                rule(delaySeconds = 15, keepPassOnShortTrips = false),
-                rule(delaySeconds = 60, keepPassOnShortTrips = true)
+                example.copy(delaySeconds = 15, keepPassOnShortTrips = false),
+                example.copy(delaySeconds = 60, keepPassOnShortTrips = true)
+            )
+        )
+    }
+
+    // ── target (spec PR 4) ──
+
+    private fun allApps(
+        exceptPackages: String? = null,
+        exceptGroupIds: String? = null,
+        days: String? = null,
+        start: Int? = null,
+        end: Int? = null,
+        mode: String = "HARD_BLOCK",
+        enabled: Boolean = true,
+        delaySeconds: Int = 15
+    ) = aBlockRule(
+        mode = mode,
+        enabled = enabled,
+        delaySeconds = delaySeconds,
+        allApps = true,
+        exceptPackages = exceptPackages,
+        exceptGroupIds = exceptGroupIds,
+        scheduleDays = days,
+        scheduleStartMinute = start,
+        scheduleEndMinute = end
+    )
+
+    @Test
+    fun `changing the target between every pair of kinds is weakening`() {
+        val targets = listOf(
+            example,
+            example.copy(packageName = "com.other"),
+            aGroupRule(1),
+            aGroupRule(2),
+            allApps()
+        )
+        for (old in targets) for (new in targets) {
+            val same = old === new
+            assertEquals("$old -> $new", !same, RuleWeakening.isWeakening(old, new))
+        }
+    }
+
+    @Test
+    fun `giving a targetless row a target is not weakening`() {
+        val none = aBlockRule(mode = "DELAY")
+        assertFalse(RuleWeakening.isWeakening(none, example))
+        assertFalse(RuleWeakening.isWeakening(none, allApps()))
+        assertTrue(RuleWeakening.isWeakening(example, none))
+    }
+
+    // ── All apps except lists ──
+
+    @Test
+    fun `adding an allowed app is weakening`() {
+        assertTrue(RuleWeakening.isWeakening(allApps("com.a"), allApps("com.a,com.b")))
+        assertTrue(RuleWeakening.isWeakening(allApps(), allApps("com.a")))
+    }
+
+    @Test
+    fun `adding an allowed group is weakening`() {
+        assertTrue(RuleWeakening.isWeakening(allApps(exceptGroupIds = "1"), allApps(exceptGroupIds = "1,2")))
+        assertTrue(RuleWeakening.isWeakening(allApps(), allApps(exceptGroupIds = "3")))
+    }
+
+    @Test
+    fun `swapping one allowed app for another is weakening`() {
+        assertTrue(RuleWeakening.isWeakening(allApps("com.a"), allApps("com.b")))
+    }
+
+    @Test
+    fun `removing or reordering allowed apps and groups is free`() {
+        assertFalse(RuleWeakening.isWeakening(allApps("com.a,com.b"), allApps("com.a")))
+        assertFalse(RuleWeakening.isWeakening(allApps("com.a,com.b"), allApps("com.b,com.a")))
+        assertFalse(RuleWeakening.isWeakening(allApps("com.a"), allApps()))
+        assertFalse(RuleWeakening.isWeakening(allApps(exceptGroupIds = "1,2"), allApps(exceptGroupIds = "2")))
+        assertFalse(RuleWeakening.isWeakening(allApps(exceptGroupIds = "1,2"), allApps(exceptGroupIds = "2,1")))
+        assertFalse(RuleWeakening.isWeakening(allApps(exceptGroupIds = "1"), allApps()))
+    }
+
+    @Test
+    fun `adding an allowed app is weakening even while hardening the mode`() {
+        assertTrue(
+            RuleWeakening.isWeakening(allApps(mode = "DELAY"), allApps("com.a", mode = "HARD_BLOCK"))
+        )
+    }
+
+    @Test
+    fun `the existing axes apply to All apps rules`() {
+        assertTrue(RuleWeakening.isWeakening(allApps(), allApps(enabled = false)))
+        assertTrue(RuleWeakening.isWeakening(allApps(mode = "HARD_BLOCK"), allApps(mode = "DELAY")))
+        assertTrue(RuleWeakening.isWeakening(allApps(mode = "DELAY", delaySeconds = 30), allApps(mode = "DELAY")))
+        assertFalse(RuleWeakening.isWeakening(allApps(mode = "DELAY"), allApps(mode = "HARD_BLOCK")))
+        assertFalse(RuleWeakening.isWeakening(allApps(), allApps()))
+    }
+
+    // ── All apps window (All apps rules ONLY; app and group rules keep F6) ──
+
+    @Test
+    fun `All the time to scheduled is weakening`() {
+        assertTrue(RuleWeakening.isWeakening(allApps(), allApps(start = 9 * 60, end = 17 * 60)))
+        assertTrue(RuleWeakening.isWeakening(allApps(), allApps(days = "1,2,3,4,5")))
+    }
+
+    @Test
+    fun `scheduled to All the time is free`() {
+        assertFalse(RuleWeakening.isWeakening(allApps(days = "1,2", start = 540, end = 1020), allApps()))
+    }
+
+    @Test
+    fun `shortening the hours is weakening and lengthening them is free`() {
+        assertTrue(RuleWeakening.isWeakening(allApps(start = 540, end = 1020), allApps(start = 600, end = 1020)))
+        assertTrue(RuleWeakening.isWeakening(allApps(start = 540, end = 1020), allApps(start = 540, end = 1019)))
+        assertFalse(RuleWeakening.isWeakening(allApps(start = 600, end = 1020), allApps(start = 540, end = 1080)))
+    }
+
+    @Test
+    fun `dropping a day is weakening and adding one is free`() {
+        assertTrue(RuleWeakening.isWeakening(allApps(days = "1,2,3"), allApps(days = "1,2")))
+        assertFalse(RuleWeakening.isWeakening(allApps(days = "1,2"), allApps(days = "1,2,3")))
+        // Reordered days are the same window.
+        assertFalse(RuleWeakening.isWeakening(allApps(days = "3,1,2"), allApps(days = "1,2,3")))
+    }
+
+    @Test
+    fun `an overnight window compares by the minutes it covers`() {
+        // 22:00-06:00 every day contains 23:00-05:00, but not the other way round.
+        assertTrue(RuleWeakening.isWeakening(allApps(start = 1320, end = 360), allApps(start = 1380, end = 300)))
+        assertFalse(RuleWeakening.isWeakening(allApps(start = 1380, end = 300), allApps(start = 1320, end = 360)))
+        // Overnight to all day on the same days only adds minutes.
+        assertFalse(RuleWeakening.isWeakening(allApps(days = "5", start = 1320, end = 360), allApps(days = "5")))
+    }
+
+    @Test
+    fun `moving the window to other hours of the same length is weakening`() {
+        assertTrue(RuleWeakening.isWeakening(allApps(start = 540, end = 600), allApps(start = 600, end = 660)))
+    }
+
+    @Test
+    fun `a group or app rule's window edits stay free (F6)`() {
+        assertFalse(RuleWeakening.isWeakening(aGroupRule(1), aGroupRule(1).copy(scheduleStartMinute = 540, scheduleEndMinute = 600)))
+        assertFalse(RuleWeakening.isWeakening(aGroupRule(1).copy(scheduleDays = "1,2,3"), aGroupRule(1).copy(scheduleDays = "1")))
+        assertFalse(
+            RuleWeakening.isWeakening(
+                example,
+                example.copy(scheduleDays = "1", scheduleStartMinute = 540, scheduleEndMinute = 600)
             )
         )
     }

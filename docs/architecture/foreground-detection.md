@@ -417,6 +417,19 @@ branch that can decide a whole-app block, through both paths) and `DuplicateBloc
 (L2, the bench capture `youtube-delay-double-launch.jsonl`, both landing orders, with the
 path-keyed identity as the counterfactual that still launches twice).
 
+**"Pending" can also mean "buried before it was drawn"
+([#143](https://github.com/astraedus/nudge/issues/143)).** A cold Google Camera under a Delay: the
+overlay's `START` lands, then CameraLauncher re-fronts Camera's own task and trampolines through
+`permissioncontroller`'s `GrantPermissionsActivity`. The overlay's activity is never created, so it
+never reports itself shown, and Camera's next window was refused as `DROP_ALREADY_PENDING`, a
+missed block 5/5 on the bench (pre-existing on v1.23.0). Both of this section's conditions were
+right on their own: the dialog is a genuine bypass, and Camera is a block. They disagreed about the
+pending record. Another app's `AppWindow` arriving before the overlay is shown now marks the pending
+record `displaced`, and the same block then answers `RESHOW_HIDDEN`: the same overlay is brought
+back (same id, no new wall, the arrival restored so the tap still counts once), asked only after
+the walk-away and foreground checks so it can never cover an app the user moved to. Mechanism and
+tests: `block-overlay-lifecycle.md`, "A pending overlay can be BURIED".
+
 **Provenance and scope.** This defect PREDATES the #26/#31 work: the capture proving it,
 `picker-subflow-keeps-sitting.jsonl`, was committed in v1.16.0, and nothing in the #26/#31 change
 touched `isOverlayBypassedByForeground`, `clearOverlays` or the debounce. It is fixed here because it

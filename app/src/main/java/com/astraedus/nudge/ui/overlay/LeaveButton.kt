@@ -9,6 +9,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.astraedus.nudge.ui.components.qaTag
+import com.astraedus.nudge.ui.testtags.UiTags
 
 /**
  * The one way OUT of a block screen: "I changed my mind" on the timed overlays, "Go Back" on the
@@ -33,6 +35,8 @@ fun LeaveButton(
             .widthIn(max = 320.dp)
             .fillMaxWidth()
             .heightIn(min = 56.dp)
+            // The device-QA handle: copy-proof, and invisible to the user.
+            .qaTag(UiTags.LEAVE)
     ) {
         Text(text = text, style = MaterialTheme.typography.titleMedium)
     }

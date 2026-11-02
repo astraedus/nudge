@@ -1,13 +1,10 @@
 package com.astraedus.nudge.ui.lock
 
-import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.domain.lock.ChallengeState
 import com.astraedus.nudge.domain.lock.LockedToggle
 import com.astraedus.nudge.domain.lock.SettingsWeakening
 import com.astraedus.nudge.domain.lock.StrictModeChallenge
-import io.mockk.every
-import io.mockk.mockk
-import kotlinx.coroutines.flow.flowOf
+import com.astraedus.nudge.testing.FakeNudgePreferences
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -29,9 +26,10 @@ import org.junit.Test
 class StrictModeGateTest {
 
     private fun gate(strictOn: Boolean, length: Int = StrictModeChallenge.DEFAULT_LENGTH): StrictModeGate {
-        val prefs = mockk<NudgePreferences>()
-        every { prefs.isStrictModeEnabled } returns flowOf(strictOn)
-        every { prefs.strictModeChallengeLength } returns flowOf(length)
+        val prefs = FakeNudgePreferences {
+            setStrictModeEnabled(strictOn)
+            setStrictModeChallengeLength(length)
+        }
         return StrictModeGate(prefs)
     }
 

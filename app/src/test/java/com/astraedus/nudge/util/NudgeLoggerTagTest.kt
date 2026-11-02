@@ -1,13 +1,11 @@
 package com.astraedus.nudge.util
 
 import android.util.Log
-import com.astraedus.nudge.data.preferences.NudgePreferences
+import com.astraedus.nudge.testing.FakeNudgePreferences
 import io.mockk.every
-import io.mockk.mockk
 import io.mockk.mockkStatic
 import io.mockk.unmockkStatic
 import io.mockk.verify
-import kotlinx.coroutines.flow.flowOf
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
@@ -22,7 +20,7 @@ import org.junit.Test
 class NudgeLoggerTagTest {
 
     private val logger = NudgeLogger(
-        mockk<NudgePreferences> { every { isDebugLoggingEnabled } returns flowOf(true) }
+        FakeNudgePreferences { setDebugLoggingEnabled(true) }
     )
 
     @Before

@@ -1,6 +1,7 @@
 package com.astraedus.nudge
 
 import android.app.Application
+import com.astraedus.nudge.domain.packages.PackageFacts
 import com.astraedus.nudge.service.ProtectionWatchdogWorker
 import com.astraedus.nudge.ui.widget.NudgeWidgetUpdater
 import dagger.hilt.android.HiltAndroidApp
@@ -11,6 +12,11 @@ class NudgeApp : Application() {
 
     @Inject
     lateinit var widgetUpdater: NudgeWidgetUpdater
+
+    // Held only so Hilt constructs it at process start: its init registers the one package-change
+    // receiver, which keeps category facts and the installed-app list fresh for the process lifetime.
+    @Inject
+    lateinit var packageFacts: PackageFacts
 
     override fun onCreate() {
         super.onCreate()

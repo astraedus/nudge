@@ -90,8 +90,9 @@ sealed interface ForegroundSignal {
     data class PipOnly(override val packageName: String) : ForegroundSignal
 
     /**
-     * Not a window-bearing event (a content change, a click, a scroll). Carries no claim about what
-     * is in front, so the sitting model ignores it.
+     * Not a window-bearing event (a content change, a click, a scroll, or an accessibility-pane
+     * change, which the platform sends under the window type in place of a content change). Carries
+     * no claim about what is in front, so the sitting model ignores it.
      *
      * The issue #7 fallback deliberately does NOT arrive here: when a content change is verified
      * against the real active window it is re-classified as a genuine [AppWindow], because that is

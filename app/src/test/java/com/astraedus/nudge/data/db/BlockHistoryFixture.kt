@@ -3,6 +3,7 @@ package com.astraedus.nudge.data.db
 import com.astraedus.nudge.data.db.entity.UsageEvent
 import com.astraedus.nudge.data.db.entity.isShownConfrontation
 import com.astraedus.nudge.domain.usecase.RecordWalkAwayUseCase
+import com.astraedus.nudge.testing.aUsageEvent
 
 /**
  * A day of real block history, plus the numbers SQLite would answer about it.
@@ -56,14 +57,14 @@ object BlockHistoryFixture {
             at += MINUTE_MS
         }
         repeat(allowed) {
-            rows += UsageEvent(packageName = packageName, timestamp = at, wasBlocked = false)
+            rows += aUsageEvent(packageName = packageName, timestamp = at, wasBlocked = false)
             at += MINUTE_MS
         }
         return rows
     }
 
     /** The row written when the overlay goes up. */
-    fun overlayShown(packageName: String = PACKAGE, timestamp: Long): UsageEvent = UsageEvent(
+    fun overlayShown(packageName: String = PACKAGE, timestamp: Long): UsageEvent = aUsageEvent(
         packageName = packageName,
         timestamp = timestamp,
         wasBlocked = true,

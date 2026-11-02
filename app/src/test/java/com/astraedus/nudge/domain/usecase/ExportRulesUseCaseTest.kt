@@ -1,17 +1,17 @@
 package com.astraedus.nudge.domain.usecase
 
-import com.astraedus.nudge.data.db.entity.AppGroup
-import com.astraedus.nudge.data.db.entity.AppGroupMember
 import com.astraedus.nudge.data.db.entity.BlockRule
-import com.astraedus.nudge.data.export.ExportedSettings
 import com.astraedus.nudge.data.export.RuleExporter
-import com.astraedus.nudge.data.preferences.NudgePreferences
-import com.astraedus.nudge.data.repository.BlockRuleRepository
-import com.astraedus.nudge.data.repository.UsageRepository
+import com.astraedus.nudge.domain.packages.EssentialPackages
+import com.astraedus.nudge.testing.FakeInstalledAppsRepository
+import com.astraedus.nudge.testing.FakeNudgePreferences
+import com.astraedus.nudge.testing.FakeRuleDatabase
+import com.astraedus.nudge.testing.FakeUsageRepository
+import com.astraedus.nudge.testing.aBlockRule
+import com.astraedus.nudge.testing.anAppGroup
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -32,34 +32,35 @@ import org.junit.Test
  */
 class ExportRulesUseCaseTest {
 
-    private lateinit var repository: BlockRuleRepository
-    private lateinit var usageRepository: UsageRepository
-    private lateinit var preferences: NudgePreferences
+    private val db = FakeRuleDatabase()
+    private lateinit var essentials: EssentialPackages
     private lateinit var useCase: ExportRulesUseCase
 
     @Before
     fun setUp() {
-        repository = mockk()
-        usageRepository = mockk()
-        preferences = mockk()
+        essentials = mockk()
+        coEvery { essentials.current() } returns emptySet()
+        coEvery { essentials.browsers() } returns emptySet()
 
-        every { repository.getAllGroups() } returns flowOf(emptyList())
-        every { repository.getGroupMembers(any()) } returns flowOf(emptyList())
-        coEvery { usageRepository.getAllEventsForExport() } returns emptyList()
-        coEvery { preferences.exportableSettings() } returns ExportedSettings()
-
-        useCase = ExportRulesUseCase(repository, usageRepository, preferences, RuleExporter())
+        useCase = ExportRulesUseCase(
+            db.repository,
+            FakeUsageRepository(),
+            FakeNudgePreferences(),
+            RuleExporter(),
+            FakeInstalledAppsRepository(),
+            essentials
+        )
     }
 
     private fun withRules(vararg rules: BlockRule) {
-        every { repository.getAllRules() } returns flowOf(rules.toList())
+        rules.forEach { db.seedRule(it) }
     }
 
     @Test
     fun `a rule the user switched off is still in the backup, switched off`() = runTest {
         withRules(
-            BlockRule(packageName = "com.instagram.android", mode = "HARD_BLOCK", enabled = true),
-            BlockRule(packageName = "com.zhiliaoapp.musically", mode = "DELAY", enabled = false)
+            aBlockRule(packageName = "com.instagram.android", mode = "HARD_BLOCK"),
+            aBlockRule(packageName = "com.zhiliaoapp.musically", mode = "DELAY", enabled = false)
         )
 
         val exported = RuleExporter().importRules(useCase.invoke())
@@ -74,14 +75,15 @@ class ExportRulesUseCaseTest {
 
     /**
      * The regression itself, stated as the collection rather than the result: the use case must ask
-     * for ALL rules. Asking for the enabled ones is the whole defect, and `getEnabledRules` is not
-     * stubbed here, so reaching for it fails this test loudly rather than quietly exporting less.
+     * for ALL rules. Asking for the enabled ones is the whole defect: every rule seeded here is
+     * disabled, so the real repository's `getEnabledRules` would hand back none and the size
+     * assertion below fails loudly rather than quietly exporting less.
      */
     @Test
     fun `the export reads every rule, not the enabled ones`() = runTest {
         withRules(
-            BlockRule(packageName = "com.a", mode = "DELAY", enabled = false),
-            BlockRule(packageName = "com.b", mode = "DELAY", enabled = false)
+            aBlockRule(packageName = "com.a", mode = "DELAY", enabled = false),
+            aBlockRule(packageName = "com.b", mode = "DELAY", enabled = false)
         )
 
         val exported = RuleExporter().importRules(useCase.invoke())
@@ -93,7 +95,7 @@ class ExportRulesUseCaseTest {
     @Test
     fun `a disabled rule keeps the rest of its configuration`() = runTest {
         withRules(
-            BlockRule(
+            aBlockRule(
                 packageName = "com.reddit.frontpage",
                 mode = "BREATHING",
                 delaySeconds = 30,
@@ -129,10 +131,8 @@ class ExportRulesUseCaseTest {
      */
     @Test
     fun `a disabled rule in a group still names its group`() = runTest {
-        every { repository.getAllGroups() } returns flowOf(listOf(AppGroup(id = 7, name = "Socials")))
-        every { repository.getGroupMembers(7) } returns
-            flowOf(listOf(AppGroupMember(groupId = 7, packageName = "com.instagram.android")))
-        withRules(BlockRule(groupId = 7, mode = "HARD_BLOCK", enabled = false))
+        db.seedGroup(anAppGroup("Socials", id = 7), "com.instagram.android")
+        withRules(aBlockRule(groupId = 7, mode = "HARD_BLOCK", enabled = false))
 
         val exported = RuleExporter().importRules(useCase.invoke())
 

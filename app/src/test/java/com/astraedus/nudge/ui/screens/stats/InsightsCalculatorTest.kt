@@ -1,6 +1,6 @@
 package com.astraedus.nudge.ui.screens.stats
 
-import com.astraedus.nudge.data.db.entity.UsageEvent
+import com.astraedus.nudge.testing.aUsageEvent
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -659,7 +659,7 @@ class InsightsCalculatorTest {
             val events = (0 until random.nextInt(0, 80)).map {
                 val ts = now - random.nextLong(0, 40L * DAY_MS)
                 val roll = random.nextInt(3)
-                UsageEvent(
+                aUsageEvent(
                     packageName = packages[random.nextInt(packages.size)],
                     timestamp = ts,
                     wasBlocked = roll != 2,
@@ -725,25 +725,12 @@ class InsightsCalculatorTest {
             .toEpochMilli()
 
     private fun shown(timestamp: Long, pkg: String = "app.a", mode: String? = "DELAY") =
-        UsageEvent(
-            packageName = pkg,
-            timestamp = timestamp,
-            wasBlocked = true,
-            blockMode = mode,
-            userChangedMind = false
-        )
+        aUsageEvent(pkg, timestamp, wasBlocked = true, blockMode = mode)
 
     private fun walkAway(timestamp: Long, pkg: String = "app.a", mode: String? = "DELAY") =
-        UsageEvent(
-            packageName = pkg,
-            timestamp = timestamp,
-            wasBlocked = true,
-            blockMode = mode,
-            userChangedMind = true
-        )
+        aUsageEvent(pkg, timestamp, wasBlocked = true, blockMode = mode, userChangedMind = true)
 
-    private fun allow(timestamp: Long, pkg: String = "app.a") =
-        UsageEvent(packageName = pkg, timestamp = timestamp)
+    private fun allow(timestamp: Long, pkg: String = "app.a") = aUsageEvent(pkg, timestamp)
 
     private companion object {
         const val DAY_MS = 24L * 60L * 60L * 1000L

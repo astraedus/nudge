@@ -1,10 +1,10 @@
 package com.astraedus.nudge.ui.widget
 
+import com.astraedus.nudge.testing.SourceScan
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.io.File
 
 /**
  * The widgets OBSERVE everything they display, and consume the deep link that opened them.
@@ -23,10 +23,7 @@ import java.io.File
 class WidgetObservationContractTest {
 
     private fun source(relativePath: String): String {
-        val candidates = listOf(File("src/$relativePath"), File("app/src/$relativePath"))
-        val text = (candidates.firstOrNull { it.exists() }
-            ?: error("$relativePath not found from working dir ${File("").absolutePath}"))
-            .readText()
+        val text = SourceScan.mainFile(relativePath.removePrefix("main/")).readText()
         // Comments stripped: these files document in prose the very mechanism they must use.
         return text
             .replace(Regex("""/\*[\s\S]*?\*/"""), "")

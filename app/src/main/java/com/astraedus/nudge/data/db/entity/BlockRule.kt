@@ -89,5 +89,26 @@ data class BlockRule(
      * granted. Turning it ON is a Strict-Mode weakening axis; see
      * [com.astraedus.nudge.domain.lock.RuleWeakening].
      */
-    val keepPassOnShortTrips: Boolean = false
+    val keepPassOnShortTrips: Boolean = false,
+    /**
+     * The rule's target is every app on the phone except the ones it lists (spec 5.1, "All apps
+     * except a few"). Exactly one of [packageName], [groupId] and this is set; the repository
+     * enforces that on write and code reads [com.astraedus.nudge.domain.model.RuleTarget], never
+     * the raw columns. Default false, so every pre-migration rule keeps its target.
+     */
+    val allApps: Boolean = false,
+    /**
+     * An All apps rule's allowed apps: comma-separated package names, the codebase's CSV idiom
+     * (like [webDomains]). Read through [com.astraedus.nudge.domain.model.ExceptCsv]. Null for
+     * every other rule. An uninstalled package stays here harmlessly and is allowed again if it is
+     * reinstalled.
+     */
+    val exceptPackages: String? = null,
+    /**
+     * An All apps rule's allowed GROUPS: comma-separated group ids, live references (membership is
+     * resolved at evaluation, so an app that joins the group later is allowed from then on). A stale
+     * id resolves to no members, which only makes the rule stricter. Deleting a group removes its id
+     * from every rule in the same transaction.
+     */
+    val exceptGroupIds: String? = null
 )

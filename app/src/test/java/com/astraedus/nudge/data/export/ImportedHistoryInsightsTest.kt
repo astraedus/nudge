@@ -9,6 +9,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.ZoneId
+import com.astraedus.nudge.testing.aUsageEvent
 
 /**
  * The end the user actually cares about: after a restore, the insight pages read the same as they
@@ -44,7 +45,7 @@ class ImportedHistoryInsightsTest {
                 val ts = nowMs - daysAgo * dayMs - (21 - hour) * 60L * 60L * 1000L
                 val mode = if (index == 0) "DELAY" else if (index == 1) "BREATHING" else "HARD_BLOCK"
                 add(
-                    UsageEvent(
+                    aUsageEvent(
                         id = id++,
                         packageName = app,
                         timestamp = ts,
@@ -56,7 +57,7 @@ class ImportedHistoryInsightsTest {
                 // Every third confrontation ends in a walk-away: a second row, same moment.
                 if ((daysAgo + index) % 3 == 0) {
                     add(
-                        UsageEvent(
+                        aUsageEvent(
                             id = id++,
                             packageName = app,
                             timestamp = ts + 1,
@@ -69,9 +70,9 @@ class ImportedHistoryInsightsTest {
             }
         }
         // An ALLOW row and a web pseudo-package row, both of which the screens must keep handling.
-        add(UsageEvent(id = id++, packageName = "com.app.allowed", timestamp = nowMs - 3600_000, wasBlocked = false))
+        add(aUsageEvent(id = id++, packageName = "com.app.allowed", timestamp = nowMs - 3600_000, wasBlocked = false))
         add(
-            UsageEvent(
+            aUsageEvent(
                 id = id,
                 packageName = "web",
                 timestamp = nowMs - 7200_000,

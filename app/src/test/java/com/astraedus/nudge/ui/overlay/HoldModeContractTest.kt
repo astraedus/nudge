@@ -5,7 +5,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.io.File
+import com.astraedus.nudge.testing.SourceScan
 
 /**
  * Source-level guard for the HOLD block mode
@@ -28,15 +28,7 @@ import java.io.File
  */
 class HoldModeContractTest {
 
-    private fun sourceRoot(): File =
-        listOf(File("src/main"), File("app/src/main")).firstOrNull { it.isDirectory }
-            ?: error("main source set not found from working dir ${File("").absolutePath}")
-
-    private fun read(relativePath: String): String {
-        val file = File(sourceRoot(), relativePath)
-        assertTrue("$relativePath must exist", file.exists())
-        return file.readText()
-    }
+    private fun read(relativePath: String): String = SourceScan.mainFile(relativePath).readText()
 
     /**
      * Comments stripped before matching. Every file involved here explains the rule it implements,
@@ -44,10 +36,7 @@ class HoldModeContractTest {
      * own explanation as evidence, and then passes because a comment mentions something the code no
      * longer does. (Learned the hard way; see `tasks/lessons.md`, 2026-09-11.)
      */
-    private fun stripComments(text: String): String = text
-        .replace(Regex("""/\*[\s\S]*?\*/"""), " ")
-        .lines()
-        .joinToString("\n") { line -> line.substringBefore("//") }
+    private fun stripComments(text: String): String = SourceScan.stripComments(text)
 
     private val activity by lazy {
         stripComments(read("java/com/astraedus/nudge/ui/overlay/BlockOverlayActivity.kt"))
@@ -316,10 +305,8 @@ class HoldModeContractTest {
                 "java/com/astraedus/nudge/ui/screens/stats/InsightsCalculator.kt",
             "AppDetailScreen.formatBlockMode" to
                 "java/com/astraedus/nudge/ui/screens/stats/AppDetailScreen.kt",
-            "ActiveRulesViewModel.formatMode" to
-                "java/com/astraedus/nudge/ui/screens/rules/ActiveRulesViewModel.kt",
-            "RuleEditorViewModel's rule summary" to
-                "java/com/astraedus/nudge/ui/screens/rules/RuleEditorViewModel.kt",
+            "RuleSummary.formatMode" to
+                "java/com/astraedus/nudge/ui/components/rule/RuleSummary.kt",
             "InterventionsScreen.modeColor" to
                 "java/com/astraedus/nudge/ui/screens/stats/InterventionsScreen.kt"
         )

@@ -2,7 +2,7 @@
 
 Covers what Nuke is, how it is stored, where it joins enforcement, what it overrides, the gates that
 keep it from being theatre, and — honestly — what it cannot stop.
-**Read before touching `domain/nuke/`, `ui/nuke/`, `ui/screens/nuke/`, `NukeSafetyFloor`, the Nuke
+**Read before touching `domain/nuke/`, `ui/nuke/`, `ui/screens/nuke/`, `EssentialApps`, the Nuke
 lines in `NudgeAccessibilityService`, `NukeBlockContent`, or any gate on the master toggle.**
 
 ## What it is (Anti, 2026-09-29)
@@ -32,8 +32,8 @@ So Nuke is three things:
 | Every decision | `domain/nuke/NukePolicy.kt` | `isNuked`, the safety floor, `armBlocker`/`canArm`, `isWeakening(old, new)`, `masterToggleOffRequiresUnlock`. |
 | Scan meaning | `domain/nuke/NukeScan.kt` | `resolveToggle` → Arm / Disarm / WrongKey / NoKey / CannotArm / Cancelled. `NukeEmergencyCode` (length 64, `SecureRandom`) reuses `StrictModeChallenge` wholesale. |
 | Persistence | `NudgePreferences` (`NUKE_*` keys) | DataStore, so it survives reboot and service restarts. Dumb writes, except ONE invariant: never on without a key (`setNukeActive(true)` with no key stays off; `clearNukeKey()` also turns Nuke off). |
-| Device safety floor | `service/NukeSafetyFloor.kt` | This phone's launcher(s), default dialer (`TelecomManager`), keyboards (`InputMethodManager`), own package, plus `SYSTEM_PACKAGES` / `IME_PACKAGES` / Settings packages. Binder calls, cached 5 minutes, off-main only. |
-| Evaluation hook | `NukeEnforcement` (interface) → `NukeEnforcementSource` | What `EvaluateBlockUseCase` asks. |
+| Device safety floor | `service/EssentialApps.kt` | The one essentials list (spec 5.4), which group and All apps coverage read too. The static floor plus this phone's launcher(s), default dialer (`TelecomManager`), keyboards (`InputMethodManager`), default SMS app (`Telephony.Sms`), clock (`AlarmClock.ACTION_SHOW_ALARMS` resolvers), emergency apps (the `EMERGENCY_ASSISTANCE` resolver plus `com.android.emergency` / `com.google.android.apps.safetyhub`), enabled accessibility services and installed autofill services, and its own package. One labelled `EssentialSource` per query; a source that throws drops only itself. Binder calls, cached 5 minutes, off-main only. |
+| Evaluation hook | `NukeEnforcement` (interface) → `service/NukeEnforcementSource.kt` | What `EvaluateBlockUseCase` asks. |
 
 **Why SHA-256 and not bcrypt.** A password hash slows down guessing a low-entropy secret. A
 generated key is 256 random bits. A product barcode is low-entropy, but the attacker in this threat
@@ -152,11 +152,31 @@ enforcement stops because the service stops, and Nuke resumes if they turn it ba
 Nuke must never block what a phone cannot be without, or the ways out of Nudge: the dialer and
 in-call UI, emergency apps, the launcher, SystemUI, Settings (every OEM settings package the escape
 guard knows), the installer/permission dialogs, every keyboard (the emergency code is TYPED), and
-Nudge itself. `NukePolicy.STATIC_FLOOR` is the static half; `NukeSafetyFloor` adds THIS phone's
-launcher, dialer and keyboards. The floor is applied in three places: the picker never offers a floor
+Nudge itself. `NukePolicy.STATIC_FLOOR` is the static half; `EssentialApps` adds THIS phone's
+launcher, dialer and keyboards, and (since spec PR 1) the default SMS app, every app that shows
+alarms, the emergency-assistance app, every enabled accessibility service (a screen reader must
+never be blocked) and every installed autofill service (a password manager unlocks itself inside the
+app it is filling). Each of those is one isolated query: one that throws costs only its own
+packages, never the rest of the list and never the static half. Camera, Maps, browsers and banking
+apps are deliberately NOT on it (owner decision, spec section 8). A browser a device source names
+anyway is taken back off: Firefox declares an autofill service, so until PR 4 Nuke could not nuke
+Firefox. The browsers removed are the ones Nudge reads URLs from plus every app that opens an
+ordinary https link; the static half is never trimmed.
+
+The same list is the floor for group and All apps rules (spec 4.2): neither ever covers an essential
+app, whatever its allowed list says. An explicit rule on that one app still applies. The Nuke screen says so in one
+sentence: "Your phone, messages, clock, launcher, keyboard and Settings are never on this list."
+The floor is applied in three places: the picker never offers a floor
 package, `NukePolicy.isNuked` refuses one even if stored, and the service's cache is built through
 `NukePolicy.enforceable` with `isNukedNow` re-checking the static half. "Arm" counts only enforceable
 packages, so a list of only floor apps cannot be armed.
+
+**One count.** "Nuke is on · N apps" appears on the dashboard card and on the Nuke screen, and both
+are `NukePolicy.nukedCount(state, essentialApps.packages())`: the apps Nuke actually blocks. A stored
+app that is now essential (Messages listed before spec PR 1 made it essential) is left out of BOTH,
+but stays in storage, so it counts again if this phone stops treating it as essential. Before this,
+the card used only the static floor and said "3 apps" next to a screen that said "1 app" (found on
+the bench in spec PR 1; pinned by `NukeCountParityTest`).
 
 ## Export / import
 
@@ -194,7 +214,10 @@ What it cannot close, and does not pretend to:
 | L1 | `BlockEngineNukeTest` | Nuke overrides every mode × limit × feature, and the non-nuked answer is byte-for-byte the old one |
 | L1 | `EvaluateBlockNukeTest` | through the real use case: nuked → Nuke decision with no rule/usage read; not listed / off / floor → the rule's answer |
 | L1 | `NukeGateTest` | key, wrong key, cancelled scan, live re-read, fresh emergency code, exact typing, cancel |
+| L1 | `EssentialAppsTest`, `EnabledAccessibilityServicesTest` | every essentials source lands on the list, a throwing source drops only itself (and is logged by label), all throwing still leaves the static floor, the production source labels are exactly the pinned set, the 5-minute cache, no camera, a browser named by any source is not essential (also when the browser query throws), the static floor is never trimmed; the accessibility-settings package parse |
+| L3 | `EvaluateBlockAllAppsTest` | a nuked app that an All apps rule allows is still nuked |
 | L1 | `NukeViewModelTest` | arm needs key + list, key toggles, wrong key does not disarm, emergency disarms, remove/replace/unpair gated only while on, add free, QR saved only after the same code is scanned back, the picker never offers the floor |
+| L1 | `NukeCountParityTest` | the dashboard card and the Nuke screen show the same count through both real ViewModels: stored essentials left out of both, an app that stops being essential counts again on both, the static floor left out of both |
 | L1 | `HomeNukeToggleGateTest` | master toggle OFF waits for the key or the code while Nuke is on |
 | L4 | `NukeExportExclusionTest`, `ImportedSettingsWriteContractTest` | nothing about Nuke leaves or enters through a backup |
 | contract | `NukeWiringContractTest` | every grant sits in `grantLetsThrough`, a nuked app never consults it, nuked browser, content-change + feature paths, re-evaluate on arm, overlay flag + fingerprint, escape guard, the Nuke overlay has no pass and walks away through `navigateHome` |

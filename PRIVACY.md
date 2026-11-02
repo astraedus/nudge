@@ -1,6 +1,6 @@
 # Privacy Policy
 
-**Last updated: 2026-11-01**
+**Last updated: 2026-11-02**
 
 Nudge is a privacy-first, open-source app blocker — an Android app and a Chrome extension. This policy explains what data Nudge handles and how. The sections below cover the Android app; see [Chrome Extension](#chrome-extension) for the extension.
 
@@ -127,8 +127,12 @@ toggle: usage data is written to `storage.local` exclusively.
 - **No network requests, with one opt-in exception.** If you turn on "Also allow channels I'm
   subscribed to" (off by default), Nudge loads your own YouTube subscriptions page
   (youtube.com/feed/channels) in your browser, using the YouTube sign-in you already have, to
-  read which channels you follow. Nothing is sent to us or anyone else; the list is stored only
-  in this browser and is not copied to Chrome sync. Turn it off and Nudge makes no network
+  read which channels you follow. To read past the first page, Nudge asks YouTube for the next
+  pages from inside a YouTube tab you already have open, and signs that request with your
+  YouTube sign-in the same way YouTube's own page does; your sign-in is never stored or sent
+  anywhere but YouTube. If no YouTube tab is open, Nudge keeps the first page and finishes the
+  list the next time you visit YouTube; it never opens a tab for you. Nothing is sent to us or
+  anyone else; the list is stored only in this browser and is not copied to Chrome sync. Turn it off and Nudge makes no network
   requests at all: not for updates, not for "anonymous" analytics, not for anything. If you don't trust this claim, read the code — every line is public.
 - **No accounts.** No sign-up, no login, no email collection.
 - **No third-party SDKs, no ad networks, no tracking pixels.**

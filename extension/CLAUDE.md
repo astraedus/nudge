@@ -164,12 +164,38 @@ unit-testable, exactly as the Android domain layer is.
    the worker fetches `https://www.youtube.com/feed/channels` with the user's own cookies
    (`credentials: 'include'`, host permission already held, NO new manifest permission),
    parses `ytInitialData` (`core/youtubeSubscriptions.ts`, pure; header/shelf channels are
-   ignored, only the grid's `channelRenderer`s count), and follows continuations with a
-   cookie-only `youtubei/v1/browse` POST (no SAPISIDHASH; a refused page = `truncated:
-   'partial'`, the list so far is kept). **Live QA 2026-11-01: YouTube refuses every
-   cookie-only continuation** (403 "Sorry" from the worker, signed-out 200 from the page),
-   so in practice the list is the FIRST page only and a bigger account reads "partial";
-   more needs SAPISIDHASH, an open privacy decision. The parser fixture is a sanitized live
+   ignored, only the grid's `channelRenderer`s count). **Continuations are signed, and only
+   inside a youtube.com tab** (2026-11-02). YouTube serves a cookie-only `youtubei/v1/browse`
+   continuation as a SIGNED-OUT 200 (`loggedOut: true`, zero channels; from the worker it is
+   a 403 "Sorry"), so the worker never posts one. It sends `NUDGE_YT_SIGNED_BROWSE`
+   (`{continuation, context, session}`, nothing else) with `chrome.tabs.sendMessage(tabId,
+   msg, {frameId: 0})` to a youtube.com tab the user ALREADY has open
+   (`background/youtubeTabBrowse.ts`: exact origin `https://www.youtube.com`, never m./music.,
+   non-discarded, the GET_SITE_CONFIG sender's tab first; never opens, focuses or reloads a
+   tab). The youtube content script (`content/signedBrowse.ts`, registered FIRST in
+   `youtube.content.ts` so it runs on allowed /watch pages while YouTube is blocked) reads
+   `SAPISID` (or `__Secure-3PAPISID`) from `document.cookie`, builds the header with
+   `core/signedBrowse.ts`, POSTs same-origin to the ONE constant URL
+   `https://www.youtube.com/youtubei/v1/browse?prettyPrint=false` (no `key=`) with
+   `{context: INNERTUBE_CONTEXT, continuation}`, and replies with the JSON only. **The cookie
+   and its hash never leave that function**: not in a message, a reply, a log or storage
+   (`tests/content/signedBrowse.test.ts` "never leaves", with a planted `console.debug`
+   caught; the worker integration test greps every message, reply, worker request and both
+   storage areas). Header shape, live-verified against YouTube's own page and matching
+   yt-dlp: `Authorization: SAPISIDHASH <ts>_<sha1>_u SAPISID1PHASH <ts>_<sha1>_u
+   SAPISID3PHASH <ts>_<sha1>_u` (1P/3P only when those cookies exist), `sha1("<USER_SESSION_ID>
+   <ts> <cookie> https://www.youtube.com")`, ts in Unix SECONDS, `_u` only when the
+   USER_SESSION_ID (parsed from the first page's `ytcfg`) is folded in, plus `X-Origin`,
+   `X-Goog-AuthUser` (`SESSION_INDEX`, default 0) and `X-Goog-PageId` for a delegated
+   (brand) account. **Live probe 2026-11-02** (signed-in profile copy, the page's own
+   sort-chip token): unsigned = 200 `loggedOut: true`, 0 channels; plain SAPISIDHASH, `_u`
+   SAPISIDHASH and the three-scheme `_u` header = 200 `loggedOut: false` with the channels.
+   No `cookies` permission is needed because the content script reads `document.cookie`
+   (SAPISID is not httpOnly). Outcomes: a refused, thrown or signed-out page = `partial`; no
+   qualifying tab (dashboard "Sync now", tab closed mid-list) = `pending`; partial/pending
+   MERGE with the previous list (keep what we have), only a whole or `cap` read replaces it.
+   A `pending` list is due again on the next youtube.com visit, floored at `PENDING_RETRY_MS`
+   (60s) so a page view storm does not re-read it. The parser fixture is a sanitized live
    capture (`tests/core/fixtures/youtubeSubscriptionsCapture.ts`): on this page a
    channelRenderer's `subscriberCountText` is the HANDLE and `videoCountText` the subscriber
    count; the sort chips carry `continuationCommand`s that must NOT be followed; zero
@@ -403,9 +429,13 @@ frame on every video you are trying not to be pulled into.
 
 - **Nothing leaves the browser.** No telemetry, no remote config, no CDN. All selectors are
   bundled. `no-restricted-globals` bans `fetch` in lint so this stays true, not aspirational.
-  The ONE exception is the opt-in subscriptions read (`background/youtubeSubscriptions.ts`,
-  one `eslint-disable` line): a GET of the user's own youtube.com page plus its continuation,
-  in their session, result kept in `storage.local`. Nothing of ours is sent anywhere. A
+  The ONE exception is the opt-in subscriptions read, with exactly two `eslint-disable`
+  lines: the worker's GET of the user's own youtube.com page
+  (`background/youtubeSubscriptions.ts`) and the youtube.com content script's signed POST of
+  each continuation to `youtubei/v1/browse` (`content/signedBrowse.ts`), both in the user's
+  own session, result kept in `storage.local`. The sign-in cookie is read and hashed inside
+  the content script per request and never stored, logged or messaged. Nothing of ours is
+  sent anywhere; `tests/core/noNetwork.test.ts` pins the two call sites. A
   second exception needs the same shape (opt-in, off by default, first-party read, stays
   local) and its own line in the onboarding copy and PRIVACY.md.
 - **Usage data never leaves the device.** Settings go to `storage.sync` (free cross-device

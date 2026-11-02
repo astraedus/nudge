@@ -2,6 +2,7 @@ package com.astraedus.nudge.ui.components
 
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import com.astraedus.nudge.testing.SourceScan
 import java.io.File
 
 /**
@@ -87,9 +88,6 @@ class ProportionalBarTest {
         .joinToString("\n") { it.substringBefore("//") }
 
     private fun mainSources(): List<File> {
-        val root = listOf(File("src/main/java"), File("app/src/main/java"))
-            .firstOrNull { it.isDirectory }
-            ?: error("main sources not found from working dir ${File("").absolutePath}")
-        return root.walkTopDown().filter { it.isFile && it.extension == "kt" }.toList()
+        return SourceScan.kotlinSources()
     }
 }

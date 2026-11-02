@@ -6,9 +6,15 @@ import com.astraedus.nudge.data.db.entity.BlockRule
 import com.astraedus.nudge.data.db.entity.UsageEvent
 import com.astraedus.nudge.domain.ContentFilterAllowlist
 import com.astraedus.nudge.domain.ContentFilterUserList
+import com.astraedus.nudge.data.repository.definition
+import com.astraedus.nudge.domain.groups.GroupMembershipResolver
+import com.astraedus.nudge.domain.groups.OFFERED_CATEGORIES
 import com.astraedus.nudge.domain.lock.StrictModeChallenge
 import com.astraedus.nudge.domain.nudge.PhoneNudge
+import com.astraedus.nudge.domain.packages.AppCategory
 import com.astraedus.nudge.domain.model.BlockMode
+import com.astraedus.nudge.domain.model.ExceptCsv
+import com.astraedus.nudge.domain.model.RuleTarget
 import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
@@ -16,6 +22,11 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 data class ImportResult(
+    /**
+     * Every readable rule in the file: the `rules` array, then the `extendedRules` array (whose
+     * entries have [ExportedRule.allApps] set). One list, so every count the user is shown covers
+     * both.
+     */
     val rules: List<ExportedRule>,
     val groups: List<ExportedGroup>,
     val version: Int,
@@ -101,51 +112,75 @@ class RuleExporter @Inject constructor() {
         groups: List<AppGroup>,
         groupMembers: Map<Long, List<AppGroupMember>>,
         history: List<UsageEvent> = emptyList(),
-        settings: ExportedSettings? = null
+        settings: ExportedSettings? = null,
+        installed: Map<String, AppCategory> = emptyMap(),
+        essentials: Set<String> = emptySet(),
+        browsers: Set<String> = emptySet()
     ): String {
         val groupIdToName = groups.associateBy({ it.id }, { it.name })
 
-        val exportedRules = rules.map { rule ->
-            ExportedRule(
-                packageName = rule.packageName,
-                groupName = rule.groupId?.let { groupIdToName[it] },
-                mode = rule.mode,
-                delaySeconds = rule.delaySeconds,
-                dailyLimitMinutes = rule.dailyLimitMinutes,
-                enabled = rule.enabled,
-                scheduleDays = rule.scheduleDays,
-                scheduleStartMinute = rule.scheduleStartMinute,
-                scheduleEndMinute = rule.scheduleEndMinute,
-                inAppFeatures = rule.inAppFeatures,
-                grayscale = rule.grayscale,
-                showCounter = rule.showCounter,
-                autoKickAfter = rule.autoKickAfter,
-                showTimeRemaining = rule.showTimeRemaining,
-                autoKickCooldownSeconds = rule.autoKickCooldownSeconds,
-                webDomains = rule.webDomains,
-                autoKickAfterMinutes = rule.autoKickAfterMinutes,
-                remindAfterMinutes = rule.remindAfterMinutes,
-                webBlockMode = rule.webBlockMode,
-                tabVanish = rule.tabVanish,
-                followingSteer = rule.followingSteer,
-                keepPassOnShortTrips = rule.keepPassOnShortTrips
-            )
-        }
-
-        val exportedGroups = groups.map { group ->
-            val members = groupMembers[group.id]?.map { it.packageName } ?: emptyList()
-            ExportedGroup(name = group.name, members = members)
+        // An All apps rule goes to `extendedRules`, never `rules` (spec 5.8): an older Nudge would
+        // import it from `rules` as a rule with no target. Decided by the engine's own reading of
+        // the row, so a corrupt row that also names an app is exported as the app rule it acts as.
+        val (allAppsRules, targetedRules) = rules.partition {
+            RuleTarget.of(it.packageName, it.groupId, it.allApps, emptySet(), emptySet()) is RuleTarget.AllApps
         }
 
         val export = NudgeExport(
-            rules = exportedRules,
-            groups = exportedGroups,
+            rules = targetedRules.map { exportedRule(it, groupIdToName) },
+            groups = groups.map { group ->
+                val definition = group.definition(groupMembers[group.id].orEmpty())
+                ExportedGroup(
+                    name = group.name,
+                    members = GroupMembershipResolver.membersOf(definition, installed, essentials, browsers).toList(),
+                    categories = OFFERED_CATEGORIES.filter { it in definition.categories }.map { it.name },
+                    includes = definition.includes.toList(),
+                    excluded = definition.excludes.toList(),
+                    hasDefinition = true
+                )
+            },
+            extendedRules = allAppsRules.map { rule ->
+                exportedRule(rule, groupIdToName).copy(
+                    packageName = null,
+                    groupName = null,
+                    allApps = true,
+                    exceptPackages = ExceptCsv.packages(rule.exceptPackages).toList(),
+                    // A stale id (its group deleted) has no name and allows nothing: dropped.
+                    exceptGroups = ExceptCsv.groupIds(rule.exceptGroupIds).mapNotNull { groupIdToName[it] }
+                )
+            },
             history = history.map(HistoryMerge::toExported),
             settings = settings?.takeIf { !it.isEmpty }
         )
 
         return serializeToJson(export)
     }
+
+    private fun exportedRule(rule: BlockRule, groupIdToName: Map<Long, String>): ExportedRule =
+        ExportedRule(
+            packageName = rule.packageName,
+            groupName = rule.groupId?.let { groupIdToName[it] },
+            mode = rule.mode,
+            delaySeconds = rule.delaySeconds,
+            dailyLimitMinutes = rule.dailyLimitMinutes,
+            enabled = rule.enabled,
+            scheduleDays = rule.scheduleDays,
+            scheduleStartMinute = rule.scheduleStartMinute,
+            scheduleEndMinute = rule.scheduleEndMinute,
+            inAppFeatures = rule.inAppFeatures,
+            grayscale = rule.grayscale,
+            showCounter = rule.showCounter,
+            autoKickAfter = rule.autoKickAfter,
+            showTimeRemaining = rule.showTimeRemaining,
+            autoKickCooldownSeconds = rule.autoKickCooldownSeconds,
+            webDomains = rule.webDomains,
+            autoKickAfterMinutes = rule.autoKickAfterMinutes,
+            remindAfterMinutes = rule.remindAfterMinutes,
+            webBlockMode = rule.webBlockMode,
+            tabVanish = rule.tabVanish,
+            followingSteer = rule.followingSteer,
+            keepPassOnShortTrips = rule.keepPassOnShortTrips
+        )
 
     /**
      * Parses and validates a JSON string into an ImportResult.
@@ -160,9 +195,10 @@ class RuleExporter @Inject constructor() {
      * literally nothing was importable. "Imported 0 rules" is never reported as a success.
      *
      * UNKNOWN top-level keys are ignored, and always have been -- only `version`, `rules`, `groups`
-     * and now `history` are read by name. That is precisely why history could be added at envelope
-     * version 1: an older Nudge skips it, where a version bump would have made it reject the file
-     * outright and lose the user their rules too.
+     * and now `history`, `settings` and `extendedRules` are read by name. That is precisely why
+     * history (and later `extendedRules`) could be added at envelope version 1: an older Nudge
+     * skips it, where a version bump would have made it reject the file outright and lose the user
+     * their rules too.
      */
     fun importRules(json: String): ImportResult {
         return try {
@@ -214,7 +250,8 @@ class RuleExporter @Inject constructor() {
                 if (settingsReasons.size < MAX_COLLECTED_REASONS) settingsReasons.add(reason)
             }
 
-            val rules = parseEach(root.arrayOrEmpty("rules"), "Rule", onSkip, ::parseRule)
+            val rules = parseEach(root.arrayOrEmpty("rules"), "Rule", onSkip, ::parseRule) +
+                parseEach(root.arrayOrEmpty("extendedRules"), "Extended rule", onSkip, ::parseExtendedRule)
             val groups = parseEach(root.arrayOrEmpty("groups"), "Group", onSkip, ::parseGroup)
             val history = parseEach(
                 root.arrayOrEmpty("history"),
@@ -275,32 +312,7 @@ class RuleExporter @Inject constructor() {
         root.put("exportedAt", export.exportedAt)
 
         val rulesArray = JSONArray()
-        export.rules.forEach { rule ->
-            val obj = JSONObject()
-            obj.put("packageName", rule.packageName ?: JSONObject.NULL)
-            obj.put("groupName", rule.groupName ?: JSONObject.NULL)
-            obj.put("mode", rule.mode)
-            obj.put("delaySeconds", rule.delaySeconds)
-            obj.put("dailyLimitMinutes", rule.dailyLimitMinutes ?: JSONObject.NULL)
-            obj.put("enabled", rule.enabled)
-            obj.put("scheduleDays", rule.scheduleDays ?: JSONObject.NULL)
-            obj.put("scheduleStartMinute", rule.scheduleStartMinute ?: JSONObject.NULL)
-            obj.put("scheduleEndMinute", rule.scheduleEndMinute ?: JSONObject.NULL)
-            obj.put("inAppFeatures", rule.inAppFeatures ?: JSONObject.NULL)
-            obj.put("grayscale", rule.grayscale)
-            obj.put("showCounter", rule.showCounter)
-            obj.put("autoKickAfter", rule.autoKickAfter ?: JSONObject.NULL)
-            obj.put("showTimeRemaining", rule.showTimeRemaining)
-            obj.put("autoKickCooldownSeconds", rule.autoKickCooldownSeconds)
-            obj.put("webDomains", rule.webDomains ?: JSONObject.NULL)
-            obj.put("autoKickAfterMinutes", rule.autoKickAfterMinutes ?: JSONObject.NULL)
-            obj.put("remindAfterMinutes", rule.remindAfterMinutes ?: JSONObject.NULL)
-            obj.put("webBlockMode", rule.webBlockMode ?: JSONObject.NULL)
-            obj.put("tabVanish", rule.tabVanish)
-            obj.put("followingSteer", rule.followingSteer)
-            obj.put("keepPassOnShortTrips", rule.keepPassOnShortTrips)
-            rulesArray.put(obj)
-        }
+        export.rules.forEach { rulesArray.put(ruleJson(it)) }
         root.put("rules", rulesArray)
 
         val groupsArray = JSONArray()
@@ -310,13 +322,59 @@ class RuleExporter @Inject constructor() {
             val membersArr = JSONArray()
             group.members.forEach { membersArr.put(it) }
             obj.put("members", membersArr)
+            if (group.hasDefinition) {
+                obj.put("categories", JSONArray(group.categories))
+                obj.put("includes", JSONArray(group.includes))
+                obj.put("excluded", JSONArray(group.excluded))
+            }
             groupsArray.put(obj)
         }
         root.put("groups", groupsArray)
 
+        if (export.extendedRules.isNotEmpty()) {
+            val extendedArray = JSONArray()
+            export.extendedRules.forEach { rule ->
+                extendedArray.put(
+                    ruleJson(rule)
+                        .put("allApps", rule.allApps)
+                        .put("exceptPackages", JSONArray(rule.exceptPackages))
+                        .put("exceptGroups", JSONArray(rule.exceptGroups))
+                )
+            }
+            root.put("extendedRules", extendedArray)
+        }
+
         export.settings?.let { root.put("settings", settingsJson(it)) }
 
         return spliceHistory(root.toString(2), export.history)
+    }
+
+    /** The fields every rule entry carries, in `rules` and `extendedRules` alike. */
+    private fun ruleJson(rule: ExportedRule): JSONObject {
+        val obj = JSONObject()
+        obj.put("packageName", rule.packageName ?: JSONObject.NULL)
+        obj.put("groupName", rule.groupName ?: JSONObject.NULL)
+        obj.put("mode", rule.mode)
+        obj.put("delaySeconds", rule.delaySeconds)
+        obj.put("dailyLimitMinutes", rule.dailyLimitMinutes ?: JSONObject.NULL)
+        obj.put("enabled", rule.enabled)
+        obj.put("scheduleDays", rule.scheduleDays ?: JSONObject.NULL)
+        obj.put("scheduleStartMinute", rule.scheduleStartMinute ?: JSONObject.NULL)
+        obj.put("scheduleEndMinute", rule.scheduleEndMinute ?: JSONObject.NULL)
+        obj.put("inAppFeatures", rule.inAppFeatures ?: JSONObject.NULL)
+        obj.put("grayscale", rule.grayscale)
+        obj.put("showCounter", rule.showCounter)
+        obj.put("autoKickAfter", rule.autoKickAfter ?: JSONObject.NULL)
+        obj.put("showTimeRemaining", rule.showTimeRemaining)
+        obj.put("autoKickCooldownSeconds", rule.autoKickCooldownSeconds)
+        obj.put("webDomains", rule.webDomains ?: JSONObject.NULL)
+        obj.put("autoKickAfterMinutes", rule.autoKickAfterMinutes ?: JSONObject.NULL)
+        obj.put("remindAfterMinutes", rule.remindAfterMinutes ?: JSONObject.NULL)
+        obj.put("webBlockMode", rule.webBlockMode ?: JSONObject.NULL)
+        obj.put("tabVanish", rule.tabVanish)
+        obj.put("followingSteer", rule.followingSteer)
+        obj.put("keepPassOnShortTrips", rule.keepPassOnShortTrips)
+        return obj
     }
 
     /**
@@ -539,7 +597,49 @@ class RuleExporter @Inject constructor() {
         }
     }
 
+    /**
+     * One entry of `rules`: an app rule or a group rule, exactly one of the two. An entry naming
+     * neither (or both) is skipped with a reason: it used to import as a row with no target, which
+     * blocks nothing and can not be edited, and the repository now refuses to write one. Any
+     * `allApps` key here is ignored (see [ExportedRule.allApps]).
+     */
     private fun parseRule(obj: JSONObject): ExportedRule {
+        val rule = parseRuleFields(obj)
+        require(rule.packageName != null || rule.groupName != null) { "Names no app and no group" }
+        require(rule.packageName == null || rule.groupName == null) { "Names both an app and a group" }
+        return rule
+    }
+
+    /**
+     * One entry of `extendedRules`: an All apps rule (spec 5.8). An entry that is not an All apps
+     * rule was written by a newer Nudge for a rule kind this one does not know, and is skipped with
+     * a reason rather than imported without the part that made it extended.
+     *
+     * Unreadable or blank entries in the except lists are dropped rather than failing the rule: a
+     * shorter except list only blocks more, while losing the rule would block less.
+     */
+    private fun parseExtendedRule(obj: JSONObject): ExportedRule {
+        val rule = parseRuleFields(obj)
+        require(obj.opt("allApps") == true) { "Needs a newer version of Nudge" }
+        require(rule.packageName == null && rule.groupName == null) {
+            "Names an app or a group as well as all apps"
+        }
+        return rule.copy(
+            allApps = true,
+            exceptPackages = obj.textList("exceptPackages"),
+            exceptGroups = obj.textList("exceptGroups")
+        )
+    }
+
+    /** The text entries of an optional array, trimmed, blanks and non-text dropped, in order. */
+    private fun JSONObject.textList(key: String): List<String> {
+        val array = opt(key) as? JSONArray ?: return emptyList()
+        return (0 until array.length())
+            .mapNotNull { (array.opt(it) as? String)?.trim()?.takeIf(String::isNotEmpty) }
+            .distinct()
+    }
+
+    private fun parseRuleFields(obj: JSONObject): ExportedRule {
         val mode = obj.getString("mode")
         require(mode in VALID_MODES) {
             "Unknown block mode: $mode"
@@ -609,7 +709,14 @@ class RuleExporter @Inject constructor() {
         require(name.isNotBlank()) { "Group name is blank" }
         val membersArr = obj.optJSONArray("members") ?: JSONArray()
         val members = (0 until membersArr.length()).map { membersArr.getString(it) }
-        return ExportedGroup(name = name, members = members)
+        return ExportedGroup(
+            name = name,
+            members = members,
+            categories = obj.textList("categories"),
+            includes = obj.textList("includes"),
+            excluded = obj.textList("excluded"),
+            hasDefinition = listOf("categories", "includes", "excluded").any { obj.has(it) }
+        )
     }
 
     /**

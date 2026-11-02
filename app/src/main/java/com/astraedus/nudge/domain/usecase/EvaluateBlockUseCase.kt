@@ -3,27 +3,39 @@ package com.astraedus.nudge.domain.usecase
 import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.data.repository.BlockRuleRepository
 import com.astraedus.nudge.data.repository.ContentFilter
+import com.astraedus.nudge.data.repository.RepositoryRuleSnapshots
+import com.astraedus.nudge.data.repository.RuleSnapshots
 import com.astraedus.nudge.data.repository.UsageRepository
 import com.astraedus.nudge.domain.ContentFilterAllowlist
 import com.astraedus.nudge.domain.ContentFilterBlocklist
 import com.astraedus.nudge.domain.WebDomainMatcher
 import com.astraedus.nudge.domain.engine.BlockEngine
+import com.astraedus.nudge.domain.engine.CoverageFacts
+import com.astraedus.nudge.domain.engine.RuleCoverage
 import com.astraedus.nudge.domain.engine.RuleEvaluator
 import com.astraedus.nudge.domain.engine.ScheduleEvaluator
+import com.astraedus.nudge.domain.engine.WholeAppCoverage
 import com.astraedus.nudge.domain.model.ActiveRule
 import com.astraedus.nudge.domain.model.BlockDecision
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.domain.model.BlockRuleData
-import com.astraedus.nudge.domain.model.GroupMembership
+import com.astraedus.nudge.domain.groups.GroupMembershipResolver
 import com.astraedus.nudge.domain.model.WebBlockMode
 import com.astraedus.nudge.domain.nuke.NukeEnforcement
+import com.astraedus.nudge.domain.packages.EssentialPackages
+import com.astraedus.nudge.domain.packages.PackageFacts
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
+import java.util.Calendar
 import javax.inject.Inject
 
 class EvaluateBlockUseCase @Inject constructor(
-    private val blockRuleRepository: BlockRuleRepository,
+    /**
+     * The rule tables. Production injects the `@Singleton` `RuleSnapshotSource`, so once it is warm
+     * an evaluation reads no database at all (spec 5.7); see that class for the cold start.
+     */
+    private val ruleSnapshots: RuleSnapshots,
     private val usageRepository: UsageRepository,
     private val blockEngine: BlockEngine,
     private val ruleEvaluator: RuleEvaluator,
@@ -34,8 +46,44 @@ class EvaluateBlockUseCase @Inject constructor(
      * Nuke Mode. No default, on purpose: every construction site has to say what Nuke is, because a
      * defaulted "never nuked" here is the silent no-op that would let every nuked app open.
      */
-    private val nukeEnforcement: NukeEnforcement
+    private val nukeEnforcement: NukeEnforcement,
+    /**
+     * The one essentials list (spec 5.4): what group and All apps rules may never cover. No default:
+     * a defaulted empty list would let an All apps rule block the phone app.
+     */
+    private val essentialPackages: EssentialPackages,
+    /** Launchable or not, per package: what an All apps rule covers (spec 4.1). Cached per package. */
+    private val packageFacts: PackageFacts
 ) {
+
+    /**
+     * A use case that reads [blockRuleRepository] on every call, exactly as evaluation did before
+     * the snapshot. For hand-built instances (the use-case tests); it is not a no-op, only uncached:
+     * same rows, same mapping, same decisions, one query per table per evaluation.
+     */
+    constructor(
+        blockRuleRepository: BlockRuleRepository,
+        usageRepository: UsageRepository,
+        blockEngine: BlockEngine,
+        ruleEvaluator: RuleEvaluator,
+        scheduleEvaluator: ScheduleEvaluator,
+        preferences: NudgePreferences,
+        contentFilter: ContentFilter,
+        nukeEnforcement: NukeEnforcement,
+        essentialPackages: EssentialPackages,
+        packageFacts: PackageFacts
+    ) : this(
+        ruleSnapshots = RepositoryRuleSnapshots(blockRuleRepository),
+        usageRepository = usageRepository,
+        blockEngine = blockEngine,
+        ruleEvaluator = ruleEvaluator,
+        scheduleEvaluator = scheduleEvaluator,
+        preferences = preferences,
+        contentFilter = contentFilter,
+        nukeEnforcement = nukeEnforcement,
+        essentialPackages = essentialPackages,
+        packageFacts = packageFacts
+    )
 
     /**
      * Evaluate whether a package should be blocked right now.
@@ -46,11 +94,16 @@ class EvaluateBlockUseCase @Inject constructor(
      * @param includeWholeAppRulesForFeature Whether feature evaluation should also consider
      *   whole-app rules. This is disabled after a whole-app delay has completed so in-app rules
      *   can still fire without looping the whole-app gate.
+     * @param excludeDirectRules Resolve GROUP rules only, dropping rules that name [packageName]
+     *   directly. The service passes true when it evaluates a browser covered by a group as an app
+     *   (spec 5.5): a direct rule on a browser keeps its web-only meaning (spec follow-up F5), so it
+     *   must not take part in the browser's app-level decision.
      */
     suspend fun invoke(
         packageName: String,
         detectedFeature: String? = null,
-        includeWholeAppRulesForFeature: Boolean = true
+        includeWholeAppRulesForFeature: Boolean = true,
+        excludeDirectRules: Boolean = false
     ): BlockDecision {
         // NUKE FIRST, and before any rule or usage read: a nuked app's rules are irrelevant, so there
         // is no reason to pay for them. Every app-level caller comes through here (the foreground
@@ -65,7 +118,7 @@ class EvaluateBlockUseCase @Inject constructor(
             )
         }
 
-        val activeRules = resolveActiveRules(packageName)
+        val activeRules = resolveActiveRules(packageName, excludeDirectRules)
         val dailyUsageMs = dailyUsageMs(packageName, activeRules)
 
         return blockEngine.evaluate(
@@ -78,48 +131,80 @@ class EvaluateBlockUseCase @Inject constructor(
     }
 
     /**
+     * Is [packageName] covered right now by a whole-app GROUP or ALL APPS rule ([WholeAppCoverage],
+     * spec 5.5)?
+     * The question that decides whether a BROWSER is evaluated as an app before its websites.
+     *
+     * Reads [ruleSnapshots] like every evaluation does, so it fails CLOSED exactly as they do: before
+     * the in-memory snapshot's first emission (or while its collector is failing) `current()` reads
+     * the tables directly. Answering from `RuleSnapshotSource.snapshot.value` instead would say "not
+     * covered" for that window, and Chrome in a hard-blocked group would open freely in the first
+     * moments after the process starts, while a cold Instagram in the same group is blocked.
+     */
+    suspend fun isCoveredWhole(packageName: String, now: Calendar = Calendar.getInstance()): Boolean {
+        val snapshot = ruleSnapshots.current()
+        val facts = coverageFacts(packageName, snapshot.ruleData, snapshot.membership)
+        return WholeAppCoverage.coversNow(
+            packageName = packageName,
+            rules = snapshot.ruleData,
+            membership = snapshot.membership,
+            facts = facts
+        ) { rule -> scheduleEvaluator.isActiveAt(rule, now) }
+    }
+
+    /**
      * Every rule that applies to [packageName] right now, as [ActiveRule]s, schedules NOT yet
      * applied (the engine applies those).
      *
-     * Extracted because a second caller appeared ([isFollowingSteerEnabled]) and this is the entire
-     * entity-to-domain mapping: a copy of it in that caller would be ~25 lines that silently stop
-     * agreeing the next time a column is added, which is exactly what happened to the four
-     * hand-written `when` blocks that `FeatureMode.toBlockMode` now replaces.
+     * Shared by [invoke] and [isFollowingSteerEnabled]. The entity-to-domain mapping it used to do
+     * inline now happens once per table change, in `RuleSnapshot.of` (`BlockRule.toRuleData`), so
+     * this is in-memory filtering over a handful of rules.
      */
-    private suspend fun resolveActiveRules(packageName: String): List<ActiveRule> {
-        val allRules = blockRuleRepository.getEnabledRules().first()
-        val allGroups = blockRuleRepository.getAllGroups().first()
-
-        val ruleDataList = allRules.map { rule ->
-            BlockRuleData(
-                id = rule.id,
-                packageName = rule.packageName,
-                groupId = rule.groupId,
-                mode = try { BlockMode.valueOf(rule.mode) } catch (_: Exception) { BlockMode.HARD_BLOCK },
-                delaySeconds = rule.delaySeconds,
-                dailyLimitMinutes = rule.dailyLimitMinutes,
-                enabled = rule.enabled,
-                scheduleDays = rule.scheduleDays?.split(",")?.mapNotNull { it.trim().toIntOrNull() },
-                scheduleStartMinute = rule.scheduleStartMinute,
-                scheduleEndMinute = rule.scheduleEndMinute,
-                inAppFeatures = rule.inAppFeatures?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() },
-                grayscale = rule.grayscale,
-                webDomains = rule.webDomains,
-                tabVanish = rule.tabVanish,
-                followingSteer = rule.followingSteer,
-                keepPassOnShortTrips = rule.keepPassOnShortTrips
-            )
+    private suspend fun resolveActiveRules(
+        packageName: String,
+        excludeDirectRules: Boolean = false
+    ): List<ActiveRule> {
+        val snapshot = ruleSnapshots.current()
+        val rules = if (excludeDirectRules) {
+            snapshot.ruleData.filter { it.packageName == null }
+        } else {
+            snapshot.ruleData
         }
+        val facts = coverageFacts(packageName, rules, snapshot.membership)
+        return ruleEvaluator.resolveRulesForPackage(packageName, rules, snapshot.membership, facts)
+    }
 
-        val memberships = mutableListOf<GroupMembership>()
-        for (group in allGroups) {
-            val members = blockRuleRepository.getGroupMembers(group.id).first()
-            for (member in members) {
-                memberships.add(GroupMembership(groupId = member.groupId, packageName = member.packageName))
-            }
+    /**
+     * The device facts coverage of [packageName] needs, read only when a rule can consult them: a
+     * package with only its own rules reads none. The category is read first, and only when a rule
+     * reaches a group that matches by category ([RuleCoverage.categoryNeeded]), because it decides
+     * which groups the package is in; that decides whether essentials and launchability matter
+     * ([RuleCoverage.factsNeeded]). Category and launchability are one cached [PackageFacts] read,
+     * the essentials list a 5-minute cache, so once warm this adds no database or binder call. A
+     * browser (the one browser list, cached with the essentials) joins no group by category, so it is
+     * checked exactly when the category is read.
+     *
+     * A fact that is not needed is reported as false (or a null category); no rule in [rules] reads it.
+     */
+    private suspend fun coverageFacts(
+        packageName: String,
+        rules: List<BlockRuleData>,
+        membership: GroupMembershipResolver
+    ): CoverageFacts {
+        val categoryFact = if (RuleCoverage.categoryNeeded(rules, membership)) {
+            packageFacts.factsFor(packageName)
+        } else {
+            null
         }
-
-        return ruleEvaluator.resolveRulesForPackage(packageName, ruleDataList, memberships)
+        val category = categoryFact?.category
+        val browser = category != null && packageName in essentialPackages.browsers()
+        val needed = RuleCoverage.factsNeeded(rules, membership.groupIdsOf(packageName, category, browser))
+        return CoverageFacts(
+            essential = needed.essential && packageName in essentialPackages.current(),
+            launchable = needed.launchable && (categoryFact ?: packageFacts.factsFor(packageName)).launchable,
+            category = category,
+            browser = browser
+        )
     }
 
     /**
@@ -153,7 +238,7 @@ class EvaluateBlockUseCase @Inject constructor(
      * @return BlockDecision and the matching rule's associated packageName (for usage tracking)
      */
     suspend fun evaluateWebDomain(urlBarText: String): WebDomainBlockResult {
-        val allRules = blockRuleRepository.getEnabledRules().first()
+        val allRules = ruleSnapshots.enabledRules()
 
         // Find rules with webDomains that match the detected URL AND actually enforce something.
         val matchingRules = allRules.mapNotNull { rule ->

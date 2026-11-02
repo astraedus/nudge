@@ -28,7 +28,7 @@ import com.astraedus.nudge.data.db.entity.UsageEvent
  * keeps passing forever after a bump nobody remembered to make twice. One constant, two readers, and
  * the compiler holds them together.
  */
-internal const val NUDGE_DB_VERSION = 13
+internal const val NUDGE_DB_VERSION = 15
 
 @Database(
     entities = [
@@ -198,6 +198,36 @@ abstract class NudgeDatabase : RoomDatabase() {
         val MIGRATION_12_13 = object : Migration(12, 13) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE block_rules ADD COLUMN keepPassOnShortTrips INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        /**
+         * Adds "All apps except a few" (spec 5.1, PR 4): the target flag and the rule's allowed
+         * apps and allowed groups, backing [com.astraedus.nudge.data.db.entity.BlockRule.allApps],
+         * [com.astraedus.nudge.data.db.entity.BlockRule.exceptPackages] and
+         * [com.astraedus.nudge.data.db.entity.BlockRule.exceptGroupIds].
+         *
+         * Additive only: every existing rule reads `allApps = 0` with no allowed lists, so it keeps
+         * exactly the target (one app or one group) it had.
+         */
+        val MIGRATION_13_14 = object : Migration(13, 14) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE block_rules ADD COLUMN allApps INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE block_rules ADD COLUMN exceptPackages TEXT DEFAULT NULL")
+                db.execSQL("ALTER TABLE block_rules ADD COLUMN exceptGroupIds TEXT DEFAULT NULL")
+            }
+        }
+
+        /**
+         * Category groups (spec 5.1/5.2, PR 6). `app_groups.categories` is a CSV of category names
+         * (`SOCIAL,VIDEO`); NULL keeps every existing group hand-picked only. `excluded` = 1 marks a
+         * "Removed by you" row (a category app taken out by hand); DEFAULT 0 keeps every existing
+         * member row an include, so an upgraded group covers exactly the apps it covered before.
+         */
+        val MIGRATION_14_15 = object : Migration(14, 15) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE app_groups ADD COLUMN categories TEXT DEFAULT NULL")
+                db.execSQL("ALTER TABLE app_group_members ADD COLUMN excluded INTEGER NOT NULL DEFAULT 0")
             }
         }
     }

@@ -58,6 +58,18 @@ object EnabledAccessibilityServices {
         }
     }
 
+    /**
+     * The package of every service listed in [raw], for the essentials list (a screen reader the
+     * user turned on must never be blocked). Same parsing as [contains]; a bare-package entry counts
+     * as that package, and blank entries are dropped.
+     */
+    fun packages(raw: String?): Set<String> {
+        if (raw.isNullOrBlank()) return emptySet()
+        return raw.split(ENTRY_SEPARATOR).mapNotNullTo(mutableSetOf()) { entry ->
+            entry.trim().substringBefore(COMPONENT_SEPARATOR).trim().takeIf { it.isNotEmpty() }
+        }
+    }
+
     private fun matches(entry: String, packageName: String, className: String): Boolean {
         if (entry.isEmpty()) return false
 

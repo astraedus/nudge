@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Empty on purpose: this module ships nothing. Everything it does lives in src/androidTest and
+     runs as a self-instrumenting test APK (see qa-driver/build.gradle.kts). -->
+<manifest />

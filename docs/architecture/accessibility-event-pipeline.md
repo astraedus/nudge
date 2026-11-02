@@ -264,6 +264,40 @@ window sequence replayed, with the counterfactual that the single-list rule pres
 frame), `WindowSnapshotReaderTest` and `WindowEvidenceTest` (which replays #76 through the real `SittingTracker`, with the counterfactual that
 the same stream without window evidence revokes the grant).
 
+## A window event that is not about a window: accessibility panes
+
+`TYPE_WINDOW_STATE_CHANGED` carries two different meanings. Usually it is a window (an activity, a
+dialog) coming forward. But the platform also sends it, in place of a content change, when a view
+that has an accessibility pane title appears, disappears or is retitled, with `contentChangeTypes`
+set to `CONTENT_CHANGE_TYPE_PANE_APPEARED` (0x10), `PANE_DISAPPEARED` (0x20) or `PANE_TITLE` (0x08).
+The framework doc for the type says so in as many words. A pane event says nothing about which app
+is in front.
+
+Before 1.24.0 the classifier read only the type, so a pane event was an `AppWindow`. YouTube is the
+one app on the bench that sends them: its player pane disappears when the user leaves, from a
+`android.view.ViewGroup` in a window that the live window list no longer contains. When that event
+arrived 30 to 60ms AFTER the launcher's Home signal, it started a new YouTube sitting, moved the
+block guard's foreground back to YouTube, and the Delay overlay launched over the home screen. When
+the countdown finished, the completion hand-back (above) correctly reopened YouTube. So a single Home
+press brought the app back. It reproduced on v1.23.2 as well. It looked like a flake because the
+straggler sometimes arrives BEFORE the Home signal, and then Home ends the sitting last and nothing
+restarts it. On the bench, 10 of 10 stragglers that arrived after Home made a phantom sitting
+before the fix. After it, 6 of 6 made none.
+
+`AccessibilityEventRecord.isPaneChange` (a window-state type whose `contentChangeTypes` has a pane
+bit) is classified `NotForeground` before every other check, the launcher included: a missed Home
+is a missed revoke, never a false re-block. The window evidence cannot save the old reading, because
+"window id absent from the list" means no evidence, not "not in front". The service's window branch
+then returns on `NotForeground` instead of evaluating the package. A real arrival always comes with
+its own activity event (`contentChangeTypes` 0), and YouTube's content changes still drive feature
+detection, so nothing is lost.
+
+Pinned by `PaneChangeReplayTest` (L2, `youtube-pane-straggler-after-home.jsonl`), which has two
+counterfactuals. The first is the same stream with `contentChangeTypes` zeroed (exactly what the old
+classifier saw), which must still start the phantom sitting and LAUNCH. The second is the reversed
+order, which is harmless under both rules. The class tests check that every pane event in every
+committed capture is `NotForeground` and that every other event classifies exactly as before.
+
 ## What a "sitting" is, and what it is not
 
 `domain/sitting/SittingTracker` owns one question: *is the user still in a sitting with app X?* A
@@ -307,6 +341,25 @@ the pass, staying away past it ends the sitting as `WENT_HOME`. Every way a sitt
 another app) clears the flag, so a sitting that holds no such grant behaves exactly as before #110.
 No length picker: one window for every absence. Turning it on is a Strict Mode weakening
 (`RuleWeakening`); it travels in exports, and an older export imports it off.
+
+**A grant also records whether it was earned against the WHOLE app (spec 5.5).** A grant has a
+package, and optionally a website (`webDomain`) or an in-app feature (`featureKey`). Only an
+app-level completion (neither) is *whole*: `PassthroughManager.isGrantedWhole(pkg)` is true when
+the package is granted AND the sitting's grant was whole, and a website grant later in the same
+package keeps it whole (the user earned the browser first, then a site inside it). A website-only or
+feature-only grant is not whole; the axis ends with the grant (`clear`, any sitting end, a grant for
+another package). It matters for one case only: a browser a group rule covers as a whole app
+(`web-domain-blocking.md`, "Browsers in a group"). For such a browser the service's two grant
+checks, `grantLetsThrough` and `grantAliveFor`, both go through `passthroughEarned`, which asks
+`isGrantedWhole` instead of `shouldSkipForegroundEvaluation`, so a finished website delay cannot
+keep open a browser its group blocks. For every other package `passthroughEarned` is the plain
+`shouldSkipForegroundEvaluation`, unchanged. Pinned by `PassthroughWholeAxisTest` (L1) and
+`GroupBrowserWiringContractTest` (site 4).
+
+The same browsers route through `evaluateBrowser` on both browser paths of the dispatch: the window
+change (`evaluateForegroundPackage`) and the debounced content change (`handleWindowContentChanged`,
+skipped while `grantAliveFor` is true). `GroupBrowserCaptureReplayTest` replays
+`chrome-open-and-browse.jsonl` through the classifier and that routing.
 
 **`WENT_HOME` can arrive by two event types, and only one of them is a window change
 ([#58](https://github.com/astraedus/nudge/issues/58)).** `EventClassifier.classify` still restricts
@@ -586,8 +639,12 @@ fields, never from per-app knowledge**, so a stock `androidx` RecyclerView is th
 | `InteractionCounterTest` | every counting branch, the primary-source election, the mode rules |
 | `A11yCaptureReplayTest` | the real device streams, each against its own oracle — plus counterfactuals showing the OLD rule really does fail each capture, so a passing fixture cannot be passing by luck |
 | `AccessibilityEventCodecTest` | encoder/decoder round trip, escaping, forward compatibility |
+| `PaneChangeReplayTest` | an accessibility-pane `WINDOW_STATE_CHANGED` claims nothing: YouTube's pane torn down after Home no longer starts a sitting or launches a Delay over the launcher, with the zeroed-`contentChangeTypes` and reversed-order counterfactuals; every pane event in every capture is `NotForeground` and nothing else changed classification |
 | `EventDispatchOrderContractTest` | classify-once and sitting-once above every early return; no branch re-derives the classification; `evaluateForegroundPackage` never clears the passthrough again; a click or a scroll actually REACHES the sitting model (#64), under the synthetic-click guard and before the counter is told — a pure-model fix nobody calls is a silent no-op with a green suite |
 | `HomeScreenPassthroughContractTest` | the Home / system-surface distinction, the Strict Mode guard's position, the global toggle's position |
+| `PassthroughWholeAxisTest` | the whole-app axis of a grant: app completion is whole, website or feature alone is not, a website grant inside an earned browser stays whole, never inherited from another package, ends with the sitting, whole always implies granted |
+| `GroupBrowserCaptureReplayTest` | `chrome-open-and-browse.jsonl` with a group Hard block covering Chrome: every Chrome evaluation blocks as an app and none reaches the website path, with the counterfactual that the pre-5.5 routing never blocks |
+| `GroupBrowserWiringContractTest` | the four service sites of spec 5.5 (foreground, content change, feature detection, both grant checks) and that `evaluateBrowser` is the only way to the website path |
 
 The counterfactual tests are worth the extra lines. `the old event-rate rule really would have
 over-counted this capture` and `the old rule really would have revoked the grant on this capture`

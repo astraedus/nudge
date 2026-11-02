@@ -12,7 +12,7 @@ import com.astraedus.nudge.domain.nuke.NukeKeyKind
 import com.astraedus.nudge.domain.nuke.NukePolicy
 import com.astraedus.nudge.domain.nuke.NukeScan
 import com.astraedus.nudge.domain.nuke.NukeState
-import com.astraedus.nudge.service.NukeSafetyFloor
+import com.astraedus.nudge.service.EssentialApps
 import com.astraedus.nudge.ui.nuke.NukeGate
 import com.astraedus.nudge.ui.nuke.NukeUnlockState
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -98,7 +98,7 @@ sealed interface NukePairing {
 class NukeViewModel @Inject constructor(
     private val preferences: NudgePreferences,
     private val installedAppsRepository: InstalledAppsRepository,
-    private val safetyFloor: NukeSafetyFloor,
+    private val essentialApps: EssentialApps,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) : ViewModel() {
 
@@ -141,7 +141,7 @@ class NukeViewModel @Inject constructor(
             active = state.active,
             hasKey = state.hasKey,
             keyKind = state.keyKind,
-            nukedCount = NukePolicy.enforceable(state.packages, floor).size,
+            nukedCount = NukePolicy.nukedCount(state, floor),
             armBlocker = NukePolicy.armBlocker(state, floor),
             apps = rows,
             query = q,
@@ -154,7 +154,7 @@ class NukeViewModel @Inject constructor(
             installed.value = installedAppsRepository.getInstalledApps()
         }
         viewModelScope.launch {
-            deviceFloor.value = withContext(ioDispatcher) { safetyFloor.deviceFloor() }
+            deviceFloor.value = withContext(ioDispatcher) { essentialApps.packages() }
         }
     }
 

@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.astraedus.nudge.testing.SourceScan
 import java.io.File
 
 /**
@@ -30,18 +31,10 @@ import java.io.File
  */
 class OverlayBackAndInsetsContractTest {
 
-    private fun sourceRoot(): File =
-        listOf(File("src/main"), File("app/src/main")).firstOrNull { it.isDirectory }
-            ?: error("main source set not found from working dir ${File("").absolutePath}")
-
-    private fun read(relativePath: String): String {
-        val file = File(sourceRoot(), relativePath)
-        assertTrue("$relativePath must exist", file.exists())
-        return file.readText()
-    }
+    private fun read(relativePath: String): String = SourceScan.mainFile(relativePath).readText()
 
     private fun allKotlinSources(): List<File> =
-        sourceRoot().walkTopDown().filter { it.isFile && it.extension == "kt" }.toList()
+        SourceScan.kotlinSources()
 
     /**
      * Every activity whose back button carries meaning, and the handler each one owes. Adding a

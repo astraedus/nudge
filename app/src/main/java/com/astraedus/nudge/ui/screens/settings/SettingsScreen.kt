@@ -132,9 +132,9 @@ fun SettingsScreen(
     // action to run once the user types it. Null = no dialog up.
     var pendingUnlock by remember { mutableStateOf<PendingSettingsUnlock?>(null) }
 
-    // Backup and restore, the same ViewModel and the same dialogs the Active Rules menu uses.
-    // Settings is where people look for data portability -- it used to be findable only through
-    // that menu, behind a stat card on Home (docs/BACKLOG.md, v1.12.0 QA).
+    // Backup and restore: its one entry point. Settings is where people look for data
+    // portability -- it used to be findable only through the old Active Rules menu, behind a stat
+    // card on Home (docs/BACKLOG.md, v1.12.0 QA).
     val backup = rememberBackupActions(backupViewModel)
     BackupDialogs(backupViewModel)
 

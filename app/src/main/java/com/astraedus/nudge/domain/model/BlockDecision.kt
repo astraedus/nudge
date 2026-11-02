@@ -49,6 +49,17 @@ sealed class BlockDecision {
          * one block, whichever path surfaced it. Read through
          * [com.astraedus.nudge.domain.block.BlockLaunchGate.identityOf], never re-derived.
          */
-        val feature: String? = null
+        val feature: String? = null,
+        /**
+         * When the deciding rule's time window ends, as wall-clock epoch ms: the block screen's
+         * "Until 8:42 AM" (spec 3.9). Set for a rule with a days-and-times window, null for one that
+         * is on all the time (and for Nuke). Read off the deciding rule, like [tabVanish].
+         */
+        val until: Long? = null,
+        /**
+         * Set when the deciding rule is an All apps rule: the rule line and the allowed-app icons
+         * (spec 3.9). Null for every other block, which then keeps its redirect bubble.
+         */
+        val allApps: AllAppsBlock? = null
     ) : BlockDecision()
 }

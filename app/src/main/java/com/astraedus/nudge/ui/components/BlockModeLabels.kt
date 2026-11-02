@@ -22,10 +22,25 @@ internal fun blockModeLabel(mode: BlockMode): String = when (mode) {
     BlockMode.BREATHING -> "Breathing"
 }
 
-/** One line under the picker saying what the selected mode actually does. */
-internal fun blockModeDescription(mode: BlockMode): String = when (mode) {
+/**
+ * The label inside a four-segment picker row, where each segment is about a quarter of the screen.
+ * One word each: "Hard Block" in a quarter-width segment with `maxLines = 1` was clipped to "Hard"
+ * and, overflowing, drawn off-centre (device QA, groups PR 2).
+ */
+internal fun blockModeShortLabel(mode: BlockMode): String = when (mode) {
+    BlockMode.HARD_BLOCK -> "Hard"
+    BlockMode.NONE, BlockMode.DELAY, BlockMode.HOLD, BlockMode.BREATHING -> blockModeLabel(mode)
+}
+
+/**
+ * One line under the picker saying what the selected mode actually does. [manyApps] is true where
+ * the rule covers several apps (a group, an All apps rule): Hard Block then reads "these apps", not
+ * "the app". Required, so every picker states which it is (device QA screenshot review, PR 4).
+ */
+internal fun blockModeDescription(mode: BlockMode, manyApps: Boolean): String = when (mode) {
     BlockMode.NONE -> "Not blocked."
-    BlockMode.HARD_BLOCK -> "Completely blocks the app. You can only go back to the home screen."
+    BlockMode.HARD_BLOCK ->
+        "Completely blocks ${if (manyApps) "these apps" else "the app"}. You can only go back to the home screen."
     BlockMode.DELAY -> "Shows a countdown timer before letting you in. Gives you time to reconsider."
     BlockMode.HOLD -> "You hold a button for the whole wait. Let go and it starts over."
     BlockMode.BREATHING -> "Guides you through a breathing exercise before opening. Calms the impulse."

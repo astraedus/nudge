@@ -1,6 +1,6 @@
 package com.astraedus.nudge.service
 
-import java.io.File
+import com.astraedus.nudge.testing.SourceScan
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -50,22 +50,14 @@ class TabCoverCountingContractTest {
         "claimConfrontation"
     )
 
-    private fun read(relative: String): String {
-        val candidates = listOf(File("src/$relative"), File("app/src/$relative"))
-        return (candidates.firstOrNull { it.exists() }
-            ?: error("$relative not found from ${File("").absolutePath}"))
-            .readText()
-    }
+    private fun read(relative: String): String = SourceScan.appFile("src/$relative").readText()
 
     /**
      * Comments are stripped first, so the KDoc on the manager is free to EXPLAIN the rule by name —
      * which it must, or the next person deletes the rule without knowing it was one. Same
      * strip-then-scan shape as `AwarenessOverlayContractTest`.
      */
-    private fun stripComments(text: String): String = text
-        .replace(Regex("""/\*[\s\S]*?\*/"""), " ")
-        .lines()
-        .joinToString("\n") { line -> line.substringBefore("//") }
+    private fun stripComments(text: String): String = SourceScan.stripComments(text)
 
     @Test
     fun `the tab cover manager never reaches usage logging`() {

@@ -1,6 +1,7 @@
 package com.astraedus.nudge.service
 
-import java.io.File
+import com.astraedus.nudge.testing.SourceScan
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -8,77 +9,49 @@ import org.junit.Test
 /**
  * Source-level guard on WHERE the "Bro. wtf." check-in is fed inside [NudgeAccessibilityService].
  *
- * The detector's rules are tested in `BounceDetectorTest` and the adapter's in `BounceCheckInTest`.
- * Both stay green if the SERVICE stops calling them, or calls them from a branch an early return can
- * skip, which is the only way the feature can silently stop working. `docs/TESTING.md`: "nothing at
- * this layer can prove the adapter actually calls the decision class on every callback -- that half
- * stays a source-level contract test." Same shape as [TabCoverWiringContractTest].
+ * What the service feeds is decided in [BounceCheckIn] and tested as behaviour in
+ * `BounceCheckInTest` (L3 pattern, `docs/testing-strategy.md`): which gate verdicts count as a
+ * wall (`onBlockLaunched`), how a kick is attributed (`onKicked`), which signals open an app. What
+ * no value test can prove is that the SERVICE calls those entry points from a path an early
+ * return cannot skip, in the right order. That residue, and only that, is pinned here.
  */
 class BounceCheckInWiringContractTest {
 
-    private fun read(relative: String): String {
-        val candidates = listOf(File("src/$relative"), File("app/src/$relative"))
-        return (candidates.firstOrNull { it.exists() }
-            ?: error("$relative not found from ${File("").absolutePath}"))
-            .readText()
-    }
+    private val service = SourceScan.kotlinFile("com/astraedus/nudge/service/NudgeAccessibilityService.kt")
+    private val code: String by lazy { SourceScan.code(service) }
 
-    private fun stripComments(text: String): String = text
-        .replace(Regex("""/\*[\s\S]*?\*/"""), " ")
-        .lines()
-        .joinToString("\n") { line -> line.substringBefore("//") }
-
-    private val code: String by lazy {
-        stripComments(read("main/java/com/astraedus/nudge/service/NudgeAccessibilityService.kt"))
-    }
-
-    private fun bodyOf(signature: String): String {
-        val start = code.indexOf(signature)
-        assertTrue("$signature not found", start >= 0)
-        var depth = 0
-        var i = code.indexOf('{', start)
-        val from = i
-        while (i < code.length) {
-            when (code[i]) {
-                '{' -> depth++
-                '}' -> {
-                    depth--
-                    if (depth == 0) return code.substring(from, i + 1)
-                }
-            }
-            i++
-        }
-        error("unbalanced braces after $signature")
-    }
+    private fun bodyOf(signature: String) = SourceScan.bodyOf(code, signature)
 
     /** Apps opened: from the one place that sees every classification, above every early return. */
     @Test
     fun `apps are fed from applyForegroundSignal`() {
         val body = bodyOf("private fun applyForegroundSignal(signal: ForegroundSignal)")
-        assertTrue(body.contains("bounceCheckIn.onForegroundSignal(signal)"))
+        assertTrue(
+            "the check-in must be fed from the one classification point, or an early return " +
+                "skips it and the feature silently stops",
+            body.contains("bounceCheckIn.onForegroundSignal(signal)")
+        )
     }
 
     /**
-     * Walls: every overlay launch the gate ALLOWS, and none it refuses. A dropped launch is no wall
-     * the user ever saw, and counting it would fire the check-in on a gate's internal churn.
+     * Walls: reported after the gate refusal has returned and before the activity starts, once per
+     * launch. A report before the refusal counts a launch nobody saw; after the start it can be
+     * skipped by a throw.
      */
     @Test
-    fun `an overlay launch reports a wall only after the gate allowed it`() {
+    fun `an overlay launch reports a wall once, between the gate refusal and the activity start`() {
         val body = bodyOf("private fun launchBlockOverlay(")
         val refusal = body.indexOf("decision != BlockLaunchGate.Decision.LAUNCH")
-        val wall = body.indexOf("bounceCheckIn.onWall(targetPackage, webDomain)")
+        val wall = body.indexOf("bounceCheckIn.onBlockLaunched(decision, targetPackage, webDomain)")
         val start = body.indexOf("startActivity(overlayIntent)")
         assertTrue("the gate refusal must be present", refusal >= 0)
-        assertTrue("launchBlockOverlay must report the wall, with its site", wall >= 0)
+        assertTrue("launchBlockOverlay must report the launch verdict, with its site", wall >= 0)
         assertTrue("the wall is reported after the refusal returns", wall > refusal)
         assertTrue("and before the activity starts, on the same path", wall < start)
-        assertTrue(
+        assertEquals(
             "exactly one wall report per launch",
-            Regex("""bounceCheckIn\.onWall\(""").findAll(body).count() == 1
-        )
-        assertTrue(
-            "the site must reach the check-in, or three blocked sites are one browser wall",
-            body.contains("webDomain")
+            1,
+            Regex("""bounceCheckIn\.onBlockLaunched\(""").findAll(body).count()
         )
     }
 
@@ -99,24 +72,22 @@ class BounceCheckInWiringContractTest {
         )
     }
 
-    /** A kick is a wall: the ONE executor is wired to report it. */
+    /** A kick is a wall: the ONE executor is wired to report it, and reports every kick. */
     @Test
     fun `the auto-kick executor is wired to the check-in`() {
         val wiring = code.substringAfter("autoKickExecutor = AutoKickExecutor(")
             .substringBefore("autoKickTimeHandler = AutoKickTimeHandler(")
-        assertTrue(wiring.contains("onKicked ="))
         assertTrue(
-            "a web kick is reported as the browser the user was in",
-            wiring.contains("webSessionUsageProvider.browserPackage")
+            "the executor's onKicked must hand the key and the browser to the check-in",
+            wiring.contains("bounceCheckIn.onKicked(key, webSessionUsageProvider.browserPackage)")
+        )
+        val executor = SourceScan.code(
+            SourceScan.kotlinFile("com/astraedus/nudge/service/AutoKickExecutor.kt")
         )
         assertTrue(
-            "a web kick must report its site too, not just the browser",
-            wiring.contains("WebSessionKey.domainOf(key)")
+            "kick() must report every kick",
+            executor.substringAfter("fun kick(").contains("onKicked(packageName)")
         )
-
-        val executor = stripComments(read("main/java/com/astraedus/nudge/service/AutoKickExecutor.kt"))
-        val kick = executor.substringAfter("fun kick(")
-        assertTrue("kick() must report every kick", kick.contains("onKicked(packageName)"))
     }
 
     /**
@@ -126,7 +97,10 @@ class BounceCheckInWiringContractTest {
     @Test
     fun `the event path never reads the preference`() {
         val dispatch = bodyOf("override fun onAccessibilityEvent(event: AccessibilityEvent?)")
-        assertFalse(dispatch.contains("bounceCheckInEnabled"))
+        assertFalse(
+            "a DataStore read per accessibility event is exactly what the hot path must never do",
+            dispatch.contains("bounceCheckInEnabled")
+        )
         assertTrue(
             "the switch is collected once, off the event path",
             code.contains("bounceCheckInEnabled.collect")

@@ -4,20 +4,21 @@ import android.content.Context
 import com.astraedus.nudge.MainDispatcherRule
 import com.astraedus.nudge.data.db.BlockHistoryFixture
 import com.astraedus.nudge.data.db.entity.UsageEvent
-import com.astraedus.nudge.data.preferences.NudgePreferences
-import com.astraedus.nudge.data.repository.BlockRuleRepository
-import com.astraedus.nudge.data.repository.InstalledAppsRepository
 import com.astraedus.nudge.data.repository.ScreenTimeProvider
-import com.astraedus.nudge.data.repository.UsageRepository
 import com.astraedus.nudge.domain.engine.TimeTracker
 import com.astraedus.nudge.domain.usage.WeeklyUsage
+import com.astraedus.nudge.testing.FakeInstalledAppsRepository
+import com.astraedus.nudge.testing.FakeNudgePreferences
+import com.astraedus.nudge.testing.FakeRuleDatabase
+import com.astraedus.nudge.testing.FakeUsageEventDao
+import com.astraedus.nudge.testing.FakeUsageRepository
+import com.astraedus.nudge.testing.aBlockRule
+import com.astraedus.nudge.testing.anAppGroup
 import com.astraedus.nudge.ui.screens.stats.InsightsCalculator
 import com.astraedus.nudge.ui.screens.stats.StatsCalculator
-import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
@@ -48,11 +49,13 @@ class HomeBlockedTileTest {
 
     private val timeTracker = TimeTracker()
 
-    private lateinit var usageRepository: UsageRepository
+    private val usageEvents = FakeUsageEventDao()
+    private val usageRepository = FakeUsageRepository(usageEvents)
+    private val ruleDatabase = FakeRuleDatabase()
+    private val blockRuleRepository = ruleDatabase.repository
+    private val installedAppsRepository = FakeInstalledAppsRepository()
+    private val preferences = FakeNudgePreferences()
     private lateinit var screenTimeProvider: ScreenTimeProvider
-    private lateinit var blockRuleRepository: BlockRuleRepository
-    private lateinit var installedAppsRepository: InstalledAppsRepository
-    private lateinit var preferences: NudgePreferences
     private lateinit var context: Context
 
     private val dayStart: Long by lazy { timeTracker.startOfToday() }
@@ -60,22 +63,13 @@ class HomeBlockedTileTest {
 
     @Before
     fun setUp() {
-        usageRepository = mockk(relaxed = true)
         screenTimeProvider = mockk(relaxed = true)
-        blockRuleRepository = mockk(relaxed = true)
-        installedAppsRepository = mockk(relaxed = true)
-        preferences = mockk(relaxed = true)
         context = mockk(relaxed = true)
 
-        every { preferences.isGlobalEnabled } returns MutableStateFlow(true)
-        every { blockRuleRepository.getEnabledRules() } returns MutableStateFlow(emptyList())
         every { screenTimeProvider.hasPermission() } returns true
         every { screenTimeProvider.getWeeklyUsage(any()) } answers {
             WeeklyUsage(listOf(firstArg()), listOf(emptyMap()))
-        }
-        coEvery { installedAppsRepository.resolveAppName(any()) } answers { firstArg() }
-        coEvery { installedAppsRepository.resolveIcon(any()) } returns null
-    }
+        }    }
 
     /**
      * Yesterday's rows are in the all-time numbers and not in today's, so a passing today-count
@@ -98,16 +92,8 @@ class HomeBlockedTileTest {
             allowed = 4
         )
 
-    private fun serve(history: List<UsageEvent>) {
-        every { usageRepository.getShownCountForDay(dayStart, dayEnd) } returns
-            MutableStateFlow(BlockHistoryFixture.shownCount(history, dayStart, dayEnd))
-        every { usageRepository.getChangedMindCountForDay(dayStart, dayEnd) } returns
-            MutableStateFlow(BlockHistoryFixture.changedMindCount(history, dayStart, dayEnd))
-        every { usageRepository.getAllTimeShownCount() } returns
-            MutableStateFlow(BlockHistoryFixture.shownCount(history))
-        every { usageRepository.getAllTimeChangedMindCount() } returns
-            MutableStateFlow(BlockHistoryFixture.changedMindCount(history))
-        every { usageRepository.getEventsSince(any()) } returns MutableStateFlow(history)
+    private suspend fun serve(history: List<UsageEvent>) {
+        usageEvents.insertAll(history)
     }
 
     private fun viewModel() = HomeViewModel(
@@ -120,6 +106,7 @@ class HomeBlockedTileTest {
         homeChartsBuilder = HomeChartsBuilder(StatsCalculator(timeTracker)),
         installedAppsRepository = installedAppsRepository,
         insightsCalculator = InsightsCalculator(),
+        essentialApps = mockk(relaxed = true),
         ioDispatcher = dispatcher
     )
 
@@ -179,5 +166,21 @@ class HomeBlockedTileTest {
 
         assertEquals(state.blockedCountToday, today.blockedCount)
         assertEquals(state.changedMindCountToday, today.walkedAwayCount)
+    }
+
+    /**
+     * The "Active Apps" tile next to these counts apps a rule that is on covers (spec 3.2), groups
+     * included, each app once. Pinned here, through the ViewModel, so the tile cannot drift back to
+     * counting rule rows; the cases themselves are in [ActiveAppsCountTest].
+     */
+    @Test
+    fun `the Active Apps tile counts apps a group covers, each app once`() = runTest(dispatcher) {
+        ruleDatabase.seedGroup(anAppGroup("Social", id = 1), "com.instagram", "com.tiktok")
+        ruleDatabase.seedRule(aBlockRule(id = 1, packageName = "com.instagram"))
+        ruleDatabase.seedRule(aBlockRule(id = 2, groupId = 1))
+
+        val state = viewModel().uiState.first { it.activeAppCount > 0 }
+
+        assertEquals(2, state.activeAppCount)
     }
 }

@@ -1,0 +1,1 @@
+• Fixed: the on/off switch at the top of the dashboard no longer runs off the edge of the screen.

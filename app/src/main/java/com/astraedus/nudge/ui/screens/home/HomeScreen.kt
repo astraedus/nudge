@@ -48,9 +48,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.astraedus.nudge.ui.components.StrictModeChallengeHost
+import com.astraedus.nudge.ui.components.qaTag
 import com.astraedus.nudge.ui.nuke.NukeUnlockHost
 import com.astraedus.nudge.ui.screens.stats.charts.BlockedTrendChart
 import com.astraedus.nudge.ui.screens.stats.charts.WeeklyBarChart
+import com.astraedus.nudge.ui.testtags.UiTags
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -59,17 +61,17 @@ fun HomeScreen(
     onNavigateToApps: () -> Unit,
     onNavigateToStats: () -> Unit,
     onNavigateToSettings: () -> Unit,
-    onNavigateToActiveRules: () -> Unit = {},
     onNavigateToWillpower: () -> Unit = {},
     onNavigateToInterventions: () -> Unit = {},
     onNavigateToAppDetail: (String) -> Unit = {},
-    onNavigateToNuke: () -> Unit = {}
+    onNavigateToNuke: () -> Unit = {},
+    onOpenAllAppsRule: (Long) -> Unit = {}
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val challenge by viewModel.challenge.collectAsStateWithLifecycle()
     val nukeSummary by viewModel.nukeSummary.collectAsStateWithLifecycle()
+    val lockCard by viewModel.lockCard.collectAsStateWithLifecycle()
     val nukeUnlock by viewModel.nukeUnlock.collectAsStateWithLifecycle()
-    val context = LocalContext.current
 
     StrictModeChallengeHost(
         challenge = challenge,
@@ -86,6 +88,44 @@ fun HomeScreen(
         onCancel = viewModel::cancelNukeUnlock
     )
 
+    HomeContent(
+        state = state,
+        nukeSummary = nukeSummary,
+        lockCard = lockCard,
+        onToggleGlobalEnabled = { viewModel.toggleGlobalEnabled() },
+        onNavigateToApps = onNavigateToApps,
+        onNavigateToStats = onNavigateToStats,
+        onNavigateToSettings = onNavigateToSettings,
+        onNavigateToWillpower = onNavigateToWillpower,
+        onNavigateToInterventions = onNavigateToInterventions,
+        onNavigateToAppDetail = onNavigateToAppDetail,
+        onNavigateToNuke = onNavigateToNuke,
+        onOpenAllAppsRule = onOpenAllAppsRule
+    )
+}
+
+/**
+ * The dashboard drawn from plain state: no ViewModel, no flows. [HomeScreen] collects and passes
+ * in; the screenshot gallery (`ui/gallery/`) renders this directly from fixture state.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun HomeContent(
+    state: HomeUiState,
+    nukeSummary: NukeSummary,
+    lockCard: LockCard?,
+    onToggleGlobalEnabled: () -> Unit,
+    onNavigateToApps: () -> Unit,
+    onNavigateToStats: () -> Unit,
+    onNavigateToSettings: () -> Unit,
+    onNavigateToWillpower: () -> Unit,
+    onNavigateToInterventions: () -> Unit,
+    onNavigateToAppDetail: (String) -> Unit,
+    onNavigateToNuke: () -> Unit,
+    onOpenAllAppsRule: (Long) -> Unit
+) {
+    val context = LocalContext.current
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -97,9 +137,12 @@ fun HomeScreen(
                     )
                 },
                 actions = {
+                    // TopAppBar leaves only 4dp after its last action; the cards below sit in a
+                    // 16dp gutter, so the extra 12dp lines the switch up with them.
                     Switch(
                         checked = state.isGlobalEnabled,
-                        onCheckedChange = { viewModel.toggleGlobalEnabled() }
+                        onCheckedChange = { onToggleGlobalEnabled() },
+                        modifier = Modifier.padding(end = 12.dp)
                     )
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -145,9 +188,9 @@ fun HomeScreen(
                 StatCard(
                     icon = Icons.Outlined.Shield,
                     label = "Active Apps",
-                    value = state.activeRuleCount.toString(),
+                    value = state.activeAppCount.toString(),
                     modifier = Modifier.weight(1f),
-                    action = TileAction("Manage", onNavigateToActiveRules)
+                    action = TileAction("Manage", onNavigateToApps)
                 )
             }
 
@@ -155,6 +198,10 @@ fun HomeScreen(
                 summary = nukeSummary,
                 onClick = onNavigateToNuke
             )
+
+            lockCard?.let { card ->
+                LockCardTile(card = card, onClick = { onOpenAllAppsRule(card.ruleId) })
+            }
 
             WeekAtAGlanceCard(
                 charts = state.charts,
@@ -271,7 +318,9 @@ private fun WeekAtAGlanceCard(
     Card(
         modifier = modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick),
+            .clickable(onClick = onClick)
+            // The device-QA handle: the driver reads the week's counts from this card's text.
+            .qaTag(UiTags.WEEK_CARD),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {

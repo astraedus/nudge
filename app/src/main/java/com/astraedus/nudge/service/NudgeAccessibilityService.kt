@@ -14,8 +14,14 @@ import com.astraedus.nudge.BuildConfig
 import com.astraedus.nudge.data.db.entity.UsageEvent
 import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.data.repository.BlockRuleRepository
+import com.astraedus.nudge.data.repository.RuleSnapshotSource
 import com.astraedus.nudge.data.repository.UsageRepository
 import com.astraedus.nudge.domain.WebDomainMatcher
+import com.astraedus.nudge.domain.engine.BrowserRouting
+import com.astraedus.nudge.domain.engine.CoverageFacts
+import com.astraedus.nudge.domain.packages.PackageFacts
+import com.astraedus.nudge.domain.engine.ScheduleEvaluator
+import com.astraedus.nudge.domain.engine.WholeAppCoverage
 import com.astraedus.nudge.domain.block.BlockLaunchGate
 import com.astraedus.nudge.domain.autokick.UseReminder
 import com.astraedus.nudge.domain.bounce.BounceAlert
@@ -102,7 +108,10 @@ class NudgeAccessibilityService : AccessibilityService() {
         fun strictModeEscapeManager(): StrictModeEscapeManager
         fun emergencyPassManager(): EmergencyPassManager
         fun blockLaunchGuard(): BlockLaunchGuard
-        fun nukeSafetyFloor(): NukeSafetyFloor
+        fun essentialApps(): EssentialApps
+        fun ruleSnapshotSource(): RuleSnapshotSource
+        fun scheduleEvaluator(): ScheduleEvaluator
+        fun packageFacts(): PackageFacts
     }
 
     /**
@@ -730,6 +739,51 @@ class NudgeAccessibilityService : AccessibilityService() {
             !NukePolicy.isProtected(packageName, emptySet())
 
     /**
+     * Is [packageName] a BROWSER that a whole-app group rule covers right now? (spec 5.5,
+     * docs/architecture/web-domain-blocking.md "Browsers in a group")
+     *
+     * A browser normally gets website rules only, which made it the way out of every "block all of
+     * Social" group: open Chrome, go to youtube.com (#109). A covered browser is evaluated as an app
+     * first. The answer is [WholeAppCoverage.coversNow] over the rule snapshot the service already
+     * holds; this only adds "is a browser" and the source of the rules.
+     *
+     * Synchronous and DB-free, like [isNukedNow]: it reads [RuleSnapshotSource.snapshot]'s current
+     * value. It serves the two SYNCHRONOUS sites only (the grant check [passthroughEarned] and the
+     * feature-detection guard). The decision to evaluate a browser as an app is made in
+     * [evaluateBrowser] through [EvaluateBlockUseCase.isCoveredWhole], which reads the tables
+     * directly when cold, exactly like every app evaluation.
+     *
+     * COLD (before the snapshot's first emission, or while its collector is failing) this answers
+     * TRUE for a browser: fail closed. At the grant site that means only a whole-app grant lets the
+     * browser skip evaluation, and [evaluateBrowser] then makes the real, table-backed decision; a
+     * browser that turns out not to be covered goes on to its website rules as always. Answering
+     * false would let a plain website grant open a browser its group hard-blocks.
+     */
+    private fun isCoveredWholeNow(packageName: String): Boolean {
+        if (!entryPoint.webDomainDetector().isBrowser(packageName)) return false
+        val snapshot = entryPoint.ruleSnapshotSource().snapshot.value ?: return true
+        val schedule = entryPoint.scheduleEvaluator()
+        // Fail closed on both facts: a browser is treated as launchable, and an essentials list not
+        // resolved yet as empty. Either only sends the browser to the real (suspending) evaluation.
+        val essentials = entryPoint.essentialApps().cachedOrNull() ?: emptySet()
+        // A browser joins no group by category (spec 5.2: Chrome says SOCIAL, and checking Social
+        // must not take the whole web), so its category is never needed here: only a group it was
+        // added to by hand, or an All apps rule, covers it whole. Every browser this site sees is on
+        // the one browser list ([EssentialApps.KNOWN_BROWSERS] is part of it).
+        return WholeAppCoverage.coversNow(
+            packageName = packageName,
+            rules = snapshot.ruleData,
+            membership = snapshot.membership,
+            facts = CoverageFacts(
+                essential = packageName in essentials,
+                launchable = true,
+                category = null,
+                browser = true
+            )
+        ) { rule -> schedule.isActiveNow(rule) }
+    }
+
+    /**
      * Package of the currently-selected default keyboard (IME), read from
      * [Settings.Secure.DEFAULT_INPUT_METHOD]. Cached so the hot accessibility path can recognise
      * ANY keyboard's window events as transient (issue #5) without a hardcoded list. Kept fresh via
@@ -1016,10 +1070,13 @@ class NudgeAccessibilityService : AccessibilityService() {
      * Has the user earned their way into [packageName] (a completed delay, or the daily emergency
      * pass)? Read-only: unlike [grantLetsThrough] this launches nothing. Nuke skips every grant, so a
      * nuked package never has one here either.
+     *
+     * A browser covered by a group (spec 5.5) is let through only by a WHOLE-APP grant: a completed
+     * website delay must not keep a browser open that its group blocks. See [passthroughEarned].
      */
     private fun grantAliveFor(packageName: String): Boolean {
         if (isNukedNow(packageName)) return false
-        return entryPoint.passthroughManager().shouldSkipForegroundEvaluation(packageName) ||
+        return passthroughEarned(packageName, entryPoint.passthroughManager()) ||
             entryPoint.emergencyPassManager().isPassActive(packageName)
     }
 
@@ -1390,10 +1447,7 @@ class NudgeAccessibilityService : AccessibilityService() {
             logger = entryPoint.nudgeLogger(),
             // A kick is a wall too. A web kick is keyed by `web:<domain>`, not a package, so it is
             // reported as the browser the user was actually in, plus the site that was kicked.
-            onKicked = { key ->
-                val app = if (WebSessionKey.isWebKey(key)) webSessionUsageProvider.browserPackage else key
-                app?.let { bounceCheckIn.onWall(it, WebSessionKey.domainOf(key)) }
-            },
+            onKicked = { key -> bounceCheckIn.onKicked(key, webSessionUsageProvider.browserPackage) },
             // Prefer the accessibility global action, exactly as EmergencyPassManager does: a HOME
             // intent is not always honoured from inside another app's task, and a kick that leaves
             // the user sitting in the app they were meant to be removed from is a silent failure.
@@ -1574,7 +1628,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         serviceScope.launch {
             entryPoint.nudgePreferences().nukeState.collect { state ->
                 val enforced = if (state.active) {
-                    NukePolicy.enforceable(state.packages, entryPoint.nukeSafetyFloor().deviceFloor())
+                    NukePolicy.enforceable(state.packages, entryPoint.essentialApps().packages())
                 } else {
                     emptySet()
                 }
@@ -1901,6 +1955,13 @@ class NudgeAccessibilityService : AccessibilityService() {
         when (record.type) {
             A11yEventType.WINDOW_STATE_CHANGED,
             A11yEventType.WINDOWS_CHANGED -> {
+                // A window-typed event the classifier says claims nothing about the foreground: an
+                // accessibility-pane change (`AccessibilityEventRecord.isPaneChange`). It is not an
+                // arrival, so it is not evaluated as one. Evaluating it anyway is how YouTube's
+                // player pane, torn down just after the user pressed Home, put a Delay overlay on
+                // the launcher. Read off the SIGNAL rather than re-tested here, so "what is on
+                // screen" keeps one answer.
+                if (signal is ForegroundSignal.NotForeground) return
                 // THE SETTLE THAT FINISHES A BLOCK WE RACED OURSELVES OUT OF (issue #58).
                 //
                 // A launch refused with DROP_FOREGROUND_MOVED because the evaluation finished a
@@ -2248,7 +2309,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         // Show time remaining overlay before passthrough check (awareness overlays always show)
         timeRemainingHandler.showIfNeeded(packageName)
 
-        if (passthrough.shouldSkipForegroundEvaluation(packageName)) {
+        if (passthroughEarned(packageName, passthrough)) {
             log.d("skip evaluation package=$packageName reason=passthrough")
             // Ensure counter is visible post-delay (onAppChanged may not re-fire)
             if (counterCache.isCounterEnabled(packageName) && !interactionHandler.isCounterVisible()) {
@@ -2258,6 +2319,23 @@ class NudgeAccessibilityService : AccessibilityService() {
         }
         return false
     }
+
+    /**
+     * Has the user completed a block that lets [packageName] skip foreground evaluation? The
+     * passthrough grant of [grantLetsThrough], also read by [grantAliveFor], so the two cannot
+     * disagree about it.
+     *
+     * For a browser covered by a whole-app group rule ([isCoveredWholeNow], spec 5.5) only a grant
+     * earned against the WHOLE app counts ([PassthroughManager.isGrantedWhole]). The plain package
+     * grant would also accept a finished website delay, and finishing youtube.com's delay is not a
+     * way past "Social is hard blocked". Every other package keeps the plain grant.
+     */
+    private fun passthroughEarned(packageName: String, passthrough: PassthroughManager): Boolean =
+        if (isCoveredWholeNow(packageName)) {
+            passthrough.isGrantedWhole(packageName)
+        } else {
+            passthrough.shouldSkipForegroundEvaluation(packageName)
+        }
 
     private fun evaluateForegroundPackage(packageName: String) {
         val now = System.currentTimeMillis()
@@ -2343,8 +2421,10 @@ class NudgeAccessibilityService : AccessibilityService() {
 
             // For browsers, evaluate web domain blocking instead of (or alongside) app blocking.
             // Not for a NUKED browser: Nuke blocks the app itself, whatever site is open.
+            // A browser a whole-app group rule covers is evaluated as an app first (spec 5.5);
+            // the passthrough above has already let an earned one through, hence grantAlive = false.
             if (!nuked && entryPoint.webDomainDetector().isBrowser(packageName)) {
-                evaluateWebDomain(packageName)
+                evaluateBrowser(packageName, grantAlive = false)
             } else {
                 val decision = entryPoint.evaluateBlockUseCase().invoke(packageName)
                 log.d("whole-app decision package=$packageName decision=$decision")
@@ -2424,6 +2504,46 @@ class NudgeAccessibilityService : AccessibilityService() {
                 // Not blocked -- nothing to do
             }
         }
+    }
+
+    /**
+     * Evaluate a browser that is in front: as an app first when a whole-app group rule covers it
+     * (spec 5.5), then its open website. Both browser sites ([evaluateForegroundPackage] and the
+     * content-change re-check in [handleWindowContentChanged]) come through here, routed by
+     * [BrowserRouting], so they cannot disagree about what a browser in a group gets.
+     *
+     * The app evaluation resolves GROUP rules only (`excludeDirectRules`): a direct rule on a
+     * browser keeps its web-only meaning (spec follow-up F5). A block from it goes to
+     * [handleDecision] WITHOUT a [WebBlockContext], which is what makes it a block of the browser
+     * itself: the overlay targets the browser package, the grant it can earn is a whole-app grant
+     * ([PassthroughManager.isGrantedWhole]) and walking away goes home rather than back to a tab.
+     * Only an Allow continues to the website's own rules.
+     *
+     * Coverage comes from [EvaluateBlockUseCase.isCoveredWhole], NOT the synchronous
+     * [isCoveredWholeNow]: it reads the rule tables directly while the in-memory snapshot is cold,
+     * so a browser in a hard-blocked group is blocked in the first moments after the process starts
+     * exactly like any other app in that group (fail closed).
+     *
+     * @param grantAlive a grant already lets the browser through (the caller's [grantAliveFor]); the
+     *   app evaluation is then skipped and only the website's rules run.
+     */
+    private suspend fun evaluateBrowser(browserPackage: String, grantAlive: Boolean) {
+        val coveredWhole = !grantAlive &&
+            entryPoint.evaluateBlockUseCase().isCoveredWhole(browserPackage)
+        if (BrowserRouting.route(coveredWhole) == BrowserRouting.Route.APP_FIRST) {
+            val decision = entryPoint.evaluateBlockUseCase()
+                .invoke(browserPackage, excludeDirectRules = true)
+            log.d("covered browser app decision package=$browserPackage decision=$decision")
+            if (!BrowserRouting.continuesToWeb(decision)) {
+                // The user is not on a website while the browser itself is blocked, so a web
+                // session's clock (a site with a time-based auto-kick) must not keep running
+                // behind the overlay. It restarts by itself through `onWebDomainForeground`.
+                endWebSession("browser_blocked_as_app")
+                handleDecision(decision, browserPackage)
+                return
+            }
+        }
+        evaluateWebDomain(browserPackage)
     }
 
     /**
@@ -2743,10 +2863,20 @@ class NudgeAccessibilityService : AccessibilityService() {
             if ((now - lastTime) < contentChangedDebounceMs) return
             lastContentChangedTime[packageName] = now
 
+            // A browser a whole-app group rule covers is re-checked as an app too (spec 5.5): this
+            // is how a group's schedule starting, or its daily limit running out, reaches a user
+            // who is still browsing. NOT while a grant lets the browser through (a completed group
+            // delay, the emergency pass): the foreground path skips the same evaluation for the
+            // same grant. Overlays cannot stack from here: under a live block overlay these events
+            // never reach this method (the `isOverlayActive` branch above swallows them), the
+            // re-check is debounced to `contentChangedDebounceMs`, and `BlockLaunchGate` drops a
+            // second launch of the same decision. The grant is read HERE, on the event thread, like
+            // every other grant read; coverage itself is decided inside evaluateBrowser.
+            val grantAlive = grantAliveFor(packageName)
             serviceScope.launch {
                 val globalEnabled = entryPoint.nudgePreferences().isGlobalEnabled.first()
                 if (!globalEnabled) return@launch
-                evaluateWebDomain(packageName)
+                evaluateBrowser(packageName, grantAlive)
             }
             return
         }
@@ -2807,6 +2937,11 @@ class NudgeAccessibilityService : AccessibilityService() {
         // a different confrontation key, and the Reels cover / Following steer have nothing to do in
         // an app the user cannot be in.
         if (isNukedNow(packageName)) return
+        // The same for a browser a whole-app group rule covers (spec 5.5): it is evaluated as an app
+        // by the browser path, and a feature evaluation on top would be a second evaluation of an
+        // app whose whole-app decision is already made. No browser is in the supported set today,
+        // so this pins the rule for the day one is, rather than changing what runs now.
+        if (isCoveredWholeNow(packageName)) return
         val now = System.currentTimeMillis()
         val lastTime = lastContentChangedTime[packageName] ?: 0L
         if ((now - lastTime) < contentChangedDebounceMs) return
@@ -3213,6 +3348,9 @@ class NudgeAccessibilityService : AccessibilityService() {
      * @param extras fills in the intent. Called only when the launch is going to happen.
      * @return false when the gate refused, in which case the caller must not record the block
      *   either, a `UsageEvent` for an overlay nobody saw is the stat inflation issue #19 measured.
+     *   True for a launch AND for a re-show of a buried overlay (#143): both put the block in front
+     *   of the user, and the caller's `claimConfrontation` is what keeps a re-show from counting
+     *   twice (the guard has already restored the arrival the original launch was counted in).
      */
     private fun launchBlockOverlay(
         targetPackage: String,
@@ -3254,7 +3392,14 @@ class NudgeAccessibilityService : AccessibilityService() {
             )
         }
 
-        if (decision != BlockLaunchGate.Decision.LAUNCH) {
+        // THE SAME BLOCK, BURIED BEFORE IT ARRIVED (#143). A trampoline launcher (Google Camera's
+        // cold start through the permission dialog) put its own task back in front of the overlay
+        // before the overlay was even created. It is re-shown through the same `startActivity`
+        // (singleInstance brings its existing task forward), but it is not a new block: no wall,
+        // no new pending overlay, and the guard restores the arrival so the caller's claim finds
+        // this tap already counted.
+        val reshow = decision == BlockLaunchGate.Decision.RESHOW_HIDDEN
+        if (decision != BlockLaunchGate.Decision.LAUNCH && !reshow) {
             // Logged unconditionally and with BOTH the target and what is actually in front,
             // because "the block was dropped" and "the block never happened" are indistinguishable
             // from a device otherwise, the ambiguity that cost the v1.12.0 release cycle.
@@ -3277,18 +3422,76 @@ class NudgeAccessibilityService : AccessibilityService() {
         // A new block owns what happens next: a Delay completed before it must not read this
         // block's go-home as its own reveal landing on Home (#119).
         entryPoint.passthroughManager().cancelHandBack()
-        // A wall, for the bounce check-in: the app the user was actually IN (the browser, for a
-        // website block) and, when it is a website, the site. Every overlay in this service passes
-        // through here exactly once per launch the gate allows, which is what makes this the one
-        // place to report it.
-        bounceCheckIn.onWall(targetPackage, webDomain)
-        // ...and record that it is only STARTED, not yet on screen. Those are different facts and
-        // conflating them is what produced two blocks for one app entry: see
-        // [BlockLaunchGate.isGenuineBypass]. Keyed on the TARGET, because that is the package whose
-        // trailing window events must not be mistaken for the user getting past the overlay.
-        guard.onOverlayLaunched(targetPackage, decisionKey)
+        if (reshow) {
+            log.i(
+                "block overlay re-shown target=$targetPackage attributed=$attributedPackage " +
+                    "reason=hidden_behind_target_before_shown foreground=${guard.foregroundPackage}"
+            )
+            guard.onOverlayReshown(targetPackage)
+        } else {
+            // A wall, for the bounce check-in: the app the user was actually IN (the browser, for
+            // a website block) and, when it is a website, the site. Every NEW overlay in this
+            // service passes through here exactly once per launch the gate allows, which is what
+            // makes this the one place to report it. A re-show is the same wall, already reported.
+            bounceCheckIn.onBlockLaunched(decision, targetPackage, webDomain)
+            // ...and record that it is only STARTED, not yet on screen. Those are different facts
+            // and conflating them is what produced two blocks for one app entry: see
+            // [BlockLaunchGate.isGenuineBypass]. Keyed on the TARGET, because that is the package
+            // whose trailing window events must not be mistaken for the user getting past it.
+            guard.onOverlayLaunched(targetPackage, decisionKey)
+        }
+        // ...and confirm it actually ARRIVED. A same-app trampoline can put the blocked app back in
+        // front of this overlay with no event left to notice it by; see
+        // [BlockLaunchGate.OVERLAY_ARRIVAL_CHECK_MS] for the two measured shapes.
+        val checkSeq = guard.armArrivalCheck(targetPackage)
+        windowReadHandler.postDelayed(
+            { checkOverlayArrived(targetPackage, checkSeq) },
+            BlockLaunchGate.OVERLAY_ARRIVAL_CHECK_MS
+        )
         applicationContext.startActivity(overlayIntent)
         return true
+    }
+
+    /**
+     * The arrival check for the launch numbered [checkSeq]: if the blocked app itself owns the
+     * active window, the block we launched is not in front of it, so re-assert it.
+     *
+     * The re-assertion is an EVALUATION, never a replay of the launched decision (issue #50's
+     * stale overlay): a Delay the user has since completed, an emergency pass, a rule switched off
+     * all answer it the ordinary way. It mirrors the bypass branch in [onAccessibilityEvent], whose
+     * event this case never gets: the overlay flag is dropped, and the foreground claim is set from
+     * the window the screen just reported, as #7's verified content-change switch sets it.
+     *
+     * The tap is not counted twice: the arrival never ended, so the caller's `claimConfrontation`
+     * finds it already counted (and a re-show restores it, #143).
+     */
+    private fun checkOverlayArrived(targetPackage: String, checkSeq: Long) {
+        val guard = entryPoint.blockLaunchGuard()
+        val activeWindowPackage = activeWindowPackageOrNull()
+        when (guard.arrivalVerdict(targetPackage, checkSeq, activeWindowPackage)) {
+            BlockLaunchGate.ArrivalVerdict.RESCUE -> {
+                log.i(
+                    "block overlay not in front of its target, re-evaluating package=$targetPackage " +
+                        "reason=buried_by_target ${guard.stateDescription()}"
+                )
+                guard.onArrivalRescue(targetPackage)
+                applyForegroundSignal(ForegroundSignal.AppWindow(targetPackage))
+                markOverlayInactive()
+                lastEvalTime = 0L
+                evaluateForegroundPackage(targetPackage)
+            }
+            BlockLaunchGate.ArrivalVerdict.SPENT -> log.w(
+                "block overlay still not in front of its target after " +
+                    "${BlockLaunchGate.MAX_ARRIVAL_RESCUES} re-evaluations, giving up " +
+                    "package=$targetPackage ${guard.stateDescription()}"
+            )
+            BlockLaunchGate.ArrivalVerdict.UNVERIFIED -> log.i(
+                "block overlay arrival unverified package=$targetPackage reason=no_active_window"
+            )
+            BlockLaunchGate.ArrivalVerdict.NOT_BURIED,
+            BlockLaunchGate.ArrivalVerdict.SUPERSEDED,
+            BlockLaunchGate.ArrivalVerdict.MOVED_ON -> Unit
+        }
     }
 
     /**
@@ -3360,6 +3563,25 @@ class NudgeAccessibilityService : AccessibilityService() {
                     }
                     decision.dailyLimitMinutes?.let {
                         putExtra(BlockOverlayActivity.EXTRA_DAILY_LIMIT_MINUTES, it)
+                    }
+                    decision.until?.let { putExtra(BlockOverlayActivity.EXTRA_UNTIL, it) }
+                    decision.allApps?.let {
+                        putExtra(
+                            BlockOverlayActivity.EXTRA_ALL_APPS_EXCEPT_PACKAGES,
+                            it.exceptPackages.toTypedArray()
+                        )
+                        putExtra(
+                            BlockOverlayActivity.EXTRA_ALL_APPS_EXCEPT_GROUPS,
+                            it.exceptGroupNames.toTypedArray()
+                        )
+                        putExtra(
+                            BlockOverlayActivity.EXTRA_ALL_APPS_ALLOWED_PACKAGES,
+                            it.allowedPackages.toTypedArray()
+                        )
+                        putExtra(
+                            BlockOverlayActivity.EXTRA_ALL_APPS_EXCEPT_GROUP_IDS,
+                            it.exceptGroupIds.toLongArray()
+                        )
                     }
                 }
                 if (!launched) return

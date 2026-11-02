@@ -23,6 +23,13 @@ interface BlockRuleDao {
     @Query("SELECT * FROM block_rules WHERE groupId = :groupId")
     fun getByGroupId(groupId: Long): Flow<List<BlockRule>>
 
+    /** Every All apps rule (spec 3.2 "All apps" section, the Home lock card), on or off. */
+    @Query("SELECT * FROM block_rules WHERE allApps = 1 ORDER BY id")
+    fun getAllAppsRules(): Flow<List<BlockRule>>
+
+    @Query("SELECT * FROM block_rules WHERE id = :id")
+    suspend fun getById(id: Long): BlockRule?
+
     @Insert
     suspend fun insert(rule: BlockRule): Long
 

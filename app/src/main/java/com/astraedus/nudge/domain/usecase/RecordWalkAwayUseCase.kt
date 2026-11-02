@@ -3,6 +3,7 @@ package com.astraedus.nudge.domain.usecase
 import com.astraedus.nudge.data.db.entity.UsageEvent
 import com.astraedus.nudge.data.repository.UsageRepository
 import com.astraedus.nudge.domain.logging.NudgeLog
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -42,15 +43,21 @@ import javax.inject.Singleton
  * reporting walk-aways as blocks.
  */
 @Singleton
-class RecordWalkAwayUseCase @Inject constructor(
+class RecordWalkAwayUseCase internal constructor(
     private val usageRepository: UsageRepository,
-    logger: NudgeLog
+    logger: NudgeLog,
+    dispatcher: CoroutineDispatcher
 ) {
+
+    /** Hilt's constructor: writes on [Dispatchers.IO]. Tests pass a test dispatcher instead. */
+    @Inject
+    constructor(usageRepository: UsageRepository, logger: NudgeLog) :
+        this(usageRepository, logger, Dispatchers.IO)
 
     private val logger: NudgeLog = logger.tagged("RecordWalkAway")
 
     private val scope = CoroutineScope(
-        SupervisorJob() + Dispatchers.IO + CoroutineExceptionHandler { _, throwable ->
+        SupervisorJob() + dispatcher + CoroutineExceptionHandler { _, throwable ->
             logger.e("walk-away NOT recorded: insert failed", throwable)
         }
     )
@@ -75,8 +82,13 @@ class RecordWalkAwayUseCase @Inject constructor(
          * they hit the overlay and turned around; `userChangedMind = true` is what separates that
          * from giving in and waiting.
          */
-        fun buildEvent(packageName: String, blockMode: String): UsageEvent = UsageEvent(
+        fun buildEvent(
+            packageName: String,
+            blockMode: String,
+            nowMs: Long = System.currentTimeMillis()
+        ): UsageEvent = UsageEvent(
             packageName = packageName,
+            timestamp = nowMs,
             wasBlocked = true,
             blockMode = blockMode,
             userChangedMind = true

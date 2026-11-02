@@ -4,25 +4,22 @@ import com.astraedus.nudge.ui.components.UsageReminderInput
 import androidx.lifecycle.SavedStateHandle
 import com.astraedus.nudge.MainDispatcherRule
 import com.astraedus.nudge.data.db.entity.BlockRule
-import com.astraedus.nudge.data.preferences.NudgePreferences
-import com.astraedus.nudge.data.repository.BlockRuleRepository
-import com.astraedus.nudge.data.repository.InstalledAppsRepository
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.domain.model.FeatureMode
-import io.mockk.Runs
-import io.mockk.coEvery
-import io.mockk.every
-import io.mockk.just
-import io.mockk.mockk
+import com.astraedus.nudge.domain.packages.FakeEssentialPackages
+import com.astraedus.nudge.domain.packages.FakePackageFacts
+import com.astraedus.nudge.testing.FakeInstalledAppsRepository
+import com.astraedus.nudge.testing.FakeNudgePreferences
+import com.astraedus.nudge.testing.FakeRuleDatabase
+import com.astraedus.nudge.testing.aBlockRule
+import com.astraedus.nudge.testing.anApp
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
-import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 
@@ -39,46 +36,23 @@ class UnifiedAppConfigViewModelTest {
 
     private val packageName = "com.instagram.android"
 
-    private lateinit var blockRuleRepository: BlockRuleRepository
-    private lateinit var installedAppsRepository: InstalledAppsRepository
-    private lateinit var nudgePreferences: NudgePreferences
+    private var db = FakeRuleDatabase()
 
-    @Before
-    fun setUp() {
-        blockRuleRepository = mockk()
-        installedAppsRepository = mockk()
-        nudgePreferences = mockk()
-
-        coEvery { installedAppsRepository.resolveAppName(any()) } returns "Instagram"
-        every { nudgePreferences.isStrictModeEnabled } returns flowOf(false)
-    }
+    /** The device has Instagram installed (the app label the editor shows) and nothing else. */
+    private val installedApps = FakeInstalledAppsRepository(anApp(packageName, "Instagram"))
 
     private fun viewModel(rules: List<BlockRule> = emptyList()): UnifiedAppConfigViewModel {
-        every { blockRuleRepository.getRulesForPackage(packageName) } returns flowOf(rules)
+        db = FakeRuleDatabase() // a fresh database per view model, so two in one test do not share rows
+        rules.forEach { db.seedRule(it) }
         return UnifiedAppConfigViewModel(
             SavedStateHandle(mapOf("packageName" to packageName)),
-            blockRuleRepository,
-            installedAppsRepository,
-            nudgePreferences
+            db.repository,
+            installedApps,
+            FakeEssentialPackages(),
+            FakePackageFacts(),
+            FakeNudgePreferences()
         )
     }
-
-    private fun defaultRule(
-        mode: String,
-        webDomains: String? = null,
-        webBlockMode: String? = null,
-        tabVanish: Boolean = true,
-        followingSteer: Boolean = false,
-        keepPassOnShortTrips: Boolean = false
-    ) = BlockRule(
-        packageName = packageName,
-        mode = mode,
-        webDomains = webDomains,
-        webBlockMode = webBlockMode,
-        tabVanish = tabVanish,
-        followingSteer = followingSteer,
-        keepPassOnShortTrips = keepPassOnShortTrips
-    )
 
     // ── setBlocksWholeApp / lastBlockingMode restore ──────────────────────
 
@@ -108,7 +82,7 @@ class UnifiedAppConfigViewModelTest {
 
     @Test
     fun `loading a rule with mode NONE yields lastBlockingMode DELAY with no prior choice`() = runTest {
-        val vm = viewModel(listOf(defaultRule(mode = "NONE")))
+        val vm = viewModel(listOf(aBlockRule(packageName = packageName, mode = "NONE")))
 
         val state = vm.uiState.value
         assertEquals(BlockMode.NONE, state.defaultMode)
@@ -117,7 +91,7 @@ class UnifiedAppConfigViewModelTest {
 
     @Test
     fun `loading a rule with mode BREATHING yields lastBlockingMode BREATHING`() = runTest {
-        val vm = viewModel(listOf(defaultRule(mode = "BREATHING")))
+        val vm = viewModel(listOf(aBlockRule(packageName = packageName, mode = "BREATHING")))
 
         val state = vm.uiState.value
         assertEquals(BlockMode.BREATHING, state.defaultMode)
@@ -188,7 +162,7 @@ class UnifiedAppConfigViewModelTest {
     @Test
     fun `loading rule mode NONE with webBlockMode BREATHING seeds state`() = runTest {
         val vm = viewModel(
-            listOf(defaultRule(mode = "NONE", webDomains = "instagram.com", webBlockMode = "BREATHING"))
+            listOf(aBlockRule(packageName = packageName, mode = "NONE", webDomains = "instagram.com", webBlockMode = "BREATHING"))
         )
 
         val state = vm.uiState.value
@@ -224,7 +198,7 @@ class UnifiedAppConfigViewModelTest {
 
     @Test
     fun `loading a rule with tabVanish false loads state tabVanish false`() = runTest {
-        val vm = viewModel(listOf(defaultRule(mode = "HARD_BLOCK", tabVanish = false)))
+        val vm = viewModel(listOf(aBlockRule(packageName = packageName, mode = "HARD_BLOCK", tabVanish = false)))
 
         assertFalse(vm.uiState.value.tabVanish)
     }
@@ -238,7 +212,7 @@ class UnifiedAppConfigViewModelTest {
 
     @Test
     fun `loading a rule with followingSteer true loads state followingSteer true`() = runTest {
-        val vm = viewModel(listOf(defaultRule(mode = "HARD_BLOCK", followingSteer = true)))
+        val vm = viewModel(listOf(aBlockRule(packageName = packageName, mode = "HARD_BLOCK", followingSteer = true)))
 
         assertTrue(vm.uiState.value.followingSteer)
     }
@@ -254,10 +228,6 @@ class UnifiedAppConfigViewModelTest {
 
     @Test
     fun `save with tabVanish false and a Reels feature override writes tabVanish false on every persisted rule`() = runTest {
-        val capturedRules = mutableListOf<BlockRule>()
-        coEvery { blockRuleRepository.deleteDirectRulesForPackage(any()) } just Runs
-        coEvery { blockRuleRepository.addRule(capture(capturedRules)) } returns 1L
-
         val vm = viewModel()
         vm.setTabVanish(false)
         vm.setFeatureOverride("REELS", FeatureOverride(mode = FeatureMode.BLOCK))
@@ -266,40 +236,32 @@ class UnifiedAppConfigViewModelTest {
 
         // At least the app-level default rule AND the Reels feature-override rule must have been
         // persisted -- this is the case a test that only checks the default rule would miss.
-        assertTrue("expected 2+ persisted rules, got ${capturedRules.size}", capturedRules.size >= 2)
+        assertTrue("expected 2+ persisted rules, got ${db.rules.size}", db.rules.size >= 2)
         assertTrue(
             "expected a feature-override rule for REELS",
-            capturedRules.any { it.inAppFeatures == "REELS" }
+            db.rules.any { it.inAppFeatures == "REELS" }
         )
-        capturedRules.forEach { rule ->
+        db.rules.forEach { rule ->
             assertFalse("rule ${rule.inAppFeatures ?: "<default>"} carried tabVanish=true", rule.tabVanish)
         }
     }
 
     @Test
     fun `followingSteer lands on the app-level rule and not on a feature-override rule`() = runTest {
-        val capturedRules = mutableListOf<BlockRule>()
-        coEvery { blockRuleRepository.deleteDirectRulesForPackage(any()) } just Runs
-        coEvery { blockRuleRepository.addRule(capture(capturedRules)) } returns 1L
-
         val vm = viewModel()
         vm.setFollowingSteer(true)
         vm.setFeatureOverride("REELS", FeatureOverride(mode = FeatureMode.BLOCK))
 
         vm.save()
 
-        val defaultRuleCaptured = capturedRules.first { it.inAppFeatures == null }
-        val featureRuleCaptured = capturedRules.first { it.inAppFeatures == "REELS" }
+        val defaultRuleCaptured = db.rules.first { it.inAppFeatures == null }
+        val featureRuleCaptured = db.rules.first { it.inAppFeatures == "REELS" }
         assertTrue(defaultRuleCaptured.followingSteer)
         assertFalse(featureRuleCaptured.followingSteer)
     }
 
     @Test
     fun `save with a scheduled override also writes tabVanish false on the scheduled rules`() = runTest {
-        val capturedRules = mutableListOf<BlockRule>()
-        coEvery { blockRuleRepository.deleteDirectRulesForPackage(any()) } just Runs
-        coEvery { blockRuleRepository.addRule(capture(capturedRules)) } returns 1L
-
         val vm = viewModel()
         vm.setTabVanish(false)
         vm.setScheduledOverrideEnabled(true)
@@ -308,8 +270,8 @@ class UnifiedAppConfigViewModelTest {
         vm.save()
 
         // App-level default + scheduled app-level + scheduled feature override = 3 rules.
-        assertTrue("expected 3+ persisted rules, got ${capturedRules.size}", capturedRules.size >= 3)
-        capturedRules.forEach { rule ->
+        assertTrue("expected 3+ persisted rules, got ${db.rules.size}", db.rules.size >= 3)
+        db.rules.forEach { rule ->
             assertFalse(
                 "rule (schedule=${rule.scheduleDays}, feature=${rule.inAppFeatures}) carried tabVanish=true",
                 rule.tabVanish
@@ -321,7 +283,7 @@ class UnifiedAppConfigViewModelTest {
 
     @Test
     fun `loading a rule with keepPassOnShortTrips true loads it, and no rule loads it off`() = runTest {
-        assertTrue(viewModel(listOf(defaultRule(mode = "DELAY", keepPassOnShortTrips = true))).uiState.value.keepPassOnShortTrips)
+        assertTrue(viewModel(listOf(aBlockRule(packageName = packageName, mode = "DELAY", keepPassOnShortTrips = true))).uiState.value.keepPassOnShortTrips)
         assertFalse(viewModel().uiState.value.keepPassOnShortTrips)
     }
 
@@ -340,10 +302,6 @@ class UnifiedAppConfigViewModelTest {
 
     @Test
     fun `save with short trips on writes it on every persisted rule, like tabVanish`() = runTest {
-        val capturedRules = mutableListOf<BlockRule>()
-        coEvery { blockRuleRepository.deleteDirectRulesForPackage(any()) } just Runs
-        coEvery { blockRuleRepository.addRule(capture(capturedRules)) } returns 1L
-
         val vm = viewModel()
         vm.setDefaultMode(BlockMode.DELAY)
         vm.setKeepPassOnShortTrips(true)
@@ -353,8 +311,8 @@ class UnifiedAppConfigViewModelTest {
 
         vm.save()
 
-        assertTrue("expected 4+ persisted rules, got ${capturedRules.size}", capturedRules.size >= 4)
-        capturedRules.forEach { rule ->
+        assertTrue("expected 4+ persisted rules, got ${db.rules.size}", db.rules.size >= 4)
+        db.rules.forEach { rule ->
             assertTrue(
                 "rule (schedule=${rule.scheduleDays}, feature=${rule.inAppFeatures}) dropped keepPassOnShortTrips",
                 rule.keepPassOnShortTrips
@@ -364,10 +322,6 @@ class UnifiedAppConfigViewModelTest {
 
     @Test
     fun `switching the app to Hard Block saves short trips off, a hidden option never persists`() = runTest {
-        val capturedRules = mutableListOf<BlockRule>()
-        coEvery { blockRuleRepository.deleteDirectRulesForPackage(any()) } just Runs
-        coEvery { blockRuleRepository.addRule(capture(capturedRules)) } returns 1L
-
         val vm = viewModel()
         vm.setDefaultMode(BlockMode.DELAY)
         vm.setKeepPassOnShortTrips(true)
@@ -375,22 +329,18 @@ class UnifiedAppConfigViewModelTest {
 
         vm.save()
 
-        assertTrue(capturedRules.isNotEmpty())
-        capturedRules.forEach { assertFalse(it.keepPassOnShortTrips) }
+        assertTrue(db.rules.isNotEmpty())
+        db.rules.forEach { assertFalse(it.keepPassOnShortTrips) }
     }
 
     @Test
     fun `short trips is off by default on a fresh save`() = runTest {
-        val capturedRules = mutableListOf<BlockRule>()
-        coEvery { blockRuleRepository.deleteDirectRulesForPackage(any()) } just Runs
-        coEvery { blockRuleRepository.addRule(capture(capturedRules)) } returns 1L
-
         val vm = viewModel()
         vm.setDefaultMode(BlockMode.DELAY)
         vm.save()
 
-        assertTrue(capturedRules.isNotEmpty())
-        capturedRules.forEach { assertFalse(it.keepPassOnShortTrips) }
+        assertTrue(db.rules.isNotEmpty())
+        db.rules.forEach { assertFalse(it.keepPassOnShortTrips) }
     }
 
     // ── Tab Vanish / Following steer: registry-driven visibility ───────────
@@ -434,7 +384,7 @@ class UnifiedAppConfigViewModelTest {
 
     @Test
     fun `loading a default rule with a reminder seeds enabled text and original`() = runTest {
-        val rule = defaultRule(mode = "DELAY").copy(remindAfterMinutes = 25)
+        val rule = aBlockRule(packageName = packageName, mode = "DELAY").copy(remindAfterMinutes = 25)
         val vm = viewModel(listOf(rule))
 
         val state = vm.uiState.value
@@ -445,7 +395,7 @@ class UnifiedAppConfigViewModelTest {
 
     @Test
     fun `loading a default rule without a reminder leaves it off and blank`() = runTest {
-        val vm = viewModel(listOf(defaultRule(mode = "DELAY")))
+        val vm = viewModel(listOf(aBlockRule(packageName = packageName, mode = "DELAY")))
 
         val state = vm.uiState.value
         assertFalse(state.reminderEnabled)
@@ -455,7 +405,7 @@ class UnifiedAppConfigViewModelTest {
 
     @Test
     fun `an untouched loaded reminder re-saves the original on the default rule`() = runTest {
-        val vm = viewModel(listOf(defaultRule(mode = "DELAY").copy(remindAfterMinutes = 2000)))
+        val vm = viewModel(listOf(aBlockRule(packageName = packageName, mode = "DELAY").copy(remindAfterMinutes = 2000)))
 
         assertEquals(2000, vm.buildDefaultRule(vm.uiState.value).remindAfterMinutes)
     }

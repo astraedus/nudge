@@ -1,9 +1,9 @@
 package com.astraedus.nudge.ui.screens.settings
 
+import com.astraedus.nudge.testing.SourceScan
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.io.File
 
 /**
  * Source-level guard for "the Settings screen's permission ticks track reality", in the same spirit
@@ -43,10 +43,7 @@ class LivePermissionStateContractTest {
      * explanation fail the test that protects it.
      */
     private fun source(relativePath: String): String {
-        val candidates = listOf(File("src/$relativePath"), File("app/src/$relativePath"))
-        val text = (candidates.firstOrNull { it.exists() }
-            ?: error("$relativePath not found from working dir ${File("").absolutePath}"))
-            .readText()
+        val text = SourceScan.mainFile(relativePath.removePrefix("main/")).readText()
         return text
             .replace(Regex("""/\*[\s\S]*?\*/"""), "")
             .lines()

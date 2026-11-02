@@ -11,6 +11,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import com.astraedus.nudge.testing.anAccessibilityEvent
 
 class InteractionHandlerTest {
 
@@ -94,7 +95,7 @@ class InteractionHandlerTest {
     // fromIndex). These helpers keep that plumbing out of the individual tests.
 
     private fun click(packageName: String) =
-        AccessibilityEventRecord(type = A11yEventType.VIEW_CLICKED, packageName = packageName)
+        anAccessibilityEvent(type = A11yEventType.VIEW_CLICKED, packageName = packageName)
 
     private fun scroll(
         packageName: String,
@@ -244,7 +245,7 @@ class InteractionHandlerTest {
         enablePackage("com.example.notes")
 
         handler.handleInteraction(
-            AccessibilityEventRecord(
+            anAccessibilityEvent(
                 type = A11yEventType.WINDOW_CONTENT_CHANGED,
                 packageName = "com.example.notes"
             )

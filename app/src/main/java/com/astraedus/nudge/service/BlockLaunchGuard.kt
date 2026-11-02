@@ -84,6 +84,16 @@ class BlockLaunchGuard @Inject constructor() {
     @Volatile
     private var deferredLaunch: BlockLaunchGate.DeferredLaunch? = null
 
+    /**
+     * The block most recently put on screen, for the arrival check that confirms it is in front
+     * (`BlockLaunchGate.OVERLAY_ARRIVAL_CHECK_MS`). Numbered by [launchSeqs] so a check posted for a
+     * launch that a later one replaced stands down instead of acting twice.
+     */
+    @Volatile
+    private var arrivalWatch: BlockLaunchGate.ArrivalWatch? = null
+
+    private val launchSeqs = java.util.concurrent.atomic.AtomicLong(0L)
+
     /** Why the last arrival ended. Diagnostic only; it appears in the storm line. */
     @Volatile
     private var lastDepartureReason: String = "none"
@@ -99,12 +109,20 @@ class BlockLaunchGuard @Inject constructor() {
      * future early return can skip one but not the other. Pinned by
      * `EventDispatchOrderContractTest`.
      */
+    // Synchronized since #143 made this a read-modify-write of [pendingOverlay], which the IO
+    // scope also writes ([onOverlayLaunched]); a lost update there would forget a fresh launch.
+    @Synchronized
     fun onForegroundSignal(signal: ForegroundSignal) {
+        // FIRST, and with the arrival as it stands BEFORE this signal (#143): a window that buries
+        // an overlay still on its way to the screen also ends the arrival two lines down, and the
+        // re-show that follows must be able to put that arrival back rather than count it again.
+        pendingOverlay = BlockLaunchGate.pendingOverlayAfterSignal(signal, pendingOverlay, arrival)
         foregroundPackage = BlockLaunchGate.foregroundAfter(signal, foregroundPackage)
         walkAway = BlockLaunchGate.walkAwayAfter(signal, walkAway)
         arrival = BlockLaunchGate.arrivalAfterSignal(signal, arrival)
         storm = BlockLaunchGate.stormAfterSignal(signal, storm)
         deferredLaunch = BlockLaunchGate.deferredLaunchAfterSignal(signal, deferredLaunch)
+        arrivalWatch = BlockLaunchGate.arrivalWatchAfterSignal(signal, arrivalWatch)
     }
 
     /**
@@ -141,9 +159,10 @@ class BlockLaunchGuard @Inject constructor() {
      */
     @Synchronized
     fun onDeparture(reason: String) {
-        if (arrival == null && storm == null && deferredLaunch == null) return
+        if (arrival == null && storm == null && deferredLaunch == null && arrivalWatch == null) return
         arrival = null
         storm = null
+        arrivalWatch = null
         // A departure the stream cannot describe is still a departure, so a block we owed the user
         // on their way INTO this app is no longer owed (issue #58). Same rule the ordinary signals
         // get in `BlockLaunchGate.deferredLaunchAfterSignal`; this is the route for the two that
@@ -185,6 +204,61 @@ class BlockLaunchGuard @Inject constructor() {
             },
             decisionKey = decisionKey
         )
+    }
+
+    /**
+     * The overlay [decide] answered [BlockLaunchGate.Decision.RESHOW_HIDDEN] for is being brought
+     * back to the front ([#143](https://github.com/astraedus/nudge/issues/143)).
+     *
+     * Same overlay, same id, on its way to the screen again; and same confrontation, so the arrival
+     * the burying window ended is put back (merged with anything counted since) and the claim that
+     * follows the re-show finds this tap already counted.
+     */
+    @Synchronized
+    fun onOverlayReshown(packageName: String) {
+        val pending = pendingOverlay ?: return
+        if (pending.packageName != packageName) return
+        arrival = BlockLaunchGate.arrivalAfterReshow(arrival, pending.displacedArrival)
+        pendingOverlay = BlockLaunchGate.pendingOverlayAfterReshow(pending, nowMs())
+    }
+
+    /**
+     * A launch or re-show of the overlay over [targetPackage] has just been handed to the platform.
+     * @return the number the arrival check posted for it must quote; see [arrivalVerdict].
+     */
+    @Synchronized
+    fun armArrivalCheck(targetPackage: String): Long {
+        val seq = launchSeqs.incrementAndGet()
+        arrivalWatch = BlockLaunchGate.arrivalWatchAfterLaunch(arrivalWatch, targetPackage, seq)
+        return seq
+    }
+
+    /**
+     * Is the overlay launched as [checkSeq] the thing in front of [targetPackage]?
+     * [activeWindowPackage] is the package owning the active window, null when unreadable.
+     */
+    fun arrivalVerdict(
+        targetPackage: String,
+        checkSeq: Long,
+        activeWindowPackage: String?
+    ): BlockLaunchGate.ArrivalVerdict = BlockLaunchGate.arrivalVerdict(
+        watch = arrivalWatch,
+        checkSeq = checkSeq,
+        target = targetPackage,
+        activeWindowPackage = activeWindowPackage
+    )
+
+    /**
+     * The arrival check found [targetPackage] in front of its own block and is about to re-assert
+     * it: spend one rescue, and mark an overlay that never reached the screen as displaced so the
+     * re-block is a re-show rather than a refusal (`BlockLaunchGate.pendingOverlayAfterRescue`).
+     */
+    @Synchronized
+    fun onArrivalRescue(targetPackage: String) {
+        arrivalWatch = arrivalWatch
+            ?.takeIf { it.targetPackage == targetPackage }
+            ?.let { it.copy(rescues = it.rescues + 1) }
+        pendingOverlay = BlockLaunchGate.pendingOverlayAfterRescue(pendingOverlay, targetPackage, arrival)
     }
 
     /**
@@ -269,7 +343,8 @@ class BlockLaunchGuard @Inject constructor() {
         return "foreground=$foregroundPackage " +
             "pendingOverlay=" + (
                 pending?.let {
-                    "${it.packageName}(shown=${it.windowShown},age=${nowMs() - it.launchedAtMs}ms)"
+                    "${it.packageName}(shown=${it.windowShown},displaced=${it.displaced}," +
+                        "age=${nowMs() - it.launchedAtMs}ms)"
                 } ?: "none"
                 ) +
             " countedThisArrival=${arrival?.countedKeys?.size ?: 0}" +
@@ -336,6 +411,7 @@ class BlockLaunchGuard @Inject constructor() {
         arrival = null
         storm = null
         deferredLaunch = null
+        arrivalWatch = null
         lastDepartureReason = "reset"
     }
 }

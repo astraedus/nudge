@@ -10,6 +10,71 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
   or "Keep going". The pause grows each time (5s at 20 minutes, 10s at 40, 20s at 60, then 30s), and
   the threshold and first pause are configurable. Off by default. (#123)
 
+## [1.26.1] - 2026-11-02
+
+### Fixed
+- The on/off switch at the top of the dashboard no longer runs off the edge of the screen.
+
+## [1.26.0] - 2026-11-02
+
+### Added
+- Groups can include whole categories. The group editor shows a chip for each kind of app (Social & Communication, Movies & Video, Games, Music & Audio, News & Magazines and more), each with how many of your apps it brings in. Check one and its apps join the group, including apps you install later, which are blocked the first time you open them. A category you have no apps in yet can be checked too, so you can block games before you install one. Your essentials never join.
+- Take one app out of a checked category with its ✕: it moves to "Removed by you" at the bottom of the list and stays out. "Add back" puts it back in, and so does picking it again under "Add apps".
+- Apps in a group because of their category show the category's name next to them, and Manage Apps counts them in the group.
+- A browser never joins a group through its category. Chrome calls itself Social and Firefox calls itself Productivity, and a browser in a blocking group is blocked on every site, so checking Social would have shut off your whole browser. To block a browser with a group, add it under "Add apps" as before.
+- An All apps block screen's "Open an allowed app" also offers the apps a category group lets through, not only the ones you picked by hand.
+
+### Changed
+- With Strict Mode on, unchecking a category that brings apps into a blocking group, or removing one of its apps, asks for the challenge. A category with no apps on your phone can be unchecked freely.
+- Backups keep a group's categories and the apps you removed from it. An older Nudge restoring the same backup gets the group's apps as a plain list.
+
+## [1.25.0] - 2026-11-02
+
+### Added
+- "All apps except a few": "Block several apps" on Manage Apps now also offers a rule that blocks every app except the ones you choose. Pick the apps that stay open (Spotify, Maps), or whole groups (Work), then how it blocks and when: all the time, or on chosen days and times. The editor says how many apps it blocks. Your essentials (phone, messages, clock, launcher, keyboard, Settings and Nudge itself) are never blocked by it, whatever the list says; "Always allowed" shows exactly which apps those are on your phone. An app you allow can still be blocked by its own rule or a group's. Saving Hard block, all the time asks first ("Block 84 apps all the time?"), and so does switching such a rule on from Manage Apps.
+- All apps rules show on Manage Apps in their own section, with a switch. An app's settings say "Also covered by" the All apps rule that blocks it, and a group's editor lists the All apps rules that leave it open.
+- While an All apps rule is blocking, the dashboard shows a card saying so and until when. It goes away when the rule's time is up.
+- An All apps block screen shows the apps you allowed, so one tap takes you to one of them instead.
+- Any block screen for a rule that ends at a set time says when: "Until 8:42 AM". A spent daily limit says midnight when the limit resets before the rule's window ends.
+- With Strict Mode on, letting more apps or groups through an All apps rule, adding an app to a group it lets through, softening it, shortening its days and times, turning it off or deleting it asks for the challenge. Making it stricter never does.
+- Backups include All apps rules. The groups they let through are matched by name on the phone you restore to.
+
+### Fixed
+- Opening an app for the first time after installing it (Google Docs, for one) could get past an All apps Hard block: the app's own start-up screen covered the block screen and closed it. Nudge now checks the block screen actually came up, and puts it back if the blocked app is in front instead.
+- Firefox, and any other browser that fills in passwords, was treated as an essential app, so Nuke Mode and groups could not block it. Browsers are now never essential.
+
+### Changed
+- Importing a backup that reduces protection under Strict Mode now asks "Import a backup that reduces protection". A backup that adds apps to a group an All apps rule lets through counts as reducing it.
+- Breathing now shows its wait time in the group editor and the All apps editor alike.
+- On the group editor, Hard Block now says "Completely blocks these apps", not "the app".
+- The rule line at the bottom of a block screen is easier to read.
+
+## [1.24.0] - 2026-11-02
+
+### Added
+- Groups you can build: "Block several apps" on Manage Apps makes a named group (say, Social) and blocks all its apps with one rule: one mode, one wait, an optional daily limit for each app, all the time or on chosen days and times. Groups show on Manage Apps as "Social · 9 apps" with what they do and a switch. Tap one to change its apps or how it blocks, or to delete it. Leaving a group with unsaved changes asks before discarding them.
+- An app that is in a blocking group shows "Also covered by Social" on its own settings, so it is clear why it is still blocked when its own switch is off. Tap the line to open the group.
+- With Strict Mode on, removing an app from a blocking group, softening the group's block, turning it off or deleting it asks for the challenge. Adding apps or making the block stricter never does.
+- A browser in a blocking group (Chrome in Social, say) is now blocked as an app, on any site, so it is no longer the way around the group. Finishing a website's countdown does not open a browser its group blocks. A browser's own rules still apply only to the websites they name.
+
+### Removed
+- The old, unreachable groups screen.
+- The Active Rules screen. Everything it showed is now on Manage Apps, and backup is in Settings.
+
+### Changed
+- Manage Apps and Active Rules are now one list. Manage Apps shows your groups, then "Block several apps", then "Apps with rules", each with what its rules do in one line ("Delay 30s · Hard Block Sat, Sun": a schedule follows the rule it belongs to), then every other app. An app with no rule of its own that a blocking group covers says so ("In Social"), so it no longer looks unblocked. On a phone with nothing set up yet it is just the one row and "Apps". A rule for an app that is no longer on the home screen is still listed, so it can be found and turned off. Search finds groups by name as well as apps. An app you switch on stays where it is in the list until you next open the screen, so a quick second tap cannot land on the app that would have slid into its place. Groups, apps and the app's own settings all describe a rule in the same words.
+- The dashboard's Active Apps card opens Manage Apps, and its number is now the apps a rule that is on covers, including every app in a blocking group, each app counted once.
+- App icons in app lists are drawn at the screen's real resolution, so they are sharper.
+- Nuke Mode now also never blocks your default messaging app, your clock and alarms, emergency and personal-safety apps, any accessibility service you have turned on (such as a screen reader), or your password manager's autofill. The Nuke screen says so: "Your phone, messages, clock, launcher, keyboard and Settings are never on this list." The dashboard's Nuke card now counts the same apps as the Nuke screen, so the two never disagree.
+- Block checks read your rules from memory instead of the database on every app switch; a rule edit still applies on the next app you open, with no restart.
+
+### Fixed
+- Pressing Home to leave YouTube could bring YouTube back by itself a few seconds later. As YouTube closes its video player it sends one more event, and that event sometimes arrived just after Home. Nudge read it as YouTube opening again, put the wait screen over the home screen, and reopened YouTube when the countdown ended. That event says nothing about which app is open, and Nudge now ignores it, for every app. This was there in 1.23.2 too, and showed up on some presses but not others.
+- Opening Google Camera when it was not already running, under a Delay rule, could skip the block screen entirely. Camera bounces through its permission check while it starts, which pushed the block screen behind it before it was ever drawn, and Nudge then refused to show it again as a duplicate. A block screen that its own app hides before it is drawn is now brought back, and the tap still counts once. This applies to any app that starts through another screen this way, not just Camera. (#143)
+- On Manage Apps, an app with more than one rule (a schedule, or a Reels block) showed its switch as whichever rule happened to be last. It now shows on when any of the app's rules is on.
+- The block mode picker on an app's settings showed "Hard Block" cut to "Hard" and off-centre. It now reads "Hard", centred with the others.
+
+
 ## [1.23.2] - 2026-11-01
 
 ### Fixed

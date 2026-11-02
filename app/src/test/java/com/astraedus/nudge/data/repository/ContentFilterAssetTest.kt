@@ -1,6 +1,7 @@
 package com.astraedus.nudge.data.repository
 
 import com.astraedus.nudge.domain.ContentFilterMatcher
+import com.astraedus.nudge.testing.SourceScan
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -26,18 +27,7 @@ class ContentFilterAssetTest {
 
     private val blocklist: Set<String> by lazy { entries.toSet() }
 
-    private fun assetFile(): File {
-        // Gradle runs unit tests with the module dir as the working dir; fall back to the
-        // repo-root-relative path so the test also passes when run from an IDE.
-        val candidates = listOf(
-            File("src/main/assets/content_filter_domains.txt"),
-            File("app/src/main/assets/content_filter_domains.txt")
-        )
-        return candidates.firstOrNull { it.isFile }
-            ?: throw AssertionError(
-                "content_filter_domains.txt not found from working dir ${File("").absolutePath}"
-            )
-    }
+    private fun assetFile(): File = SourceScan.mainFile("assets/content_filter_domains.txt")
 
     // ---- Hygiene: what may live in the file at all ----
 

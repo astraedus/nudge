@@ -3,18 +3,15 @@ package com.astraedus.nudge.ui.backup
 import com.astraedus.nudge.MainDispatcherRule
 import com.astraedus.nudge.data.export.ExportedSettings
 import com.astraedus.nudge.data.export.ImportResult
-import com.astraedus.nudge.data.preferences.NudgePreferences
-import com.astraedus.nudge.domain.lock.StrictModeChallenge
+import com.astraedus.nudge.testing.FakeNudgePreferences
 import com.astraedus.nudge.domain.usecase.ExportRulesUseCase
 import com.astraedus.nudge.domain.usecase.ImportOutcome
 import com.astraedus.nudge.domain.usecase.ImportPreview
 import com.astraedus.nudge.domain.usecase.ImportRulesUseCase
 import io.mockk.coEvery
-import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -23,7 +20,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
-import java.io.File
+import com.astraedus.nudge.testing.SourceScan
 
 /**
  * The security contract of the import path: **an import must not be a way around Strict Mode.**
@@ -45,7 +42,6 @@ class BackupImportGateTest {
 
     private lateinit var exportRulesUseCase: ExportRulesUseCase
     private lateinit var importRulesUseCase: ImportRulesUseCase
-    private lateinit var preferences: NudgePreferences
 
     /** Every `execute` the ViewModel actually reached — i.e. everything that was WRITTEN. */
     private lateinit var writes: MutableList<ImportResult>
@@ -61,7 +57,6 @@ class BackupImportGateTest {
     fun setUp() {
         exportRulesUseCase = mockk()
         importRulesUseCase = mockk()
-        preferences = mockk()
         writes = mutableListOf()
 
         coEvery { importRulesUseCase.preview(any()) } returns ImportPreview(parsed, 0)
@@ -74,16 +69,14 @@ class BackupImportGateTest {
                 settingsApplied = true
             )
         }
-        every { preferences.strictModeChallengeLength } returns flowOf(StrictModeChallenge.DEFAULT_LENGTH)
     }
 
     private fun viewModel(strictOn: Boolean, weakens: Boolean): BackupViewModel {
-        every { preferences.isStrictModeEnabled } returns flowOf(strictOn)
         coEvery { importRulesUseCase.weakensProtection(any()) } returns weakens
         return BackupViewModel(
             exportRulesUseCase,
             importRulesUseCase,
-            preferences,
+            FakeNudgePreferences { setStrictModeEnabled(strictOn) },
             ioDispatcher = mainDispatcherRule.dispatcher
         )
     }
@@ -112,7 +105,7 @@ class BackupImportGateTest {
         assertNull("no outcome dialog while the import is pending", vm.uiState.value.importOutcome)
         val challenge = vm.challenge.value
         assertNotNull("a challenge must be raised", challenge)
-        assertEquals("Import settings that reduce protection", challenge!!.prompt)
+        assertEquals("Import a backup that reduces protection", challenge!!.prompt)
         // The confirmation dialog steps aside so the challenge does not stack on top of it.
         assertNull(vm.uiState.value.importPreview)
     }
@@ -189,9 +182,7 @@ class BackupImportGateTest {
      */
     @Test
     fun `there is exactly one call site that writes an import, and it consults the gate`() {
-        val mainSources = listOf(File("src/main/java"), File("app/src/main/java"))
-            .firstOrNull { it.exists() }
-            ?: error("main sources not found from working dir ${File("").absolutePath}")
+        val mainSources = SourceScan.kotlinFile("")
 
         val writers = mainSources.walkTopDown()
             .filter { it.isFile && it.extension == "kt" }
@@ -206,7 +197,7 @@ class BackupImportGateTest {
         )
         assertTrue(
             "the writer must ask whether the payload weakens protection",
-            File(mainSources, "com/astraedus/nudge/ui/backup/BackupViewModel.kt")
+            SourceScan.kotlinFile("com/astraedus/nudge/ui/backup/BackupViewModel.kt")
                 .readText()
                 .contains("importRulesUseCase.weakensProtection(")
         )

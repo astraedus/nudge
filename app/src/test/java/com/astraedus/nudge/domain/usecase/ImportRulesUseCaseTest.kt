@@ -5,16 +5,23 @@ import com.astraedus.nudge.data.db.entity.AppGroupMember
 import com.astraedus.nudge.data.db.entity.BlockRule
 import com.astraedus.nudge.data.db.entity.UsageEvent
 import com.astraedus.nudge.data.export.ExportedSettings
-import com.astraedus.nudge.data.export.HistoryMerge
 import com.astraedus.nudge.data.export.RuleExporter
 import com.astraedus.nudge.data.preferences.NudgePreferences
-import com.astraedus.nudge.data.repository.BlockRuleRepository
 import com.astraedus.nudge.data.repository.UsageRepository
+import com.astraedus.nudge.domain.packages.EssentialPackages
+import com.astraedus.nudge.testing.FakeInstalledAppsRepository
+import com.astraedus.nudge.testing.InMemoryPreferencesDataStore
+import com.astraedus.nudge.testing.FakeRuleDatabase
+import com.astraedus.nudge.testing.FakeUsageEventDao
+import com.astraedus.nudge.testing.FakeUsageRepository
+import com.astraedus.nudge.testing.aBlockRule
+import com.astraedus.nudge.testing.aGroupMember
+import com.astraedus.nudge.testing.anAppGroup
 import io.mockk.coEvery
 import io.mockk.coVerify
-import io.mockk.every
 import io.mockk.mockk
-import kotlinx.coroutines.flow.flowOf
+import io.mockk.spyk
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -35,71 +42,51 @@ import org.junit.Test
  */
 class ImportRulesUseCaseTest {
 
-    private lateinit var repository: BlockRuleRepository
-    private lateinit var usageRepository: UsageRepository
+    private val db = FakeRuleDatabase()
+    private val events = FakeUsageEventDao()
+    private val preferencesStore = InMemoryPreferencesDataStore()
+    private val preferences = NudgePreferences(preferencesStore)
+    private lateinit var essentials: EssentialPackages
     private lateinit var useCase: ImportRulesUseCase
-    private lateinit var addedRules: MutableList<BlockRule>
-    private lateinit var createdGroups: MutableList<AppGroup>
-    private lateinit var addedMembers: MutableList<AppGroupMember>
 
-    /** Stands in for `usage_events`: what the fake DB holds, and what a second import sees. */
-    private lateinit var storedEvents: MutableList<UsageEvent>
+    /** The app's own out-of-the-box settings, read off the real preferences before any import. */
+    private lateinit var deviceDefaults: ExportedSettings
 
-    private lateinit var preferences: NudgePreferences
+    // Rows that were on the phone before the import under test ran; "added" is everything else.
+    private val preexistingRules = mutableListOf<BlockRule>()
+    private val preexistingGroups = mutableListOf<AppGroup>()
+    private val preexistingMembers = mutableListOf<AppGroupMember>()
 
-    /**
-     * Stands in for the settings DataStore. Starts at the app's real defaults so "did this import
-     * weaken protection?" is asked against a plausible device, not against nulls.
-     */
-    private lateinit var deviceSettings: ExportedSettings
+    private val addedRules: List<BlockRule> get() = db.rules.filterNot { it in preexistingRules }
+    private val createdGroups: List<AppGroup> get() = db.groups.filterNot { it in preexistingGroups }
+    private val addedMembers: List<AppGroupMember> get() = db.members.filterNot { it in preexistingMembers }
 
-    /** Every [NudgePreferences.applyImportedSettings] call, in order. */
-    private lateinit var appliedSettings: MutableList<ExportedSettings>
+    /** What `usage_events` holds: what the import wrote, and what a second import sees. */
+    private val storedEvents: List<UsageEvent> get() = events.events
+
+    private fun seedRule(rule: BlockRule) {
+        preexistingRules += db.seedRule(rule)
+    }
 
     @Before
     fun setUp() {
-        repository = mockk()
-        usageRepository = mockk()
-        addedRules = mutableListOf()
-        createdGroups = mutableListOf()
-        addedMembers = mutableListOf()
-        storedEvents = mutableListOf()
-        appliedSettings = mutableListOf()
-        deviceSettings = DEVICE_DEFAULTS
+        deviceDefaults = runBlocking { preferences.exportableSettings() }
 
-        preferences = mockk()
-        coEvery { preferences.exportableSettings() } answers { deviceSettings }
-        coEvery { preferences.applyImportedSettings(any()) } answers {
-            appliedSettings.add(firstArg())
-            Unit
-        }
+        essentials = mockk()
+        coEvery { essentials.current() } returns emptySet()
+        coEvery { essentials.browsers() } returns emptySet()
 
-        // A real (if tiny) table rather than a stub: idempotency is a property of the SECOND
-        // import, so the fake has to actually remember what the first one wrote.
-        coEvery { usageRepository.getEventKeysInRange(any(), any()) } answers {
-            val from = firstArg<Long>()
-            val to = secondArg<Long>()
-            storedEvents.filter { it.timestamp in from..to }.map(HistoryMerge::keyOf)
-        }
-        coEvery { usageRepository.insertEvents(any()) } answers {
-            storedEvents.addAll(firstArg<List<UsageEvent>>())
-        }
-
-        every { repository.getAllRules() } returns flowOf(emptyList())
-        every { repository.getAllGroups() } returns flowOf(emptyList())
-        every { repository.getGroupMembers(any()) } returns flowOf(emptyList())
-        coEvery { repository.addRule(any()) } answers {
-            addedRules.add(firstArg())
-            addedRules.size.toLong()
-        }
-        coEvery { repository.createGroup(any()) } answers {
-            createdGroups.add(firstArg())
-            createdGroups.size.toLong()
-        }
-        coEvery { repository.addToGroup(any()) } answers { addedMembers.add(firstArg()); Unit }
-
-        useCase = ImportRulesUseCase(repository, usageRepository, preferences, RuleExporter())
+        useCase = importUseCase(FakeUsageRepository(events))
     }
+
+    private fun importUseCase(usage: UsageRepository) = ImportRulesUseCase(
+        db.repository,
+        usage,
+        preferences,
+        RuleExporter(),
+        FakeInstalledAppsRepository(),
+        essentials
+    )
 
     private suspend fun import(json: String): ImportOutcome =
         useCase.execute(useCase.preview(json).result)
@@ -159,9 +146,7 @@ class ImportRulesUseCaseTest {
 
     @Test
     fun `duplicates and unreadable entries are counted separately`() = runTest {
-        every { repository.getAllRules() } returns flowOf(
-            listOf(BlockRule(id = 1, packageName = "com.app1", mode = "DELAY", delaySeconds = 15))
-        )
+        seedRule(aBlockRule(packageName = "com.app1", mode = "DELAY"))
 
         val outcome = import(
             """
@@ -262,7 +247,7 @@ class ImportRulesUseCaseTest {
      */
     @Test
     fun `a rule with every field off its default round-trips through export and import`() = runTest {
-        val original = BlockRule(
+        val original = aBlockRule(
             packageName = "com.full",
             mode = "HARD_BLOCK",
             delaySeconds = 42,
@@ -377,7 +362,7 @@ class ImportRulesUseCaseTest {
         assertEquals(listOf(true, true, false), storedEvents.map { it.wasBlocked })
         assertEquals(listOf(false, true, false), storedEvents.map { it.userChangedMind })
         // Row ids belong to the importing device, never to the file.
-        assertTrue("imported rows must take fresh local ids", storedEvents.all { it.id == 0L })
+        assertTrue("imported rows must take fresh local ids", events.insertAllBatches.flatten().all { it.id == 0L })
     }
 
     /**
@@ -507,9 +492,13 @@ class ImportRulesUseCaseTest {
      */
     @Test
     fun `the duplicate check only reads the window the file covers`() = runTest {
-        import(historyJson(event(ts = 5_000), event(ts = 9_000)))
+        // A spy over the real repository: the only way to observe WHICH window was read.
+        val usage = spyk(FakeUsageRepository(events))
+        val useCase = importUseCase(usage)
 
-        coVerify { usageRepository.getEventKeysInRange(5_000L, 9_000L) }
+        useCase.execute(useCase.preview(historyJson(event(ts = 5_000), event(ts = 9_000))).result)
+
+        coVerify { usage.getEventKeysInRange(5_000L, 9_000L) }
     }
 
     // --- Settings --------------------------------------------------------------------------
@@ -544,9 +533,9 @@ class ImportRulesUseCaseTest {
         assertTrue(outcome.settingsApplied)
         assertEquals(0, outcome.settingsInvalidCount)
         // All-or-nothing: one call, so DataStore commits one transaction.
-        assertEquals(1, appliedSettings.size)
+        assertEquals(1, preferencesStore.writes)
         assertEquals(
-            ExportedSettings(
+            deviceDefaults.copy(
                 contentFilterEnabled = true,
                 contentFilterMode = "DELAY",
                 contentFilterStrictKeywords = true,
@@ -557,7 +546,7 @@ class ImportRulesUseCaseTest {
                 customDelaySubtitles = "Breathe.",
                 customHardBlockMessages = "Not today."
             ),
-            appliedSettings.single()
+            preferences.exportableSettings()
         )
         // The rules in the same file still import.
         assertEquals(1, outcome.importedCount)
@@ -572,7 +561,7 @@ class ImportRulesUseCaseTest {
         assertEquals(1, outcome.importedCount)
         assertFalse(outcome.settingsApplied)
         assertEquals(0, outcome.settingsInvalidCount)
-        assertTrue("an older backup must not rewrite settings", appliedSettings.isEmpty())
+        assertEquals("an older backup must not rewrite settings", 0, preferencesStore.writes)
     }
 
     @Test
@@ -593,8 +582,8 @@ class ImportRulesUseCaseTest {
         assertEquals(3, outcome.settingsInvalidCount)
         assertTrue(outcome.settingsApplied)
         assertEquals(
-            ExportedSettings(customDelayTitles = "Pause."),
-            appliedSettings.single()
+            deviceDefaults.copy(customDelayTitles = "Pause."),
+            preferences.exportableSettings()
         )
         assertEquals(1, outcome.importedCount)
     }
@@ -616,7 +605,7 @@ class ImportRulesUseCaseTest {
         assertEquals(0, outcome.importedCount)
         assertEquals(1, outcome.invalidCount)
         assertTrue(outcome.settingsApplied)
-        assertEquals(ExportedSettings(strictModeEnabled = true), appliedSettings.single())
+        assertEquals(deviceDefaults.copy(strictModeEnabled = true), preferences.exportableSettings())
     }
 
     /**
@@ -631,7 +620,7 @@ class ImportRulesUseCaseTest {
 
         assertNotNull(outcome.error)
         assertTrue(addedRules.isEmpty())
-        assertTrue(appliedSettings.isEmpty())
+        assertEquals(0, preferencesStore.writes)
     }
 
     // --- The Strict Mode gate -----------------------------------------------------------------
@@ -648,7 +637,7 @@ class ImportRulesUseCaseTest {
 
     @Test
     fun `turning strict mode off in a file weakens protection`() = runTest {
-        deviceSettings = DEVICE_DEFAULTS.copy(strictModeEnabled = true)
+        preferences.setStrictModeEnabled(true)
 
         assertTrue(weakens(settingsJson(""""strictModeEnabled": false""")))
     }
@@ -660,7 +649,8 @@ class ImportRulesUseCaseTest {
 
     @Test
     fun `lowering the challenge difficulty weakens protection`() = runTest {
-        deviceSettings = DEVICE_DEFAULTS.copy(strictModeEnabled = true, strictModeChallengeLength = 48)
+        preferences.setStrictModeEnabled(true)
+        preferences.setStrictModeChallengeLength(48)
 
         assertTrue(weakens(settingsJson(""""strictModeChallengeLength": 12""")))
     }
@@ -672,17 +662,17 @@ class ImportRulesUseCaseTest {
     @Test
     fun `the gate re-reads the live settings rather than a snapshot`() = runTest {
         val json = settingsJson(""""emergencyPassEnabled": true""")
-        deviceSettings = DEVICE_DEFAULTS.copy(emergencyPassEnabled = true)
+        preferences.setEmergencyPassEnabled(true)
         assertFalse("pass already on -> nothing weakens", weakens(json))
 
-        deviceSettings = DEVICE_DEFAULTS.copy(emergencyPassEnabled = false)
+        preferences.setEmergencyPassEnabled(false)
         assertTrue("pass off -> the file re-opens the bypass", weakens(json))
     }
 
     /** Custom block messages change what the overlay SAYS, never what it blocks. */
     @Test
     fun `restoring custom messages is not a weakening`() = runTest {
-        deviceSettings = DEVICE_DEFAULTS.copy(strictModeEnabled = true)
+        preferences.setStrictModeEnabled(true)
 
         assertFalse(weakens(settingsJson(""""customDelayTitles": "Pause.", "customHardBlockMessages": """"")))
     }
@@ -698,8 +688,8 @@ class ImportRulesUseCaseTest {
     fun `a rule that was switched off comes back switched off`() = runTest {
         val backup = RuleExporter().exportRules(
             rules = listOf(
-                BlockRule(packageName = "com.on", mode = "HARD_BLOCK", enabled = true),
-                BlockRule(packageName = "com.off", mode = "DELAY", enabled = false)
+                aBlockRule(packageName = "com.on", mode = "HARD_BLOCK"),
+                aBlockRule(packageName = "com.off", mode = "DELAY", enabled = false)
             ),
             groups = emptyList(),
             groupMembers = emptyMap()
@@ -738,21 +728,6 @@ class ImportRulesUseCaseTest {
         assertTrue("an old backup must not restore rules that block nothing", addedRules.all { it.enabled })
     }
 
-    private companion object {
-        /** The app's own out-of-the-box settings, as `NudgePreferences` defaults them. */
-        val DEVICE_DEFAULTS = ExportedSettings(
-            contentFilterEnabled = false,
-            contentFilterMode = "HARD_BLOCK",
-            contentFilterStrictKeywords = false,
-            strictModeEnabled = false,
-            strictModeChallengeLength = 24,
-            emergencyPassEnabled = true,
-            customDelayTitles = "",
-            customDelaySubtitles = "",
-            customHardBlockMessages = ""
-        )
-    }
-
     @Test
     fun `keepPassOnShortTrips true survives an import and defaults to false when absent`() = runTest {
         import(
@@ -769,5 +744,41 @@ class ImportRulesUseCaseTest {
         assertTrue(byPackage.getValue("com.keep").keepPassOnShortTrips)
         assertFalse(byPackage.getValue("com.plain").keepPassOnShortTrips)
         assertFalse(byPackage.getValue("com.legacy").keepPassOnShortTrips)
+    }
+
+    /**
+     * PR 2 L4 test (groups spec 5.6): import is ADDITIVE for groups, so it can never weaken a
+     * group a rule depends on. With "Social" {a, b} used by an enabled DELAY rule, a file that
+     * carries "Social" {c} only adds c: no member removed, no existing rule deleted, updated or
+     * disabled, and no settings in the file means `weakensProtection` stays false -- which is why
+     * the import path needs no per-group Strict Mode gate.
+     */
+    @Test
+    fun `importing a group used by an enabled rule only adds members and weakens nothing`() = runTest {
+        val social = db.seedGroup(anAppGroup("Social", id = 7), "com.a", "com.b")
+        val existingRule = db.seedRule(aBlockRule(id = 1, groupId = 7, mode = "DELAY"))
+        preexistingGroups += social
+        preexistingRules += existingRule
+        preexistingMembers += db.members
+
+        val parsed = useCase.preview(
+            """
+            {"version": 1,
+             "rules": [{"groupName": "Social", "mode": "HARD_BLOCK"}],
+             "groups": [{"name": "Social", "members": ["com.c"]}]}
+            """.trimIndent()
+        ).result
+        assertFalse(useCase.weakensProtection(parsed))
+        val outcome = useCase.execute(parsed)
+
+        assertNull(outcome.error)
+        assertEquals(0, outcome.groupsCreated)
+        assertEquals(listOf(aGroupMember(7, "com.c")), addedMembers)
+        assertEquals(listOf(7L), addedRules.map { it.groupId })
+        // Nothing existing was removed, rewritten, deleted or switched off.
+        assertEquals(setOf("com.a", "com.b", "com.c"), db.members.map { it.packageName }.toSet())
+        assertEquals(existingRule, db.ruleWithId(1))
+        assertEquals(social, db.groupWithId(7))
+        assertEquals(0, preferencesStore.writes)
     }
 }

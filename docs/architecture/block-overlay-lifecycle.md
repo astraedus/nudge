@@ -108,6 +108,50 @@ The ordering that produces it is this table's own second row wearing a different
 
 `PendingOverlay` now carries a `decisionKey` (`BlockLaunchGate.decisionFingerprint`: the confrontation's identity, plus the block mode, plus whether it is the daily-limit variant), and a launch is a duplicate only while the fingerprint matches. Nothing that TICKS is in it — a countdown in a fingerprint would make every re-launch look new and hand this table's whole problem back. A re-delivery keeps the on-screen overlay's id and `windowShown` and adopts the NEW fingerprint, because that is the block it is about to render. Full reasoning, the two rejected alternatives (a rule-change flow, the record's age), and the test list: `foreground-detection.md`, *"Already pending" has to mean the SAME BLOCK*.
 
+### A pending overlay can be BURIED, and then it is re-shown, not dropped ([#143](https://github.com/astraedus/nudge/issues/143))
+
+`PendingOverlay` had one meaning for two different situations: *the screen will show this any moment* and *nothing will ever show this*. The second is a trampoline launcher. Cold-launching Google Camera under a Delay rule on the bench Pixel 3 (Android 12), 5/5:
+
+```
+.553  ATM   START BlockOverlayActivity                 <- our launch; its record is created
+.556  ATM   wm_new_intent / set_resumed BlockOverlay   <- ...in its own task, brought to front
+.605  ATM   wm_task_to_front Camera task               <- CameraLauncher re-fronts ITS task (REQUEST_PERMISSIONS)
+.609  ATM   wm_create_activity GrantPermissionsActivity
+.945  nudge block overlay bypassed by foreground switch, re-evaluating package=...permissioncontroller
+2.012 nudge block overlay launch dropped target=...GoogleCamera reason=DROP_ALREADY_PENDING
+```
+
+The overlay record is never created on the client (no `onCreate`, no `onResume`), so nothing reports it shown, and nothing finishes it either: it sits in a background task. The service evaluated correctly at both events: the permission dialog's window really is a bypass, and Camera coming back really is a block. The gate refused the block anyway, as a "duplicate" of an overlay nobody would see. It reproduced on v1.23.0 and v1.23.1, so it is not a regression from #131.
+
+The fix is evidence, not a timer. `BlockLaunchGate.pendingOverlayAfterSignal` marks an unshown pending overlay `displaced` the moment ANOTHER app's `AppWindow` comes forward. That is the departure evidence every rule in this file already uses, so it is not Camera-specific: any launcher that bounces through another app's window during its cold start buries the overlay the same way. Then:
+
+- **`decide` answers the same block for a displaced overlay with `Decision.RESHOW_HIDDEN`**, and asks it *below* the walk-away and foreground checks, unlike `DROP_ALREADY_PENDING`. A re-show puts an overlay on screen, so it must never drag a buried overlay over an app the user really moved on to. A DIFFERENT block (#50) still launches afresh, and a displaced overlay past `OVERLAY_SETTLE_MS` falls back to an ordinary launch.
+- **`launchBlockOverlay` re-shows through the same `startActivity`.** `singleInstance` brings the existing overlay task forward, and on the device the never-created record is then created and resumed. It marks the overlay active again. It reports no new wall to the bounce check-in and makes no new pending overlay: same id and same block, with only the settle window restarted (`pendingOverlayAfterReshow`).
+- **One tap is still one row (#131).** The displacing window also ends the arrival (`arrivalAfterSignal`), so a re-show would otherwise look like a fresh confrontation. The pending record keeps the arrival as it stood BEFORE the displacement (`displacedArrival`). `BlockLaunchGuard.onOverlayReshown` merges it back (`arrivalAfterReshow`), so `handleDecision`'s ordinary `claimConfrontation` finds the tap already counted. It is a merge rather than a restore because the original claim runs on the IO scope and can land on either side of the displacement.
+- **`isGenuineBypass` also says yes for the target's own window over a displaced overlay.** A displacing event that did not go through the bypass branch (a verified content change, a floating window) would otherwise leave `isOverlayActive` up, and Camera's return would be swallowed as "still starting up under its overlay".
+
+Walk-away and Delay completion are untouched: both act on an overlay that reached the screen (`windowShown = true`), and a shown overlay is never displaced.
+
+Tests: `TrampolineLaunchReplayTest` (L2, `camera-cold-trampoline-pending-drop.jsonl` through the real classifier, guard, gate and engine; asserts a re-show after the permission dialog and one row in both claim orders, with the pre-fix gate on the same events as the counterfactual) and `BlockLaunchGateTest` (the displacement, decide and re-show functions branch by branch, including the class test that nothing but another app's window displaces).
+
+### A block buried by its OWN app is re-asserted by the arrival check (2026-11-02)
+
+#143's displacement needs ANOTHER app's window. Google Docs' first launch after an install buries the Hard block with its own: `NewMainProxyActivity` (the trampoline) starts `HomescreenActivity` in the same task, after our `startActivity`. Measured on the bench Pixel 3 under an All apps Hard rule, main-latest 97ad2e4: 3 escapes in 9 first launches, later launches blocked every time. Two shapes, both proven by the `wm_*` events in the same run's logcat (header of `docs-first-launch-trampoline-buries-overlay.jsonl`):
+
+- **M2, the overlay was shown, then finished under the re-block.** The overlay resumes at +0.42 s, Docs' trampoline fronts `HomescreenActivity` at +0.43 s, the server stops the overlay at +1.46 s, and the bypass branch reads Homescreen and re-launches at +1.51 s. `singleInstance` delivers that START as `wm_new_intent` to the SAME instance, whose queued `onStop` then finishes it (+1.52 s, `OverlayLifecycle.onStopped`). The re-block reached an instance on its way out.
+- **M1, the overlay never resumed.** The trampoline's window is the target's own, so it is neither a bypass nor a displacement; the re-block is swallowed under `isOverlayActive` or refused as `DROP_ALREADY_PENDING` for an overlay nobody will draw.
+
+Both end the same way: no further `TYPE_WINDOW_STATE_CHANGED` ever says "Docs is in front", so no event-driven rule can catch it. That is why this one IS a timer, gated on evidence:
+
+- Every launch and re-show arms a numbered check (`BlockLaunchGuard.armArrivalCheck`), posted `OVERLAY_ARRIVAL_CHECK_MS` (1.5 s) later on the main handler. The overlay resumes about 230 ms after START and the trampoline lands inside 1.1 s, so 1.5 s is after both.
+- The check reads `rootInActiveWindow`'s package. Only the blocked app itself in front is a rescue (`ArrivalVerdict.RESCUE`). Our overlay, the launcher, another app or a dialog is `NOT_BURIED`; an unreadable window is `UNVERIFIED` and never acts; a check for a launch a later one replaced is `SUPERSEDED`; Home or another app's window ends the watch (`MOVED_ON`).
+- A rescue is a FRESH evaluation, never a replay: it marks an unshown pending overlay displaced (`pendingOverlayAfterRescue`, so the gate answers `RESHOW_HIDDEN`, not `DROP_ALREADY_PENDING`), applies `AppWindow(target)`, drops `isOverlayActive`, resets the debounce and calls `evaluateForegroundPackage`. A completed Delay or a pass is answered by its grant, so a rescue never re-blocks an app the user was let into.
+- At most `MAX_ARRIVAL_RESCUES` (2) per stay, then one `log.w` and nothing more: a device where the check is wrong costs two launches, not a loop. `claimConfrontation` keeps it one row.
+
+Tests: `OverlayArrivalCheckTest` (L1: the verdict matrix, the watch lifecycle with a class test over every `ForegroundSignal`, and the rescue turning a refused re-block into a re-show) and `OverlayArrivalReplayTest` (L2: the committed capture through the real classifier, guard, gate and engine with the platform's effects scripted; the counterfactual without the check ends with nothing on screen, the M1 shape with the overlay window withheld, the reversed order where the overlay lands after Homescreen and the check stands down, and the cap).
+
+Not covered: the QA report's Firefox case (the default-browser role dialog). The dialog is another app's window and IS read as a bypass; its dismissal sends no window-state event, so nothing re-evaluates Firefox. It did not reproduce on the bench (8/8 blocked, 4 under CPU load) and is tracked as foreground detection, not overlay arrival.
+
 Tests: `InterventionCountReplayTest` (every mechanism above replayed through the real classifier, guard and gate, each asserting ROWS — with the launch count on the same run as the counterfactual, since one row per allowed launch is literally what the old code did; plus the arrival matrix over every departure kind × every block kind, and the dated 100-iteration regression), `ArrivalAndStormGateTest` (the pure functions, branch by branch), `BlockOverlayLaunchContractTest` (the claim's position, the single row writer, the two reported departures, the storm log, the fail-safe re-arm).
 
 ## The redirect app — one better app on every block screen (v1.20.0)
@@ -146,6 +190,12 @@ does when the launcher lands. `launchRedirectApp` falls back to `goHome()` if th
 the start throws: the walk-away is already recorded and the overlay marked inactive, so failing to leave
 would strand the user on a spent block. The start is allowed by the background-activity-start rules because
 the overlay is the foreground activity and the user just touched it.
+
+### All apps blocks and the rule footer (groups spec 3.9)
+
+- **One footer.** `RuleFooter(ruleName, until)` is the only place the "Rule: ..." line is printed; the hard, delay, hold and breathing bodies all render it (Nuke has no rule line). Under it, "Until 8:42 AM" appears for ANY block carrying `EXTRA_UNTIL`, in the device 12/24h format.
+- **All apps (`EXTRA_ALL_APPS_*` extras present):** the rule line reads `RuleSummary.allAppsTitle(...)` ("All apps except Spotify, Maps": group names, then installed except-app labels). The redirect bubble is hidden; its slot holds `AllowedAppsRow` ("Open an allowed app", up to four installed + launchable icons, never the blocked package). The first frame shows `EXTRA_ALL_APPS_ALLOWED_PACKAGES` (the rule's own apps, then its allowed groups' hand-added apps); `fillInGroupMembers` then resolves the groups in `EXTRA_ALL_APPS_EXCEPT_GROUP_IDS` on the device (`DeviceGroupMembers`, off the main thread) and swaps in `AllAppsBlock.allowedPackagesOf`, so an app allowed through a category group is offered too. A failure keeps the first frame and never affects the block. A tap calls `navigateHome(redirectPackage = pkg)`, i.e. the redirect walk-away, so lifecycle, passthrough and stats are identical. No surviving icon = the row renders nothing. The daily pass is unchanged.
+- Pure choices live in `OverlayBlockInfo` (L1: `OverlayBlockInfoTest`); the wiring is pinned by `RuleFooterContractTest`.
 
 ### Never an app Nudge would block: the loop the policy exists to prevent
 

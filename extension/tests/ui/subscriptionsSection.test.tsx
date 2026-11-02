@@ -6,6 +6,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { defaultYoutubeFeatureSettings } from '../../src/core/settingsSchema';
 import type { YoutubeFeatureSettings } from '../../src/core/settingsSchema';
 import type { SubscriptionSyncStatus } from '../../src/core/protocol';
+import type { SyncTruncation } from '../../src/core/youtubeSubscriptions';
+
+// Exhaustive by type: a new truncation value fails to compile here until it has copy.
+const EVERY_TRUNCATION: Record<SyncTruncation, true> = { cap: true, partial: true, pending: true };
 
 const send = vi.fn();
 vi.mock('../../src/ui/rpc', () => ({ send: (request: unknown) => send(request) }));
@@ -14,6 +18,7 @@ const {
   ChannelListEditor,
   subscriptionErrorText,
   subscriptionSummaryText,
+  subscriptionTruncationText,
 } = await import('../../src/entrypoints/dashboard/ChannelListEditor');
 
 const TOGGLE = "Also allow channels I'm subscribed to";
@@ -83,6 +88,21 @@ describe('the "also allow channels I\'m subscribed to" toggle', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Sync now' }));
     expect(await screen.findByText('4 channels, synced just now')).toBeDefined();
     expect(send).toHaveBeenCalledWith({ type: 'SYNC_YT_SUBSCRIPTIONS' });
+  });
+
+  it('every truncation has its own line, and none for a whole list', () => {
+    const lines = (Object.keys(EVERY_TRUNCATION) as SyncTruncation[]).map((truncated) =>
+      subscriptionTruncationText(status({ count: 40, truncated })),
+    );
+    for (const line of lines) expect(line).toBeTruthy();
+    expect(new Set(lines).size).toBe(lines.length);
+    expect(subscriptionTruncationText(status({ count: 40 }))).toBeNull();
+  });
+
+  it('a pending list says the rest arrives on the next YouTube visit', async () => {
+    send.mockResolvedValue(status({ count: 30, syncedAt: Date.now(), truncated: 'pending' }));
+    render(<Harness initial={{ channelMode: 'WHITELIST', allowSubscriptions: true }} />);
+    expect(await screen.findByText('The rest of your list loads next time you open YouTube.')).toBeDefined();
   });
 
   it('shows a short error and says the last list is kept', async () => {

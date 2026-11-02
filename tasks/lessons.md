@@ -1513,3 +1513,38 @@ A warm YouTube relaunch under a whole-app Delay reached `handleDecision` twice w
 - **A test harness never re-spells a production key.** If the harness builds its own fingerprint, it tests the harness.
 - **On the bench, `device-qa.sh` UI dumps (uiautomator) suppress accessibility and reconnect the service, which resets the guard.** A run-to-run difference across a dump is harness variance first; read the capture before calling it a regression.
 - Count launches by overlay `START` lines and rows by the absence of `NOT counted`, not by `handling block`: a gated (dropped) decision logs `handling block` too.
+
+## Spec PR 1 broke main through a source-scan test the lane's scoped run never picked (2026-11-02)
+
+PR 1 added a third `flowOn(ioDispatcher)` to `HomeViewModel` (the Nuke count). That was a correct change, but `ViewModelDispatcherContractTest` pinned the count at exactly 2, and it lives in the `ui` root package. The lane scoped its tests to `ui.screens.home` and friends, so the test never ran until CI on main.
+
+- **When a change touches a class, also run the source-scan contract tests that read it.** Find them with `grep -rl "<ClassName>.kt" app/src/test`. They live by concern, not next to the class.
+- **A contract test pins the invariant, not a number.** "Every `flowOn` in this file is the injected one" survives a new step. "There are exactly 2" fails on the first correct addition.
+
+## #143: a "pending" overlay that its own app buried before it was drawn swallowed the re-block (2026-11-02)
+
+Cold Google Camera under a Delay: the overlay's `START` landed, CameraLauncher re-fronted Camera's task and trampolined through `permissioncontroller`, and the overlay activity was never created. The service correctly called the permission dialog a bypass and correctly re-evaluated Camera to a block, but the gate's pending record still said "on its way" and refused it as `DROP_ALREADY_PENDING`. Missed block 5/5 on the bench, pre-existing on v1.23.0.
+
+- **"Launched" is not "will be shown".** A pending record is a claim about the screen; anything that can take the screen before the overlay draws (another app's window) has to update that claim, not just the service's `isOverlayActive` flag. Two holders of "is the overlay up" that update on different evidence will disagree, and the disagreement is a silent miss.
+- **A dedupe that can suppress an ENFORCEMENT action must have an exit for "the original never happened".** `RESHOW_HIDDEN` re-shows the same overlay (same id, no new wall, arrival restored so #131's one-tap-one-row holds) instead of dropping; it is asked after the walk-away and foreground checks so a re-show can never cover an app the user moved to.
+- **Order the gate's branches by what the outcome DOES.** A drop can be decided early; anything that puts a window on screen goes after every "the user is elsewhere" check. My first draft put the re-show first and would have dragged the overlay over the app the user switched to.
+- Cold-launch trials need a force-stop of the TARGET (not just Home) and a logcat check that Nudge logged at all: three of five v1.23.1 trials had no Nudge lines and proved nothing.
+
+## Spec PR 3: a switch moved its own row while the finger was still on the list (2026-11-02)
+
+Merging Active Rules into Manage Apps made "has a rule" decide which section an app sits in. Switching an app on created its rule, the row jumped up to "Apps with rules", the next app slid into its place, and the device tester's quick second tap switched THAT app on. Every L1 test was green, because each section was right on its own. Only a tap sequence on the device showed it. The same run found a second bug of the "right for each part, wrong together" kind: the "nothing matches" line counted app rows only, and the groups live inside the top row.
+
+- **A control never moves the row it lives in, while the user is still on that list.** Keep the row in place for the visit, and let the next visit re-sort it (`keepInPlace` / `switchedOnHere`). Test it through the real ViewModel with a rules Flow that emits the write (`SwitchedOnStaysInPlaceTest`).
+- **An empty state asks the whole model ("is there anything at all?"), never the length of one rendered list.**
+
+## Spec PR 2/3 renamed on-screen text and the release gate broke, not the app (2026-11-02)
+**What happened:** #145 changed the Manage Apps search placeholder to "Search apps and groups" and #147 deleted Active Rules. Both lanes passed their own device QA, but the 1.24.0 release gate failed `setup` (Maestro asserted "Active Rules") and both daily-limit cases ("Search apps..." not on screen). lane-pr3 had seen the setup failure and blamed the debug APK.
+**Rule:** a PR that renames, moves or deletes any user-visible string greps `scripts/` and `.maestro/` for the old text and fixes the hits in the same PR. A device-qa failure on a string the PR changed is the PR's bug, never "the debug build".
+
+## home-reopen: one Home press and YouTube came back by itself (2026-11-02)
+
+The 1.24.0 gate failed `home-reopen`, and the A/B looked like a regression (v1.23.2 F/P/P, main F/F/F). It was not one. YouTube tears down its player PANE as the user leaves, and the platform sends that as a `TYPE_WINDOW_STATE_CHANGED` with `contentChangeTypes` = PANE_DISAPPEARED. When it landed after the launcher's Home signal, the classifier called it `AppWindow`. That started a sitting, moved the guard's foreground, launched the Delay over the launcher, and the completion hand-back then reopened YouTube. 10 of 10 such stragglers on the pre-fix bench (both builds) did this, and 6 of 6 on the fixed build did nothing. Two harness races added noise: YouTube's PiP explainer stood in front of the launcher, and the next trial's Home landed within the 1.5s hand-back window of the previous re-block's countdown.
+
+- **An event TYPE is not a meaning.** `TYPE_WINDOW_STATE_CHANGED` is also the pane event. Read `contentChangeTypes` before treating it as a window coming forward. The framework's own doc for the type says so.
+- **F/P/P against F/F/F at n=3 is not a regression signal.** Count the MECHANISM across every logcat you have, per build, before bisecting. Here the mechanism was in both builds, and every instance failed the same way.
+- **A gate case that presses a button must start from a settled state.** If the previous step leaves a timer running (a countdown, a hand-back window), wait it out, or the harness's own input becomes part of the race it is measuring.

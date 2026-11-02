@@ -90,7 +90,7 @@ Uses Accessibility Service to detect in-app navigation to these screens.
 
 ### Dashboard
 
-2x2 stats at a glance: **Screen Time**, **Active Rules**, **Blocked** (times blocked today), **Walked Away** (times you chose to leave). Weekly charts, hourly heatmaps, and streak tracking.
+2x2 stats at a glance: **Screen Time**, **Active Apps**, **Blocked** (times blocked today), **Walked Away** (times you chose to leave). Weekly charts, hourly heatmaps, and streak tracking.
 
 ### Privacy
 

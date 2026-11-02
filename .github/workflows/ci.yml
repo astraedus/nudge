@@ -1,0 +1,67 @@
+name: CI
+
+# Pull-request gate for the Android app. release.yml only runs on main and v* tags, so before this
+# existed a PR (ours or a contributor's) reached main with no check at all, and lanes had to
+# workflow_dispatch release.yml on their branch to see a result. Same checks as release.yml's
+# test step, nothing that needs a secret: `pull_request` (never `pull_request_target`) gives a
+# fork's PR a read-only token and no secrets, so running its code here cannot reach the keystore.
+
+on:
+  pull_request:
+    paths-ignore:
+      - 'extension/**'   # extension-ci.yml covers the Chrome extension
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Check store release notes
+        run: |
+          scripts/test-store-notes.sh
+          scripts/check-store-notes.sh
+
+      - name: Test the device-QA harness (device-free, shimmed adb)
+        run: |
+          scripts/test-cert-guard.sh
+          scripts/test-device-qa.sh
+
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@48b5f213c81028ace310571dc5ec0fbbca0b2947 # v4
+        with:
+          validate-wrappers: false
+          cache-read-only: true   # PRs read main's Gradle cache but never write to it
+
+      # The qa build type and the :qa-driver tests run only on the bench, so CI at least proves they
+      # compile; a red qa compile would otherwise surface mid-device-run. (testDebugUnitTest already
+      # includes :qa-driver's JVM parser tests and app's QaControlManifestTest release gate.)
+      - name: Run tests and lint
+        run: |
+          bash -n scripts/qa-driver.sh
+          ./gradlew testDebugUnitTest lintDebug :app:compileQaKotlin :qa-driver:compileDebugAndroidTestKotlin
+
+      - name: Upload unit test reports
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: unit-test-reports
+          path: |
+            app/build/reports/tests/**
+            app/build/test-results/**
+            qa-driver/build/reports/tests/**
+            qa-driver/build/test-results/**
+            app/build/reports/lint-results-debug.html
+          if-no-files-found: warn
+          retention-days: 7

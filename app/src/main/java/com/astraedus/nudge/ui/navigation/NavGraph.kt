@@ -14,8 +14,10 @@ import androidx.navigation.navArgument
 import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.ui.screens.apps.AppListScreen
 import com.astraedus.nudge.ui.screens.apps.AppListViewModel
-import com.astraedus.nudge.ui.screens.groups.GroupScreen
-import com.astraedus.nudge.ui.screens.groups.GroupViewModel
+import com.astraedus.nudge.ui.screens.allapps.AllAppsEditorScreen
+import com.astraedus.nudge.ui.screens.allapps.AllAppsEditorViewModel
+import com.astraedus.nudge.ui.screens.groups.GroupEditorScreen
+import com.astraedus.nudge.ui.screens.groups.GroupEditorViewModel
 import com.astraedus.nudge.ui.screens.home.HomeScreen
 import com.astraedus.nudge.ui.screens.home.HomeViewModel
 import com.astraedus.nudge.ui.screens.nuke.NukeScreen
@@ -23,10 +25,6 @@ import com.astraedus.nudge.ui.screens.nuke.NukeViewModel
 import com.astraedus.nudge.ui.screens.onboarding.OnboardingScreen
 import com.astraedus.nudge.ui.screens.config.UnifiedAppConfigScreen
 import com.astraedus.nudge.ui.screens.config.UnifiedAppConfigViewModel
-import com.astraedus.nudge.ui.screens.rules.ActiveRulesScreen
-import com.astraedus.nudge.ui.screens.rules.ActiveRulesViewModel
-import com.astraedus.nudge.ui.screens.rules.RuleEditorScreen
-import com.astraedus.nudge.ui.screens.rules.RuleEditorViewModel
 import com.astraedus.nudge.ui.screens.settings.GrayscaleGuideScreen
 import com.astraedus.nudge.ui.screens.settings.MessagesEditorScreen
 import com.astraedus.nudge.ui.screens.settings.SettingsScreen
@@ -43,12 +41,6 @@ import kotlinx.coroutines.launch
 sealed class Screen(val route: String) {
     data object Home : Screen("home")
     data object Apps : Screen("apps")
-    data object RuleEditor : Screen("rule_editor/{packageName}?ruleId={ruleId}") {
-        fun createRoute(packageName: String) = "rule_editor/$packageName"
-        fun createRoute(packageName: String, ruleId: Long) = "rule_editor/$packageName?ruleId=$ruleId"
-        fun createNewRoute(packageName: String) = "rule_editor/$packageName?ruleId=0"
-    }
-    data object Groups : Screen("groups")
     data object Stats : Screen("stats")
     data object Willpower : Screen("willpower")
     data object Interventions : Screen("interventions")
@@ -56,7 +48,6 @@ sealed class Screen(val route: String) {
     data object Onboarding : Screen("onboarding")
     data object GrayscaleGuide : Screen("grayscale_guide")
     data object MessagesEditor : Screen("messages_editor")
-    data object ActiveRules : Screen("active_rules")
     data object AppConfig : Screen("app_config/{packageName}") {
         fun createRoute(packageName: String) = "app_config/$packageName"
     }
@@ -64,6 +55,18 @@ sealed class Screen(val route: String) {
         fun createRoute(packageName: String) = "app_detail/$packageName"
     }
     data object Nuke : Screen("nuke")
+
+    /** The group editor (spec 3.3). No id, or an id of 0 or less, opens a new group. */
+    data object GroupEditor : Screen("group_editor?groupId={groupId}") {
+        fun createRoute(groupId: Long? = null) =
+            if (groupId == null) "group_editor" else "group_editor?groupId=$groupId"
+    }
+
+    /** The All apps editor (spec 3.4). No id, or an id of 0 or less, opens a new rule. */
+    data object AllAppsEditor : Screen("all_apps_editor?ruleId={ruleId}") {
+        fun createRoute(ruleId: Long? = null) =
+            if (ruleId == null) "all_apps_editor" else "all_apps_editor?ruleId=$ruleId"
+    }
 }
 
 @Composable
@@ -132,13 +135,15 @@ fun NudgeNavGraph(
                 onNavigateToApps = { navController.navigate(Screen.Apps.route) },
                 onNavigateToStats = { navController.navigate(Screen.Stats.route) },
                 onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
-                onNavigateToActiveRules = { navController.navigate(Screen.ActiveRules.route) },
                 onNavigateToWillpower = { navController.navigate(Screen.Willpower.route) },
                 onNavigateToInterventions = { navController.navigate(Screen.Interventions.route) },
                 onNavigateToAppDetail = { pkg ->
                     navController.navigate(Screen.AppDetail.createRoute(pkg))
                 },
-                onNavigateToNuke = { navController.navigate(Screen.Nuke.route) }
+                onNavigateToNuke = { navController.navigate(Screen.Nuke.route) },
+                onOpenAllAppsRule = { ruleId ->
+                    navController.navigate(Screen.AllAppsEditor.createRoute(ruleId))
+                }
             )
         }
 
@@ -171,31 +176,14 @@ fun NudgeNavGraph(
             AppListScreen(
                 viewModel = viewModel,
                 onNavigateBack = { navController.popBackStack() },
-                onNavigateToRuleEditor = { pkg ->
+                onNavigateToAppConfig = { pkg ->
                     navController.navigate(Screen.AppConfig.createRoute(pkg))
-                }
-            )
-        }
-
-        composable(
-            route = Screen.RuleEditor.route,
-            arguments = listOf(
-                navArgument("packageName") { type = NavType.StringType },
-                navArgument("ruleId") {
-                    type = NavType.LongType
-                    defaultValue = -1L
-                }
-            )
-        ) {
-            val viewModel: RuleEditorViewModel = hiltViewModel()
-            RuleEditorScreen(
-                viewModel = viewModel,
-                onNavigateBack = { navController.popBackStack() },
-                onNavigateToRuleEditor = { pkg, ruleId ->
-                    navController.navigate(Screen.RuleEditor.createRoute(pkg, ruleId))
                 },
-                onCreateNewRule = { pkg ->
-                    navController.navigate(Screen.RuleEditor.createNewRoute(pkg))
+                onOpenGroup = { groupId ->
+                    navController.navigate(Screen.GroupEditor.createRoute(groupId))
+                },
+                onOpenAllAppsRule = { ruleId ->
+                    navController.navigate(Screen.AllAppsEditor.createRoute(ruleId))
                 }
             )
         }
@@ -207,26 +195,51 @@ fun NudgeNavGraph(
             val viewModel: UnifiedAppConfigViewModel = hiltViewModel()
             UnifiedAppConfigScreen(
                 viewModel = viewModel,
-                onNavigateBack = { navController.popBackStack() }
-            )
-        }
-
-        composable(Screen.ActiveRules.route) {
-            val viewModel: ActiveRulesViewModel = hiltViewModel()
-            ActiveRulesScreen(
-                viewModel = viewModel,
                 onNavigateBack = { navController.popBackStack() },
-                onNavigateToRuleEditor = { pkg, _ ->
-                    navController.navigate(Screen.AppConfig.createRoute(pkg))
+                onOpenGroup = { groupId ->
+                    navController.navigate(Screen.GroupEditor.createRoute(groupId))
+                },
+                onOpenAllAppsRule = { ruleId ->
+                    navController.navigate(Screen.AllAppsEditor.createRoute(ruleId))
                 }
             )
         }
 
-        composable(Screen.Groups.route) {
-            val viewModel: GroupViewModel = hiltViewModel()
-            GroupScreen(
+        composable(
+            route = Screen.GroupEditor.route,
+            arguments = listOf(
+                navArgument(GroupEditorViewModel.ARG_GROUP_ID) {
+                    type = NavType.LongType
+                    defaultValue = -1L
+                }
+            )
+        ) {
+            val viewModel: GroupEditorViewModel = hiltViewModel()
+            GroupEditorScreen(
                 viewModel = viewModel,
-                onNavigateBack = { navController.popBackStack() }
+                onNavigateBack = { navController.popBackStack() },
+                onOpenAllAppsRule = { ruleId ->
+                    navController.navigate(Screen.AllAppsEditor.createRoute(ruleId))
+                }
+            )
+        }
+
+        composable(
+            route = Screen.AllAppsEditor.route,
+            arguments = listOf(
+                navArgument(AllAppsEditorViewModel.ARG_RULE_ID) {
+                    type = NavType.LongType
+                    defaultValue = -1L
+                }
+            )
+        ) {
+            val viewModel: AllAppsEditorViewModel = hiltViewModel()
+            AllAppsEditorScreen(
+                viewModel = viewModel,
+                onNavigateBack = { navController.popBackStack() },
+                onOpenGroup = { groupId ->
+                    navController.navigate(Screen.GroupEditor.createRoute(groupId))
+                }
             )
         }
 

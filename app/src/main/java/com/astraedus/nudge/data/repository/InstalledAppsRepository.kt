@@ -5,8 +5,15 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ResolveInfo
 import android.graphics.drawable.Drawable
+import com.astraedus.nudge.domain.packages.AppCategory
+import com.astraedus.nudge.service.categoryOf
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -27,17 +34,42 @@ import javax.inject.Singleton
  *    (same pattern as [ContentFilterRepository]).
  *
  * Call [refresh] to invalidate the cache (e.g. after an app is installed/removed).
+ *
+ * Every PackageManager read sits behind [InstalledAppsSource], so a JVM test runs THIS class (its
+ * caching, its name fallback, [changes]) over an in-memory source
+ * (`testing/FakeInstalledAppsRepository.kt`) instead of mocking it. The app builds it from a
+ * [Context] through the `@Inject` constructor, which reads [PackageManagerAppsSource] on
+ * [Dispatchers.IO] exactly as before.
  */
 @Singleton
-class InstalledAppsRepository @Inject constructor(
-    @ApplicationContext private val context: Context
+class InstalledAppsRepository internal constructor(
+    private val source: InstalledAppsSource,
+    private val ioDispatcher: CoroutineDispatcher
 ) {
+
+    @Inject
+    constructor(@ApplicationContext context: Context) :
+        this(PackageManagerAppsSource(context), Dispatchers.IO)
 
     data class AppInfo(
         val packageName: String,
         val appName: String,
-        val icon: Drawable?
+        val icon: Drawable?,
+        /**
+         * `ApplicationInfo.category`, mapped (spec 5.2): what a category group matches. UNDEFINED
+         * for a row that is not an installed app (a placeholder for an uninstalled member), which
+         * matches no category.
+         */
+        val category: AppCategory = AppCategory.UNDEFINED
     )
+
+    private val _changes = MutableStateFlow(0L)
+
+    /**
+     * A version counter that bumps on every [refresh] (a package was added, removed or changed).
+     * Collectors that show the installed list re-read [getInstalledApps] when it moves.
+     */
+    val changes: StateFlow<Long> = _changes.asStateFlow()
 
     @Volatile
     private var cachedApps: List<AppInfo>? = null
@@ -65,13 +97,75 @@ class InstalledAppsRepository @Inject constructor(
         cachedApps?.let { return it }
         return loadMutex.withLock {
             cachedApps?.let { return it }
-            val loaded = withContext(Dispatchers.IO) { queryInstalledApps() }
+            val loaded = withContext(ioDispatcher) { source.launcherApps() }
             cachedApps = loaded
             loaded
         }
     }
 
-    private fun queryInstalledApps(): List<AppInfo> {
+    /**
+     * Resolve a single package's display label, or the package name itself when it is not
+     * installed. Cached per-package; runs off the main thread on the first lookup for a given
+     * package.
+     */
+    suspend fun resolveAppName(packageName: String): String {
+        nameCache[packageName]?.let { return it }
+        val resolved = withContext(ioDispatcher) { source.label(packageName) ?: packageName }
+        nameCache[packageName] = resolved
+        return resolved
+    }
+
+    /**
+     * Resolve a single package's launcher icon, or null when the app is not installed
+     * (uninstalled apps still appear in usage history, so callers must render without one).
+     *
+     * Same contract as [resolveAppName]: PackageManager work off the main thread, cached
+     * per package.
+     */
+    suspend fun resolveIcon(packageName: String): Drawable? {
+        iconCache[packageName]?.let { return it }
+        if (packageName in iconMisses) return null
+        val resolved = withContext(ioDispatcher) { source.icon(packageName) }
+        if (resolved != null) iconCache[packageName] = resolved else iconMisses.add(packageName)
+        return resolved
+    }
+
+    /**
+     * Invalidate every cache so the next [getInstalledApps] / [resolveAppName] /
+     * [resolveIcon] re-queries PackageManager, and bump [changes]. Called by the package-change
+     * receiver in `AndroidPackageFacts` after an app is installed/uninstalled/changed.
+     */
+    fun refresh() {
+        cachedApps = null
+        nameCache.clear()
+        iconCache.clear()
+        iconMisses.clear()
+        _changes.update { it + 1 }
+    }
+}
+
+/**
+ * The PackageManager reads behind [InstalledAppsRepository]: the one place it touches the
+ * platform. Blocking calls; the repository runs them off the main thread and caches the answers.
+ */
+interface InstalledAppsSource {
+    /**
+     * Every user-visible app (one with a LAUNCHER activity), without our own package or the
+     * critical system packages, one row per package, sorted by label.
+     */
+    fun launcherApps(): List<InstalledAppsRepository.AppInfo>
+
+    /** [packageName]'s display label, or null when it is not installed. */
+    fun label(packageName: String): String?
+
+    /** [packageName]'s launcher icon, or null when it is not installed. */
+    fun icon(packageName: String): Drawable?
+}
+
+/** The real [InstalledAppsSource]: PackageManager, read exactly as the repository always read it. */
+internal class PackageManagerAppsSource(private val context: Context) : InstalledAppsSource {
+
+    override fun launcherApps(): List<InstalledAppsRepository.AppInfo> {
         val pm = context.packageManager
         val launcherIntent = Intent(Intent.ACTION_MAIN).apply {
             addCategory(Intent.CATEGORY_LAUNCHER)
@@ -99,69 +193,33 @@ class InstalledAppsRepository @Inject constructor(
                     null
                 }
 
-                AppInfo(
+                InstalledAppsRepository.AppInfo(
                     packageName = packageName,
                     appName = appName,
-                    icon = icon
+                    icon = icon,
+                    // Already on the ResolveInfo: no extra PackageManager call per app.
+                    category = categoryOf(activityInfo.applicationInfo?.category ?: -1)
                 )
             }
             .distinctBy { it.packageName }
             .sortedBy { it.appName.lowercase() }
     }
 
-    /**
-     * Resolve a single package's display label. Cached per-package; runs off the
-     * main thread on the first lookup for a given package.
-     */
-    suspend fun resolveAppName(packageName: String): String {
-        nameCache[packageName]?.let { return it }
-        val resolved = withContext(Dispatchers.IO) {
-            try {
-                val pm = context.packageManager
-                val appInfo = pm.getApplicationInfo(packageName, 0)
-                pm.getApplicationLabel(appInfo).toString()
-            } catch (_: PackageManager.NameNotFoundException) {
-                packageName
-            }
-        }
-        nameCache[packageName] = resolved
-        return resolved
+    override fun label(packageName: String): String? = try {
+        val pm = context.packageManager
+        pm.getApplicationLabel(pm.getApplicationInfo(packageName, 0)).toString()
+    } catch (_: PackageManager.NameNotFoundException) {
+        null
     }
 
-    /**
-     * Resolve a single package's launcher icon, or null when the app is not installed
-     * (uninstalled apps still appear in usage history, so callers must render without one).
-     *
-     * Same contract as [resolveAppName]: PackageManager work off the main thread, cached
-     * per package.
-     */
-    suspend fun resolveIcon(packageName: String): Drawable? {
-        iconCache[packageName]?.let { return it }
-        if (packageName in iconMisses) return null
-        val resolved = withContext(Dispatchers.IO) {
-            try {
-                context.packageManager.getApplicationIcon(packageName)
-            } catch (_: PackageManager.NameNotFoundException) {
-                null
-            }
-        }
-        if (resolved != null) iconCache[packageName] = resolved else iconMisses.add(packageName)
-        return resolved
+    override fun icon(packageName: String): Drawable? = try {
+        context.packageManager.getApplicationIcon(packageName)
+    } catch (_: PackageManager.NameNotFoundException) {
+        null
     }
 
-    /**
-     * Invalidate every cache so the next [getInstalledApps] / [resolveAppName] /
-     * [resolveIcon] re-queries PackageManager. Call after an app is installed/uninstalled.
-     */
-    fun refresh() {
-        cachedApps = null
-        nameCache.clear()
-        iconCache.clear()
-        iconMisses.clear()
-    }
-
-    companion object {
-        private val EXCLUDED_PACKAGES = setOf(
+    private companion object {
+        val EXCLUDED_PACKAGES = setOf(
             "com.android.systemui",
             "com.android.settings",
             "com.android.packageinstaller",

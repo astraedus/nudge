@@ -1,8 +1,9 @@
 package com.astraedus.nudge.data.export
 
-import com.astraedus.nudge.data.db.entity.BlockRule
 import com.astraedus.nudge.data.db.entity.UsageEvent
 import com.astraedus.nudge.data.db.entity.isShownConfrontation
+import com.astraedus.nudge.testing.aBlockRule
+import com.astraedus.nudge.testing.aUsageEvent
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -32,23 +33,18 @@ class HistoryExportTest {
         exporter = RuleExporter()
     }
 
-    private fun event(
-        pkg: String = "com.instagram.android",
-        ts: Long,
-        blocked: Boolean = true,
-        mode: String? = "DELAY",
-        changedMind: Boolean = false
-    ) = UsageEvent(
-        id = ts, // deliberately non-zero: local ids must not survive the trip
-        packageName = pkg,
-        timestamp = ts,
-        wasBlocked = blocked,
-        blockMode = mode,
-        userChangedMind = changedMind
+    /**
+     * The history row this file exports: a shown block on Instagram. `copy` sets what a test is
+     * about; every row's id is its timestamp (deliberately non-zero: local ids must not survive the trip).
+     */
+    private val shownBlock = aUsageEvent(
+        packageName = "com.instagram.android",
+        wasBlocked = true,
+        blockMode = "DELAY"
     )
 
     private fun export(history: List<UsageEvent>): String = exporter.exportRules(
-        rules = listOf(BlockRule(id = 1, packageName = "com.instagram.android", mode = "DELAY")),
+        rules = listOf(aBlockRule(id = 1, packageName = "com.instagram.android")),
         groups = emptyList(),
         groupMembers = emptyMap(),
         history = history
@@ -59,10 +55,10 @@ class HistoryExportTest {
     @Test
     fun `history survives an export-import round trip field for field`() {
         val source = listOf(
-            event(ts = 1_700_000_000_000, mode = "DELAY"),
-            event(ts = 1_700_000_001_000, mode = "DELAY", changedMind = true),
-            event(pkg = "com.google.android.youtube", ts = 1_700_000_002_000, mode = "HARD_BLOCK"),
-            event(pkg = "com.zhiliaoapp.musically", ts = 1_700_000_003_000, blocked = false, mode = null)
+            shownBlock.copy(id = 1_700_000_000_000, timestamp = 1_700_000_000_000, blockMode = "DELAY"),
+            shownBlock.copy(id = 1_700_000_001_000, timestamp = 1_700_000_001_000, blockMode = "DELAY", userChangedMind = true),
+            shownBlock.copy(id = 1_700_000_002_000, timestamp = 1_700_000_002_000, packageName = "com.google.android.youtube", blockMode = "HARD_BLOCK"),
+            shownBlock.copy(id = 1_700_000_003_000, timestamp = 1_700_000_003_000, packageName = "com.zhiliaoapp.musically", wasBlocked = false, blockMode = null)
         )
 
         val result = exporter.importRules(export(source))
@@ -75,7 +71,7 @@ class HistoryExportTest {
 
     @Test
     fun `the exported file is valid JSON at version 1 with history as a top-level array`() {
-        val json = JSONObject(export(listOf(event(ts = 1000), event(ts = 2000))))
+        val json = JSONObject(export(listOf(shownBlock.copy(id = 1000, timestamp = 1000), shownBlock.copy(id = 2000, timestamp = 2000))))
 
         assertEquals(1, json.getInt("version"))
         assertEquals(2, json.getJSONArray("history").length())
@@ -85,7 +81,7 @@ class HistoryExportTest {
 
     @Test
     fun `package names needing JSON escaping survive`() {
-        val source = listOf(event(pkg = """weird."pkg"\name""", ts = 1000))
+        val source = listOf(shownBlock.copy(id = 1000, timestamp = 1000, packageName = """weird."pkg"\name"""))
 
         val result = exporter.importRules(export(source))
 
@@ -103,7 +99,7 @@ class HistoryExportTest {
     fun `a closing brace inside a rule value cannot break the splice`() {
         val json = exporter.exportRules(
             rules = listOf(
-                BlockRule(
+                aBlockRule(
                     id = 1,
                     packageName = "com.app.with}brace",
                     mode = "DELAY",
@@ -112,7 +108,7 @@ class HistoryExportTest {
             ),
             groups = emptyList(),
             groupMembers = emptyMap(),
-            history = listOf(event(pkg = "com.app.with}brace", ts = 1000))
+            history = listOf(shownBlock.copy(id = 1000, timestamp = 1000, packageName = "com.app.with}brace"))
         )
 
         val result = exporter.importRules(json)
@@ -144,12 +140,12 @@ class HistoryExportTest {
     fun `rules stay pretty-printed while history is written compactly`() {
         val json = exporter.exportRules(
             rules = listOf(
-                BlockRule(id = 1, packageName = "com.app1", mode = "DELAY"),
-                BlockRule(id = 2, packageName = "com.app2", mode = "HARD_BLOCK")
+                aBlockRule(id = 1, packageName = "com.app1", mode = "DELAY"),
+                aBlockRule(id = 2, packageName = "com.app2", mode = "HARD_BLOCK")
             ),
             groups = emptyList(),
             groupMembers = emptyMap(),
-            history = (1..50L).map { event(ts = it * 1000) }
+            history = (1..50L).map { shownBlock.copy(id = it * 1000, timestamp = it * 1000) }
         )
 
         val historyStart = json.indexOf("\"history\"")
@@ -174,7 +170,7 @@ class HistoryExportTest {
     @Test
     fun `a large history stays compact and still round-trips exactly`() {
         val source = (1..10_000L).map {
-            event(ts = 1_700_000_000_000 + it * 1000, changedMind = it % 4 == 0L)
+            shownBlock.copy(id = 1_700_000_000_000 + it * 1000, timestamp = 1_700_000_000_000 + it * 1000, userChangedMind = it % 4 == 0L)
         }
 
         val json = export(source)
@@ -379,9 +375,9 @@ class HistoryExportTest {
     @Test
     fun `blocked and walked-away counts survive the round trip`() {
         val source = buildList {
-            repeat(19) { add(event(ts = 1_000L + it, blocked = true)) }
-            repeat(7) { add(event(ts = 9_000L + it, blocked = true, changedMind = true)) }
-            repeat(5) { add(event(ts = 20_000L + it, blocked = false, mode = null)) }
+            repeat(19) { add(shownBlock.copy(id = 1_000L + it, timestamp = 1_000L + it, wasBlocked = true)) }
+            repeat(7) { add(shownBlock.copy(id = 9_000L + it, timestamp = 9_000L + it, wasBlocked = true, userChangedMind = true)) }
+            repeat(5) { add(shownBlock.copy(id = 20_000L + it, timestamp = 20_000L + it, wasBlocked = false, blockMode = null)) }
         }
         val sourceBlocked = source.count { it.wasBlocked }
         val sourceWalkAways = source.count { it.userChangedMind }
@@ -400,7 +396,7 @@ class HistoryExportTest {
 
     @Test
     fun `imported rows carry no local ids from the exporting device`() {
-        val restored = exporter.importRules(export(listOf(event(ts = 1000), event(ts = 2000))))
+        val restored = exporter.importRules(export(listOf(shownBlock.copy(id = 1000, timestamp = 1000), shownBlock.copy(id = 2000, timestamp = 2000))))
             .history
             .map(HistoryMerge::toEntity)
 

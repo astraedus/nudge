@@ -1,6 +1,6 @@
 package com.astraedus.nudge.service
 
-import java.io.File
+import com.astraedus.nudge.testing.SourceScan
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -25,12 +25,7 @@ import org.junit.Test
  */
 class BlockOverlayLaunchContractTest {
 
-    private fun read(relative: String): String {
-        val candidates = listOf(File("src/$relative"), File("app/src/$relative"))
-        return (candidates.firstOrNull { it.exists() }
-            ?: error("$relative not found from ${File("").absolutePath}"))
-            .readText()
-    }
+    private fun read(relative: String): String = SourceScan.appFile("src/$relative").readText()
 
     private val service: String by lazy {
         read("main/java/com/astraedus/nudge/service/NudgeAccessibilityService.kt")
@@ -48,18 +43,12 @@ class BlockOverlayLaunchContractTest {
         read("main/java/com/astraedus/nudge/MainActivity.kt")
     }
 
-    /** Not under `src/`, so it needs its own candidate search rather than [read]. */
+    /** Not under `src/`, so it goes through [SourceScan.appFile] directly rather than [read]. */
     private val appBuildGradle: String by lazy {
-        val candidates = listOf(File("app/build.gradle.kts"), File("build.gradle.kts"))
-        (candidates.firstOrNull { it.exists() }
-            ?: error("build.gradle.kts not found from ${File("").absolutePath}"))
-            .readText()
+        SourceScan.appFile("build.gradle.kts").readText()
     }
 
-    private fun stripComments(text: String): String = text
-        .replace(Regex("""/\*[\s\S]*?\*/"""), " ")
-        .lines()
-        .joinToString("\n") { line -> line.substringBefore("//") }
+    private fun stripComments(text: String): String = SourceScan.stripComments(text)
 
     /**
      * One function's body from the service, comments stripped and stopped at the next KDoc block.

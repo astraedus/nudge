@@ -1,6 +1,6 @@
 package com.astraedus.nudge.service
 
-import java.io.File
+import com.astraedus.nudge.testing.SourceScan
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -43,10 +43,7 @@ class ServiceTeardownContractTest {
      * a `"${'$'}{...}"` template or a `'}'` literal.
      */
     private fun code(): String {
-        val candidates = listOf(File("src/$relativePath"), File("app/src/$relativePath"))
-        val text = (candidates.firstOrNull { it.exists() }
-            ?: error("$relativePath not found from working dir ${File("").absolutePath}"))
-            .readText()
+        val text = SourceScan.appFile("src/$relativePath").readText()
         return text
             .replace(Regex("""/\*[\s\S]*?\*/"""), " ")
             .lines()

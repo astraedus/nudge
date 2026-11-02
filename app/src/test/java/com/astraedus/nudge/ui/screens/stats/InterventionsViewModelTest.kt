@@ -2,20 +2,16 @@ package com.astraedus.nudge.ui.screens.stats
 
 import com.astraedus.nudge.MainDispatcherRule
 import com.astraedus.nudge.data.db.BlockHistoryFixture
-import com.astraedus.nudge.data.db.entity.UsageEvent
-import com.astraedus.nudge.data.repository.InstalledAppsRepository
-import com.astraedus.nudge.data.repository.UsageRepository
-import io.mockk.coEvery
-import io.mockk.every
-import io.mockk.mockk
-import io.mockk.verify
+import com.astraedus.nudge.testing.FakeInstalledAppsRepository
+import com.astraedus.nudge.testing.FakeUsageEventDao
+import com.astraedus.nudge.testing.FakeUsageRepository
+import com.astraedus.nudge.testing.TestClock
+import com.astraedus.nudge.testing.aUsageEvent
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
-import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 
@@ -31,32 +27,20 @@ import org.junit.Test
 class InterventionsViewModelTest {
 
     private val dispatcher = StandardTestDispatcher()
+    private val clock = TestClock()
 
     @get:Rule
     val mainDispatcherRule = MainDispatcherRule(dispatcher)
 
-    private lateinit var usageRepository: UsageRepository
-    private lateinit var installedAppsRepository: InstalledAppsRepository
-
-    private val events = MutableStateFlow<List<UsageEvent>>(emptyList())
-    private val allTimeShown = MutableStateFlow(0)
-
-    @Before
-    fun setUp() {
-        usageRepository = mockk(relaxed = true)
-        installedAppsRepository = mockk(relaxed = true)
-
-        every { usageRepository.getEventsSince(any()) } returns events
-        every { usageRepository.getAllTimeShownCount() } returns allTimeShown
-        coEvery { installedAppsRepository.resolveAppName(any()) } answers { firstArg() }
-        coEvery { installedAppsRepository.resolveIcon(any()) } returns null
-    }
+    /** The `usage_events` table the real repository reads; no app is installed, so names fall back to packages. */
+    private val events = FakeUsageEventDao()
 
     @Test
     fun `the all-time headline counts confrontations, not the rows behind them`() =
         runTest(dispatcher) {
             val history = BlockHistoryFixture.day(dayStartMs = 1_700_000_000_000L, shown = 38, walkAways = 12)
-            allTimeShown.value = BlockHistoryFixture.shownCount(history)
+            events.insertAll(history)
+            assertEquals(50, BlockHistoryFixture.shownCount(history))
 
             val state = viewModel().uiState.first { !it.isLoading }
 
@@ -73,8 +57,6 @@ class InterventionsViewModelTest {
      */
     @Test
     fun `a device with no history reads zero`() = runTest(dispatcher) {
-        allTimeShown.value = 0
-
         val state = viewModel().uiState.first { !it.isLoading }
 
         assertEquals(0, state.allTimeTotal)
@@ -83,11 +65,13 @@ class InterventionsViewModelTest {
     @Test
     fun `flipping the range re-slices the loaded events instead of re-querying Room`() =
         runTest(dispatcher) {
-            val now = System.currentTimeMillis()
+            val now = clock.now
             val dayMs = 24L * 60L * 60L * 1000L
-            events.value = listOf(
-                blockedEvent(now - 2 * dayMs),   // inside 7d and 30d
-                blockedEvent(now - 20 * dayMs)   // inside 30d only
+            events.insertAll(
+                listOf(
+                    blockedEvent(now - 2 * dayMs),   // inside 7d and 30d
+                    blockedEvent(now - 20 * dayMs)   // inside 30d only
+                )
             )
 
             val viewModel = viewModel()
@@ -105,20 +89,16 @@ class InterventionsViewModelTest {
 
             // Two range flips, still exactly one query: the widest window is fetched once
             // and every narrower view is a slice of it.
-            verify(exactly = 1) { usageRepository.getEventsSince(any()) }
+            assertEquals(1, events.eventsSinceQueries)
         }
 
     private fun viewModel() = InterventionsViewModel(
-        usageRepository = usageRepository,
-        installedAppsRepository = installedAppsRepository,
-        calculator = InsightsCalculator()
+        usageRepository = FakeUsageRepository(events = events),
+        installedAppsRepository = FakeInstalledAppsRepository(),
+        calculator = InsightsCalculator(),
+        clock = clock.asSource()
     )
 
-    private fun blockedEvent(timestamp: Long) = UsageEvent(
-        packageName = "app.a",
-        timestamp = timestamp,
-        wasBlocked = true,
-        blockMode = "DELAY",
-        userChangedMind = false
-    )
+    private fun blockedEvent(timestamp: Long) =
+        aUsageEvent("app.a", timestamp = timestamp, wasBlocked = true, blockMode = "DELAY")
 }

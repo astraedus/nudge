@@ -1,5 +1,6 @@
 package com.astraedus.nudge.ui.widget
 
+import com.astraedus.nudge.testing.SourceScan
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -35,19 +36,14 @@ class WidgetStrictModeContractTest {
      * that explanation fail the test that protects it.
      */
     private fun source(relativePath: String): String {
-        val candidates = listOf(File("src/$relativePath"), File("app/src/$relativePath"))
-        val text = (candidates.firstOrNull { it.exists() }
-            ?: error("$relativePath not found from working dir ${File("").absolutePath}"))
-            .readText()
+        val text = SourceScan.mainFile(relativePath.removePrefix("main/")).readText()
         return text
             .replace(Regex("""/\*[\s\S]*?\*/"""), "")
             .lines()
             .joinToString("\n") { it.substringBefore("//") }
     }
 
-    private val widgetDir = File("app/src/main/java/com/astraedus/nudge/ui/widget")
-        .takeIf { it.exists() }
-        ?: File("src/main/java/com/astraedus/nudge/ui/widget")
+    private val widgetDir = SourceScan.kotlinFile("com/astraedus/nudge/ui/widget")
 
     private fun widgetSources(): List<File> {
         assertTrue(
@@ -74,7 +70,7 @@ class WidgetStrictModeContractTest {
         var guardedWrites = 0
 
         widgetSources().forEach { file ->
-            source(file.path.substringAfter("src/")).lines().forEach { line ->
+            source(file.path.substringAfter("/app/src/")).lines().forEach { line ->
                 if (!line.contains("setGlobalEnabled(false)")) return@forEach
                 if (line.contains("!strictModeEnabled")) {
                     guardedWrites++
@@ -109,7 +105,7 @@ class WidgetStrictModeContractTest {
     @Test
     fun `no widget turns protection off while Nuke is on`() {
         val writes = widgetSources().flatMap { file ->
-            source(file.path.substringAfter("src/")).lines()
+            source(file.path.substringAfter("/app/src/")).lines()
                 .filter { it.contains("setGlobalEnabled(false)") }
         }
         assertTrue("the guarded write must exist", writes.isNotEmpty())
@@ -201,7 +197,7 @@ class WidgetStrictModeContractTest {
     fun `the widget package writes no preference other than the audited master toggle`() {
         val writes = mutableListOf<String>()
         widgetSources().forEach { file ->
-            source(file.path.substringAfter("src/")).lines().forEach { line ->
+            source(file.path.substringAfter("/app/src/")).lines().forEach { line ->
                 val match = Regex("""\.set[A-Z][A-Za-z]*\(""").find(line) ?: return@forEach
                 val call = match.value.removePrefix(".").removeSuffix("(")
                 if (call != "setGlobalEnabled") writes += "${file.name}: $call"
@@ -254,7 +250,7 @@ class WidgetStrictModeContractTest {
             composingSources.size >= 3
         )
         composingSources.forEach { file ->
-            val text = source(file.path.substringAfter("src/"))
+            val text = source(file.path.substringAfter("/app/src/"))
             listOf(".collect {", ".collectLatest", "collectAsState", "stateIn(").forEach { banned ->
                 assertFalse(
                     "${file.name} must not use `$banned`: a widget composes in a short-lived " +

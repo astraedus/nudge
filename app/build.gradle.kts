@@ -4,6 +4,7 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
     id("com.google.devtools.ksp")
     id("com.google.dagger.hilt.android")
+    id("app.cash.paparazzi")
 }
 
 import java.util.Properties
@@ -24,8 +25,8 @@ android {
         applicationId = "dev.astraedus.nudge"
         minSdk = 26
         targetSdk = 36
-        versionCode = 68
-        versionName = "1.23.2"
+        versionCode = 72
+        versionName = "1.26.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -50,6 +51,28 @@ android {
                 "proguard-rules.pro"
             )
             signingConfig = signingConfigs.getByName("release")
+        }
+        /**
+         * The device-QA build: the RELEASE build (R8 on, `-dontobfuscate`, not debuggable, so the
+         * minified code paths and the "is this our own window" class-name check are what QA
+         * exercises), plus the DUMP-guarded control receiver in `src/qa` that the `:qa-driver`
+         * tests seed and read state through. Debug-signed, because it is bench software: it never
+         * leaves a test device, and a release-key qa APK would be one more artefact that could.
+         *
+         * No `applicationIdSuffix`: it would put the qa build next to the release one on the bench,
+         * and then the a11y component, the deep links and every `dev.astraedus.nudge` the logcat
+         * oracle greps for would differ from what ships. Installing qa over release is a key switch
+         * (scripts/qa-driver.sh handles it the way device-qa.sh does); see docs/TESTING.md.
+         *
+         * Never in a release path: CI builds `assembleRelease`/`bundleRelease`, and the qa
+         * receiver is kept out of those by `verify<Variant>NoQaControl` and `QaControlManifestTest`.
+         */
+        create("qa") {
+            initWith(getByName("release"))
+            signingConfig = signingConfigs.getByName("debug")
+            // Library modules publish debug/release only; resolve them as release, like the
+            // build type this one copies.
+            matchingFallbacks += listOf("release")
         }
     }
 
@@ -178,6 +201,61 @@ dependencies {
 }
 
 /**
+ * The JVM unit tests run against the library versions the app ships.
+ *
+ * Paparazzi (docs/screenshot-tests.md) adds its runtime to every unit-test classpath, and that
+ * runtime asks for newer kotlin-stdlib and kotlinx-coroutines than the app is built with. Left to
+ * Gradle's "highest wins", the whole suite would quietly run on coroutines-test 1.10 while the app
+ * ships 1.9, which is the library #53's leak detection leans on. Consistent resolution takes the
+ * app's resolved version for every module the two classpaths share; modules only Paparazzi uses
+ * resolve as normal, except Kotlin's own artifacts (kotlin-reflect, which mockk and Paparazzi
+ * load), held at the Kotlin this build compiles with so they match the stdlib beside them.
+ */
+afterEvaluate {
+    val kotlinVersion = org.jetbrains.kotlin.gradle.plugin.getKotlinPluginVersion(logger)
+    for (variant in listOf("debug", "release")) {
+        for (kind in listOf("Compile", "Runtime")) {
+            configurations.getByName("${variant}UnitTest${kind}Classpath").apply {
+                shouldResolveConsistentlyWith(configurations.getByName("${variant}${kind}Classpath"))
+                resolutionStrategy.eachDependency {
+                    if (requested.group == "org.jetbrains.kotlin") useVersion(kotlinVersion)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Paparazzi's screenshot tests and the rest of the JVM suite never share a test JVM.
+ *
+ * Paparazzi renders with layoutlib, whose jar is the real Android framework (native calls and all)
+ * rather than the android.jar stubs. On one classpath, every test that mocks a framework class
+ * (PackageManager, AccessibilityNodeInfo, WindowManager) runs that class's real static initialiser,
+ * which dies in `SystemProperties.native_get`; and a framework class that failed to initialise
+ * stays broken for the gallery tests that run later in the same fork. 83 tests failed that way.
+ *
+ * So a run that includes a Paparazzi task (`verifyPaparazziDebug`, `recordPaparazziDebug`) runs the
+ * screenshot gallery and nothing else, and every other run leaves the gallery out and takes
+ * layoutlib off the classpath, so the suite sees exactly the classpath it had before Paparazzi.
+ * Run the two in separate Gradle invocations, as CI does (ci.yml, screenshots.yml).
+ */
+val screenshotPackage = "com.astraedus.nudge.ui.gallery"
+gradle.taskGraph.whenReady {
+    // Not any "Paparazzi" task: testDebugUnitTest itself depends on its resources task.
+    val paparazziRun = allTasks.any {
+        it.project == project && it.name.matches(Regex("(record|verify|cleanRecord)Paparazzi.*"))
+    }
+    tasks.withType<Test>().forEach { test ->
+        if (paparazziRun) {
+            test.filter.includeTestsMatching("$screenshotPackage.*")
+        } else {
+            test.filter.excludeTestsMatching("$screenshotPackage.*")
+            test.classpath = test.classpath.filter { !it.name.matches(Regex("layoutlib-[0-9].*\\.jar")) }
+        }
+    }
+}
+
+/**
  * Unit-test JVM forks: make a process-global coroutine leak NAME ITSELF.
  *
  * Issue [#53](https://github.com/astraedus/nudge/issues/53) cost two investigations and shipped
@@ -266,7 +344,84 @@ abstract class VerifyMergedPermissionsTask : DefaultTask() {
     }
 }
 
+/**
+ * The qa control receiver must never reach a non-qa APK.
+ *
+ * It lives in `src/qa`, which AGP merges into the qa build type only, so today this can only fail
+ * if someone copies the declaration into `src/main` or `src/debug`. That is exactly the edit nobody
+ * reviews closely ("just make the receiver reachable on debug too"), and the cost would be an
+ * exported component that wipes a user's rules. Same shape as [VerifyMergedPermissionsTask]: it
+ * reads the manifest that SHIPS, so a library or an overlay cannot sneak past it either.
+ */
+abstract class VerifyNoQaControlTask : DefaultTask() {
+    @get:InputFile
+    abstract val mergedManifest: RegularFileProperty
+
+    @get:OutputFile
+    abstract val report: RegularFileProperty
+
+    @TaskAction
+    fun verify() {
+        val text = mergedManifest.get().asFile.readText()
+        val leaks = QA_CONTROL_MARKERS.filter { text.contains(it) }
+        if (leaks.isNotEmpty()) {
+            throw GradleException(
+                "A non-qa merged manifest names the qa control channel ($leaks). It belongs in " +
+                    "app/src/qa/AndroidManifest.xml only (see QaControlReceiver)."
+            )
+        }
+        report.get().asFile.writeText("clean\n")
+    }
+
+    companion object {
+        /** The receiver's class and its action, as they appear in a merged manifest. */
+        val QA_CONTROL_MARKERS = listOf("com.astraedus.nudge.qa.", "dev.astraedus.nudge.qa.")
+    }
+}
+
 androidComponents {
+    // The qa variant runs no JVM tests of its own: `./gradlew test` (CI) would otherwise run the
+    // whole suite a THIRD time against identical main code. Its one extra source file is covered by
+    // QaControlManifestTest (placement + guard) and by the :qa-driver suite on a device.
+    beforeVariants(selector().withBuildType("qa")) { it.enableUnitTest = false }
+
+    onVariants(selector().withBuildType("release")) { variant ->
+        // QaControlManifestTest reads the RELEASE merged manifest from every unit-test fork, so
+        // the gate runs on `./gradlew test`, which is what CI runs before anything ships.
+        val merged = variant.artifacts.get(com.android.build.api.artifact.SingleArtifact.MERGED_MANIFEST)
+        tasks.withType<Test>().configureEach {
+            inputs.file(merged).withPropertyName("releaseMergedManifest")
+                .withPathSensitivity(PathSensitivity.NONE)
+            jvmArgumentProviders.add(CommandLineArgumentProvider {
+                listOf("-Dnudge.releaseMergedManifest=${merged.get().asFile.absolutePath}")
+            })
+        }
+    }
+
+    onVariants(selector().withBuildType("qa")) { variant ->
+        // The positive control for the test above: the same detection must FIND the receiver in
+        // the qa manifest, or a "release is clean" pass could be a matcher that matches nothing.
+        val merged = variant.artifacts.get(com.android.build.api.artifact.SingleArtifact.MERGED_MANIFEST)
+        tasks.withType<Test>().configureEach {
+            inputs.file(merged).withPropertyName("qaMergedManifest")
+                .withPathSensitivity(PathSensitivity.NONE)
+            jvmArgumentProviders.add(CommandLineArgumentProvider {
+                listOf("-Dnudge.qaMergedManifest=${merged.get().asFile.absolutePath}")
+            })
+        }
+    }
+
+    onVariants { variant ->
+        if (variant.buildType == "qa") return@onVariants
+        val suffix = variant.name.replaceFirstChar { it.uppercase() }
+        val verifyNoQa = tasks.register<VerifyNoQaControlTask>("verify${suffix}NoQaControl") {
+            mergedManifest.set(variant.artifacts.get(com.android.build.api.artifact.SingleArtifact.MERGED_MANIFEST))
+            report.set(layout.buildDirectory.file("reports/no-qa-control/${variant.name}.txt"))
+        }
+        tasks.matching { it.name == "assemble$suffix" || it.name == "bundle$suffix" }
+            .configureEach { dependsOn(verifyNoQa) }
+    }
+
     onVariants { variant ->
         val suffix = variant.name.replaceFirstChar { it.uppercase() }
         val verify = tasks.register<VerifyMergedPermissionsTask>("verify${suffix}MergedPermissions") {

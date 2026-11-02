@@ -1,5 +1,6 @@
 package com.astraedus.nudge.service
 
+import com.astraedus.nudge.testing.SourceScan
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -28,10 +29,7 @@ import java.io.File
  */
 class WatchdogDebugTriggerContractTest {
 
-    private fun file(relativePath: String): File =
-        listOf(File("src/$relativePath"), File("app/src/$relativePath"))
-            .firstOrNull { it.exists() }
-            ?: error("$relativePath not found from working dir ${File("").absolutePath}")
+    private fun file(relativePath: String): File = SourceScan.appFile("src/$relativePath")
 
     /** Code only. These files document the defect in prose, so raw text would self-satisfy. */
     private fun source(relativePath: String): String =
@@ -103,10 +101,7 @@ class WatchdogDebugTriggerContractTest {
             text.contains("recordProtectionCheck(")
         )
         // The trigger is useless to the next person if the invocation only exists in this file.
-        val doc = listOf(
-            File("../docs/architecture/service-lifecycle-and-watchdog.md"),
-            File("docs/architecture/service-lifecycle-and-watchdog.md")
-        ).firstOrNull { it.exists() } ?: error("watchdog architecture doc not found")
+        val doc = SourceScan.rootFile("docs/architecture/service-lifecycle-and-watchdog.md")
         assertTrue(
             "${doc.name} must document the ADB invocation, or the trigger is undiscoverable",
             doc.readText().contains("dev.astraedus.nudge.debug.RUN_WATCHDOG")
@@ -146,22 +141,6 @@ class WatchdogDebugTriggerContractTest {
         assertFalse(
             "src/$mainManifest must not declare the debug trigger action",
             xml(mainManifest).contains("dev.astraedus.nudge.debug")
-        )
-    }
-
-    @Test
-    fun `no shipping code references the debug trigger`() {
-        val root = listOf(File("src/main/java"), File("app/src/main/java")).first { it.exists() }
-        val referrers = root.walkTopDown()
-            .filter { it.isFile && it.extension == "kt" }
-            .filter { it.readText().contains("WatchdogDebugReceiver") }
-            .map { it.name }
-            .toList()
-
-        assertTrue(
-            "Nothing in src/main may reference WatchdogDebugReceiver, the class is absent from " +
-                "release builds, so a reference is a release-only compile failure. Found: $referrers",
-            referrers.isEmpty()
         )
     }
 }

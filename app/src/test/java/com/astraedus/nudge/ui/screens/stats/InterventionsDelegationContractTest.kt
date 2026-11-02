@@ -1,5 +1,6 @@
 package com.astraedus.nudge.ui.screens.stats
 
+import com.astraedus.nudge.testing.SourceScan
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -27,10 +28,7 @@ class InterventionsDelegationContractTest {
      * defect fail the test that prevents it.
      */
     private fun source(relativePath: String): String {
-        val candidates = listOf(File("src/$relativePath"), File("app/src/$relativePath"))
-        val file = candidates.firstOrNull { it.exists() }
-            ?: error("$relativePath not found from working dir ${File("").absolutePath}")
-        return codeOf(file)
+        return codeOf(SourceScan.mainFile(relativePath.removePrefix("main/")))
     }
 
     /** The same stripping, for a file found by walking rather than by name. */
@@ -40,12 +38,7 @@ class InterventionsDelegationContractTest {
         .joinToString("\n") { it.substringBefore("//") }
 
     /** Every Kotlin file in `main`, so an invariant can be asserted about the APP, not a file. */
-    private fun mainSources(): List<File> {
-        val root = listOf(File("src/main/java"), File("app/src/main/java"))
-            .firstOrNull { it.isDirectory }
-            ?: error("main sources not found from working dir ${File("").absolutePath}")
-        return root.walkTopDown().filter { it.isFile && it.extension == "kt" }.toList()
-    }
+    private fun mainSources(): List<File> = SourceScan.kotlinSources()
 
     private val calculator =
         source("main/java/com/astraedus/nudge/ui/screens/stats/InsightsCalculator.kt")

@@ -1,10 +1,10 @@
 package com.astraedus.nudge.ui.screens.stats
 
+import com.astraedus.nudge.testing.SourceScan
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.io.File
 
 /**
  * Source-level guard for "one source of truth for a day's screen time", in the same spirit as
@@ -34,10 +34,7 @@ class ScreenTimeSourceContractTest {
      * fail the test that protects it.
      */
     private fun source(relativePath: String): String {
-        val candidates = listOf(File("src/$relativePath"), File("app/src/$relativePath"))
-        val text = (candidates.firstOrNull { it.exists() }
-            ?: error("$relativePath not found from working dir ${File("").absolutePath}"))
-            .readText()
+        val text = SourceScan.mainFile(relativePath.removePrefix("main/")).readText()
         return text
             .replace(Regex("""/\*[\s\S]*?\*/"""), "")
             .lines()

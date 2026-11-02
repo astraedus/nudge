@@ -3,7 +3,7 @@ package com.astraedus.nudge.service
 import android.view.accessibility.AccessibilityEvent
 import com.astraedus.nudge.NudgeIdentity
 import com.astraedus.nudge.domain.block.BlockLaunchGate
-import java.io.File
+import com.astraedus.nudge.testing.SourceScan
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -41,10 +41,7 @@ class OwnClassNamespaceContractTest {
     )
 
     private val appBuildGradle: String by lazy {
-        val candidates = listOf(File("build.gradle.kts"), File("app/build.gradle.kts"))
-        (candidates.firstOrNull { it.exists() }
-            ?: error("app/build.gradle.kts not found from ${File("").absolutePath}"))
-            .readText()
+        SourceScan.appFile("build.gradle.kts").readText()
     }
 
     private fun buildValue(key: String): String =
@@ -165,16 +162,13 @@ class OwnClassNamespaceContractTest {
     @Test
     fun `every class name in this fixture names a source file that exists`() {
         realOwnClassNames.forEach { className ->
-            val relative = "java/" + className.replace('.', '/') + ".kt"
-            val candidates = listOf(
-                File("app/src/main/$relative"),
-                File("src/main/$relative")
-            )
+            val relative = className.replace('.', '/') + ".kt"
+            val exists = runCatching { SourceScan.kotlinFile(relative) }.isSuccess
             assertTrue(
                 "$className must be a class this app really ships, not a string that merely " +
                     "starts with our namespace -- a retyped class name is the same fixture " +
                     "dishonesty that hid issue #33",
-                candidates.any { it.exists() }
+                exists
             )
         }
     }
@@ -192,9 +186,7 @@ class OwnClassNamespaceContractTest {
                 NudgeIdentity.CLASS_NAMESPACE
             )
         )
-        val dispatch = File("app/src/main/java/com/astraedus/nudge/service/NudgeAccessibilityService.kt")
-            .takeIf { it.exists() }
-            ?: File("src/main/java/com/astraedus/nudge/service/NudgeAccessibilityService.kt")
+        val dispatch = SourceScan.kotlinFile("com/astraedus/nudge/service/NudgeAccessibilityService.kt")
         val source = dispatch.readText()
         val awareness = source.indexOf("if (signal is ForegroundSignal.AwarenessOverlay)")
         val ownUi = source.indexOf("if (signal is ForegroundSignal.OwnUi)")

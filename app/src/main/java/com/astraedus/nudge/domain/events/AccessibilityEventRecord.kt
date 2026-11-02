@@ -61,8 +61,36 @@ data class AccessibilityEventRecord(
     val sourceViewId: String? = null,
     val isScrollable: Boolean = false
 ) {
+    /**
+     * True for a `TYPE_WINDOW_STATE_CHANGED` that is about an accessibility PANE inside a window
+     * (a view with a pane title appearing, disappearing, or retitled) and not about a window
+     * coming forward.
+     *
+     * The platform overloads the type. Its own documentation for `TYPE_WINDOW_STATE_CHANGED` says
+     * these events "should only be dispatched from Views that have accessibility pane titles, and
+     * replaces TYPE_WINDOW_CONTENT_CHANGED for those sources": a pane event is a CONTENT CHANGE
+     * wearing the window type, and the only thing that tells them apart is [contentChangeTypes].
+     *
+     * It matters because a pane can disappear from an app that is already gone. YouTube tears down
+     * its Shorts player pane (`android.view.ViewGroup`, `CONTENT_CHANGE_TYPE_PANE_DISAPPEARED`) a few
+     * dozen milliseconds AFTER the launcher has come forward. Read as "YouTube came forward", it
+     * started a new sitting over the home screen, the Delay overlay landed on the launcher, and
+     * when its countdown finished the completion hand-back reopened YouTube by itself. See
+     * `youtube-pane-straggler-after-home.jsonl`.
+     */
+    val isPaneChange: Boolean
+        get() = type == A11yEventType.WINDOW_STATE_CHANGED && (contentChangeTypes and PANE_CHANGE_TYPES) != 0
+
     companion object {
         /** The framework's own "this field was never set" value (`AccessibilityRecord.UNDEFINED`). */
         const val UNDEFINED = -1
+
+        /**
+         * `AccessibilityEvent.CONTENT_CHANGE_TYPE_PANE_TITLE` (0x08), `..._PANE_APPEARED` (0x10) and
+         * `..._PANE_DISAPPEARED` (0x20), API 28. Spelled as numbers because this layer has no
+         * `android.*` dependency; `PaneChangeTest` pins them to the framework constants, so a typo
+         * here fails a test instead of silently classifying panes as windows again.
+         */
+        const val PANE_CHANGE_TYPES = 0x08 or 0x10 or 0x20
     }
 }

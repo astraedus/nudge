@@ -14,11 +14,13 @@ import com.astraedus.nudge.data.repository.BlockRuleRepository
 import com.astraedus.nudge.data.repository.InstalledAppsRepository
 import com.astraedus.nudge.data.repository.ScreenTimeProvider
 import com.astraedus.nudge.data.repository.UsageRepository
+import com.astraedus.nudge.data.repository.toRuleData
 import com.astraedus.nudge.di.IoDispatcher
 import com.astraedus.nudge.domain.engine.TimeTracker
 import com.astraedus.nudge.domain.lock.ChallengeState
 import com.astraedus.nudge.domain.nuke.NukePolicy
 import com.astraedus.nudge.domain.nuke.NukeState
+import com.astraedus.nudge.service.EssentialApps
 import com.astraedus.nudge.ui.nuke.NukeGate
 import com.astraedus.nudge.ui.nuke.NukeUnlockState
 import com.astraedus.nudge.ui.lock.StrictModeGate
@@ -27,6 +29,7 @@ import com.astraedus.nudge.ui.screens.stats.InsightsCalculator
 import com.astraedus.nudge.ui.screens.stats.StatsViewModel.Companion.formatDayTotal
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.util.Calendar
 import javax.inject.Inject
 import kotlin.math.roundToInt
 import kotlinx.coroutines.CoroutineDispatcher
@@ -36,6 +39,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
@@ -68,7 +72,7 @@ data class TopBlockedApp(
 data class HomeUiState(
     val isGlobalEnabled: Boolean = true,
     val todayTotalUsageFormatted: String = "0s",
-    val activeRuleCount: Int = 0,
+    val activeAppCount: Int = 0,
     /**
      * The "Blocked" tiles: confrontations the user was SHOWN, each counted once. A walk-away is a
      * walk-away and lands in [changedMindCountToday] / [allTimeChangedMindCount]; it is not also a
@@ -91,17 +95,17 @@ data class HomeUiState(
 data class NukeSummary(
     val active: Boolean = false,
     val hasKey: Boolean = false,
-    /** Listed apps with the static safety floor removed (the device floor is the Nuke screen's). */
+    /** Apps Nuke actually blocks: [NukePolicy.nukedCount], the same number the Nuke screen shows. */
     val appCount: Int = 0
 ) {
     /** Never set up at all: no key and no list. The card then invites setup instead of a state. */
     val needsSetup: Boolean get() = !hasKey && appCount == 0
 
     companion object {
-        fun from(state: NukeState) = NukeSummary(
+        fun from(state: NukeState, essentials: Set<String>) = NukeSummary(
             active = state.active,
             hasKey = state.hasKey,
-            appCount = NukePolicy.enforceable(state.packages, emptySet()).size
+            appCount = NukePolicy.nukedCount(state, essentials)
         )
     }
 }
@@ -118,6 +122,7 @@ class HomeViewModel @Inject constructor(
     private val homeChartsBuilder: HomeChartsBuilder,
     private val installedAppsRepository: InstalledAppsRepository,
     private val insightsCalculator: InsightsCalculator,
+    private val essentialApps: EssentialApps,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) : ViewModel() {
 
@@ -134,15 +139,73 @@ class HomeViewModel @Inject constructor(
     val nukeGate = NukeGate(currentState = { nudgePreferences.nukeState.first() })
     val nukeUnlock: StateFlow<NukeUnlockState?> = nukeGate.unlock
 
+    /** The one essentials list, resolved off the main thread (it reads PackageManager and roles). */
+    private fun essentialsFlow() = flow { emit(essentialApps.packages()) }.flowOn(ioDispatcher)
+
+    /**
+     * The essentials and the one browser list together (one resolution, cached together): what a
+     * group's membership resolves against besides the installed apps.
+     */
+    private fun essentialsAndBrowsersFlow() =
+        flow { emit(essentialApps.packages() to essentialApps.browsers()) }.flowOn(ioDispatcher)
+
+    /**
+     * The installed apps with a launcher entry, each with its category: what an All apps rule and a
+     * category group can cover (spec 4.1, 5.2).
+     */
+    private fun launchableFlow() = installedAppsRepository.changes.map {
+        installedAppsRepository.getInstalledApps().associate { it.packageName to it.category }
+    }.flowOn(ioDispatcher)
+
     /**
      * The dashboard's Nuke card. Its OWN flow rather than a field on [uiState]: the card changes
      * when Nuke does, and folding it into the clock-driven combine would re-render the whole
      * dashboard state on every Nuke write and vice versa.
+     *
+     * Counted against the same [EssentialApps] set the Nuke screen uses, so an essential app still
+     * stored on the list (Messages, say, listed before it became essential) is left out of BOTH
+     * counts, never just one.
      */
-    val nukeSummary: StateFlow<NukeSummary> = nudgePreferences.nukeState
-        .map { NukeSummary.from(it) }
+    val nukeSummary: StateFlow<NukeSummary> = combine(
+        nudgePreferences.nukeState,
+        essentialsFlow()
+    ) { state, essentials -> NukeSummary.from(state, essentials) }
         .distinctUntilChanged()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), NukeSummary())
+
+    /**
+     * The lock card (spec 3.8): the All apps rule blocking right now, or null. Its OWN flow, like
+     * [nukeSummary], so it never rides the dashboard's clock-driven combine. The rules are read in
+     * the flow body, so nothing is read until the card is collected.
+     *
+     * A scheduled rule starts and ends on its own, so while one exists the card is re-derived at the
+     * top of every minute (the schedule's resolution) and disappears at the window end. With no
+     * enabled scheduled All apps rule there is no ticker at all: the card only changes when a rule
+     * does.
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val lockCard: StateFlow<LockCard?> = flow {
+        val labels = installedAppsRepository.getInstalledApps().associate { it.packageName to it.appName }
+        emitAll(
+            combine(blockRuleRepository.getAllRules(), blockRuleRepository.getAllGroups()) { rules, groups ->
+                val names = groups.associate { it.id to it.name }
+                rules.map { it.toRuleData(groupNames = names) } to labels
+            }
+        )
+    }.flatMapLatest { (rules, labels) ->
+        flow {
+            if (!lockCardNeedsClock(rules)) {
+                emit(lockCardFor(rules, Calendar.getInstance(), labels))
+                return@flow
+            }
+            while (true) {
+                val now = Calendar.getInstance()
+                emit(lockCardFor(rules, now, labels))
+                delay(millisToNextMinute(now.timeInMillis))
+            }
+        }
+    }.distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     /**
      * Start-of-today, re-derived on every poll tick rather than once at construction.
@@ -282,13 +345,20 @@ class HomeViewModel @Inject constructor(
     // list ticks with the events.
     val uiState: StateFlow<HomeUiState> = combine(
         nudgePreferences.isGlobalEnabled,
-        blockRuleRepository.getEnabledRules().map { rules ->
-            rules.mapNotNull { it.packageName }.distinct().size
+        // Apps covered by a rule that is on (direct or through a group), as the engine sees them.
+        combine(
+            blockRuleRepository.getEnabledRules(),
+            blockRuleRepository.getAllGroups(),
+            blockRuleRepository.getAllGroupMembers(),
+            launchableFlow(),
+            essentialsAndBrowsersFlow()
+        ) { rules, groups, members, launchable, (essentials, browsers) ->
+            activeAppsCount(rules, groups, members, launchable, essentials, browsers)
         },
         countsFlow,
         screenTimeFlow,
         weekEventsFlow
-    ) { enabled, activeRuleCount, counts, screenTime, weekEvents ->
+    ) { enabled, activeAppCount, counts, screenTime, weekEvents ->
         val charts = homeChartsBuilder.build(
             weeklyTotals = screenTime.weeklyTotals,
             weekEvents = weekEvents.events,
@@ -297,7 +367,7 @@ class HomeViewModel @Inject constructor(
         HomeUiState(
             isGlobalEnabled = enabled,
             todayTotalUsageFormatted = formatDayTotal(screenTime.todayMs, timeTracker),
-            activeRuleCount = activeRuleCount,
+            activeAppCount = activeAppCount,
             blockedCountToday = counts.shownToday,
             changedMindCountToday = counts.changedMindToday,
             allTimeBlockedCount = counts.allTimeShown,

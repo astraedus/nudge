@@ -1,20 +1,20 @@
 package com.astraedus.nudge.domain.usecase
 
-import com.astraedus.nudge.domain.nuke.NukeEnforcement
-import com.astraedus.nudge.data.db.entity.BlockRule
-import com.astraedus.nudge.data.preferences.NudgePreferences
-import com.astraedus.nudge.data.repository.BlockRuleRepository
 import com.astraedus.nudge.data.repository.ContentFilter
-import com.astraedus.nudge.data.repository.UsageRepository
 import com.astraedus.nudge.domain.engine.BlockEngine
 import com.astraedus.nudge.domain.engine.RuleEvaluator
 import com.astraedus.nudge.domain.engine.ScheduleEvaluator
 import com.astraedus.nudge.domain.model.BlockDecision
 import com.astraedus.nudge.domain.model.BlockMode
+import com.astraedus.nudge.domain.nuke.NukeEnforcement
+import com.astraedus.nudge.domain.packages.FakeEssentialPackages
+import com.astraedus.nudge.domain.packages.FakePackageFacts
+import com.astraedus.nudge.testing.FakeNudgePreferences
+import com.astraedus.nudge.testing.FakeRuleDatabase
+import com.astraedus.nudge.testing.FakeUsageRepository
+import com.astraedus.nudge.testing.aBlockRule
 import io.mockk.coEvery
-import io.mockk.every
 import io.mockk.mockk
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -28,62 +28,38 @@ import org.junit.Test
  * app-level `mode`, so a whole-app-off rule (`mode = NONE`) can still enforce on the web.
  *
  * Real [BlockEngine] + [RuleEvaluator] (matches [EvaluateBlockContentFilterTest]'s harness);
- * repositories/preferences/content filter mocked.
+ * rules, usage and preferences are the shared fakes; only the content filter is mocked.
  */
 class EvaluateBlockWebDomainTest {
 
-    private lateinit var blockRuleRepository: BlockRuleRepository
-    private lateinit var usageRepository: UsageRepository
-    private lateinit var preferences: NudgePreferences
+    private val instagram = "com.instagram.android"
+    private val db = FakeRuleDatabase()
+    private val preferences = FakeNudgePreferences()
     private lateinit var contentFilter: ContentFilter
     private lateinit var useCase: EvaluateBlockUseCase
 
     @Before
     fun setUp() {
-        blockRuleRepository = mockk()
-        usageRepository = mockk()
-        preferences = mockk()
         contentFilter = mockk()
 
-        every { usageRepository.getDailyForegroundTimeMs(any()) } returns 0L
-        every { preferences.contentFilterStrictKeywords } returns flowOf(false)
-        every { preferences.contentFilterAllowlist } returns flowOf(emptySet())
-        every { preferences.contentFilterBlocklist } returns flowOf(emptySet())
-        every { preferences.contentFilterEnabled } returns flowOf(false)
-        every { preferences.contentFilterMode } returns flowOf("HARD_BLOCK")
-
+        // The real preferences ship the content filter off, strict keywords off, mode HARD_BLOCK.
         useCase = EvaluateBlockUseCase(
-            blockRuleRepository = blockRuleRepository,
-            usageRepository = usageRepository,
+            blockRuleRepository = db.repository,
+            usageRepository = FakeUsageRepository(),
             blockEngine = BlockEngine(ScheduleEvaluator()),
             ruleEvaluator = RuleEvaluator(),
             scheduleEvaluator = ScheduleEvaluator(),
             preferences = preferences,
             contentFilter = contentFilter,
-            nukeEnforcement = NukeEnforcement.NEVER
+            nukeEnforcement = NukeEnforcement.NEVER,
+            essentialPackages = FakeEssentialPackages(),
+            packageFacts = FakePackageFacts()
         )
     }
 
-    private fun rule(
-        mode: String,
-        webDomains: String?,
-        webBlockMode: String? = null,
-        packageName: String? = "com.instagram.android",
-        delaySeconds: Int = 15
-    ) = BlockRule(
-        id = 1,
-        packageName = packageName,
-        mode = mode,
-        delaySeconds = delaySeconds,
-        webDomains = webDomains,
-        webBlockMode = webBlockMode
-    )
-
     @Test
     fun `THE REGRESSION -- app mode NONE with webBlockMode HARD_BLOCK still blocks the site`() = runTest {
-        every { blockRuleRepository.getEnabledRules() } returns flowOf(
-            listOf(rule(mode = "NONE", webDomains = "instagram.com", webBlockMode = "HARD_BLOCK"))
-        )
+        db.seedRule(aBlockRule(packageName = instagram, mode = "NONE", webDomains = "instagram.com", webBlockMode = "HARD_BLOCK"))
 
         val result = useCase.evaluateWebDomain("https://www.instagram.com/reels")
 
@@ -93,9 +69,7 @@ class EvaluateBlockWebDomainTest {
 
     @Test
     fun `DELAY app mode with null webBlockMode blocks with DELAY and the rule's delaySeconds`() = runTest {
-        every { blockRuleRepository.getEnabledRules() } returns flowOf(
-            listOf(rule(mode = "DELAY", webDomains = "instagram.com", delaySeconds = 20))
-        )
+        db.seedRule(aBlockRule(packageName = instagram, mode = "DELAY", webDomains = "instagram.com", delaySeconds = 20))
 
         val result = useCase.evaluateWebDomain("https://www.instagram.com/reels")
 
@@ -107,9 +81,7 @@ class EvaluateBlockWebDomainTest {
 
     @Test
     fun `HARD_BLOCK app mode with null webBlockMode blocks with HARD_BLOCK`() = runTest {
-        every { blockRuleRepository.getEnabledRules() } returns flowOf(
-            listOf(rule(mode = "HARD_BLOCK", webDomains = "instagram.com"))
-        )
+        db.seedRule(aBlockRule(packageName = instagram, mode = "HARD_BLOCK", webDomains = "instagram.com"))
 
         val result = useCase.evaluateWebDomain("https://www.instagram.com/reels")
 
@@ -119,9 +91,7 @@ class EvaluateBlockWebDomainTest {
 
     @Test
     fun `BREATHING app mode with null webBlockMode blocks with BREATHING`() = runTest {
-        every { blockRuleRepository.getEnabledRules() } returns flowOf(
-            listOf(rule(mode = "BREATHING", webDomains = "instagram.com", delaySeconds = 25))
-        )
+        db.seedRule(aBlockRule(packageName = instagram, mode = "BREATHING", webDomains = "instagram.com", delaySeconds = 25))
 
         val result = useCase.evaluateWebDomain("https://www.instagram.com/reels")
 
@@ -133,9 +103,7 @@ class EvaluateBlockWebDomainTest {
 
     @Test
     fun `webBlockMode overrides a real app mode -- HARD_BLOCK app mode, DELAY web mode`() = runTest {
-        every { blockRuleRepository.getEnabledRules() } returns flowOf(
-            listOf(rule(mode = "HARD_BLOCK", webDomains = "instagram.com", webBlockMode = "DELAY"))
-        )
+        db.seedRule(aBlockRule(packageName = instagram, mode = "HARD_BLOCK", webDomains = "instagram.com", webBlockMode = "DELAY"))
 
         val result = useCase.evaluateWebDomain("https://www.instagram.com/reels")
 
@@ -145,10 +113,8 @@ class EvaluateBlockWebDomainTest {
 
     @Test
     fun `mode NONE with null webBlockMode -- un-migrated inherit case -- enforces nothing and falls through, filter ON blocks as Restricted content`() = runTest {
-        every { blockRuleRepository.getEnabledRules() } returns flowOf(
-            listOf(rule(mode = "NONE", webDomains = "instagram.com", webBlockMode = null))
-        )
-        every { preferences.contentFilterEnabled } returns flowOf(true)
+        db.seedRule(aBlockRule(packageName = instagram, mode = "NONE", webDomains = "instagram.com", webBlockMode = null))
+        preferences.setContentFilterEnabled(true)
         coEvery { contentFilter.isBlocked(any(), any(), any(), any()) } returns true
 
         val result = useCase.evaluateWebDomain("https://www.instagram.com/reels")
@@ -159,10 +125,8 @@ class EvaluateBlockWebDomainTest {
 
     @Test
     fun `mode NONE with null webBlockMode -- filter OFF -- falls through to Allow, not treated as handled`() = runTest {
-        every { blockRuleRepository.getEnabledRules() } returns flowOf(
-            listOf(rule(mode = "NONE", webDomains = "instagram.com", webBlockMode = null))
-        )
-        every { preferences.contentFilterEnabled } returns flowOf(false)
+        db.seedRule(aBlockRule(packageName = instagram, mode = "NONE", webDomains = "instagram.com", webBlockMode = null))
+        preferences.setContentFilterEnabled(false)
 
         val result = useCase.evaluateWebDomain("https://www.instagram.com/reels")
 
@@ -171,10 +135,8 @@ class EvaluateBlockWebDomainTest {
 
     @Test
     fun `non-matching URL falls through to the content filter`() = runTest {
-        every { blockRuleRepository.getEnabledRules() } returns flowOf(
-            listOf(rule(mode = "HARD_BLOCK", webDomains = "instagram.com"))
-        )
-        every { preferences.contentFilterEnabled } returns flowOf(true)
+        db.seedRule(aBlockRule(packageName = instagram, mode = "HARD_BLOCK", webDomains = "instagram.com"))
+        preferences.setContentFilterEnabled(true)
         coEvery { contentFilter.isBlocked(any(), any(), any(), any()) } returns true
 
         val result = useCase.evaluateWebDomain("https://example.com")
@@ -185,9 +147,7 @@ class EvaluateBlockWebDomainTest {
 
     @Test
     fun `trackingPackage is the matching rule's packageName`() = runTest {
-        every { blockRuleRepository.getEnabledRules() } returns flowOf(
-            listOf(rule(mode = "HARD_BLOCK", webDomains = "instagram.com", packageName = "com.instagram.android"))
-        )
+        db.seedRule(aBlockRule(packageName = instagram, mode = "HARD_BLOCK", webDomains = "instagram.com"))
 
         val result = useCase.evaluateWebDomain("https://www.instagram.com/reels")
 
@@ -196,9 +156,7 @@ class EvaluateBlockWebDomainTest {
 
     @Test
     fun `trackingPackage falls back to web when the rule has no packageName`() = runTest {
-        every { blockRuleRepository.getEnabledRules() } returns flowOf(
-            listOf(rule(mode = "HARD_BLOCK", webDomains = "instagram.com", packageName = null))
-        )
+        db.seedRule(aBlockRule(packageName = null, mode = "HARD_BLOCK", webDomains = "instagram.com"))
 
         val result = useCase.evaluateWebDomain("https://www.instagram.com/reels")
 
@@ -207,9 +165,7 @@ class EvaluateBlockWebDomainTest {
 
     @Test
     fun `ruleName reflects the resolved web mode for an app-mode-NONE plus web-HARD_BLOCK rule`() = runTest {
-        every { blockRuleRepository.getEnabledRules() } returns flowOf(
-            listOf(rule(mode = "NONE", webDomains = "instagram.com", webBlockMode = "HARD_BLOCK"))
-        )
+        db.seedRule(aBlockRule(packageName = instagram, mode = "NONE", webDomains = "instagram.com", webBlockMode = "HARD_BLOCK"))
 
         val result = useCase.evaluateWebDomain("https://www.instagram.com/reels")
 
@@ -219,8 +175,7 @@ class EvaluateBlockWebDomainTest {
 
     @Test
     fun `no rules at all falls through to content filter and can Allow`() = runTest {
-        every { blockRuleRepository.getEnabledRules() } returns flowOf(emptyList())
-        every { preferences.contentFilterEnabled } returns flowOf(false)
+        preferences.setContentFilterEnabled(false)
 
         val result = useCase.evaluateWebDomain("https://www.instagram.com/reels")
 

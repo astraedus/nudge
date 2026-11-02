@@ -1,6 +1,7 @@
 package com.astraedus.nudge.ui.screens.stats
 
 import com.astraedus.nudge.data.db.entity.UsageEvent
+import com.astraedus.nudge.testing.aUsageEvent
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -28,19 +29,12 @@ class TopBlockedAppsTest {
     private val now = 2_000_000L
 
     private fun shown(pkg: String, ts: Long, mode: String? = "HARD_BLOCK") =
-        UsageEvent(packageName = pkg, timestamp = ts, wasBlocked = true, blockMode = mode)
+        aUsageEvent(pkg, ts, wasBlocked = true, blockMode = mode)
 
     private fun walkAway(pkg: String, ts: Long, mode: String? = "HARD_BLOCK") =
-        UsageEvent(
-            packageName = pkg,
-            timestamp = ts,
-            wasBlocked = true,
-            blockMode = mode,
-            userChangedMind = true
-        )
+        aUsageEvent(pkg, ts, wasBlocked = true, blockMode = mode, userChangedMind = true)
 
-    private fun allowed(pkg: String, ts: Long) =
-        UsageEvent(packageName = pkg, timestamp = ts, wasBlocked = false)
+    private fun allowed(pkg: String, ts: Long) = aUsageEvent(pkg, ts)
 
     private fun top(events: List<UsageEvent>, limit: Int = 10) =
         calculator.topBlockedApps(events, sinceMs = since, nowMs = now, limit = limit)

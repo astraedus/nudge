@@ -111,6 +111,10 @@ Full audit with `file:line` evidence and a fix order lives outside this repo:
 - [ ] Contextual triggers (location-based, time-of-day auto-enable)
 - [x] Release signing key (v1.3.2 -- PKCS12 keystore, CI via GitHub secrets)
 
+## [ ] Firefox first launch under an All apps Hard rule escaped once, behind the default-browser dialog (QA 2026-11-02, not reproduced)
+
+QA's run on main-latest 97ad2e4: the overlay START at 44.104, Firefox's own `HomeActivity` at 44.925, then `permissioncontroller`'s `RequestRoleActivity` ("set as default browser") at 45.284. The dialog is another app's window, so the bypass branch read it and evaluated Allow (correct: it is not Firefox). After Cancel, Firefox was in front and nothing re-blocked it: a dialog's dismissal sends no `TYPE_WINDOW_STATE_CHANGED` for the window underneath, so the stream never says "Firefox is in front" again (the F6 family above). The bench never reproduced it (8/8 blocked, 4 of them under CPU load; `pm clear org.mozilla.firefox` + launch), and the 2026-11-02 arrival check does not cover it: by the time it fires the dialog owns the active window (`NOT_BURIED`), and the bypass ended its watch. Next step if it recurs: a capture with the dialog showing, then decide whether a dialog's departure should re-read the active window.
+
 ## API-level crashes on Android 8-9 — FIXED in v1.17.0, with the gate that lets them ship still worth reading
 
 Found by running `./gradlew :app:lintDebug` during the v1.17.0 widget work (the widgets themselves were
@@ -191,7 +195,7 @@ change that surfaced it.
 - **`rememberAppIcon(icon, sizeDp)` is owed, and it is a visual change, not a cleanup.** The
   drawable-to-bitmap conversion is hand-rolled at five composable sites, and **every one passes a literal
   pixel size that does not match its own dp box**: `AppListItem` 48px into 40dp, `WillpowerScreen` 32px/32dp,
-  `InterventionsScreen` 64px/32dp, `ActiveRulesScreen` 48px/40dp. A shared helper rasterising at real device
+  `InterventionsScreen` 64px/32dp, `ActiveRulesScreen` 48px/40dp. (Groups PR 3: `AppListItem` now rasterises at the real px of its 40dp box and `ActiveRulesScreen` is gone; the other two remain.) A shared helper rasterising at real device
   density would make all four sharper (on a Pixel 3, 40dp is 110px against today's 48px) and cost roughly 5x
   the bitmap bytes per icon. That is probably an improvement and it changes rendering on four screens, so it
   wants its own device-QA'd task. `WidgetReads` is NOT in scope - Glance needs a raw `Bitmap`, which is a

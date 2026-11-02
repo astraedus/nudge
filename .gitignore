@@ -9,6 +9,7 @@
 .cxx
 local.properties
 /app/build
+/qa-driver/build
 *.keystore
 *.jks
 keystore.properties

@@ -7,7 +7,7 @@ day selection, the one events-based screen-time source, and the Willpower / Inte
 ## Feature summary
 
 - **"Walked Away" tracking** — counts when user taps "I changed my mind" instead of waiting
-- **2x2 dashboard stats** — Screen Time, Active Rules (tappable), Blocked, Walked Away
+- **2x2 dashboard stats** — Screen Time, Active Apps (opens Manage Apps), Blocked, Walked Away. Active Apps is `activeAppsCount`: the apps an enabled rule covers, direct rules and enabled group members together, each app once. It is the engine's own answer (`domain/engine/CoveredApps` asks `RuleEvaluator.resolveRulesForPackage` per candidate), never a count of rule rows, so it cannot disagree with what blocks (`ActiveAppsCountTest`).
 
 ## Stats visualization architecture
 
@@ -101,6 +101,16 @@ What changed:
 - **`SectionHeader(title, hint)`** carries "Tap a tile for charts" on the **Today** header only. Said twice it reads as noise, and by the second section the chevrons have taught the pattern.
 - **Two `InsightEntryCard`s in `StatsScreen`**, inserted above the raw charts (insights are the interpretation of those charts, so they come first) and below the streak. Each has an icon, a title and a **supporting line** — an icon-plus-word card reads unfinished, and density is a standing rule on this dashboard. Both screens are now reachable from two different places, which is the acceptance criterion.
 - **Tests**: `HomeTileAffordanceContractTest` (8, source-level) pins the shape — every `StatCard` call site passes both `onClick` and `actionLabel`, tiles sharing a destination share its name, the `onClickLabel` is wired, and neither `Theme.kt` nor `HomeScreen.kt` disables ripple. It counts the tiles too, so a sixth becoming a seventh is noticed rather than silently unchecked. `StatsInsightEntryContractTest` pins that both callbacks exist in `StatsScreen` and are actually passed at the `NavGraph` call site, so the wiring cannot rot back into a dead default.
+
+### Lock card and Active Apps with All apps rules (spec PR 4)
+
+- **Active Apps already counts All apps.** `CoveredApps` asks the engine's resolver per candidate package, and the
+  resolver covers an All apps rule's apps (minus essentials, allowed apps and allowed groups), so no change was needed
+  to the number; `ActiveAppsCountTest` still pins it.
+- **The lock card** (`ui/screens/home/LockCard.kt`, under the Nuke card) is a separate flow, `HomeViewModel.lockCard`.
+  It is not part of `uiState` or the day-clock combine: it changes when a rule or the minute does, and the dashboard
+  state must not re-render for it. It ticks once a minute only while an enabled scheduled All apps rule exists; with
+  none it never polls. Rules and behaviour: `rules-and-features.md`, "The Home lock card".
 
 ### "Blocked most this week" on the dashboard
 

@@ -1,6 +1,8 @@
 package com.astraedus.nudge.domain.lock
 
 import com.astraedus.nudge.data.db.entity.BlockRule
+import com.astraedus.nudge.domain.model.ExceptCsv
+import com.astraedus.nudge.domain.model.RuleTarget
 
 /**
  * Pure-Kotlin comparison of two versions of the same per-app block rule to decide whether the
@@ -62,6 +64,22 @@ object RuleWeakening {
      *    home screen, so reopening from the icon within the return window skips the delay. It
      *    removes friction, so turning it ON is weakening; turning it off never is.
      *
+     *  - the target changed (spec PR 4): the rule now covers a different app, a different group,
+     *    or switched between app / group / All apps. The apps it covered before may no longer be
+     *    covered, so it is weakening whichever way it moves. A row that named no target covered
+     *    nothing, so giving it one is never weakening.
+     *
+     *  - All apps rules only (spec 5.6 + the PR 4 decision on windows):
+     *    - an app added to the except list ([BlockRule.exceptPackages] grew): one more app opens;
+     *    - a group added to the except list ([BlockRule.exceptGroupIds] grew): its members open;
+     *    - the window shortened: some minute of the week the old schedule blocked is no longer
+     *      blocked ([ScheduleWeek]). Scheduled -> "All the time" only adds minutes, so it is free;
+     *      "All the time" -> scheduled loses minutes, so it challenges.
+     *    Removing or reordering except entries only blocks more, so it is free. The window axis is
+     *    deliberately NOT applied to app and group rules: for them a days-and-times edit stays free
+     *    (spec F6), because their schedule is how the user sets WHEN a single app is blocked, and an
+     *    All apps rule's window is the whole lock (shortening it opens every app at once).
+     *
      *  - `remindAfterMinutes` (#77) is deliberately NOT a dimension either: a usage reminder is a
      *    notification and enforces nothing, exactly like `showCounter`, `showTimeRemaining` and
      *    `grayscale`, none of which are dimensions. It is a SEPARATE field from the time kick
@@ -110,8 +128,50 @@ object RuleWeakening {
         // delay, so (like tabVanish, mirrored) this is a one-directional check.
         if (!old.keepPassOnShortTrips && new.keepPassOnShortTrips) return true
 
+        // The rule now covers something else: whatever it covered before may be uncovered.
+        if (isTargetChanged(old, new)) return true
+
+        // An All apps rule: its except lists and its window are protection too.
+        if (isAllAppsWeakened(old, new)) return true
+
         return false
     }
+
+    /**
+     * True when [new] targets something other than [old]. Two All apps rules have the same target
+     * whatever their except lists say (those are compared by [isAllAppsWeakened], where shrinking
+     * them is free).
+     */
+    private fun isTargetChanged(old: BlockRule, new: BlockRule): Boolean {
+        val oldTarget = targetOf(old) ?: return false
+        val newTarget = targetOf(new) ?: return true
+        return if (oldTarget is RuleTarget.AllApps) newTarget !is RuleTarget.AllApps
+        else oldTarget != newTarget
+    }
+
+    /**
+     * True when both versions are All apps rules and [new] allows an app or group [old] did not, or
+     * blocks during fewer minutes of the week than [old].
+     */
+    private fun isAllAppsWeakened(old: BlockRule, new: BlockRule): Boolean {
+        val oldTarget = targetOf(old) as? RuleTarget.AllApps ?: return false
+        val newTarget = targetOf(new) as? RuleTarget.AllApps ?: return false
+        if ((newTarget.exceptPackages - oldTarget.exceptPackages).isNotEmpty()) return true
+        if ((newTarget.exceptGroupIds - oldTarget.exceptGroupIds).isNotEmpty()) return true
+        return ScheduleWeek.isShortened(
+            old = ScheduleWeek.activeMinutes(old.scheduleDays, old.scheduleStartMinute, old.scheduleEndMinute),
+            new = ScheduleWeek.activeMinutes(new.scheduleDays, new.scheduleStartMinute, new.scheduleEndMinute)
+        )
+    }
+
+    /** One reading of a row's target columns, the same one the engine uses ([RuleTarget.of]). */
+    private fun targetOf(rule: BlockRule): RuleTarget? = RuleTarget.of(
+        packageName = rule.packageName,
+        groupId = rule.groupId,
+        allApps = rule.allApps,
+        exceptPackages = ExceptCsv.packages(rule.exceptPackages),
+        exceptGroupIds = ExceptCsv.groupIds(rule.exceptGroupIds)
+    )
 
     /**
      * True when [new] enforces less on the web than [old] did. Only bites when [old] actually had

@@ -1,7 +1,7 @@
 package com.astraedus.nudge.service
 
 import com.astraedus.nudge.NudgeIdentity
-import java.io.File
+import com.astraedus.nudge.testing.SourceScan
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -41,17 +41,9 @@ class AwarenessOverlayContractTest {
         "main/java/com/astraedus/nudge/service/FloatingWindowCoverManager.kt"
     )
 
-    private fun read(relative: String): String {
-        val candidates = listOf(File("src/$relative"), File("app/src/$relative"))
-        return (candidates.firstOrNull { it.exists() }
-            ?: error("$relative not found from ${File("").absolutePath}"))
-            .readText()
-    }
+    private fun read(relative: String): String = SourceScan.appFile("src/$relative").readText()
 
-    private fun stripComments(text: String): String = text
-        .replace(Regex("""/\*[\s\S]*?\*/"""), " ")
-        .lines()
-        .joinToString("\n") { line -> line.substringBefore("//") }
+    private fun stripComments(text: String): String = SourceScan.stripComments(text)
 
     /**
      * The one that matters. `new TextView(...)` anywhere in an awareness overlay is a window that

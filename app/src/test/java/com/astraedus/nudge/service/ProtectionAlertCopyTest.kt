@@ -1,11 +1,11 @@
 package com.astraedus.nudge.service
 
 import com.astraedus.nudge.domain.health.ProtectionFault
+import com.astraedus.nudge.testing.SourceScan
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.io.File
 
 /**
  * Every fault has copy, and the copy names the RIGHT recovery.
@@ -39,10 +39,7 @@ class ProtectionAlertCopyTest {
     )
 
     private val strings: String by lazy {
-        listOf(File("src/main/res/values/strings.xml"), File("app/src/main/res/values/strings.xml"))
-            .firstOrNull { it.exists() }
-            ?.readText()
-            ?: error("strings.xml not found from ${File("").absolutePath}")
+        SourceScan.mainFile("res/values/strings.xml").readText()
     }
 
     private fun string(name: String): String {
@@ -52,10 +49,7 @@ class ProtectionAlertCopyTest {
     }
 
     private fun notifierSource(): String =
-        listOf(
-            File("src/main/java/com/astraedus/nudge/service/ProtectionAlertNotifier.kt"),
-            File("app/src/main/java/com/astraedus/nudge/service/ProtectionAlertNotifier.kt")
-        ).first { it.exists() }.readText()
+        SourceScan.kotlinFile("com/astraedus/nudge/service/ProtectionAlertNotifier.kt").readText()
 
     @Test
     fun `every fault the watchdog can report has copy wired to it`() {

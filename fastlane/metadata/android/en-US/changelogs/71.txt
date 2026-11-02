@@ -1,0 +1,3 @@
+• New: category groups. Tick a category like Social or Games and its apps join the group, including apps you install later. Take any app out with one tap.
+• Browsers only join a group when you add them yourself, so ticking Social never blocks Chrome.
+• The All apps block screen now lists every app you allowed, including ones from category groups.

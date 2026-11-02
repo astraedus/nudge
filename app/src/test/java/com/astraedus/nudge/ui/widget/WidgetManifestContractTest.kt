@@ -1,9 +1,9 @@
 package com.astraedus.nudge.ui.widget
 
+import com.astraedus.nudge.testing.SourceScan
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.io.File
 
 /**
  * Pins the manifest wiring every widget needs to exist at all.
@@ -20,13 +20,8 @@ import java.io.File
  */
 class WidgetManifestContractTest {
 
-    private fun projectFile(relativePath: String): File =
-        listOf(File("app/$relativePath"), File(relativePath))
-            .firstOrNull { it.exists() }
-            ?: error("$relativePath not found from working dir ${File("").absolutePath}")
-
     private val manifestText: String by lazy {
-        projectFile("src/main/AndroidManifest.xml").readText()
+        SourceScan.mainFile("AndroidManifest.xml").readText()
     }
 
     /** Each `<receiver …>…</receiver>` block whose android:name points into `ui.widget`. */
@@ -44,7 +39,7 @@ class WidgetManifestContractTest {
 
     /** The Kotlin classes that actually extend `GlanceAppWidgetReceiver`. */
     private fun declaredReceiverClasses(): List<String> {
-        val dir = projectFile("src/main/java/com/astraedus/nudge/ui/widget")
+        val dir = SourceScan.mainFile("java/com/astraedus/nudge/ui/widget")
         return dir.walkTopDown()
             .filter { it.isFile && it.extension == "kt" }
             .flatMap { file ->
@@ -126,7 +121,7 @@ class WidgetManifestContractTest {
         )
 
         referenced.forEach { resource ->
-            val file = projectFile("src/main/res/xml/$resource.xml")
+            val file = SourceScan.mainFile("res/xml/$resource.xml")
             val text = file.readText()
             assertTrue(
                 "res/xml/$resource.xml must be an <appwidget-provider>",
@@ -146,7 +141,7 @@ class WidgetManifestContractTest {
                 ?: error("res/xml/$resource.xml has no parseable initialLayout")
             assertTrue(
                 "res/layout/$layout.xml is referenced by res/xml/$resource.xml but does not exist",
-                projectFile("src/main/res/layout/$layout.xml").exists()
+                SourceScan.mainFile("res/layout/$layout.xml").exists()
             )
         }
     }
@@ -179,18 +174,18 @@ class WidgetManifestContractTest {
      */
     @Test
     fun `every string the widget XML references exists`() {
-        val stringsText = projectFile("src/main/res/values/strings.xml").readText()
+        val stringsText = SourceScan.mainFile("res/values/strings.xml").readText()
         val defined = Regex("""<string name="(\w+)"""")
             .findAll(stringsText)
             .map { it.groupValues[1] }
             .toSet()
 
         val referencingFiles = buildList {
-            add(projectFile("src/main/AndroidManifest.xml"))
-            addAll(projectFile("src/main/res/xml").listFiles().orEmpty().filter {
+            add(SourceScan.mainFile("AndroidManifest.xml"))
+            addAll(SourceScan.mainFile("res/xml").listFiles().orEmpty().filter {
                 it.name.endsWith("_widget_info.xml")
             })
-            addAll(projectFile("src/main/res/layout").listFiles().orEmpty().filter {
+            addAll(SourceScan.mainFile("res/layout").listFiles().orEmpty().filter {
                 it.name.startsWith("widget_")
             })
         }
@@ -220,8 +215,8 @@ class WidgetManifestContractTest {
      */
     @Test
     fun `each widget has its own debug pin row, pinning one widget per tap`() {
-        val settings = projectFile(
-            "src/main/java/com/astraedus/nudge/ui/screens/settings/SettingsScreen.kt"
+        val settings = SourceScan.kotlinFile(
+            "com/astraedus/nudge/ui/screens/settings/SettingsScreen.kt"
         ).readText()
             .replace(Regex("""/\*[\s\S]*?\*/"""), "")
             .lines()

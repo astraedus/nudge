@@ -1,9 +1,9 @@
 package com.astraedus.nudge.ui.qr
 
+import com.astraedus.nudge.testing.SourceScan
 import com.astraedus.nudge.BuildConfig
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.io.File
 
 /**
  * The scanner's manifest wiring, none of which any code path can observe until it is missing on a
@@ -15,10 +15,7 @@ import java.io.File
 class QrManifestContractTest {
 
     private val manifest: String by lazy {
-        listOf(File("app/src/main/AndroidManifest.xml"), File("src/main/AndroidManifest.xml"))
-            .firstOrNull { it.exists() }
-            ?.readText()
-            ?: error("AndroidManifest.xml not found from ${File("").absolutePath}")
+        SourceScan.mainFile("AndroidManifest.xml").readText()
     }
 
     /** `.ui.qr.QrScanActivity`, derived from the class and the namespace, never retyped. */

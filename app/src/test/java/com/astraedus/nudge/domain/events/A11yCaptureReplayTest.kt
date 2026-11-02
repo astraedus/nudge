@@ -6,7 +6,6 @@ import com.astraedus.nudge.domain.engine.ScheduleEvaluator
 import com.astraedus.nudge.domain.interaction.InteractionCounter
 import com.astraedus.nudge.domain.model.BlockDecision
 import com.astraedus.nudge.domain.model.BlockMode
-import com.astraedus.nudge.domain.model.BlockRuleData
 import com.astraedus.nudge.domain.sitting.SittingEndCause
 import com.astraedus.nudge.domain.sitting.SittingEvent
 import com.astraedus.nudge.domain.sitting.SittingTracker
@@ -16,6 +15,10 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.astraedus.nudge.domain.engine.CoverageFacts
+import com.astraedus.nudge.domain.groups.GroupMembershipResolver
+import com.astraedus.nudge.testing.aBlockRuleData
+import com.astraedus.nudge.testing.anAccessibilityEvent
 
 /**
  * Replays REAL device event streams through the real pipeline.
@@ -198,7 +201,7 @@ class A11yCaptureReplayTest {
     fun `a second source does take over once the primary has been silent past the handover window`() {
         val counter = InteractionCounter(handoverMs = 1_000)
         val sheet = A11yCapture.load("yt-list-scroll-3-gestures")
-        val feed = AccessibilityEventRecord(
+        val feed = anAccessibilityEvent(
             type = A11yEventType.VIEW_SCROLLED,
             packageName = "com.google.android.youtube",
             className = "android.support.v7.widget.RecyclerView",
@@ -421,12 +424,12 @@ class A11yCaptureReplayTest {
     @Test
     fun `short trips is per rule - same capture, Telegram on keeps the pass, Instagram off loses it`() {
         val rules = listOf(
-            BlockRuleData(
+            aBlockRuleData(
                 id = 1, packageName = telegram, groupId = null, mode = BlockMode.DELAY,
                 delaySeconds = 15, dailyLimitMinutes = null, enabled = true,
                 keepPassOnShortTrips = true
             ),
-            BlockRuleData(
+            aBlockRuleData(
                 id = 2, packageName = instagram, groupId = null, mode = BlockMode.DELAY,
                 delaySeconds = 15, dailyLimitMinutes = null, enabled = true,
                 keepPassOnShortTrips = false
@@ -436,7 +439,7 @@ class A11yCaptureReplayTest {
         val engine = BlockEngine(ScheduleEvaluator())
         fun decide(pkg: String) = engine.evaluate(
             packageName = pkg,
-            activeRules = evaluator.resolveRulesForPackage(pkg, rules, emptyList()),
+            activeRules = evaluator.resolveRulesForPackage(pkg, rules, GroupMembershipResolver.NONE, CoverageFacts(essential = false, launchable = true, category = null, browser = false)),
             dailyUsageMs = 0L
         ) as BlockDecision.Block
 
