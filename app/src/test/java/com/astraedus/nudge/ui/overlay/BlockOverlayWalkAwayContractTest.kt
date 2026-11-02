@@ -4,7 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.io.File
+import com.astraedus.nudge.testing.SourceScan
 
 /**
  * Source-level guard for the walk-away path in `BlockOverlayActivity`.
@@ -23,13 +23,7 @@ import java.io.File
 class BlockOverlayWalkAwayContractTest {
 
     private val source: String by lazy {
-        val candidates = listOf(
-            File("src/main/java/com/astraedus/nudge/ui/overlay/BlockOverlayActivity.kt"),
-            File("app/src/main/java/com/astraedus/nudge/ui/overlay/BlockOverlayActivity.kt")
-        )
-        (candidates.firstOrNull { it.exists() }
-            ?: error("BlockOverlayActivity.kt not found from working dir ${File("").absolutePath}"))
-            .readText()
+        SourceScan.kotlinFile("com/astraedus/nudge/ui/overlay/BlockOverlayActivity.kt").readText()
     }
 
     /**
@@ -37,10 +31,7 @@ class BlockOverlayWalkAwayContractTest {
      * they explain. A contract test that greps raw source reads its own explanation as code, and
      * then passes because a comment mentions the thing the code no longer does.
      */
-    private fun stripComments(text: String): String = text
-        .replace(Regex("""/\*[\s\S]*?\*/"""), " ")
-        .lines()
-        .joinToString("\n") { line -> line.substringBefore("//") }
+    private fun stripComments(text: String): String = SourceScan.stripComments(text)
 
     /**
      * The whole reason the walk-away could go missing: the write was owned by nothing. A

@@ -1,6 +1,6 @@
 package com.astraedus.nudge.service
 
-import java.io.File
+import com.astraedus.nudge.testing.SourceScan
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -34,13 +34,7 @@ import org.junit.Test
 class FollowingSteerVisitWiringContractTest {
 
     private val source: String by lazy {
-        val candidates = listOf(
-            File("src/main/java/com/astraedus/nudge/service/NudgeAccessibilityService.kt"),
-            File("app/src/main/java/com/astraedus/nudge/service/NudgeAccessibilityService.kt")
-        )
-        (candidates.firstOrNull { it.exists() }
-            ?: error("NudgeAccessibilityService.kt not found from ${File("").absolutePath}"))
-            .readText()
+        SourceScan.kotlinFile("com/astraedus/nudge/service/NudgeAccessibilityService.kt").readText()
     }
 
     /**
@@ -49,10 +43,7 @@ class FollowingSteerVisitWiringContractTest {
      * explanation as the thing it explains - `EventDispatchOrderContractTest` has had to say so
      * three times.
      */
-    private fun stripComments(text: String): String = text
-        .replace(Regex("""/\*[\s\S]*?\*/"""), " ")
-        .lines()
-        .joinToString("\n") { line -> line.substringBefore("//") }
+    private fun stripComments(text: String): String = SourceScan.stripComments(text)
 
     private val code: String by lazy { stripComments(source) }
 

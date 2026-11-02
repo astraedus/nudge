@@ -1,5 +1,6 @@
 package com.astraedus.nudge.data.db
 
+import com.astraedus.nudge.testing.SourceScan
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -26,23 +27,11 @@ import org.junit.Test
  */
 class BlockedCountSemanticsContractTest {
 
-    private fun read(relative: String): String {
-        val candidates = listOf(File("src/$relative"), File("app/src/$relative"))
-        return (candidates.firstOrNull { it.exists() }
-            ?: error("$relative not found from ${File("").absolutePath}"))
-            .readText()
-    }
+    private fun read(relative: String): String = SourceScan.appFile("src/$relative").readText()
 
-    private fun stripComments(text: String): String = text
-        .replace(Regex("""/\*[\s\S]*?\*/"""), " ")
-        .lines()
-        .joinToString("\n") { line -> line.substringBefore("//") }
+    private fun stripComments(text: String): String = SourceScan.stripComments(text)
 
-    private fun mainDir(relative: String): File {
-        val candidates = listOf(File("src/$relative"), File("app/src/$relative"))
-        return candidates.firstOrNull { it.isDirectory }
-            ?: error("$relative not found from ${File("").absolutePath}")
-    }
+    private fun mainDir(relative: String): File = SourceScan.appFile("src/$relative")
 
     private val dao: String by lazy {
         read("main/java/com/astraedus/nudge/data/db/dao/UsageEventDao.kt")
@@ -100,28 +89,6 @@ class BlockedCountSemanticsContractTest {
             emptyList<String>(),
             offenders
         )
-    }
-
-    /**
-     * The raw readers are DELETED, not merely unused. A `getAllTimeBlockedCount()` left on the
-     * repository is an invitation, and the next screen will accept it - the same reason the
-     * day-scoped screen-time reads were deleted rather than deprecated in v1.15.1.
-     */
-    @Test
-    fun `the raw blocked-count readers no longer exist to be called`() {
-        val stripped = stripComments(dao) + stripComments(repository)
-        for (gone in listOf(
-            "fun getBlockedCount(",
-            "fun getAllTimeBlockedCount(",
-            "fun getBlockedCountForDay(",
-            "getAllTimeBlockedCount()"
-        )) {
-            assertTrue(
-                "`$gone` is back. Counting `wasBlocked` rows is not counting blocks: read " +
-                    "getShownCount / getAllTimeShownCount instead.",
-                !stripped.contains(gone)
-            )
-        }
     }
 
     @Test

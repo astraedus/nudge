@@ -1,6 +1,6 @@
 package com.astraedus.nudge.service
 
-import java.io.File
+import com.astraedus.nudge.testing.SourceScan
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -25,12 +25,7 @@ import org.junit.Test
  */
 class WebDomainEnforcementContractTest {
 
-    private fun read(relative: String): String {
-        val candidates = listOf(File("src/main/java/$relative"), File("app/src/main/java/$relative"))
-        return (candidates.firstOrNull { it.exists() }
-            ?: error("$relative not found from ${File("").absolutePath}"))
-            .readText()
-    }
+    private fun read(relative: String): String = SourceScan.kotlinFile(relative).readText()
 
     private val service: String by lazy {
         read("com/astraedus/nudge/service/NudgeAccessibilityService.kt")

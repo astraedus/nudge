@@ -7,6 +7,7 @@ import com.astraedus.nudge.data.repository.BlockRuleRepository
 import com.astraedus.nudge.data.repository.InstalledAppsRepository
 import com.astraedus.nudge.domain.lock.StrictModeChallenge
 import com.astraedus.nudge.domain.packages.FakeEssentialPackages
+import com.astraedus.nudge.testing.SourceScan
 import com.astraedus.nudge.ui.components.rule.AllAppsRuleItem
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -292,8 +293,8 @@ class AppListViewModelStrictModeTest {
     @Test
     fun `the switch and the editor ask through the one predicate`() {
         // One function, two callers: the switch cannot drift from the editor's Save.
-        val vmSrc = java.io.File("src/main/java/com/astraedus/nudge/ui/screens/apps/AppListViewModel.kt").readText()
-        val formSrc = java.io.File("src/main/java/com/astraedus/nudge/ui/screens/allapps/AllAppsForm.kt").readText()
+        val vmSrc = SourceScan.kotlinFile("com/astraedus/nudge/ui/screens/apps/AppListViewModel.kt").readText()
+        val formSrc = SourceScan.kotlinFile("com/astraedus/nudge/ui/screens/allapps/AllAppsForm.kt").readText()
         assertTrue(vmSrc.contains("confirmsSwitchOn(rule)"))
         assertTrue(formSrc.contains("AllAppsForm.from(rule).copy(enabled = true).confirmsOnSave"))
     }

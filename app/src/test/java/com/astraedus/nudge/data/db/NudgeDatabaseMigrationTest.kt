@@ -2,6 +2,7 @@ package com.astraedus.nudge.data.db
 
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.astraedus.nudge.data.db.entity.UsageEvent
+import com.astraedus.nudge.testing.SourceScan
 import java.lang.reflect.InvocationHandler
 import java.lang.reflect.Method
 import java.lang.reflect.Proxy
@@ -255,10 +256,7 @@ class NudgeDatabaseMigrationTest {
         // sources: a migration declared but not passed to addMigrations() is a crash on upgrade
         // (Room finds no path) that no JVM test of the migration body would notice.
         fun source(relative: String): String =
-            listOf(java.io.File("src/main/java/com/astraedus/nudge/$relative"),
-                java.io.File("app/src/main/java/com/astraedus/nudge/$relative"))
-                .first { it.exists() }
-                .readText()
+            SourceScan.kotlinFile("com/astraedus/nudge/$relative").readText()
         val declared = Regex("""val (MIGRATION_\d+_\d+)\s*=""")
             .findAll(source("data/db/NudgeDatabase.kt")).map { it.groupValues[1] }.toList()
         val module = source("di/DatabaseModule.kt")

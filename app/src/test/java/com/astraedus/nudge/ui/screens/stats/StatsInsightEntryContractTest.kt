@@ -1,9 +1,9 @@
 package com.astraedus.nudge.ui.screens.stats
 
+import com.astraedus.nudge.testing.SourceScan
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.io.File
 
 /**
  * Source-level guard for "the insight screens are reachable from more than one unlabelled tile",
@@ -32,10 +32,7 @@ class StatsInsightEntryContractTest {
      * Scanning raw text would make writing that explanation fail the test protecting it.
      */
     private fun source(relativePath: String): String {
-        val candidates = listOf(File("src/$relativePath"), File("app/src/$relativePath"))
-        val text = (candidates.firstOrNull { it.exists() }
-            ?: error("$relativePath not found from working dir ${File("").absolutePath}"))
-            .readText()
+        val text = SourceScan.mainFile(relativePath.removePrefix("main/")).readText()
         return text
             .replace(Regex("""/\*[\s\S]*?\*/"""), "")
             .lines()

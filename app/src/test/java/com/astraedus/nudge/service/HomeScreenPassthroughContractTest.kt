@@ -1,6 +1,6 @@
 package com.astraedus.nudge.service
 
-import java.io.File
+import com.astraedus.nudge.testing.SourceScan
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -18,13 +18,7 @@ import org.junit.Test
 class HomeScreenPassthroughContractTest {
 
     private val source: String by lazy {
-        val candidates = listOf(
-            File("src/main/java/com/astraedus/nudge/service/NudgeAccessibilityService.kt"),
-            File("app/src/main/java/com/astraedus/nudge/service/NudgeAccessibilityService.kt")
-        )
-        (candidates.firstOrNull { it.exists() }
-            ?: error("NudgeAccessibilityService.kt not found from ${File("").absolutePath}"))
-            .readText()
+        SourceScan.kotlinFile("com/astraedus/nudge/service/NudgeAccessibilityService.kt").readText()
     }
 
     /**
@@ -143,11 +137,7 @@ class HomeScreenPassthroughContractTest {
     }
 
     private val passthroughManagerSource: String by lazy {
-        val candidates = listOf(
-            File("src/main/java/com/astraedus/nudge/service/PassthroughManager.kt"),
-            File("app/src/main/java/com/astraedus/nudge/service/PassthroughManager.kt")
-        )
-        (candidates.firstOrNull { it.exists() } ?: error("PassthroughManager.kt not found")).readText()
+        SourceScan.kotlinFile("com/astraedus/nudge/service/PassthroughManager.kt").readText()
     }
 
     /**

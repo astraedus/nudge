@@ -3,7 +3,7 @@ package com.astraedus.nudge.ui.backup
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.io.File
+import com.astraedus.nudge.testing.SourceScan
 
 /**
  * Where backup can be reached from, and the shape every entry point has to have.
@@ -21,11 +21,9 @@ import java.io.File
  */
 class BackupEntryPointsContractTest {
 
-    private val mainSources = listOf(File("src/main/java"), File("app/src/main/java"))
-        .firstOrNull { it.exists() }
-        ?: error("main sources not found from working dir ${File("").absolutePath}")
+    private val mainSources = SourceScan.kotlinFile("")
 
-    private fun source(path: String): String = File(mainSources, path).readText()
+    private fun source(path: String): String = SourceScan.kotlinFile(path).readText()
 
     private val settingsScreen = "com/astraedus/nudge/ui/screens/settings/SettingsScreen.kt"
 

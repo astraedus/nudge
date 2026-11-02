@@ -1,10 +1,10 @@
 package com.astraedus.nudge.service
 
+import com.astraedus.nudge.testing.SourceScan
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.io.File
 
 /**
  * Pins the four service sites where a browser covered by a group rule is evaluated as an app (spec
@@ -23,16 +23,10 @@ import java.io.File
  */
 class GroupBrowserWiringContractTest {
 
-    private fun read(relative: String): String = listOf(File("src/main/java/$relative"), File("app/src/main/java/$relative"))
-        .firstOrNull { it.exists() }
-        ?.readText()
-        ?: error("$relative not found from ${File("").absolutePath}")
+    private fun read(relative: String): String = SourceScan.kotlinFile(relative).readText()
 
     /** Code only: these sources explain in prose the very calls they must not make. */
-    private fun code(text: String): String = text
-        .replace(Regex("""/\*[\s\S]*?\*/"""), " ")
-        .lines()
-        .joinToString("\n") { it.substringBefore("//") }
+    private fun code(text: String): String = SourceScan.stripComments(text)
 
     private val service by lazy { code(read("com/astraedus/nudge/service/NudgeAccessibilityService.kt")) }
 

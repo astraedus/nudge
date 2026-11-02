@@ -1,6 +1,6 @@
 package com.astraedus.nudge.service
 
-import java.io.File
+import com.astraedus.nudge.testing.SourceScan
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -25,18 +25,10 @@ class TabCoverWiringContractTest {
 
     private val servicePath = "main/java/com/astraedus/nudge/service/NudgeAccessibilityService.kt"
 
-    private fun read(relative: String): String {
-        val candidates = listOf(File("src/$relative"), File("app/src/$relative"))
-        return (candidates.firstOrNull { it.exists() }
-            ?: error("$relative not found from ${File("").absolutePath}"))
-            .readText()
-    }
+    private fun read(relative: String): String = SourceScan.appFile("src/$relative").readText()
 
     /** Comments in this file quote the code they explain, so they must not be read as code. */
-    private fun stripComments(text: String): String = text
-        .replace(Regex("""/\*[\s\S]*?\*/"""), " ")
-        .lines()
-        .joinToString("\n") { line -> line.substringBefore("//") }
+    private fun stripComments(text: String): String = SourceScan.stripComments(text)
 
     private val code: String by lazy { stripComments(read(servicePath)) }
 

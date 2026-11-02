@@ -1,5 +1,6 @@
 package com.astraedus.nudge.service
 
+import com.astraedus.nudge.testing.SourceScan
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -27,23 +28,14 @@ import java.io.File
  */
 class MonitorServiceContractTest {
 
-    private fun sourceRoot(): File =
-        listOf(File("src/main"), File("app/src/main")).firstOrNull { it.isDirectory }
-            ?: error("main source set not found from working dir ${File("").absolutePath}")
-
-    private fun read(relativePath: String): String {
-        val file = File(sourceRoot(), relativePath)
-        assertTrue("$relativePath must exist", file.exists())
-        return file.readText()
-    }
+    private fun read(relativePath: String): String = SourceScan.mainFile(relativePath).readText()
 
     private val monitorService = "java/com/astraedus/nudge/service/NudgeMonitorService.kt"
     private val accessibilityService =
         "java/com/astraedus/nudge/service/NudgeAccessibilityService.kt"
 
     private fun serviceSources(): List<File> =
-        File(sourceRoot(), "java/com/astraedus/nudge/service")
-            .walkTopDown().filter { it.isFile && it.extension == "kt" }.toList()
+        SourceScan.kotlinSources("com/astraedus/nudge/service")
 
     /** Strip `//` line comments and `/* */` blocks so prose about a pattern is not read as the pattern. */
     private fun code(text: String): String = text
@@ -314,10 +306,7 @@ class MonitorServiceContractTest {
         )
 
         val preferences = code(
-            File(
-                sourceRoot(),
-                "java/com/astraedus/nudge/data/preferences/NudgePreferences.kt"
-            ).readText()
+            SourceScan.kotlinFile("com/astraedus/nudge/data/preferences/NudgePreferences.kt").readText()
         )
         assertTrue(
             "isGlobalEnabled must be distinctUntilChanged. DataStore's data flow re-emits on " +
@@ -395,7 +384,7 @@ class MonitorServiceContractTest {
      */
     @Test
     fun `auto backup is off on every API level`() {
-        val manifest = File(sourceRoot(), "AndroidManifest.xml").readText()
+        val manifest = SourceScan.mainFile("AndroidManifest.xml").readText()
         assertTrue(
             "allowBackup must be false — a nightly full_backup kills an always-on blocker, and " +
                 "uploads a local-only app's database to Google Drive",
@@ -420,7 +409,7 @@ class MonitorServiceContractTest {
     fun `both backup rule files exclude every domain`() {
         val domains = listOf("root", "database", "sharedpref", "file", "external")
 
-        val extraction = File(sourceRoot(), "res/xml/data_extraction_rules.xml").readText()
+        val extraction = SourceScan.mainFile("res/xml/data_extraction_rules.xml").readText()
         listOf("cloud-backup", "device-transfer").forEach { transport ->
             val section = extraction.substringAfter("<$transport>").substringBefore("</$transport>")
             assertTrue("$transport section must exist", section.isNotBlank())
@@ -432,7 +421,7 @@ class MonitorServiceContractTest {
             }
         }
 
-        val fullBackup = File(sourceRoot(), "res/xml/backup_rules.xml").readText()
+        val fullBackup = SourceScan.mainFile("res/xml/backup_rules.xml").readText()
         domains.forEach { domain ->
             assertTrue(
                 "full-backup-content must exclude domain=$domain",

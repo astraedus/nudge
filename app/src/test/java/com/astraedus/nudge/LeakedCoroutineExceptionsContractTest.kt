@@ -1,5 +1,6 @@
 package com.astraedus.nudge
 
+import com.astraedus.nudge.testing.SourceScan
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -25,12 +26,7 @@ import java.io.File
 class LeakedCoroutineExceptionsContractTest {
 
     private val testSourceRoot: File by lazy {
-        val candidates = listOf(
-            File("src/test/java/com/astraedus/nudge"),
-            File("app/src/test/java/com/astraedus/nudge")
-        )
-        candidates.firstOrNull { it.isDirectory }
-            ?: error("test sources not found from working dir ${File("").absolutePath}")
+        SourceScan.appFile("src/test/java/com/astraedus/nudge")
     }
 
     private val testSources: List<File> by lazy {
@@ -42,10 +38,7 @@ class LeakedCoroutineExceptionsContractTest {
      * name the thing they are about, and a contract test that greps raw source reads its own
      * explanation as code.
      */
-    private fun stripComments(text: String): String = text
-        .replace(Regex("""/\*[\s\S]*?\*/"""), " ")
-        .lines()
-        .joinToString("\n") { line -> line.substringBefore("//") }
+    private fun stripComments(text: String): String = SourceScan.stripComments(text)
 
     @Test
     fun `the suite has test sources to scan at all`() {

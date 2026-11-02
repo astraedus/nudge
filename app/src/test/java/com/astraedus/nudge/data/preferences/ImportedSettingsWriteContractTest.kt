@@ -1,9 +1,9 @@
 package com.astraedus.nudge.data.preferences
 
+import com.astraedus.nudge.testing.SourceScan
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.io.File
 
 /**
  * Source-level guard for how an imported backup's settings are WRITTEN.
@@ -27,11 +27,7 @@ import java.io.File
 class ImportedSettingsWriteContractTest {
 
     private val source: String by lazy {
-        val path = "src/main/java/com/astraedus/nudge/data/preferences/NudgePreferences.kt"
-        val candidates = listOf(File(path), File("app/$path"))
-        (candidates.firstOrNull { it.exists() }
-            ?: error("NudgePreferences.kt not found from working dir ${File("").absolutePath}"))
-            .readText()
+        SourceScan.kotlinFile("com/astraedus/nudge/data/preferences/NudgePreferences.kt").readText()
     }
 
     /** The body of `applyImportedSettings`, from its signature to the end of the file. */
