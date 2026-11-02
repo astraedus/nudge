@@ -1,11 +1,12 @@
 buildscript {
-    // Paparazzi's plugin imports kotlin-bom 2.1.21. Unchecked, that lifts the Kotlin compiler
-    // artifacts on this classpath past the Kotlin Gradle plugin 2.0.21 they belong to, and
-    // compileDebugKotlin dies with a NoSuchMethodError. Hold every Kotlin artifact at the pinned
-    // toolchain version (docs/screenshot-tests.md).
-    configurations.classpath {
-        resolutionStrategy.eachDependency {
-            if (requested.group == "org.jetbrains.kotlin") useVersion("2.0.21")
+    dependencies {
+        // Paparazzi 2.0.0-alpha02 (docs/screenshot-tests.md) depends on kotlin-bom 2.1.21. On this
+        // classpath that bom would lift the Kotlin compiler artifacts past the Kotlin Gradle plugin
+        // they belong to, and compileDebugKotlin dies with a NoSuchMethodError. The plugin runs on
+        // the Kotlin that Gradle and KGP already put here, so it brings none of its own: the Kotlin
+        // artifacts on the build classpath stay exactly what the plugins below resolve.
+        classpath("app.cash.paparazzi:paparazzi-gradle-plugin:2.0.0-alpha02") {
+            exclude(group = "org.jetbrains.kotlin")
         }
     }
 }
@@ -16,5 +17,4 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose") version "2.0.21" apply false
     id("com.google.devtools.ksp") version "2.0.21-1.0.28" apply false
     id("com.google.dagger.hilt.android") version "2.52" apply false
-    id("app.cash.paparazzi") version "2.0.0-alpha02" apply false
 }

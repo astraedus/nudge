@@ -179,6 +179,31 @@ dependencies {
 }
 
 /**
+ * The JVM unit tests run against the library versions the app ships.
+ *
+ * Paparazzi (docs/screenshot-tests.md) adds its runtime to every unit-test classpath, and that
+ * runtime asks for newer kotlin-stdlib and kotlinx-coroutines than the app is built with. Left to
+ * Gradle's "highest wins", the whole suite would quietly run on coroutines-test 1.10 while the app
+ * ships 1.9, which is the library #53's leak detection leans on. Consistent resolution takes the
+ * app's resolved version for every module the two classpaths share; modules only Paparazzi uses
+ * resolve as normal, except Kotlin's own artifacts (kotlin-reflect, which mockk and Paparazzi
+ * load), held at the Kotlin this build compiles with so they match the stdlib beside them.
+ */
+afterEvaluate {
+    val kotlinVersion = org.jetbrains.kotlin.gradle.plugin.getKotlinPluginVersion(logger)
+    for (variant in listOf("debug", "release")) {
+        for (kind in listOf("Compile", "Runtime")) {
+            configurations.getByName("${variant}UnitTest${kind}Classpath").apply {
+                shouldResolveConsistentlyWith(configurations.getByName("${variant}${kind}Classpath"))
+                resolutionStrategy.eachDependency {
+                    if (requested.group == "org.jetbrains.kotlin") useVersion(kotlinVersion)
+                }
+            }
+        }
+    }
+}
+
+/**
  * Unit-test JVM forks: make a process-global coroutine leak NAME ITSELF.
  *
  * Issue [#53](https://github.com/astraedus/nudge/issues/53) cost two investigations and shipped

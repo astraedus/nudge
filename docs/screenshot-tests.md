@@ -10,13 +10,25 @@ like a switch losing its end padding, fails the comparison and produces a diff i
 - Fixtures: `GalleryFixtures.kt` in the same package
 - Goldens: `app/src/test/snapshots/images/`
 - CI: `.github/workflows/screenshots.yml` (verifies on every PR and every push to main)
-- Plugin: `app.cash.paparazzi` 1.3.5 (pinned in the root `build.gradle.kts`), with layoutlib
-  forced to 15.2.3 (`app/build.gradle.kts`). Why:
-  - 1.3.5 is the last stable release, and it is built on our Kotlin 2.0.21.
-  - Its bundled API 34 layoutlib crashes on compileSdk 36 (cashapp/paparazzi#1877: no
-    `Build.VERSION_CODES_FULL`). 15.2.3 is the API 36 layoutlib that 2.0.0-alpha02 ships.
-  - 2.0.0-alpha02 itself puts Kotlin 2.1 on the build classpath and breaks `compileDebugKotlin`.
-  - alpha04 and later need Java 21 and Kotlin 2.3.
+- Plugin: `app.cash.paparazzi` **2.0.0-alpha02**, on the root buildscript classpath
+  (`build.gradle.kts`). It is the only release that both renders on compileSdk 36 and runs on our
+  toolchain (Java 17, Kotlin 2.0.21, AGP 8.13):
+  - 1.3.5, the last stable, bundles API 34 layoutlib, which crashes on compileSdk 36 before it
+    draws a frame (cashapp/paparazzi#1877: no `Build.VERSION_CODES_FULL`). Forcing its layoutlib
+    to the API 36 build (15.2.3) does not help: 1.3.5's bridge hardcodes `icudt72l.dat` and the
+    API 36 layoutlib ships `icudt75l.dat`.
+  - alpha03 and later need Java 21 and Kotlin 2.3 (their Gradle module metadata says so).
+  - alpha02 renders on API 36 (layoutlib 15.2.3), but depends on kotlin-bom 2.1.21. On the build
+    classpath that lifts the Kotlin compiler artifacts past our Kotlin Gradle plugin and
+    `compileDebugKotlin` dies with a `NoSuchMethodError`, so the classpath entry excludes
+    `org.jetbrains.kotlin`: the build classpath's Kotlin is exactly what it is without Paparazzi.
+  - On the unit-test classpath its runtime asks for kotlin-stdlib 2.1 and coroutines 1.10.
+    `app/build.gradle.kts` resolves both unit-test classpaths consistently with the app's own
+    classpaths, so every JVM test still runs on the library versions the app ships.
+
+  None of this touches what ships: `releaseRuntimeClasspath` is identical with and without the
+  plugin. Re-check the version before any compileSdk, AGP, Java or Kotlin bump; the Kotlin 2.3
+  bump is when to move to the current 2.0.0 release and drop the exclude.
 
   Re-check this pair before any compileSdk, AGP or Kotlin bump.
 
