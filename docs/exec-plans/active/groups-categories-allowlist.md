@@ -627,8 +627,10 @@ Most of this mechanism is @danieltsam's #109 design, kept as-is:
   - It is `ACTION_USER_PRESENT`, **runtime-registered** in the service next to the existing
     `ACTION_SCREEN_OFF` receiver.
   - Fallback: the first `TYPE_WINDOW_STATE_CHANGED` from an app window of the logical day, while
-    `KeyguardManager.isDeviceLocked` is false. It covers devices with no secure lock, and missed
-    broadcasts.
+    the keyguard is NOT showing and the screen is interactive (`!KeyguardManager.isKeyguardLocked &&
+    PowerManager.isInteractive`). It covers devices with no secure lock, and missed broadcasts.
+    Not `isDeviceLocked`: that is false on swipe-only or no-PIN phones even while the lock screen is
+    up, so an alarm activity shown over the lock screen would start the window in bed (#155 review).
   - Whichever arrives first sets the stamp. (#109)
 - **Always stamp, even with no first-unlock rule.** Then turning a rule on mid-morning has a real
   anchor and behaves predictably. (#109)
@@ -646,10 +648,19 @@ Most of this mechanism is @danieltsam's #109 design, kept as-is:
 
 New in this spec:
 
-- **Arming.** A first-unlock window counts only if `stamp >= rule.armedAt`. `armedAt` is set on
-  every save and every switch-on. So a rule made, edited or re-enabled at 8:05, after an 8:00 unlock,
+- **Arming.** A first-unlock window counts only if `stamp >= rule.armedAt`. `armedAt` is set when a
+  rule is **created, switched on (disabled → enabled), or newly becomes a first-unlock rule**. Other
+  saves keep the stored value, and that includes edit flows that delete and re-add rows, such as App
+  config. So a Morning Lock made or re-enabled at 8:05, after an 8:00 unlock,
   starts **tomorrow**, and the editor says so ("Starts at your next first unlock."). Without this,
   saving a Morning Lock ten minutes after waking would lock the phone mid-setup, with no warning.
+  NOT on every save: re-arming on any save would let a no-challenge edit end today's window
+  mid-lock, such as raising 30 → 60 min, renaming the group, or saving unchanged. That is a Strict
+  Mode bypass, found in the #155 review on 2026-11-02.
+- **Stamp writes are atomic and persisted-first.** The decide-and-write ("is today's stamp already
+  set?") happens inside one DataStore `edit {}` against the stored value, never against an in-memory
+  cache that may not have loaded yet. Otherwise the first unlock after process death (a Play update or
+  a crash) re-stamps mid-day. Found in the #155 review on 2026-11-02.
   Open question Q1 asks the owner whether to keep this.
 - **One pure function:**
   `FirstUnlockWindow.isActive(now, stamp, dayStartMinute, minutes, days, armedAt, zone): Boolean`
@@ -1152,8 +1163,8 @@ model above.
   check at four sites (`evaluateForegroundPackage`, `handleWindowContentChanged`,
   `detectAndEvaluateFeature`, `grantAliveFor`). Section 5.5.
 - The essentials list isn't `SYSTEM_PACKAGES`, and the default SMS role must be added. Section 5.4.
-- `ACTION_USER_PRESENT` must be runtime-registered, with a first-AppWindow + `!isDeviceLocked`
-  fallback. Section 5.3.
+- `ACTION_USER_PRESENT` must be runtime-registered, with a first-AppWindow + `!isKeyguardLocked &&
+  isInteractive` fallback. Section 5.3.
 - Always record the first-unlock stamp even when the feature is off. Section 5.3.
 - Wall clock, not elapsed-realtime; discard a future stamp; fail open on clock jumps. Section 5.3.
 - No timers: check `now < windowEnd` on events. Section 5.3.
