@@ -19,7 +19,7 @@ import com.astraedus.nudge.domain.model.ActiveRule
 import com.astraedus.nudge.domain.model.BlockDecision
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.domain.model.BlockRuleData
-import com.astraedus.nudge.domain.model.GroupMembership
+import com.astraedus.nudge.domain.groups.GroupMembershipResolver
 import com.astraedus.nudge.domain.model.WebBlockMode
 import com.astraedus.nudge.domain.nuke.NukeEnforcement
 import com.astraedus.nudge.domain.packages.EssentialPackages
@@ -143,11 +143,11 @@ class EvaluateBlockUseCase @Inject constructor(
      */
     suspend fun isCoveredWhole(packageName: String, now: Calendar = Calendar.getInstance()): Boolean {
         val snapshot = ruleSnapshots.current()
-        val facts = coverageFacts(packageName, snapshot.ruleData, snapshot.memberships)
+        val facts = coverageFacts(packageName, snapshot.ruleData, snapshot.membership)
         return WholeAppCoverage.coversNow(
             packageName = packageName,
             rules = snapshot.ruleData,
-            memberships = snapshot.memberships,
+            membership = snapshot.membership,
             facts = facts
         ) { rule -> scheduleEvaluator.isActiveAt(rule, now) }
     }
@@ -170,27 +170,40 @@ class EvaluateBlockUseCase @Inject constructor(
         } else {
             snapshot.ruleData
         }
-        val facts = coverageFacts(packageName, rules, snapshot.memberships)
-        return ruleEvaluator.resolveRulesForPackage(packageName, rules, snapshot.memberships, facts)
+        val facts = coverageFacts(packageName, rules, snapshot.membership)
+        return ruleEvaluator.resolveRulesForPackage(packageName, rules, snapshot.membership, facts)
     }
 
     /**
-     * The device facts coverage of [packageName] needs, read only when a rule can consult them
-     * ([RuleCoverage.factsNeeded]): a package with only its own rules reads neither. Both reads are
-     * in-memory caches once warm (the essentials list for 5 minutes, launchability per package until
-     * an install broadcast), so this adds no database or binder call per event.
+     * The device facts coverage of [packageName] needs, read only when a rule can consult them: a
+     * package with only its own rules reads none. The category is read first, and only when a rule
+     * reaches a group that matches by category ([RuleCoverage.categoryNeeded]), because it decides
+     * which groups the package is in; that decides whether essentials and launchability matter
+     * ([RuleCoverage.factsNeeded]). Category and launchability are one cached [PackageFacts] read,
+     * the essentials list a 5-minute cache, so once warm this adds no database or binder call. A
+     * browser (the one browser list, cached with the essentials) joins no group by category, so it is
+     * checked exactly when the category is read.
      *
-     * A fact that is not needed is reported as false; no rule in [rules] reads it.
+     * A fact that is not needed is reported as false (or a null category); no rule in [rules] reads it.
      */
     private suspend fun coverageFacts(
         packageName: String,
         rules: List<BlockRuleData>,
-        memberships: List<GroupMembership>
+        membership: GroupMembershipResolver
     ): CoverageFacts {
-        val needed = RuleCoverage.factsNeeded(rules, RuleCoverage.groupIdsOf(packageName, memberships))
+        val categoryFact = if (RuleCoverage.categoryNeeded(rules, membership)) {
+            packageFacts.factsFor(packageName)
+        } else {
+            null
+        }
+        val category = categoryFact?.category
+        val browser = category != null && packageName in essentialPackages.browsers()
+        val needed = RuleCoverage.factsNeeded(rules, membership.groupIdsOf(packageName, category, browser))
         return CoverageFacts(
             essential = needed.essential && packageName in essentialPackages.current(),
-            launchable = needed.launchable && packageFacts.factsFor(packageName).launchable
+            launchable = needed.launchable && (categoryFact ?: packageFacts.factsFor(packageName)).launchable,
+            category = category,
+            browser = browser
         )
     }
 

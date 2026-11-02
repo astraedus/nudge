@@ -5,6 +5,10 @@ import com.astraedus.nudge.data.db.entity.AppGroup
 import com.astraedus.nudge.data.db.entity.AppGroupMember
 import com.astraedus.nudge.data.db.entity.BlockRule
 import com.astraedus.nudge.data.repository.InstalledAppsRepository.AppInfo
+import com.astraedus.nudge.data.repository.groupResolverOf
+import com.astraedus.nudge.domain.engine.CoverageFacts
+import com.astraedus.nudge.domain.groups.GroupMembershipResolver
+import com.astraedus.nudge.domain.packages.AppCategory
 import com.astraedus.nudge.ui.components.rule.AllAppsRuleItem
 import com.astraedus.nudge.ui.components.rule.RuleSummary
 import com.astraedus.nudge.ui.components.rule.allAppsRuleItems
@@ -102,6 +106,8 @@ fun buildManageAppsSections(
     groups: List<AppGroup>,
     members: List<AppGroupMember>,
     rules: List<BlockRule>,
+    essentials: Set<String>,
+    browsers: Set<String>,
     query: String,
     extraApps: Map<String, AppInfo> = emptyMap(),
     keepInPlace: Set<String> = emptySet()
@@ -114,6 +120,8 @@ fun buildManageAppsSections(
         .filter { it.packageName != null && it.groupId == null }
         .groupBy { it.packageName!! }
     val installedByPackage = installed.associateBy { it.packageName }
+    val membership = groupResolverOf(groups, members)
+    val categories = installed.associate { it.packageName to it.category }
 
     fun row(info: AppInfo): AppRow {
         val pkgRules = rulesByPackage[info.packageName] ?: return AppRow(
@@ -121,7 +129,18 @@ fun buildManageAppsSections(
             summary = null,
             isOn = false,
             coveredBy = RuleSummary.coveredByText(
-                blockingGroupsOf(info.packageName, groups, members, rules).map { (group, _) -> group.name }
+                blockingGroupsOf(
+                    packageName = info.packageName,
+                    facts = CoverageFacts(
+                        essential = info.packageName in essentials,
+                        launchable = true,
+                        category = categories[info.packageName],
+                        browser = info.packageName in browsers
+                    ),
+                    groups = groups,
+                    membership = membership,
+                    rules = rules
+                ).map { (group, _) -> group.name }
             )
         )
         return AppRow(
@@ -147,7 +166,7 @@ fun buildManageAppsSections(
     val firstRun = allAppsAll.isEmpty() && groups.isEmpty() && rulesByPackage.keys.none(::belowWithRules)
     return ManageAppsSections(
         allApps = allAppsAll.filter { needle.isEmpty() || it.title.contains(needle, ignoreCase = true) },
-        groups = buildGroupRows(groups, members, rules, needle),
+        groups = buildGroupRows(groups, membership, categories, essentials, browsers, rules, needle),
         showNewGroup = needle.isEmpty(),
         appsWithRules = appsWithRules,
         otherApps = otherApps,
@@ -161,11 +180,14 @@ fun buildManageAppsSections(
  */
 fun buildGroupRows(
     groups: List<AppGroup>,
-    members: List<AppGroupMember>,
+    membership: GroupMembershipResolver,
+    installed: Map<String, AppCategory>,
+    essentials: Set<String>,
+    browsers: Set<String>,
     rules: List<BlockRule>,
     query: String
 ): List<GroupRow> {
-    val countByGroup = members.groupingBy { it.groupId }.eachCount()
+    fun count(groupId: Long) = membership.membersOf(groupId, installed, essentials, browsers).size
     val needle = query.trim()
     return groups
         .filter { needle.isEmpty() || it.name.contains(needle, ignoreCase = true) }
@@ -174,7 +196,7 @@ fun buildGroupRows(
             val rule = ownGroupRule(group.id, rules)
             GroupRow(
                 groupId = group.id,
-                title = RuleSummary.groupTitle(group.name, countByGroup[group.id] ?: 0),
+                title = RuleSummary.groupTitle(group.name, count(group.id)),
                 summary = RuleSummary.groupSummaryText(rule),
                 blocking = rule?.enabled == true,
                 rule = rule

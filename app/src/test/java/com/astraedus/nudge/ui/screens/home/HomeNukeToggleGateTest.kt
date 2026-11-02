@@ -50,7 +50,8 @@ class HomeNukeToggleGateTest {
             screenTimeProvider = mockk(relaxed = true),
             timeTracker = timeTracker,
             homeChartsBuilder = HomeChartsBuilder(StatsCalculator(timeTracker)),
-            installedAppsRepository = mockk(relaxed = true),
+            installedAppsRepository = mockk<com.astraedus.nudge.data.repository.InstalledAppsRepository>(relaxed = true)
+                .also { every { it.changes } returns MutableStateFlow(0L) },
             insightsCalculator = InsightsCalculator(),
             essentialApps = mockk(relaxed = true),
             ioDispatcher = dispatcher

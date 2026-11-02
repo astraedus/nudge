@@ -3,10 +3,12 @@ package com.astraedus.nudge.data.repository
 import com.astraedus.nudge.data.db.dao.AppGroupDao
 import com.astraedus.nudge.data.db.dao.BlockRuleDao
 import com.astraedus.nudge.data.db.dao.exceptGroupIdsWithout
-import com.astraedus.nudge.data.db.dao.membershipChanges
+import com.astraedus.nudge.data.db.dao.memberRowChanges
+import com.astraedus.nudge.data.db.dao.memberRows
 import com.astraedus.nudge.data.db.entity.AppGroup
 import com.astraedus.nudge.data.db.entity.AppGroupMember
 import com.astraedus.nudge.data.db.entity.BlockRule
+import com.astraedus.nudge.domain.packages.AppCategory
 import io.mockk.mockk
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
@@ -18,26 +20,33 @@ import org.junit.Test
 /** In-memory [AppGroupDao]: the `open` transactional methods under test run for real on it. */
 private class FakeGroupDao : AppGroupDao() {
     val groups = mutableMapOf<Long, String>()
-    val members = mutableSetOf<Pair<Long, String>>()
+    val categories = mutableMapOf<Long, String?>()
+    /** (group, package) -> excluded. */
+    val members = mutableMapOf<Pair<Long, String>, Boolean>()
     val rules = mutableMapOf<Long, BlockRule>()
     var nextId = 1L
 
     override fun getAll(): Flow<List<AppGroup>> = flowOf(groups.map { AppGroup(it.key, it.value) })
     override fun getById(id: Long): Flow<AppGroup?> = flowOf(groups[id]?.let { AppGroup(id, it) })
-    override suspend fun insert(group: AppGroup): Long { groups[nextId] = group.name; return nextId++ }
+    override suspend fun insert(group: AppGroup): Long {
+        groups[nextId] = group.name; categories[nextId] = group.categories; return nextId++
+    }
     override suspend fun update(group: AppGroup) { groups[group.id] = group.name }
     override suspend fun delete(group: AppGroup) { groups.remove(group.id) }
     override fun getMembersForGroup(groupId: Long): Flow<List<AppGroupMember>> =
-        flowOf(members.filter { it.first == groupId }.map { AppGroupMember(it.first, it.second) })
+        flowOf(members.filter { it.key.first == groupId }.map { AppGroupMember(it.key.first, it.key.second, it.value) })
     override fun getAllMembers(): Flow<List<AppGroupMember>> =
-        flowOf(members.map { AppGroupMember(it.first, it.second) })
-    override suspend fun addMember(member: AppGroupMember) { members.add(member.groupId to member.packageName) }
+        flowOf(members.map { AppGroupMember(it.key.first, it.key.second, it.value) })
+    override suspend fun addMember(member: AppGroupMember) {
+        members[member.groupId to member.packageName] = member.excluded
+    }
     override suspend fun removeMember(groupId: Long, packageName: String) { members.remove(groupId to packageName) }
     override fun getGroupsForPackage(packageName: String): Flow<List<AppGroup>> = flowOf(emptyList())
-    override suspend fun getMemberPackages(groupId: Long) =
-        members.filter { it.first == groupId }.map { it.second }
+    override suspend fun getMemberRows(groupId: Long) =
+        members.filter { it.key.first == groupId }.map { AppGroupMember(groupId, it.key.second, it.value) }
+    override suspend fun setCategories(groupId: Long, categories: String?) { this.categories[groupId] = categories }
     override suspend fun renameGroup(groupId: Long, name: String) { groups[groupId] = name }
-    override suspend fun deleteMembersOfGroup(groupId: Long) { members.removeAll { it.first == groupId } }
+    override suspend fun deleteMembersOfGroup(groupId: Long) { members.keys.removeAll { it.first == groupId } }
     override suspend fun deleteGroupById(groupId: Long) { groups.remove(groupId) }
     override suspend fun deleteRulesOfGroup(groupId: Long) { rules.values.removeAll { it.groupId == groupId } }
     override suspend fun getRulesWithExceptGroups() = rules.values.filter { it.exceptGroupIds != null }
@@ -56,19 +65,51 @@ class GroupSaveTest {
     private val repo = BlockRuleRepository(mockk<BlockRuleDao>(relaxed = true), dao)
     private val rule = BlockRule(mode = "DELAY", packageName = "ignored")
 
+    // saveGroup(groupId, name, categories, includes, excludes, rule)
+    private suspend fun BlockRuleRepository.save(
+        id: Long?, name: String, includes: Set<String>, r: BlockRule = rule,
+        categories: Set<AppCategory> = emptySet(), excludes: Set<String> = emptySet()
+    ) = saveGroup(id, name, categories, includes, excludes, r)
+
+    private fun packagesOf(id: Long) = dao.members.filter { it.key.first == id }.keys.map { it.second }.toSet()
+
     @Test
-    fun `membershipChanges splits adds and removes`() {
-        val c = membershipChanges(setOf("a", "b"), setOf("b", "c"))
-        assertEquals(setOf("c"), c.toAdd)
+    fun `memberRowChanges splits writes and removes`() {
+        val c = memberRowChanges(mapOf("a" to false, "b" to false), mapOf("b" to false, "c" to false))
+        assertEquals(mapOf("c" to false), c.toWrite)
         assertEquals(setOf("a"), c.toRemove)
     }
 
     @Test
+    fun `an include flipped to removed-by-you is a write, not a remove plus an add`() {
+        val c = memberRowChanges(mapOf("a" to false), mapOf("a" to true))
+        assertEquals(mapOf("a" to true), c.toWrite)
+        assertEquals(emptySet<String>(), c.toRemove)
+    }
+
+    @Test
+    fun `a row dropped entirely is a remove and an unchanged row writes nothing`() {
+        val c = memberRowChanges(mapOf("a" to true, "b" to false), mapOf("b" to false))
+        assertEquals(emptyMap<String, Boolean>(), c.toWrite)
+        assertEquals(setOf("a"), c.toRemove)
+    }
+
+    @Test
+    fun `memberRows maps includes to false and excludes to true`() {
+        assertEquals(mapOf("a" to false, "b" to true), memberRows(setOf("a"), setOf("b")))
+    }
+
+    @Test
+    fun `memberRows rejects a package that is both added and removed`() {
+        assertThrows(IllegalArgumentException::class.java) { memberRows(setOf("a"), setOf("a")) }
+    }
+
+    @Test
     fun `saving a new group inserts it, its members and its rule with groupId set`() = runTest {
-        val id = repo.saveGroup(null, "  Social ", setOf("a", "b"), rule)
+        val id = repo.save(null, "  Social ", setOf("a", "b"))
 
         assertEquals("Social", dao.groups[id])
-        assertEquals(setOf("a", "b"), dao.members.filter { it.first == id }.map { it.second }.toSet())
+        assertEquals(setOf("a", "b"), packagesOf(id))
         val saved = dao.rules.values.single()
         assertEquals(id, saved.groupId)
         assertEquals(null, saved.packageName)
@@ -76,26 +117,26 @@ class GroupSaveTest {
 
     @Test
     fun `saving an existing group replaces members as a set and updates its rule`() = runTest {
-        val id = repo.saveGroup(null, "Social", setOf("a", "b"), rule)
+        val id = repo.save(null, "Social", setOf("a", "b"))
         val ruleId = dao.rules.keys.single()
 
-        repo.saveGroup(id, "Feeds", setOf("b", "c"), dao.rules.getValue(ruleId).copy(mode = "HARD_BLOCK"))
+        repo.save(id, "Feeds", setOf("b", "c"), dao.rules.getValue(ruleId).copy(mode = "HARD_BLOCK"))
 
         assertEquals("Feeds", dao.groups[id])
-        assertEquals(setOf("b", "c"), dao.members.map { it.second }.toSet())
+        assertEquals(setOf("b", "c"), packagesOf(id))
         assertEquals(1, dao.rules.size)
         assertEquals("HARD_BLOCK", dao.rules.getValue(ruleId).mode)
     }
 
     @Test
     fun `deleting a group removes its members and rules explicitly but not other groups'`() = runTest {
-        val a = repo.saveGroup(null, "A", setOf("x"), rule)
-        val b = repo.saveGroup(null, "B", setOf("y"), rule)
+        val a = repo.save(null, "A", setOf("x"))
+        val b = repo.save(null, "B", setOf("y"))
 
         repo.deleteGroupWithRules(a)
 
         assertEquals(setOf(b), dao.groups.keys)
-        assertEquals(listOf(b to "y"), dao.members.toList())
+        assertEquals(mapOf((b to "y") to false), dao.members)
         assertEquals(listOf(b), dao.rules.values.map { it.groupId })
     }
 
@@ -127,8 +168,8 @@ class GroupSaveTest {
 
     @Test
     fun `deleting a group takes its id off every All apps rule's allowed groups`() = runTest {
-        val gone = repo.saveGroup(null, "Work", setOf("w"), rule)
-        val kept = repo.saveGroup(null, "Music", setOf("m"), rule)
+        val gone = repo.save(null, "Work", setOf("w"))
+        val kept = repo.save(null, "Music", setOf("m"))
         val both = putRule(allAppsRule("$gone,$kept"))
         val onlyGone = putRule(allAppsRule("$gone"))
         val onlyKept = putRule(allAppsRule("$kept"))
@@ -146,15 +187,55 @@ class GroupSaveTest {
     fun `saving a group with an All apps rule throws instead of writing a two-target row`() {
         assertThrows(IllegalArgumentException::class.java) {
             kotlinx.coroutines.runBlocking {
-                repo.saveGroup(null, "A", emptySet(), BlockRule(mode = "DELAY", allApps = true))
+                repo.save(null, "A", emptySet(), BlockRule(mode = "DELAY", allApps = true))
             }
+        }
+        assertEquals(emptyMap<Long, String>(), dao.groups)
+    }
+
+    // -- category groups: categories column + include / removed-by-you rows --
+
+    @Test
+    fun `saving a category group stores the categories CSV and the removed-by-you row`() = runTest {
+        val id = repo.save(
+            null, "Social", setOf("hand"),
+            categories = setOf(AppCategory.VIDEO, AppCategory.SOCIAL), excludes = setOf("gone")
+        )
+
+        assertEquals("SOCIAL,VIDEO", dao.categories[id])
+        assertEquals(mapOf((id to "hand") to false, (id to "gone") to true), dao.members)
+    }
+
+    @Test
+    fun `saving with no categories leaves the column null`() = runTest {
+        val id = repo.save(null, "Hand picked", setOf("a"))
+        assertEquals(null, dao.categories[id])
+    }
+
+    @Test
+    fun `re-saving flips an include to removed-by-you in place and drops a cleared row`() = runTest {
+        val id = repo.save(null, "G", setOf("a", "b"), categories = setOf(AppCategory.GAME))
+
+        repo.save(id, "G", setOf("b"), categories = emptySet(), excludes = setOf("a"))
+
+        assertEquals(null, dao.categories[id])
+        assertEquals(mapOf((id to "a") to true, (id to "b") to false), dao.members)
+
+        repo.save(id, "G", emptySet())
+        assertEquals(emptyMap<Pair<Long, String>, Boolean>(), dao.members)
+    }
+
+    @Test
+    fun `saving a package as both added and removed throws before anything is written`() {
+        assertThrows(IllegalArgumentException::class.java) {
+            kotlinx.coroutines.runBlocking { repo.save(null, "G", setOf("a"), excludes = setOf("a")) }
         }
         assertEquals(emptyMap<Long, String>(), dao.groups)
     }
 
     @Test
     fun `renaming trims the name`() = runTest {
-        val id = repo.saveGroup(null, "A", emptySet(), rule)
+        val id = repo.save(null, "A", emptySet())
         repo.renameGroup(id, " Z ")
         assertEquals("Z", dao.groups[id])
     }

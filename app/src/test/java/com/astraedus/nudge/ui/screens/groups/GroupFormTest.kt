@@ -1,8 +1,10 @@
 package com.astraedus.nudge.ui.screens.groups
 
 import com.astraedus.nudge.data.db.entity.BlockRule
+import com.astraedus.nudge.domain.groups.GroupDefinition
 import com.astraedus.nudge.domain.lock.GroupUsage
 import com.astraedus.nudge.domain.model.BlockMode
+import com.astraedus.nudge.domain.packages.AppCategory
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -116,13 +118,19 @@ class GroupFormTest {
 
     // ── Strict Mode on save (spec 5.6) ────────────────────────────────────
 
+    /** Hand-picked groups: every member is an include, whether or not it is installed. */
     private fun weakens(
         oldMembers: Set<String>?,
         newMembers: Set<String>,
         oldRule: BlockRule?,
         newRule: BlockRule,
         usage: GroupUsage = blocking
-    ) = groupSaveWeakens(3L, oldMembers, newMembers, usage, oldRule, newRule)
+    ) = groupSaveWeakens(
+        oldMembers?.let { GroupDefinition(3L, includes = it) },
+        GroupDefinition(3L, includes = newMembers),
+        usage, oldRule, newRule,
+        installed = emptyMap(), essentials = emptySet(), browsers = emptySet()
+    )
 
     @Test
     fun `creating a group is never weakening`() =
@@ -174,8 +182,78 @@ class GroupFormTest {
 
     @Test
     fun `deleting a blocking group is weakening, an unused one is free`() {
-        assertTrue(groupDeleteWeakens(3L, setOf("a"), blocking))
-        assertFalse(groupDeleteWeakens(3L, setOf("a"), GroupUsage.UNUSED))
+        assertTrue(groupDeleteWeakens(GroupDefinition(3L, includes = setOf("a")), blocking, emptyMap(), emptySet(), browsers = emptySet()))
+        assertFalse(groupDeleteWeakens(GroupDefinition(3L, includes = setOf("a")), GroupUsage.UNUSED, emptyMap(), emptySet(), browsers = emptySet()))
+    }
+
+    // ── Category groups (spec 5.2): membership is resolved before it is compared ──
+
+    private val fiveSocial = (1..5).associate { "com.social$it" to AppCategory.SOCIAL }
+    private val socialGroup = GroupDefinition(3L, categories = setOf(AppCategory.SOCIAL))
+
+    private fun categoryWeakens(
+        old: GroupDefinition?,
+        new: GroupDefinition,
+        installed: Map<String, AppCategory>,
+        essentials: Set<String> = emptySet(),
+        usage: GroupUsage = blocking
+    ) = groupSaveWeakens(old, new, usage, groupRule(), groupRule(), installed, essentials, browsers = emptySet())
+
+    @Test
+    fun `unchecking a category that resolves to no installed app is not weakening`() {
+        val installed = mapOf("com.game" to AppCategory.GAME)
+        assertFalse(categoryWeakens(socialGroup, GroupDefinition(3L), installed))
+    }
+
+    @Test
+    fun `unchecking a category that resolves to five apps is weakening`() {
+        assertTrue(categoryWeakens(socialGroup, GroupDefinition(3L), fiveSocial))
+    }
+
+    @Test
+    fun `unchecking a category whose only apps are essential is not weakening`() {
+        assertFalse(
+            categoryWeakens(socialGroup, GroupDefinition(3L), fiveSocial, essentials = fiveSocial.keys)
+        )
+    }
+
+    @Test
+    fun `moving a category app to removed-by-you is weakening`() {
+        val removed = socialGroup.copy(excludes = setOf("com.social1"))
+        assertTrue(categoryWeakens(socialGroup, removed, fiveSocial))
+    }
+
+    @Test
+    fun `restoring a removed category app is not weakening under a blocking group`() {
+        val removed = socialGroup.copy(excludes = setOf("com.social1"))
+        assertFalse(categoryWeakens(removed, socialGroup, fiveSocial))
+    }
+
+    @Test
+    fun `checking a category is not weakening under a blocking group`() {
+        assertFalse(categoryWeakens(GroupDefinition(3L), socialGroup, fiveSocial))
+    }
+
+    @Test
+    fun `checking a category under an allowing rule is weakening, since apps join the allowed set`() {
+        val allowing = GroupUsage(blocks = false, allowedBy = true)
+        assertTrue(categoryWeakens(GroupDefinition(3L), socialGroup, fiveSocial, usage = allowing))
+    }
+
+    @Test
+    fun `a brand-new category group is never weakening`() {
+        assertFalse(categoryWeakens(null, socialGroup, fiveSocial))
+    }
+
+    @Test
+    fun `deleting a category group is weakening while it blocks, free when unused`() {
+        assertTrue(groupDeleteWeakens(socialGroup, blocking, fiveSocial, emptySet(), browsers = emptySet()))
+        assertFalse(groupDeleteWeakens(socialGroup, GroupUsage.UNUSED, fiveSocial, emptySet(), browsers = emptySet()))
+    }
+
+    @Test
+    fun `deleting a category group with no installed member is free`() {
+        assertFalse(groupDeleteWeakens(socialGroup, blocking, emptyMap(), emptySet(), browsers = emptySet()))
     }
 
     // ── The picker ────────────────────────────────────────────────────────

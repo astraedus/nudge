@@ -3,7 +3,9 @@ package com.astraedus.nudge.domain.usecase
 import com.astraedus.nudge.data.export.RuleExporter
 import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.data.repository.BlockRuleRepository
+import com.astraedus.nudge.data.repository.InstalledAppsRepository
 import com.astraedus.nudge.data.repository.UsageRepository
+import com.astraedus.nudge.domain.packages.EssentialPackages
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.withContext
@@ -13,7 +15,9 @@ class ExportRulesUseCase @Inject constructor(
     private val repository: BlockRuleRepository,
     private val usageRepository: UsageRepository,
     private val preferences: NudgePreferences,
-    private val exporter: RuleExporter
+    private val exporter: RuleExporter,
+    private val installedApps: InstalledAppsRepository,
+    private val essentialPackages: EssentialPackages
 ) {
 
     /**
@@ -32,6 +36,10 @@ class ExportRulesUseCase @Inject constructor(
      * and both insight pages survive a device move, and an opt-in nobody finds is a backup nobody
      * has. Screen time is not included — it belongs to `UsageStatsManager` and re-derives itself on
      * whatever device the file lands on.
+     *
+     * Each group is written as its definition (categories, includes, "Removed by you") AND as its
+     * members resolved on this device, so an older Nudge, which reads only `name` + `members`,
+     * still imports a usable hand-picked group. Envelope version stays 1.
      *
      * Serialization runs OFF the main thread. Retention is not enforced anywhere
      * (`UsageRepository.cleanup` has no call site), so the row count is unbounded and a heavy user's
@@ -53,6 +61,13 @@ class ExportRulesUseCase @Inject constructor(
         // actually restored their Nudge. Device-local state is excluded -- see [ExportedSettings].
         val settings = preferences.exportableSettings()
 
-        exporter.exportRules(rules, groups, groupMembers, history, settings)
+        val installed = installedApps.getInstalledApps().associate { it.packageName to it.category }
+
+        exporter.exportRules(
+            rules, groups, groupMembers, history, settings,
+            installed = installed,
+            essentials = essentialPackages.current(),
+            browsers = essentialPackages.browsers()
+        )
     }
 }

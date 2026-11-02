@@ -59,6 +59,7 @@ class AllAppsEditorViewModelTest {
         coEvery { installed.resolveIcon(any()) } returns null
         val essentials = mockk<EssentialApps>()
         every { essentials.packages(any()) } returns setOf(DIALER, LAUNCHER)
+        coEvery { essentials.browsers() } returns emptySet()
         val facts = FakePackageFacts(launchable = AllAppsFixtures.installed.mapTo(HashSet()) { it.packageName })
         val prefs = mockk<NudgePreferences>()
         every { prefs.isStrictModeEnabled } returns flowOf(strictOn)

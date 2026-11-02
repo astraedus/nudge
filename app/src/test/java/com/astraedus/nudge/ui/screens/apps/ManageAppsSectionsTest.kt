@@ -4,6 +4,7 @@ import com.astraedus.nudge.data.db.entity.AppGroup
 import com.astraedus.nudge.data.db.entity.AppGroupMember
 import com.astraedus.nudge.data.db.entity.BlockRule
 import com.astraedus.nudge.data.repository.InstalledAppsRepository.AppInfo
+import com.astraedus.nudge.domain.packages.AppCategory
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -33,7 +34,7 @@ class ManageAppsSectionsTest {
         query: String = "",
         extraApps: Map<String, AppInfo> = emptyMap(),
         keepInPlace: Set<String> = emptySet()
-    ) = buildManageAppsSections(installed, groups, members, rules, query, extraApps, keepInPlace)
+    ) = buildManageAppsSections(installed, groups, members, rules, emptySet(), emptySet(), query, extraApps, keepInPlace)
 
     private fun ManageAppsSections.names(list: List<AppRow>) = list.map { it.appInfo.appName }
 
@@ -177,7 +178,7 @@ class ManageAppsSectionsTest {
             BlockRule(id = 40, groupId = 1, mode = "HARD_BLOCK"),
             BlockRule(id = 41, groupId = 2, mode = "DELAY", enabled = false)
         )
-        val s = buildManageAppsSections(installed + many, groups, emptyList(), rules, query = "")
+        val s = buildManageAppsSections(installed + many, groups, emptyList(), rules, emptySet(), query = "", browsers = emptySet())
 
         assertEquals(listOf("games · 0 apps", "Social · 0 apps", "Work · 0 apps"), s.groups.map { it.title })
         assertEquals(listOf(true, false, false), s.groups.map { it.blocking })
@@ -297,5 +298,40 @@ class ManageAppsSectionsTest {
         val s = sections(listOf(social), typicalMembers, typicalRules.filter { it.groupId != null })
         assertTrue(s.appsWithRules.isEmpty())
         assertEquals(installed.size, s.otherApps.size)
+    }
+
+    // ── Category groups (spec 5.2) ─────────────────────────────────────────
+
+    private fun categorised(pkg: String, name: String, category: AppCategory) =
+        AppInfo(packageName = pkg, appName = name, icon = null, category = category)
+
+    private val phone = listOf(
+        categorised("com.insta", "Instagram", AppCategory.SOCIAL),
+        categorised("com.tiktok", "TikTok", AppCategory.SOCIAL),
+        categorised("com.dialer", "Phone", AppCategory.SOCIAL),
+        categorised("com.chess", "Chess", AppCategory.GAME)
+    )
+    private val socialApps = AppGroup(id = 7, name = "Social apps", categories = "SOCIAL")
+
+    @Test
+    fun `a category group row counts its category apps, minus essentials and removed ones`() {
+        val s = buildManageAppsSections(
+            phone, listOf(socialApps), listOf(AppGroupMember(7, "com.tiktok", excluded = true)),
+            emptyList(), setOf("com.dialer"), query = "", browsers = emptySet()
+        )
+
+        assertEquals(listOf("Social apps · 1 app"), s.groups.map { it.title })
+    }
+
+    @Test
+    fun `an app covered only by a blocking category group reads In that group`() {
+        val rules = listOf(BlockRule(id = 1, groupId = 7, mode = "HARD_BLOCK"))
+        val s = buildManageAppsSections(phone, listOf(socialApps), emptyList(), rules, setOf("com.dialer"), query = "", browsers = emptySet())
+        val byName = s.otherApps.associateBy { it.appInfo.appName }
+
+        assertEquals("In Social apps", byName.getValue("Instagram").coveredBy)
+        assertEquals(null, byName.getValue("Chess").coveredBy)
+        // The essential app carries the category but is never covered.
+        assertEquals(null, byName.getValue("Phone").coveredBy)
     }
 }

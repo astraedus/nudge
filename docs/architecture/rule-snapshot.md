@@ -17,7 +17,7 @@ queries, `PackageFacts` / `AndroidPackageFacts`, or `di/EngineModule.kt`.**
 | Per-call reader | `RepositoryRuleSnapshots` (same file) | Reads the tables now: rules, groups, then one query per group. The cold-start path, and what a hand-built `EvaluateBlockUseCase` (every existing use-case test) uses. |
 | Members query | `AppGroupDao.getAllMembers()` | One Flow over `app_group_members`, so a membership change re-emits without one query per group. |
 | Package facts port | `domain/packages/PackageFacts.kt` | `factsFor(pkg)` → `PackageFact(category, launchable)`, plus `invalidate` / `invalidateAll`. `PackageFactsCache` is the pure per-package cache. |
-| Package facts impl | `service/AndroidPackageFacts.kt` (bound in `di/EngineModule.kt`) | `PackageManager` reads on the IO dispatcher, cached per package, invalidated by a runtime `PACKAGE_ADDED/REPLACED/REMOVED/CHANGED` receiver. Read by `EvaluateBlockUseCase` for All apps coverage. |
+| Package facts impl | `service/AndroidPackageFacts.kt` (bound in `di/EngineModule.kt`) | `PackageManager` reads on the IO dispatcher, cached per package, invalidated by a runtime `PACKAGE_ADDED/REPLACED/REMOVED/CHANGED` receiver (the ONE receiver; never a second, never manifest). The same receiver also calls `InstalledAppsRepository.refresh()`, which clears its cache and bumps its `changes` counter, so Home's "N apps blocked" and Manage Apps re-read the list and a newly installed app joins its category group in the counts. `NudgeApp` field-injects `PackageFacts`, so the receiver is registered for the whole process lifetime, not only once the accessibility hot path first asks for a fact. Read by `EvaluateBlockUseCase` for All apps coverage. |
 | Essentials port | `domain/packages/EssentialPackages.kt`, impl `service/EssentialApps.kt` | `current()` (cached 5 minutes) and `cachedOrNull()`. The one essentials list, read by Nuke and by group and All apps coverage. |
 
 ## Why a snapshot
@@ -81,6 +81,27 @@ The service's synchronous check (above) cannot suspend, so it reads `EssentialAp
 (empty if never resolved) and treats a browser as launchable. Both mistakes only send the browser to
 the suspending evaluation, which reads the real facts.
 
+## Category groups on the hot path (spec PR 6)
+
+The snapshot carries `membership`, a `GroupMembershipResolver` built once by `groupResolverOf`
+(`data/repository/GroupDefinitions.kt`) from each group's `categories` CSV and its include and
+"Removed by you" rows. Membership is `!essential && !excluded && (included || (!browser && category
+in categories))`; UNDEFINED never matches, and a browser joins only by hand (see
+`rules-and-features.md`, "A browser never joins by category"). The resolver itself does not apply essentials: `RuleCoverage`
+does, per rule kind, exactly as for hand-picked members.
+
+A package's category is read only when a rule can reach a group that matches by category
+(`RuleCoverage.categoryNeeded`). With no category group in any enabled rule, evaluation reads no
+category at all. When it is needed, `EvaluateBlockUseCase` reads it through the cached
+`PackageFacts.factsFor` (one cached read, the same one that holds launchability), so once warm a
+category group adds no binder call per event. `browser` is `pkg in EssentialPackages.browsers()`,
+the one browser list, cached with the essentials, and checked only when a category was read.
+
+The service's synchronous `isCoveredWholeNow` is only ever asked about a browser, and a browser never
+joins by category, so it passes `browser = true` and no category: it reads no category at all, and
+only a hand-added row can cover it. (Before the browser rule it read `PackageFacts.cachedOrNull` and
+failed closed on a miss; that branch is gone with the case it covered.)
+
 ## Group names
 
 `RuleSnapshot.of` maps each group rule with the name of its group (`BlockRuleData.groupName`,
@@ -106,4 +127,5 @@ broadcast invalidates it; any other failure is not cached, so the next read retr
 | L1 | `RuleEvaluatorGroupNameTest` | a group rule is named after its group in every mode, with qualifiers and feature prefix; "Group" for a missing name; direct rules unchanged; `RuleSnapshot.of` fills `groupName` |
 | L1 | `PackageFactsCacheTest`, `AndroidPackageFactsCategoryTest` | cache hit/miss/invalidate, a throwing resolve is not cached; every `CATEGORY_*` mapping, unknown → `UNDEFINED` |
 | L3 | `EvaluateBlockAllAppsTest` | with an All apps rule: zero table opens and zero per-group reads once warm (including `isCoveredWhole`); no device-fact read for a package with only its own rule; one read of each fact per All apps evaluation; a newly installed app covered on its first evaluation |
+| L1 | `GroupMembershipResolverTest`, `GroupDefinitionsTest`, `CategoryCoverageTest` | category match, include, "Removed by you" beats category, essentials never members, UNDEFINED never matches; rows to definitions; coverage of a category member under group and All apps rules |
 | L1 | `RuleCoverageTest` | `factsNeeded` asks for nothing with app-only rules, and a fact it skips never changes any rule's coverage |

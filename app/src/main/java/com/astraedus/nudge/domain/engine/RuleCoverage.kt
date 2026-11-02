@@ -1,19 +1,32 @@
 package com.astraedus.nudge.domain.engine
 
 import com.astraedus.nudge.domain.model.BlockRuleData
-import com.astraedus.nudge.domain.model.GroupMembership
+import com.astraedus.nudge.domain.groups.GroupMembershipResolver
 import com.astraedus.nudge.domain.model.RuleTarget
+import com.astraedus.nudge.domain.packages.AppCategory
 
 /**
- * The two facts about a package that group and All apps coverage need beyond the rule tables.
+ * The facts about a package that group and All apps coverage need beyond the rule tables.
  *
- * Both come from the device: [essential] from the one essentials list
- * ([com.astraedus.nudge.domain.packages.EssentialPackages], spec 5.4), [launchable] from
- * [com.astraedus.nudge.domain.packages.PackageFacts]. There is deliberately no default instance:
- * every caller says what it knows, because a defaulted "launchable, not essential" is how an
- * essential app ends up under an All apps rule.
+ * All come from the device: [essential] from the one essentials list
+ * ([com.astraedus.nudge.domain.packages.EssentialPackages], spec 5.4), [launchable] and [category]
+ * from [com.astraedus.nudge.domain.packages.PackageFacts]. [category] is null when it was not read,
+ * which matches no category group (see [GroupMembershipResolver]); a caller reads it whenever
+ * [RuleCoverage.categoryNeeded] says a rule's groups match by category. There is deliberately no
+ * default for any of them: every caller says what it knows, because a defaulted "launchable, not
+ * essential" is how an essential app ends up under an All apps rule, and a defaulted null category
+ * is how a category group silently covers nothing.
  */
-data class CoverageFacts(val essential: Boolean, val launchable: Boolean)
+data class CoverageFacts(
+    val essential: Boolean,
+    val launchable: Boolean,
+    val category: AppCategory?,
+    /**
+     * On the one browser list ([com.astraedus.nudge.domain.packages.EssentialPackages.browsers]): a
+     * browser joins no group by [category], only by hand. Only consulted when [category] is read.
+     */
+    val browser: Boolean
+)
 
 /**
  * Which rules cover a package (spec 4.1). The ONE coverage answer: block evaluation
@@ -51,9 +64,28 @@ object RuleCoverage {
                 target.exceptGroupIds.none { it in groupIdsOfPackage }
     }
 
-    /** The groups [packageName] is a member of. */
-    fun groupIdsOf(packageName: String, memberships: List<GroupMembership>): Set<Long> =
-        memberships.filter { it.packageName == packageName }.mapTo(HashSet()) { it.groupId }
+    /**
+     * The groups [packageName] is a member of, by [membership] (spec 5.2) with [facts]' category.
+     * Essentials are applied by [covers], per rule kind; a browser joins by hand only.
+     */
+    fun groupIdsOf(packageName: String, membership: GroupMembershipResolver, facts: CoverageFacts): Set<Long> =
+        membership.groupIdsOf(packageName, facts.category, facts.browser)
+
+    /**
+     * Does evaluating [rules] need the package's category? True when a rule targets, or (All apps)
+     * allows, a group that matches by category. Otherwise no group the rules reach can match by
+     * category, and the hot path skips the read.
+     */
+    fun categoryNeeded(rules: List<BlockRuleData>, membership: GroupMembershipResolver): Boolean {
+        if (!membership.usesCategories) return false
+        return rules.any { rule ->
+            when (val target = RuleTarget.of(rule)) {
+                is RuleTarget.Group -> membership.usesCategories(listOf(target.groupId))
+                is RuleTarget.AllApps -> membership.usesCategories(target.exceptGroupIds)
+                is RuleTarget.App, null -> false
+            }
+        }
+    }
 
     /**
      * The ENABLED rules among [rules] that cover [packageName], in [rules] order. What "Also
@@ -63,10 +95,10 @@ object RuleCoverage {
     fun coveringRules(
         packageName: String,
         rules: List<BlockRuleData>,
-        memberships: List<GroupMembership>,
+        membership: GroupMembershipResolver,
         facts: CoverageFacts
     ): List<BlockRuleData> {
-        val groupIds = groupIdsOf(packageName, memberships)
+        val groupIds = groupIdsOf(packageName, membership, facts)
         return rules.filter { it.enabled && covers(it, packageName, groupIds, facts) }
     }
 

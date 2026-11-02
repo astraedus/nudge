@@ -15,17 +15,28 @@ class FakeEssentialPackages(var packages: Set<String> = emptySet()) : EssentialP
     }
 
     override fun cachedOrNull(): Set<String>? = packages
+
+    /** The one browser list; empty unless a test sets it. */
+    var browsers: Set<String> = emptySet()
+
+    override suspend fun browsers(): Set<String> = browsers
 }
 
-/** Launchable = in [launchable]; everything else reads as not installed. */
-class FakePackageFacts(var launchable: Set<String> = emptySet()) : PackageFacts {
+/**
+ * Launchable = in [launchable]; everything else reads as not installed. A launchable app's category
+ * is its entry in [categories], UNDEFINED when it has none.
+ */
+class FakePackageFacts(
+    var launchable: Set<String> = emptySet(),
+    var categories: Map<String, AppCategory> = emptyMap()
+) : PackageFacts {
     var reads = 0
         private set
 
     override suspend fun factsFor(packageName: String): PackageFact {
         reads++
         return if (packageName in launchable) {
-            PackageFact(AppCategory.UNDEFINED, launchable = true)
+            PackageFact(categories[packageName] ?: AppCategory.UNDEFINED, launchable = true)
         } else {
             PackageFact.NOT_INSTALLED
         }

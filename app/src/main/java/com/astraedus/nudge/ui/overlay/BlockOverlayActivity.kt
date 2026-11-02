@@ -12,10 +12,12 @@ import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
 import androidx.core.net.toUri
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import com.astraedus.nudge.data.preferences.NudgePreferences
+import com.astraedus.nudge.data.repository.DeviceGroupMembers
 import com.astraedus.nudge.data.repository.InstalledAppsRepository
 import com.astraedus.nudge.data.repository.RedirectAppRepository
 import com.astraedus.nudge.domain.block.OverlayLifecycle
@@ -23,6 +25,7 @@ import com.astraedus.nudge.domain.block.OverlayWindowMode
 import com.astraedus.nudge.domain.block.WebBlockEscape
 import com.astraedus.nudge.domain.emergency.EmergencyPass
 import com.astraedus.nudge.domain.logging.NudgeLog
+import com.astraedus.nudge.domain.model.AllAppsBlock
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.domain.usecase.RecordWalkAwayUseCase
 import com.astraedus.nudge.service.BlockLaunchGuard
@@ -34,8 +37,11 @@ import com.astraedus.nudge.ui.redirect.RedirectAppController
 import com.astraedus.nudge.ui.redirect.RedirectAppPickerHost
 import com.astraedus.nudge.ui.theme.NudgeTheme
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -49,6 +55,7 @@ class BlockOverlayActivity : ComponentActivity() {
     private val nudgeLogger: NudgeLog by lazy { rootLogger.tagged("BlockOverlay") }
     @Inject lateinit var blockLaunchGuard: BlockLaunchGuard
     @Inject lateinit var redirectAppRepository: RedirectAppRepository
+    @Inject lateinit var deviceGroupMembers: DeviceGroupMembers
     @Inject lateinit var webBlockEscape: WebBlockEscape
 
     /** Posts the walk-away fail-safe finish. Cleared in [onDestroy]. */
@@ -131,6 +138,8 @@ class BlockOverlayActivity : ComponentActivity() {
         const val EXTRA_ALL_APPS_EXCEPT_PACKAGES = "all_apps_except_packages"
         const val EXTRA_ALL_APPS_EXCEPT_GROUPS = "all_apps_except_groups"
         const val EXTRA_ALL_APPS_ALLOWED_PACKAGES = "all_apps_allowed_packages"
+        /** The rule's allowed groups that still exist (LongArray): their category members are added here. */
+        const val EXTRA_ALL_APPS_EXCEPT_GROUP_IDS = "all_apps_except_group_ids"
 
         /**
          * `SystemClock.elapsedRealtime()` when THIS delivery was started by [relaunchFullscreen]
@@ -388,7 +397,20 @@ class BlockOverlayActivity : ComponentActivity() {
         val isAllApps = intent.hasExtra(EXTRA_ALL_APPS_EXCEPT_PACKAGES) ||
             intent.hasExtra(EXTRA_ALL_APPS_EXCEPT_GROUPS) ||
             intent.hasExtra(EXTRA_ALL_APPS_ALLOWED_PACKAGES)
-        val allowedApps = if (isAllApps) resolveAllowedApps(intent, blockPackages) else emptyList()
+        // First frame: what the engine could name (own apps, groups' hand-added apps). The allowed
+        // groups' category members are then resolved on the device and fill in, never delaying the
+        // block. One state object per delivery, so a late answer for an earlier block is not shown.
+        val allowedApps = mutableStateOf(
+            if (isAllApps) {
+                resolveAllowedApps(
+                    intent.getStringArrayExtra(EXTRA_ALL_APPS_ALLOWED_PACKAGES)?.toList().orEmpty(),
+                    blockPackages
+                )
+            } else {
+                emptyList()
+            }
+        )
+        if (isAllApps) fillInGroupMembers(intent, blockPackages) { allowedApps.value = it }
         val redirectBubble: @Composable () -> Unit = if (OverlayBlockInfo.showRedirectBubble(isAllApps)) {
             {
                 RedirectAppBubble(
@@ -398,7 +420,7 @@ class BlockOverlayActivity : ComponentActivity() {
                 )
             }
         } else {
-            { AllowedAppsRow(apps = allowedApps, onOpen = { navigateHome(redirectPackage = it) }) }
+            { AllowedAppsRow(apps = allowedApps.value, onOpen = { navigateHome(redirectPackage = it) }) }
         }
         val untilText = OverlayBlockInfo.untilLine(
             untilMs = intent.getLongExtra(EXTRA_UNTIL, -1L).takeIf { it >= 0 },
@@ -539,11 +561,34 @@ class BlockOverlayActivity : ComponentActivity() {
     }
 
     /**
-     * The "Open an allowed app" apps for an All apps block: installed + launchable only, never the
-     * blocked package, capped (the rule is [OverlayBlockInfo.allowedIconPackages]).
+     * The allowed apps of an All apps block as the ENGINE allows them: the rule's own apps, then every
+     * current member of its allowed groups, category members included ([DeviceGroupMembers], the
+     * resolution coverage uses; [AllAppsBlock.allowedPackagesOf]). Off the main thread; [show] runs
+     * on it. Never allowed to stop the block: a failure keeps the first frame's icons.
      */
-    private fun resolveAllowedApps(intent: Intent, blockPackages: Set<String>): List<AllowedApp> {
-        val allowed = intent.getStringArrayExtra(EXTRA_ALL_APPS_ALLOWED_PACKAGES)?.toList().orEmpty()
+    private fun fillInGroupMembers(intent: Intent, blockPackages: Set<String>, show: (List<AllowedApp>) -> Unit) {
+        val groupIds = intent.getLongArrayExtra(EXTRA_ALL_APPS_EXCEPT_GROUP_IDS)?.toList().orEmpty()
+        if (groupIds.isEmpty()) return
+        val own = intent.getStringArrayExtra(EXTRA_ALL_APPS_EXCEPT_PACKAGES)?.toList().orEmpty()
+        lifecycleScope.launch {
+            try {
+                val apps = withContext(Dispatchers.IO) {
+                    val members = deviceGroupMembers.of(groupIds)
+                    val allowed = AllAppsBlock.allowedPackagesOf(own, groupIds) { members[it].orEmpty() }
+                    resolveAllowedApps(allowed, blockPackages)
+                }
+                show(apps)
+            } catch (e: Exception) {
+                nudgeLogger.e("allowed group members could not be resolved", e)
+            }
+        }
+    }
+
+    /**
+     * The "Open an allowed app" apps for an All apps block out of [allowed]: installed + launchable
+     * only, never the blocked package, capped (the rule is [OverlayBlockInfo.allowedIconPackages]).
+     */
+    private fun resolveAllowedApps(allowed: List<String>, blockPackages: Set<String>): List<AllowedApp> {
         val pm = packageManager
         return OverlayBlockInfo.allowedIconPackages(
             allowed = allowed,

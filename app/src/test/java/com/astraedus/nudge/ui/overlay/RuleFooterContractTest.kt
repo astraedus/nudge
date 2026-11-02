@@ -50,7 +50,26 @@ class RuleFooterContractTest {
     @Test
     fun `the activity hides the bubble for All apps and exits through the one walk-away path`() {
         assertTrue(activity.contains("OverlayBlockInfo.showRedirectBubble(isAllApps)"))
-        assertTrue(activity.contains("AllowedAppsRow(apps = allowedApps, onOpen = { navigateHome(redirectPackage = it) })"))
+        assertTrue(activity.contains("AllowedAppsRow(apps = allowedApps.value, onOpen = { navigateHome(redirectPackage = it) })"))
+    }
+
+    /**
+     * The allowed list is the set the engine allows: the allowed groups' category members are filled
+     * in on the device through the one resolution (`DeviceGroupMembers`) and the one ordering
+     * (`AllAppsBlock.allowedPackagesOf`, its L1 test is `AllAppsBlockTest`). The service must send
+     * the group ids for that to happen at all.
+     */
+    @Test
+    fun `the allowed list fills in category members from the group ids the service sends`() {
+        assertTrue(activity.contains("if (isAllApps) fillInGroupMembers(intent, blockPackages)"))
+        assertTrue(activity.contains("deviceGroupMembers.of(groupIds)"))
+        assertTrue(activity.contains("AllAppsBlock.allowedPackagesOf(own, groupIds)"))
+        val serviceDir = File(overlayDir(), "../../service")
+        val service = code(File(serviceDir, "NudgeAccessibilityService.kt").readText())
+        assertTrue(
+            Regex("""BlockOverlayActivity\.EXTRA_ALL_APPS_EXCEPT_GROUP_IDS,\s*it\.exceptGroupIds\.toLongArray\(\)""")
+                .containsMatchIn(service)
+        )
     }
 
     @Test

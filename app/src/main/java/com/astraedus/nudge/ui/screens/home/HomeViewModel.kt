@@ -142,9 +142,19 @@ class HomeViewModel @Inject constructor(
     /** The one essentials list, resolved off the main thread (it reads PackageManager and roles). */
     private fun essentialsFlow() = flow { emit(essentialApps.packages()) }.flowOn(ioDispatcher)
 
-    /** The installed apps with a launcher entry: what an All apps rule can cover (spec 4.1). */
-    private fun launchableFlow() = flow {
-        emit(installedAppsRepository.getInstalledApps().map { it.packageName }.toSet())
+    /**
+     * The essentials and the one browser list together (one resolution, cached together): what a
+     * group's membership resolves against besides the installed apps.
+     */
+    private fun essentialsAndBrowsersFlow() =
+        flow { emit(essentialApps.packages() to essentialApps.browsers()) }.flowOn(ioDispatcher)
+
+    /**
+     * The installed apps with a launcher entry, each with its category: what an All apps rule and a
+     * category group can cover (spec 4.1, 5.2).
+     */
+    private fun launchableFlow() = installedAppsRepository.changes.map {
+        installedAppsRepository.getInstalledApps().associate { it.packageName to it.category }
     }.flowOn(ioDispatcher)
 
     /**
@@ -341,9 +351,10 @@ class HomeViewModel @Inject constructor(
             blockRuleRepository.getAllGroups(),
             blockRuleRepository.getAllGroupMembers(),
             launchableFlow(),
-            essentialsFlow(),
-            ::activeAppsCount
-        ),
+            essentialsAndBrowsersFlow()
+        ) { rules, groups, members, launchable, (essentials, browsers) ->
+            activeAppsCount(rules, groups, members, launchable, essentials, browsers)
+        },
         countsFlow,
         screenTimeFlow,
         weekEventsFlow

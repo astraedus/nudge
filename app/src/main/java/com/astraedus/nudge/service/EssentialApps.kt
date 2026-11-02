@@ -35,6 +35,12 @@ import kotlinx.coroutines.withContext
  * sections 5.4 and 8): the user can allow any of them in seconds. A browser that a device source
  * names anyway (Firefox ships an autofill service) is taken back off ([resolve]).
  *
+ * It is also the ONE browser list ([browsers]): the browsers Nudge reads addresses from
+ * ([KNOWN_BROWSERS]) plus every app that opens an ordinary web link ([deviceBrowsers]). The same set
+ * keeps browsers off the essentials and keeps them out of category groups (a browser joins a group
+ * only by hand, [com.astraedus.nudge.domain.groups.GroupMembershipResolver]), so the two can never
+ * disagree about what a browser is.
+ *
  * Resolved from PackageManager, TelecomManager, InputMethodManager, Telephony and Settings, which are binder
  * calls, so [packages] must be called OFF the main thread. The answer is cached for [REFRESH_MS]: a
  * stale set only errs toward the old default apps staying protected, never toward blocking a new
@@ -61,13 +67,16 @@ class EssentialApps internal constructor(
 
     private val logger: NudgeLog = logger.tagged("EssentialApps")
     @Volatile private var cached: Set<String>? = null
+    @Volatile private var cachedBrowsers: Set<String>? = null
     @Volatile private var cachedAt: Long = 0L
 
     /** Every essential package. Off-main only; cached for [REFRESH_MS]. */
     fun packages(now: Long = System.currentTimeMillis()): Set<String> {
         val current = cached
         if (current != null && now - cachedAt < REFRESH_MS) return current
-        val resolved = resolve()
+        val notEssential = browserPackages()
+        val resolved = resolve(notEssential)
+        cachedBrowsers = notEssential
         cached = resolved
         cachedAt = now
         return resolved
@@ -86,6 +95,15 @@ class EssentialApps internal constructor(
     /** The last resolved set, however old, without resolving. Null before the first resolution. */
     override fun cachedOrNull(): Set<String>? = cached
 
+    /**
+     * The one browser list ([EssentialPackages.browsers]), resolved and cached with [current]. Never
+     * smaller than [KNOWN_BROWSERS], even when the device query fails.
+     */
+    override suspend fun browsers(): Set<String> {
+        current()
+        return cachedBrowsers ?: KNOWN_BROWSERS
+    }
+
     /** Drop the cache (e.g. after the user changes a default app). */
     fun invalidate() {
         cached = null
@@ -102,14 +120,17 @@ class EssentialApps internal constructor(
      * query for browsers fails, the browsers Nudge reads URLs from ([KNOWN_BROWSERS]) are still
      * removed.
      */
-    private fun resolve(): Set<String> {
-        val notEssential = KNOWN_BROWSERS + resolveOrEmpty(browsers)
+    private fun resolve(notEssential: Set<String>): Set<String> {
         val all = STATIC_ESSENTIALS.toMutableSet()
         for (source in sources) {
             all += resolveOrEmpty(source) - notEssential
         }
         return all.filterTo(mutableSetOf()) { it.isNotBlank() }
     }
+
+    /** [KNOWN_BROWSERS] plus this phone's browsers; the known ones even if the query throws. */
+    private fun browserPackages(): Set<String> =
+        (KNOWN_BROWSERS + resolveOrEmpty(browsers)).filterTo(mutableSetOf()) { it.isNotBlank() }
 
     private fun resolveOrEmpty(source: EssentialSource): Set<String> =
         try {

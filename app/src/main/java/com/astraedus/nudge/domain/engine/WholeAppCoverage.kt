@@ -1,7 +1,7 @@
 package com.astraedus.nudge.domain.engine
 
 import com.astraedus.nudge.domain.model.BlockRuleData
-import com.astraedus.nudge.domain.model.GroupMembership
+import com.astraedus.nudge.domain.groups.GroupMembershipResolver
 import com.astraedus.nudge.domain.model.RuleTarget
 
 /**
@@ -35,11 +35,11 @@ object WholeAppCoverage {
     fun coversNow(
         packageName: String,
         rules: List<BlockRuleData>,
-        memberships: List<GroupMembership>,
+        membership: GroupMembershipResolver,
         facts: CoverageFacts,
         isInSchedule: (BlockRuleData) -> Boolean
     ): Boolean {
-        val groupIds = RuleCoverage.groupIdsOf(packageName, memberships)
+        val groupIds = RuleCoverage.groupIdsOf(packageName, membership, facts)
         return rules.any { rule ->
             rule.enabled &&
                 RuleTarget.of(rule).let { it is RuleTarget.Group || it is RuleTarget.AllApps } &&

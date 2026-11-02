@@ -4,7 +4,7 @@ import com.astraedus.nudge.domain.model.ActiveRule
 import com.astraedus.nudge.domain.model.AllAppsBlock
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.domain.model.BlockRuleData
-import com.astraedus.nudge.domain.model.GroupMembership
+import com.astraedus.nudge.domain.groups.GroupMembershipResolver
 import com.astraedus.nudge.domain.model.RuleTarget
 import javax.inject.Inject
 
@@ -21,10 +21,10 @@ class RuleEvaluator @Inject constructor() {
     fun resolveRulesForPackage(
         packageName: String,
         allRules: List<BlockRuleData>,
-        groupMemberships: List<GroupMembership>,
+        membership: GroupMembershipResolver,
         facts: CoverageFacts
     ): List<ActiveRule> {
-        val groupIdsForPackage = RuleCoverage.groupIdsOf(packageName, groupMemberships)
+        val groupIdsForPackage = RuleCoverage.groupIdsOf(packageName, membership, facts)
 
         return allRules.filter { rule ->
             RuleCoverage.covers(rule, packageName, groupIdsForPackage, facts)
@@ -43,24 +43,35 @@ class RuleEvaluator @Inject constructor() {
                 tabVanish = rule.tabVanish,
                 followingSteer = rule.followingSteer,
                 keepPassOnShortTrips = rule.keepPassOnShortTrips,
-                allApps = allAppsBlockOf(rule, groupMemberships)
+                allApps = allAppsBlockOf(rule, membership)
             )
         }
     }
 
-    /** What an All apps rule's block screen shows; null for any other rule. */
+    /**
+     * What an All apps rule's block screen shows; null for any other rule.
+     *
+     * An allowed group contributes its hand-added apps (minus "Removed by you") here. Its CATEGORY
+     * members need the installed apps, which the engine does not hold (nothing per app is stored,
+     * spec 5.2), so the block screen resolves them on the device from [AllAppsBlock.exceptGroupIds]
+     * through the same [AllAppsBlock.allowedPackagesOf]. Coverage itself never depended on this list:
+     * a category member of an allowed group is not covered, through [RuleCoverage].
+     */
     private fun allAppsBlockOf(
         rule: BlockRuleData,
-        groupMemberships: List<GroupMembership>
+        membership: GroupMembershipResolver
     ): AllAppsBlock? {
         val target = RuleTarget.of(rule) as? RuleTarget.AllApps ?: return null
-        val groupMembers = groupMemberships
-            .filter { it.groupId in target.exceptGroupIds }
-            .map { it.packageName }
+        val exceptPackages = target.exceptPackages.toList()
+        val liveGroupIds = target.exceptGroupIds.filter { it in membership.definitions }
         return AllAppsBlock(
-            exceptPackages = target.exceptPackages.toList(),
+            exceptPackages = exceptPackages,
             exceptGroupNames = rule.exceptGroupNames,
-            allowedPackages = (target.exceptPackages + groupMembers).distinct()
+            exceptGroupIds = liveGroupIds,
+            // No device facts: each group's hand-added apps minus "Removed by you".
+            allowedPackages = AllAppsBlock.allowedPackagesOf(exceptPackages, liveGroupIds) { id ->
+                membership.membersOf(id, installed = emptyMap(), essentials = emptySet(), browsers = emptySet())
+            }
         )
     }
 

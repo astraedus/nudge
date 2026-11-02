@@ -6,7 +6,6 @@ import com.astraedus.nudge.data.db.entity.BlockRule
 import com.astraedus.nudge.data.repository.RuleSnapshot
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.domain.model.BlockRuleData
-import com.astraedus.nudge.domain.model.GroupMembership
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -90,8 +89,8 @@ class RuleEvaluatorGroupNameTest {
         val resolved = evaluator.resolveRulesForPackage(
             "com.instagram.android",
             listOf(rule()),
-            listOf(GroupMembership(7L, "com.instagram.android")),
-            CoverageFacts(essential = false, launchable = true)
+            membership(7L to "com.instagram.android"),
+            CoverageFacts(essential = false, launchable = true, category = null, browser = false)
         )
         assertEquals("Social", resolved.single().ruleName)
     }

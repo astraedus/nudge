@@ -1,11 +1,12 @@
 package com.astraedus.nudge.ui.screens.groups
 
 import com.astraedus.nudge.data.db.entity.BlockRule
-import com.astraedus.nudge.domain.lock.GroupDefinition
+import com.astraedus.nudge.domain.groups.GroupDefinition
 import com.astraedus.nudge.domain.lock.GroupUsage
 import com.astraedus.nudge.domain.lock.GroupWeakening
 import com.astraedus.nudge.domain.lock.RuleWeakening
 import com.astraedus.nudge.domain.model.BlockMode
+import com.astraedus.nudge.domain.packages.AppCategory
 
 /**
  * The editable half of a group's own rule: what the "Block these apps" switch, How and When show.
@@ -86,41 +87,44 @@ fun GroupRuleForm.toRule(existing: BlockRule?): BlockRule {
  * (spec 5.6): a member leaving a group that blocks ([GroupWeakening]), or the group's own rule
  * getting softer ([RuleWeakening]).
  *
+ * Members are RESOLVED on this device ([installed], [essentials], [browsers]) before they are compared, so
+ * unchecking a category that brings in five apps is five members leaving, unchecking one no app
+ * here is in is free, and "Removed by you" on a category app is that app leaving.
+ *
  * A rule that was OFF protected nothing, so editing it while switching it on is never weakening,
  * whatever its old mode was (switching it off is caught by `enabled` while it was on). A brand-new
- * group ([oldMembers] null) only ever adds.
+ * group ([old] null) only ever adds.
  */
 fun groupSaveWeakens(
-    groupId: Long,
-    oldMembers: Set<String>?,
-    newMembers: Set<String>,
+    old: GroupDefinition?,
+    new: GroupDefinition,
     usage: GroupUsage,
     oldRule: BlockRule?,
-    newRule: BlockRule
+    newRule: BlockRule,
+    installed: Map<String, AppCategory>,
+    essentials: Set<String>,
+    browsers: Set<String>
 ): Boolean {
-    if (oldMembers == null) return false
-    if (GroupWeakening.isWeakening(
-            GroupDefinition(groupId, oldMembers),
-            GroupDefinition(groupId, newMembers),
-            usage
-        )
-    ) return true
+    if (old == null) return false
+    if (GroupWeakening.isWeakening(old, new, usage, installed, essentials, browsers)) return true
     return oldRule != null && oldRule.enabled && RuleWeakening.isWeakening(oldRule, newRule)
 }
 
 /** Whether deleting the group needs the challenge: every member leaves it at once. */
-fun groupDeleteWeakens(groupId: Long, members: Set<String>, usage: GroupUsage): Boolean =
-    GroupWeakening.isWeakening(
-        GroupDefinition(groupId, members),
-        GroupDefinition(groupId, emptySet()),
-        usage
-    )
+fun groupDeleteWeakens(
+    old: GroupDefinition,
+    usage: GroupUsage,
+    installed: Map<String, AppCategory>,
+    essentials: Set<String>,
+    browsers: Set<String>
+): Boolean = GroupWeakening.isWeakening(old, GroupDefinition(old.id), usage, installed, essentials, browsers)
 
 /**
- * The member set after the picker returns [picked]: the picker's choice, plus any member the picker
- * could not show ([pickable] lacks it: an essential app, or one since uninstalled). Dropping those
- * silently would remove apps from the group without the user ever seeing them go, and without the
- * Strict Mode check that a visible removal gets.
+ * A plain package set after the picker returns [picked]: the picker's choice, plus any entry the
+ * picker could not show ([pickable] lacks it: an essential app, or one since uninstalled). Dropping
+ * those silently would remove apps without the user ever seeing them go, and without the Strict Mode
+ * check that a visible removal gets. The All apps editor's allowed apps use it; a group's members
+ * go through [GroupMembersDraft.afterPick], which also knows categories and "Removed by you".
  */
 fun membersAfterPick(current: Set<String>, picked: Set<String>, pickable: Set<String>): Set<String> =
     picked + current.filterNot { it in pickable }

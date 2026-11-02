@@ -21,11 +21,13 @@ import com.astraedus.nudge.ui.screens.allapps.blockedCount
 import com.astraedus.nudge.ui.screens.allapps.confirmsSwitchOn
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
@@ -53,7 +55,11 @@ data class AllAppsSwitchOn(val rule: BlockRule, val blockedCount: Int)
 private data class GroupData(
     val groups: List<AppGroup>,
     val members: List<AppGroupMember>,
-    val rules: List<BlockRule>
+    val rules: List<BlockRule>,
+    /** The one essentials list: never a group member, so never counted or "In Social". */
+    val essentials: Set<String>,
+    /** The one browser list: in a group only when added by hand, never by category. */
+    val browsers: Set<String>
 )
 
 /**
@@ -104,8 +110,10 @@ class AppListViewModel @Inject constructor(
         blockRuleRepository.getAllGroups(),
         blockRuleRepository.getAllGroupMembers(),
         blockRuleRepository.getAllRules(),
-        ::GroupData
-    ).onEach { data ->
+        flow { emit(essentialPackages.current() to essentialPackages.browsers()) }
+    ) { groups, members, rules, (essentials, browsers) ->
+        GroupData(groups, members, rules, essentials, browsers)
+    }.onEach { data ->
         newlyAddedGroupId(knownGroupIds, data.groups)?.let { revealGroupId.value = it }
         knownGroupIds = data.groups.mapTo(HashSet()) { it.id }
     }
@@ -148,6 +156,8 @@ class AppListViewModel @Inject constructor(
                 groups = data.groups,
                 members = data.members,
                 rules = data.rules,
+                essentials = data.essentials,
+                browsers = data.browsers,
                 query = query,
                 extraApps = extras,
                 keepInPlace = keepInPlace
@@ -160,7 +170,10 @@ class AppListViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
-            installedApps.value = installedAppsRepository.getInstalledApps()
+            // Re-read when a package is added/removed/changed, so a new app joins its category.
+            installedAppsRepository.changes.collectLatest {
+                installedApps.value = installedAppsRepository.getInstalledApps()
+            }
         }
     }
 
@@ -268,7 +281,8 @@ class AppListViewModel @Inject constructor(
         ),
         device = DeviceApps(
             installed = installedApps.value ?: installedAppsRepository.getInstalledApps(),
-            essentials = essentialPackages.current()
+            essentials = essentialPackages.current(),
+            browsers = essentialPackages.browsers()
         )
     )
 

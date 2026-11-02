@@ -5,8 +5,14 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ResolveInfo
 import android.graphics.drawable.Drawable
+import com.astraedus.nudge.domain.packages.AppCategory
+import com.astraedus.nudge.service.categoryOf
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -36,8 +42,22 @@ class InstalledAppsRepository @Inject constructor(
     data class AppInfo(
         val packageName: String,
         val appName: String,
-        val icon: Drawable?
+        val icon: Drawable?,
+        /**
+         * `ApplicationInfo.category`, mapped (spec 5.2): what a category group matches. UNDEFINED
+         * for a row that is not an installed app (a placeholder for an uninstalled member), which
+         * matches no category.
+         */
+        val category: AppCategory = AppCategory.UNDEFINED
     )
+
+    private val _changes = MutableStateFlow(0L)
+
+    /**
+     * A version counter that bumps on every [refresh] (a package was added, removed or changed).
+     * Collectors that show the installed list re-read [getInstalledApps] when it moves.
+     */
+    val changes: StateFlow<Long> = _changes.asStateFlow()
 
     @Volatile
     private var cachedApps: List<AppInfo>? = null
@@ -102,7 +122,9 @@ class InstalledAppsRepository @Inject constructor(
                 AppInfo(
                     packageName = packageName,
                     appName = appName,
-                    icon = icon
+                    icon = icon,
+                    // Already on the ResolveInfo: no extra PackageManager call per app.
+                    category = categoryOf(activityInfo.applicationInfo?.category ?: -1)
                 )
             }
             .distinctBy { it.packageName }
@@ -151,13 +173,15 @@ class InstalledAppsRepository @Inject constructor(
 
     /**
      * Invalidate every cache so the next [getInstalledApps] / [resolveAppName] /
-     * [resolveIcon] re-queries PackageManager. Call after an app is installed/uninstalled.
+     * [resolveIcon] re-queries PackageManager, and bump [changes]. Called by the package-change
+     * receiver in `AndroidPackageFacts` after an app is installed/uninstalled/changed.
      */
     fun refresh() {
         cachedApps = null
         nameCache.clear()
         iconCache.clear()
         iconMisses.clear()
+        _changes.update { it + 1 }
     }
 
     companion object {

@@ -14,13 +14,26 @@ import com.astraedus.nudge.domain.model.ExceptCsv
 import kotlinx.coroutines.flow.Flow
 
 /**
- * Member-set difference between two versions of a group: what to add and what to remove.
- * Pure so the set arithmetic is unit-testable without a database.
+ * Member-row difference between two versions of a group: the rows to write (new, or flipped between
+ * "added" and "Removed by you") and the packages whose row goes. A row is package -> `excluded`.
+ * Pure so the arithmetic is unit-testable without a database.
  */
-internal data class MembershipChanges(val toAdd: Set<String>, val toRemove: Set<String>)
+internal data class MemberRowChanges(val toWrite: Map<String, Boolean>, val toRemove: Set<String>)
 
-internal fun membershipChanges(old: Set<String>, new: Set<String>): MembershipChanges =
-    MembershipChanges(toAdd = new - old, toRemove = old - new)
+internal fun memberRowChanges(old: Map<String, Boolean>, new: Map<String, Boolean>): MemberRowChanges =
+    MemberRowChanges(
+        toWrite = new.filter { (pkg, excluded) -> old[pkg] != excluded },
+        toRemove = old.keys - new.keys
+    )
+
+/**
+ * The member rows a group with [includes] and [excludes] stores: package -> `excluded`. The two sets
+ * must not overlap (the primary key holds one row per package); a caller that lets them is a bug.
+ */
+internal fun memberRows(includes: Set<String>, excludes: Set<String>): Map<String, Boolean> {
+    require(includes.none { it in excludes }) { "a package is either added or removed, not both" }
+    return includes.associateWith { false } + excludes.associateWith { true }
+}
 
 /**
  * The `exceptGroupIds` rewrites that remove [groupId] from every rule in [rules] that lists it as
@@ -72,20 +85,28 @@ abstract class AppGroupDao {
     @Query("DELETE FROM app_group_members WHERE groupId = :groupId AND packageName = :packageName")
     abstract suspend fun removeMember(groupId: Long, packageName: String)
 
+    /**
+     * The groups [packageName] was ADDED to by hand (`excluded` = 0). Not its full membership: a
+     * category group holds its category apps with no row (spec 5.2), and only
+     * `GroupMembershipResolver` answers that.
+     */
     @Query(
         """
         SELECT ag.* FROM app_groups ag
         INNER JOIN app_group_members agm ON ag.id = agm.groupId
-        WHERE agm.packageName = :packageName
+        WHERE agm.packageName = :packageName AND agm.excluded = 0
         """
     )
     abstract fun getGroupsForPackage(packageName: String): Flow<List<AppGroup>>
 
-    @Query("SELECT packageName FROM app_group_members WHERE groupId = :groupId")
-    abstract suspend fun getMemberPackages(groupId: Long): List<String>
+    @Query("SELECT * FROM app_group_members WHERE groupId = :groupId")
+    abstract suspend fun getMemberRows(groupId: Long): List<AppGroupMember>
 
     @Query("UPDATE app_groups SET name = :name WHERE id = :groupId")
     abstract suspend fun renameGroup(groupId: Long, name: String)
+
+    @Query("UPDATE app_groups SET categories = :categories WHERE id = :groupId")
+    abstract suspend fun setCategories(groupId: Long, categories: String?)
 
     @Query("DELETE FROM app_group_members WHERE groupId = :groupId")
     abstract suspend fun deleteMembersOfGroup(groupId: Long)
@@ -110,29 +131,35 @@ abstract class AppGroupDao {
     abstract suspend fun updateGroupRule(rule: BlockRule)
 
     /**
-     * Creates (groupId == null) or updates a group, replaces its member set and writes its rule,
-     * all in one transaction. [rule] is stored with `groupId` = the group and `packageName` = null.
+     * Creates (groupId == null) or updates a group: its name, its [categories] (CSV, null for none),
+     * its member rows ([includes] added by hand, [excludes] "Removed by you", replaced as a whole)
+     * and its rule, all in one transaction. [rule] is stored with `groupId` = the group and
+     * `packageName` = null.
      */
     @Transaction
     open suspend fun saveGroupWithRule(
         groupId: Long?,
         name: String,
-        members: Set<String>,
+        categories: String?,
+        includes: Set<String>,
+        excludes: Set<String>,
         rule: BlockRule
     ): Long {
+        val rows = memberRows(includes, excludes)
         val id: Long
-        val existing: Set<String>
+        val existing: Map<String, Boolean>
         if (groupId == null) {
-            id = insert(AppGroup(name = name))
-            existing = emptySet()
+            id = insert(AppGroup(name = name, categories = categories))
+            existing = emptyMap()
         } else {
             id = groupId
             renameGroup(id, name)
-            existing = getMemberPackages(id).toSet()
+            setCategories(id, categories)
+            existing = getMemberRows(id).associate { it.packageName to it.excluded }
         }
-        val changes = membershipChanges(existing, members)
+        val changes = memberRowChanges(existing, rows)
         changes.toRemove.forEach { removeMember(id, it) }
-        changes.toAdd.forEach { addMember(AppGroupMember(id, it)) }
+        changes.toWrite.forEach { (pkg, excluded) -> addMember(AppGroupMember(id, pkg, excluded)) }
 
         val groupRule = rule.copy(groupId = id, packageName = null)
         if (groupRule.id == 0L) insertGroupRule(groupRule) else updateGroupRule(groupRule)

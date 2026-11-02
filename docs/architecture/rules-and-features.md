@@ -173,8 +173,8 @@ Spec: `docs/exec-plans/active/groups-categories-allowlist.md`, sections 3.3, 3.6
 
 | Piece | Where | What it owns |
 |---|---|---|
-| Editor | `ui/screens/groups/GroupEditorScreen` + `GroupEditorViewModel` (route `group_editor?groupId=`; none or <= 0 = new) | Name, apps, then "Block these apps" heading How (mode, wait, daily limit for each app) and When (All the time / Days and times). Off folds How and When away and saves the rule with `enabled = false`, so the values come back. Back and the top bar's arrow both go through `requestLeave`: "Discard changes?" (Discard / Keep editing) only when `GroupEditorState.isDirty`, i.e. the draft differs from the `baseline` the editor opened with (the saved group, or the blank new-group form), so an edit undone by hand leaves without asking (`GroupEditorDiscardTest`). No category chips and no "Allowed during" yet (PR 4). |
-| The form | `ui/screens/groups/GroupForm.kt` (pure) | `GroupRuleForm.from(rule)` / `toRule(existing)`: `toRule` COPIES the saved row, so fields the editor does not show (auto-kick, counter, reminder...) survive a save. `membersAfterPick` keeps members the picker could not show (essential, uninstalled): a member is only ever removed where the user can see it go. |
+| Editor | `ui/screens/groups/GroupEditorScreen` + `GroupEditorViewModel` (route `group_editor?groupId=`; none or <= 0 = new) | Name, apps, then "Block these apps" heading How (mode, wait, daily limit for each app) and When (All the time / Days and times). Off folds How and When away and saves the rule with `enabled = false`, so the values come back. Back and the top bar's arrow both go through `requestLeave`: "Discard changes?" (Discard / Keep editing) only when `GroupEditorState.isDirty`, i.e. the draft differs from the `baseline` the editor opened with (the saved group, or the blank new-group form), so an edit undone by hand leaves without asking (`GroupEditorDiscardTest`). "Allowed during" came in PR 4, category chips in PR 6 (see "Category groups" below). |
+| The form | `ui/screens/groups/GroupForm.kt` (pure) | `GroupRuleForm.from(rule)` / `toRule(existing)`: `toRule` COPIES the saved row, so fields the editor does not show (auto-kick, counter, reminder...) survive a save. `GroupMembersDraft.afterPick` keeps members the picker could not show (essential, uninstalled): a member is only ever removed where the user can see it go (`membersAfterPick` does the same for the All apps editor's allowed apps). |
 | Save / delete | `BlockRuleRepository.saveGroup` / `deleteGroupWithRules` -> `AppGroupDao` `@Transaction`s | Group, member set and own rule in one write; delete removes rules, members, then the group. |
 | Picker | `ui/components/AppPicker` | Full-screen multi-select over installed apps minus the essentials (spec 5.4). |
 | Manage Apps | `buildGroupRows` (pure, `ManageAppsSections.kt`) + `AppListScreen` | "Groups" rows above the apps: `Social · 9 apps`, the rule's summary in the same words as an app's (`RuleSummary.groupSummaryText`), and a switch. Since PR 3 Manage Apps is the one list; see "Manage Apps: one list (spec PR 3)" below. "Block several apps" opens a new group (hidden while searching). Search matches group names. **Everything above the apps is ONE list row** (`ManageAppsRow.Top`, key `"top"`, always first; `manageAppsRows` is pure and pinned by `ManageAppsRowsTest`): the LazyColumn keeps its first visible row in place by key, and the groups arrive after the first frame, so when each group was its own row they were inserted above "Block several apps" and so above the viewport, and Manage Apps opened with no Groups section (PR 2 device QA, from Home and after a save). Late groups now grow the top row in place. The list also waits for the first state that holds the groups (`isLoading`), and a group just saved in the editor scrolls back to the top (`AppListViewModel.newlyAddedGroupId`); an ordinary open never scrolls. Never split the top section back into separate lazy items. |
@@ -185,6 +185,52 @@ Spec: `docs/exec-plans/active/groups-categories-allowlist.md`, sections 3.3, 3.6
 Strict Mode for all of this is in `strict-mode.md`, "Groups". There is no migration: groups and `BlockRule.groupId` have
 existed since DB v1, the engine already honoured them, and only the UI was missing. The old `GroupScreen` (unreachable
 from any navigation) is deleted.
+
+## Category groups (spec PR 6)
+
+Spec sections 3.3, 5.2, 5.5, 5.6. A group can be built from Android's app categories as well as by hand.
+
+**Membership is resolved, never stored** (spec 5.2):
+
+```
+member(p, g) = !essential(p) && !(p in g.excludes)
+               && (p in g.includes || (!browser(p) && category(p) in g.categories))
+```
+
+Precedence: an essential is never a member; "Removed by you" beats a category; an app added by hand or in a checked
+category is a member. `AppCategory.UNDEFINED` never matches (a category-less app joins only by hand). A browser never
+joins by category, only by hand (below). Nothing is written per installed app, so an app installed later joins by
+itself, and its first open is blocked.
+
+| Piece | Where | What it owns |
+|---|---|---|
+| Definition | `domain/groups/GroupDefinition` (`id`, `categories`, `includes`, `excludes`), `OFFERED_CATEGORIES`, `AppCategoryCsv` | The group as the user wrote it. The categories offered are SOCIAL, VIDEO, GAME, NEWS, AUDIO, IMAGE, MAPS, PRODUCTIVITY, in that order; never UNDEFINED. `AppCategoryCsv` is the one reader/writer of `app_groups.categories` (unknown names and UNDEFINED skipped, written in offered order, NULL for none). |
+| Rows | `app_groups.categories` (TEXT NULL), `app_group_members.excluded` (0 = "Add apps", 1 = "Removed by you"), DB 14 -> 15 | The PK `(groupId, packageName)` means an app is never both. `AppGroupDao.saveGroupWithRule(groupId, name, categories, includes, excludes, rule)` diffs rows with `memberRowChanges` (a flip is one write, not delete + add). `getGroupsForPackage` reads include rows only. |
+| The one answer | `domain/groups/GroupMembershipResolver`, built from rows by `groupResolverOf` (`data/repository/GroupDefinitions.kt`) | Every reader asks it: the engine (through `RuleSnapshot.membership`), the browser check, Manage Apps counts and "In Social" lines, App config's "Also covered by", the All apps editor's counts, Home's "N apps blocked", the redirect-app exclusions, the group editor, Strict Mode and the backup. A member row is not a member, so nothing lists rows as members any more. `groupIdsOf(pkg, category, browser)` does not apply essentials: `RuleCoverage` applies them per rule kind. Off the engine, `data/repository/DeviceGroupMembers` is the one place that resolves groups against this phone (installed apps, essentials, browsers, read only when a group checks a category); the redirect app and the All apps block screen both use it. |
+| Hot path | `EvaluateBlockUseCase.coverageFacts`, `NudgeAccessibilityService.isCoveredWholeNow` | The category is read only when an enabled rule targets a category group (`RuleCoverage.categoryNeeded`), from the cached `PackageFacts`, and the same fact gives launchable. `browser` is `pkg in EssentialPackages.browsers()` (cached with the essentials). The synchronous browser check (`isCoveredWholeNow`) asks about a browser, so it passes `browser = true` and no category: only a hand-added row can cover it, and it reads no category at all. No PackageManager call is added to the accessibility path. |
+| Editor | `ui/screens/groups/GroupMembersDraft` (pure) + `GroupEditorScreen` | Under "Apps · N": FilterChips for EVERY offered category, titled by Nudge's own `categoryTitle` (`ui/components/CategoryTitle.kt`, pure and exhaustive: "Social & Communication", "Music & Audio", ...; Android's `getCategoryTitle` said "Music and audio", the odd one out) with the count of apps it brings in (installed, minus essentials, minus browsers, minus removed). A category with nothing installed shows 0 and is still offered, so "Games" can be checked before the first game is installed (the first build hid empty chips; device QA showed that made pre-blocking impossible and made a chip vanish once all its apps were removed). "New apps in these categories join automatically." only while one is checked. A category member shows its category's SHORT name as trailing text (`shortCategoryTitle`: "Social & Communication" is "Social"; the full title ellipsised on every row). Its ✕ moves it to "Removed by you" (an app in by hand only, a browser included, is just dropped); that section is collapsed by default, lists only removed apps a checked category would bring in, and has "Add back" per row. Picking a removed app under "Add apps" restores it. Save needs a name and at least a category or a member. |
+| Strict Mode | `groupSaveWeakens` / `groupDeleteWeakens` over `GroupDefinition`s | Judged on the members RESOLVED on this device, so unchecking a category with 0 apps here is free and one with 5 is five apps leaving. See `strict-mode.md`. |
+| Package changes | the one runtime receiver in `AndroidPackageFacts` | Invalidates the package's fact and refreshes `InstalledAppsRepository`, so counts and the editor follow installs and removals. No second receiver. See `rule-snapshot.md`. |
+
+**What a category is.** `ApplicationInfo.category`, set by the developer in the manifest; Play-installed apps carry it.
+On the bench Pixel 3 (48 launchable apps): Social 11, Productivity 17, none 14, Image 2, Video 2, Audio 1, Maps 1. The
+apps with none were sideloaded, dev or system apps, so there is no hand-kept table of known apps (it would be a second
+source of truth that rots). Some apps file themselves surprisingly: Chrome, Gmail and Contacts say Social; LinkedIn and
+Firefox say Productivity. "Removed by you" is the answer for the apps.
+
+**A browser never joins by category.** A browser covered by a blocking group is blocked whole, as an app, on every site
+(spec 5.5), so a category match on one would make checking "Social" (Chrome) or "Productivity" (Firefox) silently
+hard-block the browser. `GroupMembershipResolver.matchesCategory` is false for a browser; adding it by hand under "Add
+apps" still works exactly as before. "Browser" is the one list, `EssentialPackages.browsers()` = `EssentialApps`'s
+`KNOWN_BROWSERS` (the URL-bar table) plus the apps that open a web link on this phone: the same set that keeps browsers
+out of the essentials, never a second list. Tests: `GroupMembershipResolverTest` (L1),
+`EvaluateBlockCategoryBrowserTest` (L3, through the real use case), `GroupMembersDraftTest` (chips, ✕).
+
+**The All apps block screen lists what the engine allows.** `AllAppsBlock.allowedPackages` is what the engine can name
+without the device (the rule's own apps, then each allowed group's hand-added apps); the service also sends
+`AllAppsBlock.exceptGroupIds`, and the overlay fills in the category members through `DeviceGroupMembers` and the same
+`AllAppsBlock.allowedPackagesOf`, off the main thread, after the first frame. A failure keeps the first frame's icons and
+never touches the block. `AllAppsBlockTest` cross-checks the list against `RuleCoverage`: listed exactly when not covered.
 
 ## Manage Apps: one list (spec PR 3)
 

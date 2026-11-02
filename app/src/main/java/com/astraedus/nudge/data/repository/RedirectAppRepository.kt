@@ -26,6 +26,7 @@ class RedirectAppRepository @Inject constructor(
     private val preferences: NudgePreferences,
     private val blockRuleRepository: BlockRuleRepository,
     private val installedAppsRepository: InstalledAppsRepository,
+    private val deviceGroupMembers: DeviceGroupMembers,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) {
 
@@ -36,9 +37,9 @@ class RedirectAppRepository @Inject constructor(
     suspend fun excluded(blockPackages: Set<String> = emptySet()): Set<String> {
         val rules = blockRuleRepository.getEnabledRules().first()
         val groupIds = rules.mapNotNull { it.groupId }.toSet()
-        val members = groupIds.associateWith { id ->
-            blockRuleRepository.getGroupMembers(id).first().mapTo(mutableSetOf()) { it.packageName }
-        }
+        // A group's members are resolved (spec 5.2): a category app is in it without a row of its
+        // own ([DeviceGroupMembers], which reads the installed apps only when a group checks a category).
+        val members = deviceGroupMembers.of(groupIds)
         val targets = RedirectAppPolicy.ruleTargets(
             rules.map { RedirectAppPolicy.RuleTarget(it.packageName, it.groupId, it.enabled) },
             members

@@ -54,25 +54,41 @@ class UnifiedAppConfigViewModel @Inject constructor(
      * The groups that block this app right now, for "Also covered by" (spec 3.7): read-only, live,
      * so a group edited from here is current on the way back. Empty hides the section.
      */
-    val coveredBy: StateFlow<List<CoveringGroup>> = combine(
-        blockRuleRepository.getAllGroups(),
-        blockRuleRepository.getAllGroupMembers(),
-        blockRuleRepository.getAllRules()
-    ) { groups, members, rules -> coveringGroups(packageName, groups, members, rules) }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    val coveredBy: StateFlow<List<CoveringGroup>> = flow {
+        val facts = deviceFacts()
+        emitAll(
+            combine(
+                blockRuleRepository.getAllGroups(),
+                blockRuleRepository.getAllGroupMembers(),
+                blockRuleRepository.getAllRules()
+            ) { groups, members, rules -> coveringGroups(packageName, facts, groups, members, rules) }
+        )
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /**
+     * This app's device facts: essential (never in a group or All apps rule), launchable, its
+     * category (what a category group matches) and whether it is a browser (which a category never
+     * brings into a group). Read once per screen, off the main thread.
+     */
+    private suspend fun deviceFacts(): CoverageFacts {
+        val fact = packageFacts.factsFor(packageName)
+        return CoverageFacts(
+            essential = packageName in essentialPackages.current(),
+            launchable = fact.launchable,
+            category = fact.category,
+            browser = packageName in essentialPackages.browsers()
+        )
+    }
 
     /**
      * The All apps rules that cover this app right now, for "Also covered by" next to the groups
-     * (spec 3.7). Coverage is [com.astraedus.nudge.domain.engine.RuleCoverage]'s, fed this app's two
+     * (spec 3.7). Coverage is [com.astraedus.nudge.domain.engine.RuleCoverage]'s, fed this app's
      * device facts once. The flow body, not the property initialiser, touches the repositories, so
      * nothing is read until the section is collected.
      */
     val coveredByAllApps: StateFlow<List<CoveringAllApps>> = flow {
         val labels = installedAppsRepository.getInstalledApps().associate { it.packageName to it.appName }
-        val facts = CoverageFacts(
-            essential = packageName in essentialPackages.current(),
-            launchable = packageFacts.factsFor(packageName).launchable
-        )
+        val facts = deviceFacts()
         emitAll(
             combine(
                 blockRuleRepository.getAllGroups(),

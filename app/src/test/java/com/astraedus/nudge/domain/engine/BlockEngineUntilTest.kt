@@ -29,6 +29,7 @@ class BlockEngineUntilTest {
     private val allAppsLine = AllAppsBlock(
         exceptPackages = listOf("maps"),
         exceptGroupNames = emptyList(),
+        exceptGroupIds = emptyList(),
         allowedPackages = listOf("maps")
     )
 

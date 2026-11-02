@@ -8,7 +8,9 @@ import com.astraedus.nudge.data.db.entity.BlockRule
 import com.astraedus.nudge.data.export.RuleExporter
 import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.data.repository.BlockRuleRepository
+import com.astraedus.nudge.data.repository.InstalledAppsRepository
 import com.astraedus.nudge.data.repository.UsageRepository
+import com.astraedus.nudge.domain.packages.EssentialPackages
 import com.astraedus.nudge.data.repository.normalizedAllAppsRule
 import io.mockk.coEvery
 import io.mockk.every
@@ -86,7 +88,12 @@ class ImportAllAppsRulesTest {
         db.repository,
         mockk<UsageRepository>(relaxed = true),
         mockk<NudgePreferences>(relaxed = true),
-        RuleExporter()
+        RuleExporter(),
+        mockk<InstalledAppsRepository> { coEvery { getInstalledApps() } returns emptyList() },
+        mockk<EssentialPackages> {
+            coEvery { current() } returns emptySet()
+            coEvery { browsers() } returns emptySet()
+        }
     )
 
     private suspend fun import(db: FakeDb, json: String): ImportOutcome {

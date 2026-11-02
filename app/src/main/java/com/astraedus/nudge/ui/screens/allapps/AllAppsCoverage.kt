@@ -4,12 +4,14 @@ import com.astraedus.nudge.data.db.entity.AppGroup
 import com.astraedus.nudge.data.db.entity.AppGroupMember
 import com.astraedus.nudge.data.db.entity.BlockRule
 import com.astraedus.nudge.data.repository.InstalledAppsRepository
+import com.astraedus.nudge.data.repository.groupResolverOf
 import com.astraedus.nudge.data.repository.toRuleData
 import com.astraedus.nudge.domain.engine.CoverageFacts
 import com.astraedus.nudge.domain.engine.CoveredApps
 import com.astraedus.nudge.domain.engine.RuleCoverage
 import com.astraedus.nudge.domain.model.BlockRuleData
-import com.astraedus.nudge.domain.model.GroupMembership
+import com.astraedus.nudge.domain.groups.GroupMembershipResolver
+import com.astraedus.nudge.domain.packages.AppCategory
 import com.astraedus.nudge.domain.model.RuleTarget
 import com.astraedus.nudge.ui.components.rule.RuleSummary
 
@@ -27,12 +29,15 @@ data class RuleTables(
 
     val groupNames: Map<Long, String> = groups.associate { it.id to it.name }
 
-    /** Members of groups that exist, in the engine's shape. */
-    val memberships: List<GroupMembership> = members
-        .filter { it.groupId in liveGroupIds }
-        .map { GroupMembership(groupId = it.groupId, packageName = it.packageName) }
+    /** Who is in each group that exists, as the engine resolves it (spec 5.2). */
+    val membership: GroupMembershipResolver = groupResolverOf(groups, members)
 
-    fun memberCount(groupId: Long): Int = memberships.count { it.groupId == groupId }
+    /**
+     * The members of [groupId] on this device: hand-added apps plus the installed apps of its
+     * checked categories, minus "Removed by you" and essentials. What "Work · 6 apps" counts.
+     */
+    fun memberCount(groupId: Long, device: DeviceApps): Int =
+        membership.membersOf(groupId, device.categories, device.essentials, device.browsers).size
 
     /**
      * Every rule but the one being edited ([editedRuleId], null for a new rule), as the engine
@@ -48,16 +53,21 @@ data class RuleTables(
  * What the device holds, read once when the editor opens.
  *
  * [installed] is the installed apps with a launcher entry (labelled, sorted by name), which is what
- * an All apps rule can cover; [essentials] is the one essentials list; [alwaysAllowed] is the
+ * an All apps rule can cover; [essentials] is the one essentials list; [browsers] is the one
+ * browser list (a browser joins a group only by hand, never by category); [alwaysAllowed] is the
  * essentials this phone can open (Phone, Messages, Settings, ...), labelled and sorted by name, for
  * the locked row and its sheet.
  */
 data class DeviceApps(
     val installed: List<InstalledAppsRepository.AppInfo> = emptyList(),
     val essentials: Set<String> = emptySet(),
+    val browsers: Set<String> = emptySet(),
     val alwaysAllowed: List<InstalledAppsRepository.AppInfo> = emptyList()
 ) {
     val launchable: Set<String> = installed.mapTo(HashSet()) { it.packageName }
+
+    /** Each installed app's category, by package: what a category group matches. */
+    val categories: Map<String, AppCategory> = installed.associate { it.packageName to it.category }
 
     val byPackage: Map<String, InstalledAppsRepository.AppInfo> = installed.associateBy { it.packageName }
 
@@ -70,7 +80,9 @@ data class DeviceApps(
 
     fun factsFor(packageName: String) = CoverageFacts(
         essential = packageName in essentials,
-        launchable = packageName in launchable
+        launchable = packageName in launchable,
+        category = categories[packageName],
+        browser = packageName in browsers
     )
 }
 
@@ -83,9 +95,10 @@ data class DeviceApps(
 fun blockedCount(rule: BlockRule, tables: RuleTables, device: DeviceApps): Int =
     CoveredApps.packages(
         ruleData = listOf(rule.copy(enabled = true).toRuleData(groupNames = tables.groupNames)),
-        memberships = tables.memberships,
-        launchable = device.launchable,
-        essentials = device.essentials
+        membership = tables.membership,
+        launchable = device.categories,
+        essentials = device.essentials,
+        browsers = device.browsers
     ).size
 
 /**
@@ -100,7 +113,7 @@ fun alsoBlockedBy(
     tables: RuleTables,
     device: DeviceApps
 ): List<String> = RuleCoverage
-    .coveringRules(packageName, otherRules, tables.memberships, device.factsFor(packageName))
+    .coveringRules(packageName, otherRules, tables.membership, device.factsFor(packageName))
     .mapNotNull { rule ->
         when (RuleTarget.of(rule)) {
             is RuleTarget.App -> OWN_RULE
@@ -133,10 +146,9 @@ fun stillBlockedCount(
     otherRules: List<BlockRuleData>,
     tables: RuleTables,
     device: DeviceApps
-): Int = tables.memberships
-    .filter { it.groupId == groupId && it.packageName in device.launchable }
-    .map { it.packageName }
-    .distinct()
+): Int = tables.membership
+    .membersOf(groupId, device.categories, device.essentials, device.browsers)
+    .filter { it in device.launchable }
     .count { alsoBlockedBy(it, otherRules, tables, device).isNotEmpty() }
 
 /** "1 still blocked by another rule", "2 still blocked by other rules"; null for none. */

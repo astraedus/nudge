@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
+import com.astraedus.nudge.data.repository.InstalledAppsRepository
 import com.astraedus.nudge.di.IoDispatcher
 import com.astraedus.nudge.domain.logging.NudgeLog
 import com.astraedus.nudge.domain.packages.AppCategory
@@ -30,7 +31,9 @@ import javax.inject.Singleton
 class AndroidPackageFacts @Inject constructor(
     @ApplicationContext context: Context,
     @IoDispatcher private val io: CoroutineDispatcher,
-    logger: NudgeLog
+    logger: NudgeLog,
+    // Lazy: no eager PackageManager work, and no construction cycle through the data layer.
+    private val installedApps: dagger.Lazy<InstalledAppsRepository>
 ) : PackageFacts {
     private val log = logger.tagged("PackageFacts")
     private val pm: PackageManager = context.packageManager
@@ -51,7 +54,7 @@ class AndroidPackageFacts @Inject constructor(
             context.registerReceiver(
                 object : BroadcastReceiver() {
                     override fun onReceive(context: Context, intent: Intent) {
-                        intent.data?.schemeSpecificPart?.let(::invalidate)
+                        onPackageChanged(intent.data?.schemeSpecificPart)
                     }
                 },
                 filter
@@ -59,6 +62,15 @@ class AndroidPackageFacts @Inject constructor(
         } catch (e: Exception) {
             log.w("failed to register package-change receiver; facts will not be invalidated", e)
         }
+    }
+
+    /**
+     * The one package-change handler: drops the package's cached fact and refreshes the installed
+     * list the UI counts read, so an app installed later shows up in category groups everywhere.
+     */
+    internal fun onPackageChanged(packageName: String?) {
+        packageName?.let(::invalidate)
+        installedApps.get().refresh()
     }
 
     override suspend fun factsFor(packageName: String): PackageFact {
@@ -72,6 +84,8 @@ class AndroidPackageFacts @Inject constructor(
             }
         }
     }
+
+    override fun cachedOrNull(packageName: String): PackageFact? = cache.peek(packageName)
 
     override fun invalidate(packageName: String) = cache.invalidate(packageName)
 

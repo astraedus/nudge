@@ -1,14 +1,18 @@
 package com.astraedus.nudge.domain.lock
 
 import com.astraedus.nudge.data.db.entity.BlockRule
+import com.astraedus.nudge.domain.groups.GroupDefinition
+import com.astraedus.nudge.domain.groups.GroupMembershipResolver
 import com.astraedus.nudge.domain.model.ExceptCsv
+import com.astraedus.nudge.domain.packages.AppCategory
 import com.astraedus.nudge.domain.model.RuleTarget
 
 /**
- * Resolved membership of one group: the packages it covers. (Once category groups exist, PR 4, the
- * caller passes includes + category matches - exclusions; this type stays "what it covers".)
+ * Resolved membership of one group: the packages it covers on this device (includes + installed
+ * category matches - "Removed by you" - essentials, [GroupMembershipResolver.membersOf]). Strict
+ * Mode judges what a group COVERS, never how it is written down.
  */
-data class GroupDefinition(val id: Long, val members: Set<String>)
+data class ResolvedGroup(val id: Long, val members: Set<String>)
 
 /** How enabled rules use a group, from the saved state. */
 data class GroupUsage(val blocks: Boolean, val allowedBy: Boolean) {
@@ -53,9 +57,30 @@ object GroupWeakening {
      * enabled All apps rule allows the group is weakening; both uses = any change; unused = free.
      * Delete = [new] with no members.
      */
-    fun isWeakening(old: GroupDefinition, new: GroupDefinition, usage: GroupUsage): Boolean {
+    fun isWeakening(old: ResolvedGroup, new: ResolvedGroup, usage: GroupUsage): Boolean {
         val left = (old.members - new.members).isNotEmpty()
         val joined = (new.members - old.members).isNotEmpty()
         return (usage.blocks && left) || (usage.allowedBy && joined)
     }
+
+    /**
+     * The same question over two group DEFINITIONS (spec 5.2), resolved on this device first:
+     * [installed] maps each installed app to its category, [essentials] are never members, and
+     * [browsers] join only by hand. So the
+     * answer is about apps, not settings: unchecking a category no installed app is in removes
+     * nobody and is free, unchecking one five apps are in is five members leaving, and "Removed by
+     * you" on a category app is one member leaving.
+     */
+    fun isWeakening(
+        old: GroupDefinition,
+        new: GroupDefinition,
+        usage: GroupUsage,
+        installed: Map<String, AppCategory>,
+        essentials: Set<String>,
+        browsers: Set<String>
+    ): Boolean = isWeakening(
+        ResolvedGroup(old.id, GroupMembershipResolver.membersOf(old, installed, essentials, browsers)),
+        ResolvedGroup(new.id, GroupMembershipResolver.membersOf(new, installed, essentials, browsers)),
+        usage
+    )
 }

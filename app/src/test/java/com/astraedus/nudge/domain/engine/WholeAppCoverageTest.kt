@@ -1,8 +1,8 @@
 package com.astraedus.nudge.domain.engine
 
+import com.astraedus.nudge.domain.groups.GroupMembershipResolver
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.domain.model.BlockRuleData
-import com.astraedus.nudge.domain.model.GroupMembership
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -19,10 +19,7 @@ class WholeAppCoverageTest {
     private val social = 7L
     private val always: (BlockRuleData) -> Boolean = { true }
 
-    private val members = listOf(
-        GroupMembership(social, chrome),
-        GroupMembership(social, "com.instagram.android")
-    )
+    private val members = membership(social to chrome, social to "com.instagram.android")
 
     private fun groupRule(
         mode: BlockMode = BlockMode.HARD_BLOCK,
@@ -49,8 +46,8 @@ class WholeAppCoverageTest {
     private fun covers(
         rules: List<BlockRuleData>,
         pkg: String = chrome,
-        memberships: List<GroupMembership> = members,
-        facts: CoverageFacts = CoverageFacts(essential = false, launchable = true),
+        memberships: GroupMembershipResolver = members,
+        facts: CoverageFacts = CoverageFacts(essential = false, launchable = true, category = null, browser = false),
         isInSchedule: (BlockRuleData) -> Boolean = always
     ) = WholeAppCoverage.coversNow(pkg, rules, memberships, facts, isInSchedule)
 
@@ -86,7 +83,7 @@ class WholeAppCoverageTest {
     @Test
     fun `a package outside the group is not covered`() {
         assertFalse(covers(listOf(groupRule()), pkg = "org.mozilla.firefox"))
-        assertFalse(covers(listOf(groupRule()), memberships = emptyList()))
+        assertFalse(covers(listOf(groupRule()), memberships = GroupMembershipResolver.NONE))
     }
 
     @Test
@@ -140,7 +137,7 @@ class WholeAppCoverageTest {
         )
         for (rule in candidates) {
             if (covers(listOf(rule))) {
-                val resolved = RuleEvaluator().resolveRulesForPackage(chrome, listOf(rule), members, CoverageFacts(essential = false, launchable = true))
+                val resolved = RuleEvaluator().resolveRulesForPackage(chrome, listOf(rule), members, CoverageFacts(essential = false, launchable = true, category = null, browser = false))
                 assertEquals("rule $rule", 1, resolved.size)
             }
         }

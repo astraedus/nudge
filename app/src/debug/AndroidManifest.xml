@@ -25,6 +25,17 @@
             </intent-filter>
         </receiver>
 
+        <!-- QA-only: logs (package, category) for every launchable app (spec PR 6, the category
+             coverage measurement behind the KnownAppCategories decision). Debug source set only,
+             like the watchdog trigger above. -->
+        <receiver
+            android:name=".service.CategoryCoverageDebugReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="dev.astraedus.nudge.debug.LOG_CATEGORIES" />
+            </intent-filter>
+        </receiver>
+
     </application>
 
 </manifest>

@@ -1,12 +1,14 @@
 package com.astraedus.nudge.domain.engine
 
+import com.astraedus.nudge.domain.groups.GroupDefinition
+import com.astraedus.nudge.domain.groups.GroupMembershipResolver
 import com.astraedus.nudge.domain.lock.RuleWeakening
 import com.astraedus.nudge.domain.model.BlockDecision
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.domain.model.BlockRuleData
-import com.astraedus.nudge.domain.model.GroupMembership
 import com.astraedus.nudge.domain.model.RuleTarget
 import com.astraedus.nudge.domain.logging.NudgeLog
+import com.astraedus.nudge.domain.packages.AppCategory
 import java.util.Calendar
 import org.junit.Assert.assertEquals
 import org.junit.Assert.fail
@@ -26,7 +28,13 @@ class RulesOnlyAddInvariantTest {
     private val pkg = "com.example.target"
     private val memberGroup = 7L
     private val otherGroup = 8L
-    private val memberships = listOf(GroupMembership(memberGroup, pkg))
+    private val categoryGroup = 9L
+    private val memberships = GroupMembershipResolver(
+        listOf(
+            GroupDefinition(memberGroup, includes = setOf(pkg)),
+            GroupDefinition(categoryGroup, categories = setOf(AppCategory.SOCIAL))
+        )
+    )
 
     // Wednesday 10:00, inside 09:00-17:00 and outside 20:00-22:00.
     private val now: Calendar = Calendar.getInstance().apply {
@@ -42,9 +50,11 @@ class RulesOnlyAddInvariantTest {
         RuleTarget.App("com.example.other"),
         RuleTarget.Group(memberGroup),
         RuleTarget.Group(otherGroup),
+        RuleTarget.Group(categoryGroup),
         RuleTarget.AllApps(emptySet(), emptySet()),
         RuleTarget.AllApps(setOf(pkg), emptySet()),
         RuleTarget.AllApps(emptySet(), setOf(memberGroup)),
+        RuleTarget.AllApps(emptySet(), setOf(categoryGroup)),
         RuleTarget.AllApps(emptySet(), setOf(99L))
     )
 
@@ -107,9 +117,12 @@ class RulesOnlyAddInvariantTest {
     }
 
     private val factsCases = listOf(
-        CoverageFacts(essential = false, launchable = true),
-        CoverageFacts(essential = true, launchable = true),
-        CoverageFacts(essential = false, launchable = false)
+        CoverageFacts(essential = false, launchable = true, category = null, browser = false),
+        CoverageFacts(essential = true, launchable = true, category = null, browser = false),
+        CoverageFacts(essential = false, launchable = false, category = null, browser = false),
+        // [pkg] is in a SOCIAL category group; an essential never is, whatever its category.
+        CoverageFacts(essential = false, launchable = true, category = AppCategory.SOCIAL, browser = false),
+        CoverageFacts(essential = true, launchable = true, category = AppCategory.SOCIAL, browser = false)
     )
 
     private fun decide(rules: List<BlockRuleData>, facts: CoverageFacts, usageMs: Long, feature: String?) =

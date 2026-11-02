@@ -178,9 +178,25 @@ data class ExportedRule(
     val exceptGroups: List<String> = emptyList()
 )
 
+/**
+ * One group in a backup (spec 5.2). Envelope version stays 1; the definition fields are additive.
+ *
+ * - [members] is the group RESOLVED on the exporting device (includes + installed category apps -
+ *   "Removed by you" - essentials). An older Nudge reads only [name] and [members], so it imports a
+ *   usable hand-picked group. A current Nudge ignores it when [hasDefinition] (importing it as
+ *   includes would freeze category apps into hand-picked rows).
+ * - [categories] are `AppCategory` names in the offered order, [includes] the apps added by hand,
+ *   [excluded] "Removed by you".
+ * - [hasDefinition] is false for a file from before categories (none of the three keys present):
+ *   then [members] ARE the includes, exactly as before.
+ */
 data class ExportedGroup(
     val name: String,
-    val members: List<String> // package names
+    val members: List<String>, // package names
+    val categories: List<String> = emptyList(),
+    val includes: List<String> = emptyList(),
+    val excluded: List<String> = emptyList(),
+    val hasDefinition: Boolean = false
 )
 
 /**

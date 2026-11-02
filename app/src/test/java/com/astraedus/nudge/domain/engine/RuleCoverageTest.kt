@@ -2,7 +2,6 @@ package com.astraedus.nudge.domain.engine
 
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.domain.model.BlockRuleData
-import com.astraedus.nudge.domain.model.GroupMembership
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -14,9 +13,9 @@ import org.junit.Test
  */
 class RuleCoverageTest {
 
-    private val plain = CoverageFacts(essential = false, launchable = true)
-    private val essential = CoverageFacts(essential = true, launchable = true)
-    private val notLaunchable = CoverageFacts(essential = false, launchable = false)
+    private val plain = CoverageFacts(essential = false, launchable = true, category = null, browser = false)
+    private val essential = CoverageFacts(essential = true, launchable = true, category = null, browser = false)
+    private val notLaunchable = CoverageFacts(essential = false, launchable = false, category = null, browser = false)
 
     private fun appRule(pkg: String) = rule(packageName = pkg)
     private fun groupRule(groupId: Long) = rule(groupId = groupId)
@@ -79,11 +78,11 @@ class RuleCoverageTest {
     @Test
     fun `an app that joins an allowed group later is no longer covered`() {
         val rule = allAppsRule(exceptGroups = setOf(3L))
-        val before = listOf(GroupMembership(3L, "maps"))
-        val after = before + GroupMembership(3L, "spotify")
+        val before = membership(3L to "maps")
+        val after = membership(3L to "maps", 3L to "spotify")
 
-        assertTrue(RuleCoverage.covers(rule, "spotify", RuleCoverage.groupIdsOf("spotify", before), plain))
-        assertFalse(RuleCoverage.covers(rule, "spotify", RuleCoverage.groupIdsOf("spotify", after), plain))
+        assertTrue(RuleCoverage.covers(rule, "spotify", RuleCoverage.groupIdsOf("spotify", before, plain), plain))
+        assertFalse(RuleCoverage.covers(rule, "spotify", RuleCoverage.groupIdsOf("spotify", after, plain), plain))
     }
 
     /** A deleted allowed group allows nothing: the rule fails strict, never open. */
@@ -92,7 +91,7 @@ class RuleCoverageTest {
         val stale = allAppsRule(exceptGroups = setOf(99L))
         val none = allAppsRule()
         for (pkg in listOf("a", "b")) {
-            val groups = RuleCoverage.groupIdsOf(pkg, listOf(GroupMembership(1L, "b")))
+            val groups = RuleCoverage.groupIdsOf(pkg, membership(1L to "b"), plain)
             assertEquals(
                 RuleCoverage.covers(none, pkg, groups, plain),
                 RuleCoverage.covers(stale, pkg, groups, plain)
@@ -110,7 +109,7 @@ class RuleCoverageTest {
             allAppsRule(except = setOf("a")).copy(id = 4L),
             allAppsRule().copy(id = 5L)
         )
-        val covering = RuleCoverage.coveringRules("a", rules, listOf(GroupMembership(7L, "a")), plain)
+        val covering = RuleCoverage.coveringRules("a", rules, membership(7L to "a"), plain)
         assertEquals(listOf(1L, 2L, 5L), covering.map { it.id })
     }
 
@@ -154,10 +153,11 @@ class RuleCoverageTest {
         for (rules in ruleSets) for (pkg in pkgs) for (groups in groupSets) {
             val needed = RuleCoverage.factsNeeded(rules, groups)
             for (e in listOf(false, true)) for (l in listOf(false, true)) {
-                val facts = CoverageFacts(essential = e, launchable = l)
+                val facts = CoverageFacts(essential = e, launchable = l, category = null, browser = false)
                 val flipped = CoverageFacts(
                     essential = if (needed.essential) e else !e,
-                    launchable = if (needed.launchable) l else !l
+                    launchable = if (needed.launchable) l else !l,
+                    category = null, browser = false
                 )
                 for (rule in rules) {
                     assertEquals(
