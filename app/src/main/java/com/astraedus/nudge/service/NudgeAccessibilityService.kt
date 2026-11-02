@@ -14,6 +14,7 @@ import com.astraedus.nudge.BuildConfig
 import com.astraedus.nudge.data.db.entity.UsageEvent
 import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.data.repository.BlockRuleRepository
+import com.astraedus.nudge.data.repository.FirstUnlockStateCache
 import com.astraedus.nudge.data.repository.RuleSnapshotSource
 import com.astraedus.nudge.data.repository.UsageRepository
 import com.astraedus.nudge.domain.WebDomainMatcher
@@ -113,6 +114,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         fun ruleSnapshotSource(): RuleSnapshotSource
         fun scheduleEvaluator(): ScheduleEvaluator
         fun packageFacts(): PackageFacts
+        fun firstUnlockStateCache(): FirstUnlockStateCache
     }
 
     /**
@@ -936,60 +938,99 @@ class NudgeAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * The first-unlock anchor (spec 5.3, from #109): the log-only spike of PR 5a.
+     * The first-unlock anchor (spec 5.3, from #109).
      *
      * `ACTION_USER_PRESENT` is the platform's "the user is past the keyguard and looking at the
      * phone" broadcast. It is runtime-registered for the same reason as [screenOffReceiver]: the
      * system only delivers these to registered receivers, never to a manifest entry.
      *
-     * This receiver records NOTHING and changes NO behaviour. It logs what actually arrived, so the
-     * mechanism can be checked on a bench device (PR 5a's decision point) before PR 5b makes a
-     * block depend on it: a PIN unlock, a swipe unlock, a reboot-then-unlock, and a locked screen
-     * woken without unlocking are four different deliveries, and only the last one should be absent.
+     * This receiver writes the anchor. The first unlock of the logical day is the instant a
+     * `firstUnlockMinutes` rule counts from, and nothing else in the pipeline observes that instant.
+     * Whether the write happens is [FirstUnlockWindow.shouldStamp], not "has this receiver fired
+     * before": an absent, stale, or future stamp is replaced, while a fresh one is left alone so the
+     * SECOND unlock of the day cannot restart the window. That is the single rule this site shares
+     * with the app-window fallback below; the once-per-day gate there is diagnostic only.
      *
-     * The fields name what the answer depends on:
+     * The write is unconditional with respect to rules and the master toggle: a rule switched on
+     * mid-morning then has a real anchor to count from instead of waiting for tomorrow.
+     *
+     * The evidence fields name what the delivery depends on:
      * - `screenOn` — `isInteractive`, because a delivery while the screen is off would be suspicious;
      * - `keyguardLocked` — `isDeviceLocked`, which must be false by the time USER_PRESENT arrives;
      * - `secureLock` — `isKeyguardSecure`, "swipe only" vs "PIN/pattern/biometric";
      * - `sinceBootMs` — `elapsedRealtime`, monotonic and jump-proof, so a reboot is obvious in the log
      *   (a small value) and a wall-clock change cannot fake one.
+     *
+     * `stamped=<ms>` on the line after the evidence says whether this delivery wrote the anchor
+     * (`0` means a fresh stamp already existed and was kept).
      */
+    private val firstUnlockState by lazy { entryPoint.firstUnlockStateCache() }
+
     private val userPresentReceiver by lazy {
         object : android.content.BroadcastReceiver() {
             override fun onReceive(context: android.content.Context?, intent: Intent?) {
                 if (intent?.action != Intent.ACTION_USER_PRESENT) return
                 logFirstUnlockEvidence(source = "user_present")
+                val now = System.currentTimeMillis()
+                val state = firstUnlockState
+                val shouldStamp = FirstUnlockWindow.shouldStamp(
+                    nowMs = now,
+                    stampMs = state.firstUnlockAt(),
+                    dayStartMinute = state.dayStartMinute(),
+                    zone = state.zoneId()
+                )
+                if (shouldStamp) serviceScope.launch { firstUnlockState.record(now) }
+                log.i(
+                    "first-unlock stamp source=user_present " +
+                        "stamped=${if (shouldStamp) now else FirstUnlockWindow.NO_STAMP}"
+                )
             }
         }
     }
 
     /**
-     * The fallback anchor's evidence (spec 5.3, PR 5a): an app window in front while the keyguard is
-     * unlocked means the user got past it even though no USER_PRESENT reached us. Covers devices with
-     * no secure lock and a broadcast an OEM dropped.
+     * The fallback anchor (spec 5.3, #109): an app window in front while the keyguard is unlocked
+     * means the user got past it even though no USER_PRESENT reached us. Covers devices with no
+     * secure lock and a broadcast an OEM dropped.
      *
-     * Logged at most once per logical day, and only that: no stamp is stored in PR 5a, so the
-     * "already logged today" memory is this service session's. PR 5b replaces it with the real
-     * stamp. Keeping the gate here rather than logging every app window is what makes the spike's
-     * log readable, and `logicalDayStart` is pure and needs no preference read.
+     * The stamp decision is the same [FirstUnlockWindow.shouldStamp] the receiver uses, so the two
+     * sites converge on one anchor and neither restarts a fresh one. It is deliberately NOT gated by
+     * the once-per-day log below: the log stays throttled so a bench log is readable, while a stamp
+     * that is still missing is written by whichever app window happens to come first.
+     *
+     * [fallbackEvidenceLoggedAt] is therefore only the diagnostic gate. The real "already stamped
+     * today" question is answered by the persisted stamp itself, which survives the process death
+     * this in-memory value does not.
      */
     private val fallbackEvidenceLoggedAt = java.util.concurrent.atomic.AtomicLong(0L)
 
     private fun logFirstUnlockFallback(packageName: String) {
         val now = System.currentTimeMillis()
-        val dayStart = FirstUnlockWindow.logicalDayStart(
-            now,
-            FirstUnlockWindow.DEFAULT_DAY_START_MINUTE,
-            java.time.ZoneId.systemDefault()
-        )
-        if (fallbackEvidenceLoggedAt.get() >= dayStart) return
+        val state = firstUnlockState
+        // Cheapest exit first, on the app-switch hot path: with a fresh anchor there is nothing to
+        // do, and `KeyguardManager.isDeviceLocked` is a binder call this must not spend per event.
+        if (!FirstUnlockWindow.shouldStamp(
+                nowMs = now,
+                stampMs = state.firstUnlockAt(),
+                dayStartMinute = state.dayStartMinute(),
+                zone = state.zoneId()
+            )
+        ) {
+            return
+        }
         val keyguard = getSystemService(android.app.KeyguardManager::class.java) ?: return
         if (keyguard.isDeviceLocked) return
+        serviceScope.launch { firstUnlockState.record(now) }
+
+        // The log stays throttled to one line per logical day; the stamp above is what matters and
+        // is already decided. The throttle is the service session's, which is all a bench log needs.
+        val dayStart = FirstUnlockWindow.logicalDayStart(now, state.dayStartMinute(), state.zoneId())
+        if (fallbackEvidenceLoggedAt.get() >= dayStart) return
         if (!fallbackEvidenceLoggedAt.compareAndSet(fallbackEvidenceLoggedAt.get(), now)) return
-        logFirstUnlockEvidence(source = "app_window_fallback package=$packageName")
+        logFirstUnlockEvidence(source = "app_window_fallback package=$packageName stamped=$now")
     }
 
-    /** One log line, every field the PR 5a decision point needs. Never throws: it is a log. */
+    /** One log line, every field the first-unlock decision (spec 5.3) needs. Never throws: it is a log. */
     private fun logFirstUnlockEvidence(source: String) {
         val power = getSystemService(android.os.PowerManager::class.java)
         val keyguard = getSystemService(android.app.KeyguardManager::class.java)
@@ -1600,8 +1641,8 @@ class NudgeAccessibilityService : AccessibilityService() {
             log.w("failed to register camera availability callback", e)
         }
 
-        // PR 5a's spike: the first-unlock anchor, log-only, registered beside screen-off for the
-        // same reason (a protected broadcast the system delivers only to registered receivers).
+        // The first-unlock anchor (spec 5.3), registered beside screen-off for the same reason
+        // (a protected broadcast the system delivers only to registered receivers).
         try {
             registerReceiver(
                 userPresentReceiver,
@@ -2088,8 +2129,9 @@ class NudgeAccessibilityService : AccessibilityService() {
      * one somewhere else -- and the third one did arrive, right here.
      */
     private fun applyForegroundSignal(signal: ForegroundSignal) {
-        // PR 5a's other half: observe the fallback anchor before anything can return early. Log
-        // only; the decision path below is untouched.
+        // The fallback half of the first-unlock anchor: observe it before anything can return
+        // early. It writes only when `shouldStamp` says the anchor is missing or stale; the
+        // decision path below is untouched.
         if (signal is ForegroundSignal.AppWindow) logFirstUnlockFallback(signal.packageName)
         entryPoint.blockLaunchGuard().onForegroundSignal(signal)
         entryPoint.passthroughManager().onForegroundSignal(signal, sittingClock())

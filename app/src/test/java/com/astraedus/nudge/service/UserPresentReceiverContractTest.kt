@@ -28,6 +28,22 @@ class UserPresentReceiverContractTest {
         File(srcDir, "main/java/com/astraedus/nudge/service/NudgeAccessibilityService.kt").readText()
     }
 
+    /**
+     * The receiver's own text, from its declaration to the end of its lazy block. A non-greedy
+     * match is safe here: every nested closing brace is indented deeper than the four spaces that
+     * end the block, so this stops at the receiver and does not spill into the fallback below.
+     */
+    private val receiverBody: String by lazy {
+        Regex("private val userPresentReceiver by lazy \\{[\\s\\S]*?\\n    \\}")
+            .find(serviceSource)?.value.orEmpty()
+    }
+
+    /** The fallback's body, same extraction rule as [receiverBody]. */
+    private val fallbackBody: String by lazy {
+        Regex("private fun logFirstUnlockFallback\\(packageName: String\\) \\{[\\s\\S]*?\\n    \\}")
+            .find(serviceSource)?.value.orEmpty()
+    }
+
     @Test
     fun `the receiver is declared, filtered on USER_PRESENT, and registered next to screen-off`() {
         assertTrue(
@@ -80,22 +96,74 @@ class UserPresentReceiverContractTest {
     }
 
     @Test
-    fun `the spike logs and changes no behaviour`() {
-        val start = serviceSource.indexOf("private val userPresentReceiver by lazy {")
-        assertTrue(start >= 0)
-        val body = serviceSource.substring(start, start + 1_200)
+    fun `the receiver logs its evidence before deciding`() {
+        // PR 5a's spike assertion (log only, change nothing) is deliberately gone: PR 5b made this
+        // receiver the anchor. What survives is the ordering that kept the spike readable — the
+        // evidence line describes the delivery whether or not it stamps.
+        val evidence = receiverBody.indexOf("logFirstUnlockEvidence(source = \"user_present\")")
+        val decision = receiverBody.indexOf("FirstUnlockWindow.shouldStamp")
 
+        assertTrue("the delivery must still be logged", evidence >= 0)
+        assertTrue("the evidence must be logged before the stamp decision", evidence < decision)
         assertTrue(
-            "the receiver's only effect is an evidence log",
-            body.contains("logFirstUnlockEvidence(source = \"user_present\")")
+            "the receiver must not evaluate a block",
+            !receiverBody.contains("evaluateBlockUseCase")
+        )
+    }
+
+    @Test
+    fun `the receiver stamps through the shared shouldStamp decision`() {
+        assertTrue("the receiver body must be findable", receiverBody.isNotEmpty())
+        val decision = receiverBody.indexOf("FirstUnlockWindow.shouldStamp")
+        val record = receiverBody.indexOf("firstUnlockState.record(")
+        assertTrue(
+            "the receiver must ask FirstUnlockWindow.shouldStamp before writing (spec 5.3)",
+            decision >= 0
         )
         assertTrue(
-            "PR 5a must not read or write preferences",
-            !body.contains("nudgePreferences")
+            "the receiver must record through FirstUnlockStateCache.record",
+            record >= 0
         )
         assertTrue(
-            "PR 5a must not evaluate a block",
-            !body.contains("evaluateBlockUseCase")
+            "the stamp decision must come before the write",
+            decision in 0 until record
+        )
+        assertTrue(
+            "a second unlock in the same logical day must not restart the window",
+            receiverBody.contains("if (shouldStamp)")
+        )
+    }
+
+    @Test
+    fun `the receiver records exactly once`() {
+        assertEquals(
+            "one .record( call in the receiver: a second would double-stamp an unlock",
+            1,
+            Regex("\\.record\\(").findAll(receiverBody).count()
+        )
+    }
+
+    @Test
+    fun `the fallback stamps under the same condition`() {
+        assertTrue("the fallback body must be findable", fallbackBody.isNotEmpty())
+        val decision = fallbackBody.indexOf("FirstUnlockWindow.shouldStamp")
+        val record = fallbackBody.indexOf("firstUnlockState.record(")
+        assertTrue(
+            "the app-window fallback must ask the same shouldStamp question",
+            decision >= 0
+        )
+        assertTrue(
+            "the fallback must record through FirstUnlockStateCache.record",
+            record >= 0
+        )
+        assertTrue(
+            "the fallback's stamp decision must also come before the write",
+            decision in 0 until record
+        )
+        assertEquals(
+            "one .record( call in the fallback: a second would double-stamp a window",
+            1,
+            Regex("\\.record\\(").findAll(fallbackBody).count()
         )
     }
 }
