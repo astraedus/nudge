@@ -99,11 +99,19 @@ data class GroupMembersDraft(
         }
 
     /**
-     * The chips to show, in [OFFERED_CATEGORIES] order: every category with an app on this phone,
-     * and every checked one (so a checked category with no app yet can still be unchecked).
+     * The chips, one per [OFFERED_CATEGORIES] entry in that order, ALWAYS all of them: a category
+     * with no app on this phone yet ("Games 0") is still offered, because checking it is how someone
+     * blocks the next game before they install it. Hiding the empty ones (the first build) made that
+     * impossible, and made a chip vanish once every app in it was "Removed by you".
      */
-    fun offeredCategories(installed: Map<String, AppCategory>, essentials: Set<String>): List<AppCategory> =
-        OFFERED_CATEGORIES.filter { it in categories || categoryCount(it, installed, essentials) > 0 }
+    fun chips(installed: Map<String, AppCategory>, essentials: Set<String>): List<CategoryChip> =
+        OFFERED_CATEGORIES.map { category ->
+            CategoryChip(
+                category = category,
+                count = categoryCount(category, installed, essentials),
+                checked = category in categories
+            )
+        }
 
     companion object {
         /** The id a definition is resolved under when only its apps matter. */

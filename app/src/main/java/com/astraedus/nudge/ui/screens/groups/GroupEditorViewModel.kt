@@ -97,13 +97,7 @@ data class GroupEditorState(
 
     /** The category chips, in the order the editor offers them. */
     val chips: List<CategoryChip>
-        get() = membersDraft.offeredCategories(installed, essentials).map { category ->
-            CategoryChip(
-                category = category,
-                count = membersDraft.categoryCount(category, installed, essentials),
-                checked = category in membersDraft.categories
-            )
-        }
+        get() = membersDraft.chips(installed, essentials)
 
     /**
      * A group needs a name and something in it: an app, or a checked category (one with no app on

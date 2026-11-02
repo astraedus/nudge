@@ -63,6 +63,7 @@ import com.astraedus.nudge.ui.components.StrictModeChallengeHost
 import com.astraedus.nudge.ui.components.TonalIcon
 import com.astraedus.nudge.ui.components.blockModeDescription
 import com.astraedus.nudge.ui.components.rememberCategoryTitle
+import com.astraedus.nudge.ui.components.rememberShortCategoryTitle
 import com.astraedus.nudge.ui.components.rule.AllAppsIcon
 import com.astraedus.nudge.ui.components.rule.AllAppsRuleItem
 import com.astraedus.nudge.ui.components.rule.BlockModeSegmentedRow
@@ -238,8 +239,9 @@ fun GroupEditorScreen(
 }
 
 /**
- * The category chips above the member list (spec 3.3): each offered category with an app on this
- * phone, named as Android names it, with how many apps it brings in. While one is checked, one line
+ * The category chips above the member list (spec 3.3): every offered category (one with no app on
+ * this phone yet shows 0), named as Android names it, with how many apps it brings in. Member rows
+ * tag the short name ("Social"). While one is checked, one line
  * says what that means for apps installed later.
  */
 @OptIn(ExperimentalLayoutApi::class)
@@ -297,7 +299,7 @@ private fun MemberRow(row: GroupMemberRow, onRemove: () -> Unit) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 row.category?.let { category ->
                     Text(
-                        rememberCategoryTitle(category),
+                        rememberShortCategoryTitle(category),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,

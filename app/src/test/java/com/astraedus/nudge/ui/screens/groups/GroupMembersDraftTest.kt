@@ -97,21 +97,26 @@ class GroupMembersDraftTest {
         assertEquals(0, draft.categoryCount(AppCategory.NEWS, installed, essentials))
     }
 
-    @Test fun `chips offered are the categories with an app here, plus any checked one, in offered order`() {
-        assertEquals(
-            listOf(AppCategory.SOCIAL, AppCategory.VIDEO, AppCategory.GAME),
-            GroupMembersDraft().offeredCategories(installed, essentials)
-        )
-        val newsChecked = GroupMembersDraft(categories = setOf(AppCategory.NEWS))
-        assertEquals(
-            listOf(AppCategory.SOCIAL, AppCategory.VIDEO, AppCategory.GAME, AppCategory.NEWS),
-            newsChecked.offeredCategories(installed, essentials)
-        )
+    @Test fun `every offered category is a chip in offered order, even with no app here`() {
+        // NEWS has no app on this phone: still offered, so the next one installed can be pre-blocked.
+        val chips = GroupMembersDraft(categories = setOf(AppCategory.NEWS)).chips(installed, essentials)
+        assertEquals(OFFERED_CATEGORIES, chips.map { it.category })
+        val news = chips.single { it.category == AppCategory.NEWS }
+        assertEquals(0, news.count)
+        assertTrue(news.checked)
+        assertEquals(listOf(AppCategory.NEWS), chips.filter { it.checked }.map { it.category })
+    }
+
+    @Test fun `a chip whose apps are all removed by you stays offered, at 0`() {
+        val draft = social.remove("com.chat", AppCategory.SOCIAL).remove("com.mail", AppCategory.SOCIAL)
+        val chip = draft.chips(installed, essentials).single { it.category == AppCategory.SOCIAL }
+        assertEquals(0, chip.count)
+        assertTrue(chip.checked)
     }
 
     @Test fun `no chip is ever UNDEFINED, and UNDEFINED cannot be checked`() {
         val everything = installed + ("com.x" to AppCategory.UNDEFINED)
-        assertFalse(AppCategory.UNDEFINED in GroupMembersDraft().offeredCategories(everything, emptySet()))
+        assertFalse(GroupMembersDraft().chips(everything, emptySet()).any { it.category == AppCategory.UNDEFINED })
         val draft = GroupMembersDraft()
         assertSame(draft, draft.toggleCategory(AppCategory.UNDEFINED))
         for (category in OFFERED_CATEGORIES) {

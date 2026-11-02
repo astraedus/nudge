@@ -22,3 +22,17 @@ fun rememberCategoryTitle(category: AppCategory): String {
     val context = LocalContext.current
     return remember(context, category) { categoryTitle(context, category) }
 }
+
+/**
+ * The first half of a two-part category title, for a tag that sits on every row: "Social &
+ * Communication" is "Social", "Music and audio" is "Music". A one-part title is returned whole. On
+ * the bench the full title ellipsised on every member row ("Social & Communica…").
+ */
+fun shortCategoryTitle(title: String): String =
+    SHORT_TITLE_SEPARATORS.fold(title) { acc, sep -> acc.substringBefore(sep) }.trim().ifEmpty { title }
+
+private val SHORT_TITLE_SEPARATORS = listOf(" & ", " and ")
+
+@Composable
+fun rememberShortCategoryTitle(category: AppCategory): String =
+    shortCategoryTitle(rememberCategoryTitle(category))
