@@ -1,22 +1,21 @@
 package com.astraedus.nudge.domain.usecase
 
-import com.astraedus.nudge.data.db.dao.AppGroupDao
-import com.astraedus.nudge.data.db.dao.BlockRuleDao
-import com.astraedus.nudge.data.db.entity.AppGroup
-import com.astraedus.nudge.data.db.entity.AppGroupMember
 import com.astraedus.nudge.data.db.entity.BlockRule
-import com.astraedus.nudge.data.export.ExportedSettings
 import com.astraedus.nudge.data.export.RuleExporter
-import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.data.repository.BlockRuleRepository
-import com.astraedus.nudge.data.repository.InstalledAppsRepository
-import com.astraedus.nudge.data.repository.UsageRepository
 import com.astraedus.nudge.domain.packages.AppCategory
 import com.astraedus.nudge.domain.packages.EssentialPackages
+import com.astraedus.nudge.testing.FakeInstalledAppsRepository
+import com.astraedus.nudge.testing.FakeNudgePreferences
+import com.astraedus.nudge.testing.FakeRuleDatabase
+import com.astraedus.nudge.testing.FakeUsageRepository
+import com.astraedus.nudge.testing.aBlockRule
+import com.astraedus.nudge.testing.aGroupMember
+import com.astraedus.nudge.testing.anApp
+import com.astraedus.nudge.testing.anAppGroup
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.json.JSONArray
 import org.json.JSONObject
@@ -43,96 +42,65 @@ class CategoryGroupBackupTest {
     )
     private val essentialsHere = setOf("com.phone")
 
-    private class FakeDb(firstId: Long = 1) {
-        val rules = mutableListOf<BlockRule>()
-        val groups = mutableListOf<AppGroup>()
-        val members = mutableListOf<AppGroupMember>()
+    /**
+     * One phone's rule tables: the shared [FakeRuleDatabase] plus a seeding helper that hands out
+     * explicit ids from [firstId] (so a source phone's ids can differ from a target's).
+     */
+    private class Phone(firstId: Long = 1) {
+        val db = FakeRuleDatabase()
+        val repository = db.repository
+        val groups get() = db.groups
         private var nextId = firstId
-
-        val repository: BlockRuleRepository = run {
-            val ruleDao = mockk<BlockRuleDao>(relaxed = true)
-            every { ruleDao.getAll() } answers { flowOf(rules.toList()) }
-            coEvery { ruleDao.insert(any()) } answers {
-                val row = firstArg<BlockRule>().copy(id = nextId++)
-                rules += row
-                row.id
-            }
-            val groupDao = mockk<AppGroupDao>(relaxed = true)
-            every { groupDao.getAll() } answers { flowOf(groups.toList()) }
-            coEvery { groupDao.insert(any()) } answers {
-                val row = firstArg<AppGroup>().copy(id = nextId++)
-                groups += row
-                row.id
-            }
-            coEvery { groupDao.setCategories(any(), any()) } answers {
-                val id = firstArg<Long>()
-                val csv = secondArg<String?>()
-                groups.replaceAll { if (it.id == id) it.copy(categories = csv) else it }
-            }
-            // REPLACE on the (groupId, packageName) primary key, as the real DAO does.
-            coEvery { groupDao.addMember(any()) } answers {
-                val row = firstArg<AppGroupMember>()
-                members.removeAll { it.groupId == row.groupId && it.packageName == row.packageName }
-                members += row
-            }
-            every { groupDao.getMembersForGroup(any()) } answers {
-                val id = firstArg<Long>()
-                flowOf(members.filter { it.groupId == id })
-            }
-            BlockRuleRepository(ruleDao, groupDao)
-        }
 
         fun group(name: String, categories: String? = null, includes: List<String> = emptyList(), excludes: List<String> = emptyList()): Long {
             val id = nextId++
-            groups += AppGroup(id = id, name = name, categories = categories)
-            includes.forEach { members += AppGroupMember(id, it) }
-            excludes.forEach { members += AppGroupMember(id, it, excluded = true) }
+            db.seedGroup(anAppGroup(name, id = id, categories = categories), *includes.toTypedArray())
+            excludes.forEach { db.seedMember(aGroupMember(id, it, excluded = true)) }
             return id
         }
 
+        fun seedRule(rule: BlockRule) = db.seedRule(rule)
+
         fun rows(name: String): Map<String, Boolean> {
             val id = groups.single { it.name == name }.id
-            return members.filter { it.groupId == id }.associate { it.packageName to it.excluded }
+            return db.members.filter { it.groupId == id }.associate { it.packageName to it.excluded }
         }
     }
 
-    private fun installedRepo(installed: Map<String, AppCategory>) = mockk<InstalledAppsRepository> {
-        coEvery { getInstalledApps() } returns installed.map { (pkg, category) ->
-            InstalledAppsRepository.AppInfo(pkg, pkg, icon = null, category = category)
-        }
-    }
+    private fun installedRepo(installed: Map<String, AppCategory>) =
+        FakeInstalledAppsRepository(*installed.map { (pkg, category) -> anApp(pkg, category = category) }.toTypedArray())
 
     private fun essentialsOf(set: Set<String>) = mockk<EssentialPackages> {
         coEvery { current() } returns set
         coEvery { browsers() } returns emptySet()
     }
 
-    private fun exportUseCase(db: FakeDb, installed: Map<String, AppCategory> = installedHere, essentials: Set<String> = essentialsHere) =
+    private fun exportUseCase(db: Phone, installed: Map<String, AppCategory> = installedHere, essentials: Set<String> = essentialsHere) =
         ExportRulesUseCase(
             db.repository,
-            mockk<UsageRepository> { coEvery { getAllEventsForExport() } returns emptyList() },
-            mockk<NudgePreferences> { coEvery { exportableSettings() } returns ExportedSettings() },
+            FakeUsageRepository(),
+            FakeNudgePreferences(),
             RuleExporter(),
             installedRepo(installed),
             essentialsOf(essentials)
         )
 
-    private fun importUseCase(db: FakeDb, installed: Map<String, AppCategory> = installedHere, essentials: Set<String> = essentialsHere) =
+    private fun importUseCase(db: Phone, installed: Map<String, AppCategory> = installedHere, essentials: Set<String> = essentialsHere) =
         ImportRulesUseCase(
             db.repository,
-            mockk<UsageRepository>(relaxed = true),
-            mockk<NudgePreferences>(relaxed = true),
+            FakeUsageRepository(),
+            FakeNudgePreferences(),
             RuleExporter(),
             installedRepo(installed),
             essentialsOf(essentials)
         )
 
-    private suspend fun import(db: FakeDb, json: String, installed: Map<String, AppCategory> = installedHere): ImportOutcome {
+    private suspend fun import(db: Phone, json: String, installed: Map<String, AppCategory> = installedHere): ImportOutcome {
         val useCase = importUseCase(db, installed)
         return useCase.execute(useCase.preview(json).result)
     }
 
-    private suspend fun weakens(db: FakeDb, json: String, installed: Map<String, AppCategory> = installedHere): Boolean {
+    private suspend fun weakens(db: Phone, json: String, installed: Map<String, AppCategory> = installedHere): Boolean {
         val useCase = importUseCase(db, installed)
         return useCase.weakensProtection(useCase.preview(json).result)
     }
@@ -140,7 +108,7 @@ class CategoryGroupBackupTest {
     private fun strings(array: JSONArray) = (0 until array.length()).map { array.getString(it) }
 
     /** Social category + a hand-added UNDEFINED app + "Removed by you" tiktok. */
-    private fun socialPhone() = FakeDb().apply {
+    private fun socialPhone() = Phone(firstId = 50).apply {
         group("Social", categories = "SOCIAL", includes = listOf("com.misc"), excludes = listOf("com.tiktok"))
     }
 
@@ -166,7 +134,7 @@ class CategoryGroupBackupTest {
 
     @Test
     fun `an UNDEFINED app is not in members through a category`() = runTest {
-        val db = FakeDb().apply { group("Everything", categories = "SOCIAL,GAME") }
+        val db = Phone().apply { group("Everything", categories = "SOCIAL,GAME") }
         val members = strings(groupJson(exportUseCase(db).invoke(), "Everything").getJSONArray("members")).toSet()
         assertEquals(setOf("com.insta", "com.tiktok", "com.game"), members)
         assertFalse("com.misc" in members)
@@ -185,7 +153,7 @@ class CategoryGroupBackupTest {
 
     @Test
     fun `a hand-picked group exports with an empty categories list`() = runTest {
-        val db = FakeDb().apply { group("Work", includes = listOf("com.slack")) }
+        val db = Phone().apply { group("Work", includes = listOf("com.slack")) }
         val group = groupJson(exportUseCase(db).invoke(), "Work")
         assertEquals(0, group.getJSONArray("categories").length())
         assertEquals(listOf("com.slack"), strings(group.getJSONArray("members")))
@@ -195,7 +163,7 @@ class CategoryGroupBackupTest {
 
     @Test
     fun `an old format file imports its members as include rows`() = runTest {
-        val db = FakeDb()
+        val db = Phone()
         val outcome = import(db, """{"version":1,"rules":[],"groups":[{"name":"Social","members":["com.insta","com.tiktok"]}]}""")
 
         assertNull(outcome.error)
@@ -208,7 +176,7 @@ class CategoryGroupBackupTest {
     fun `round trip recreates categories, includes and excludes, not members as includes`() = runTest {
         val json = exportUseCase(socialPhone()).invoke()
 
-        val target = FakeDb(firstId = 100)
+        val target = Phone()
         val outcome = import(target, json)
 
         assertNull(outcome.error)
@@ -222,7 +190,7 @@ class CategoryGroupBackupTest {
     @Test
     fun `importing the same file twice changes nothing the second time`() = runTest {
         val json = exportUseCase(socialPhone()).invoke()
-        val target = FakeDb(firstId = 100)
+        val target = Phone()
         import(target, json)
         val groupsAfterFirst = target.groups.toList()
         val rowsAfterFirst = target.rows("Social")
@@ -236,14 +204,14 @@ class CategoryGroupBackupTest {
 
     @Test
     fun `merge unions categories into an existing group of the same name`() = runTest {
-        val db = FakeDb().apply { group("Social", categories = "GAME") }
+        val db = Phone().apply { group("Social", categories = "GAME") }
         import(db, """{"version":1,"rules":[],"groups":[{"name":"Social","members":[],"categories":["SOCIAL","NOPE","UNDEFINED"],"includes":[],"excluded":[]}]}""")
         assertEquals("SOCIAL,GAME".split(",").sorted(), db.groups.single().categories!!.split(",").sorted())
     }
 
     @Test
     fun `an exclude that would remove an existing member is skipped, and an include flips a removed row`() = runTest {
-        val db = FakeDb().apply {
+        val db = Phone().apply {
             group("Social", categories = "SOCIAL", includes = listOf("com.keep"), excludes = listOf("com.tiktok"))
         }
         import(
@@ -261,7 +229,7 @@ class CategoryGroupBackupTest {
 
     @Test
     fun `a file with the new fields never writes members as includes into an existing group`() = runTest {
-        val db = FakeDb().apply { group("Social", categories = "SOCIAL") }
+        val db = Phone().apply { group("Social", categories = "SOCIAL") }
         import(db, """{"version":1,"rules":[],"groups":[{"name":"Social","members":["com.insta","com.tiktok"],"categories":["SOCIAL"],"includes":[],"excluded":[]}]}""")
         assertTrue(db.rows("Social").isEmpty())
     }
@@ -269,25 +237,25 @@ class CategoryGroupBackupTest {
     // --- Strict Mode gate ---
 
     private fun allowing(groupId: Long) =
-        BlockRule(mode = "HARD_BLOCK", allApps = true, exceptGroupIds = "$groupId")
+        aBlockRule(mode = "HARD_BLOCK", allApps = true, exceptGroupIds = "$groupId")
 
     private val addSocial =
         """{"version":1,"rules":[],"groups":[{"name":"Social","members":[],"categories":["SOCIAL"],"includes":[],"excluded":[]}]}"""
 
     @Test
     fun `a category merge that brings apps into an All apps allowed group is weakening`() = runTest {
-        val db = FakeDb()
+        val db = Phone()
         val id = db.group("Social")
-        db.rules += allowing(id).copy(id = 90)
+        db.seedRule(allowing(id).copy(id = 90))
 
         assertTrue(weakens(db, addSocial))
     }
 
     @Test
     fun `a category merge that resolves to no apps here is not weakening`() = runTest {
-        val db = FakeDb()
+        val db = Phone()
         val id = db.group("Social")
-        db.rules += allowing(id).copy(id = 90)
+        db.seedRule(allowing(id).copy(id = 90))
 
         // Same file, but this phone has no social apps installed, and the one that is is essential.
         assertFalse(weakens(db, addSocial, installed = mapOf("com.phone" to AppCategory.SOCIAL, "com.game" to AppCategory.GAME)))
@@ -295,16 +263,16 @@ class CategoryGroupBackupTest {
 
     @Test
     fun `the same category merge is free when no All apps rule allows the group`() = runTest {
-        val db = FakeDb()
+        val db = Phone()
         db.group("Social")
         assertFalse(weakens(db, addSocial))
     }
 
     @Test
     fun `an exclude-only file never weakens`() = runTest {
-        val db = FakeDb()
+        val db = Phone()
         val id = db.group("Social", categories = "SOCIAL")
-        db.rules += allowing(id).copy(id = 90)
+        db.seedRule(allowing(id).copy(id = 90))
         assertFalse(
             weakens(db, """{"version":1,"rules":[],"groups":[{"name":"Social","members":[],"categories":[],"includes":[],"excluded":["com.insta"]}]}""")
         )

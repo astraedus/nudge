@@ -1,10 +1,6 @@
 package com.astraedus.nudge.domain.usecase
 
-import com.astraedus.nudge.domain.nuke.NukeEnforcement
-import com.astraedus.nudge.data.preferences.NudgePreferences
-import com.astraedus.nudge.data.repository.BlockRuleRepository
 import com.astraedus.nudge.data.repository.ContentFilter
-import com.astraedus.nudge.data.repository.UsageRepository
 import com.astraedus.nudge.domain.ContentFilterAllowlist
 import com.astraedus.nudge.domain.ContentFilterBlocklist
 import com.astraedus.nudge.domain.engine.BlockEngine
@@ -12,21 +8,22 @@ import com.astraedus.nudge.domain.engine.RuleEvaluator
 import com.astraedus.nudge.domain.engine.ScheduleEvaluator
 import com.astraedus.nudge.domain.model.BlockDecision
 import com.astraedus.nudge.domain.model.BlockMode
+import com.astraedus.nudge.domain.nuke.NukeEnforcement
+import com.astraedus.nudge.domain.packages.FakeEssentialPackages
+import com.astraedus.nudge.domain.packages.FakePackageFacts
+import com.astraedus.nudge.testing.FakeNudgePreferences
+import com.astraedus.nudge.testing.FakeRuleDatabase
+import com.astraedus.nudge.testing.FakeUsageRepository
 import io.mockk.coEvery
 import io.mockk.coVerify
-import io.mockk.every
 import io.mockk.mockk
 import io.mockk.slot
-import io.mockk.verify
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
-import com.astraedus.nudge.domain.packages.FakeEssentialPackages
-import com.astraedus.nudge.domain.packages.FakePackageFacts
 
 /**
  * Use-case level tests for the generic content-filter fallback in
@@ -36,30 +33,19 @@ import com.astraedus.nudge.domain.packages.FakePackageFacts
  */
 class EvaluateBlockContentFilterTest {
 
-    private lateinit var blockRuleRepository: BlockRuleRepository
-    private lateinit var usageRepository: UsageRepository
-    private lateinit var preferences: NudgePreferences
+    // No rules are seeded -> every evaluation falls through to the filter.
+    private val preferences = FakeNudgePreferences()
     private lateinit var contentFilter: ContentFilter
     private lateinit var useCase: EvaluateBlockUseCase
 
     @Before
     fun setUp() {
-        blockRuleRepository = mockk()
-        usageRepository = mockk()
-        preferences = mockk()
         contentFilter = mockk()
 
-        // No explicit per-rule web domain rules -> always falls through to filter.
-        every { blockRuleRepository.getEnabledRules() } returns flowOf(emptyList())
-        every { usageRepository.getDailyForegroundTimeMs(any()) } returns 0L
-        // Default strict-keywords pref to false (opt-in). Individual tests override.
-        every { preferences.contentFilterStrictKeywords } returns flowOf(false)
-        every { preferences.contentFilterAllowlist } returns flowOf(emptySet())
-        every { preferences.contentFilterBlocklist } returns flowOf(emptySet())
-
+        // Strict keywords default to false (opt-in) on the real preferences. Individual tests override.
         useCase = EvaluateBlockUseCase(
-            blockRuleRepository = blockRuleRepository,
-            usageRepository = usageRepository,
+            blockRuleRepository = FakeRuleDatabase().repository,
+            usageRepository = FakeUsageRepository(),
             blockEngine = BlockEngine(ScheduleEvaluator()),
             ruleEvaluator = RuleEvaluator(),
             scheduleEvaluator = ScheduleEvaluator(),
@@ -73,8 +59,8 @@ class EvaluateBlockContentFilterTest {
 
     @Test
     fun `enabled and blocked returns Block with configured HARD_BLOCK mode`() = runTest {
-        every { preferences.contentFilterEnabled } returns flowOf(true)
-        every { preferences.contentFilterMode } returns flowOf("HARD_BLOCK")
+        preferences.setContentFilterEnabled(true)
+        preferences.setContentFilterMode("HARD_BLOCK")
         coEvery { contentFilter.isBlocked(any(), any(), any(), any()) } returns true
 
         val result = useCase.evaluateWebDomain("https://blockedsite.com")
@@ -88,8 +74,8 @@ class EvaluateBlockContentFilterTest {
 
     @Test
     fun `enabled and blocked honors DELAY mode`() = runTest {
-        every { preferences.contentFilterEnabled } returns flowOf(true)
-        every { preferences.contentFilterMode } returns flowOf("DELAY")
+        preferences.setContentFilterEnabled(true)
+        preferences.setContentFilterMode("DELAY")
         coEvery { contentFilter.isBlocked(any(), any(), any(), any()) } returns true
 
         val result = useCase.evaluateWebDomain("https://blockedsite.com")
@@ -100,8 +86,8 @@ class EvaluateBlockContentFilterTest {
 
     @Test
     fun `disabled returns Allow even when filter would block`() = runTest {
-        every { preferences.contentFilterEnabled } returns flowOf(false)
-        every { preferences.contentFilterMode } returns flowOf("HARD_BLOCK")
+        preferences.setContentFilterEnabled(false)
+        preferences.setContentFilterMode("HARD_BLOCK")
         coEvery { contentFilter.isBlocked(any(), any(), any(), any()) } returns true
 
         val result = useCase.evaluateWebDomain("https://blockedsite.com")
@@ -112,8 +98,8 @@ class EvaluateBlockContentFilterTest {
 
     @Test
     fun `enabled but not blocked returns Allow`() = runTest {
-        every { preferences.contentFilterEnabled } returns flowOf(true)
-        every { preferences.contentFilterMode } returns flowOf("HARD_BLOCK")
+        preferences.setContentFilterEnabled(true)
+        preferences.setContentFilterMode("HARD_BLOCK")
         coEvery { contentFilter.isBlocked(any(), any(), any(), any()) } returns false
 
         val result = useCase.evaluateWebDomain("https://wikipedia.org")
@@ -124,8 +110,8 @@ class EvaluateBlockContentFilterTest {
 
     @Test
     fun `invalid mode string falls back to HARD_BLOCK`() = runTest {
-        every { preferences.contentFilterEnabled } returns flowOf(true)
-        every { preferences.contentFilterMode } returns flowOf("NONSENSE")
+        preferences.setContentFilterEnabled(true)
+        preferences.setContentFilterMode("NONSENSE")
         coEvery { contentFilter.isBlocked(any(), any(), any(), any()) } returns true
 
         val result = useCase.evaluateWebDomain("https://blockedsite.com")
@@ -136,9 +122,9 @@ class EvaluateBlockContentFilterTest {
 
     @Test
     fun `strict pref TRUE threads strictKeywords=true into isBlocked`() = runTest {
-        every { preferences.contentFilterEnabled } returns flowOf(true)
-        every { preferences.contentFilterMode } returns flowOf("HARD_BLOCK")
-        every { preferences.contentFilterStrictKeywords } returns flowOf(true)
+        preferences.setContentFilterEnabled(true)
+        preferences.setContentFilterMode("HARD_BLOCK")
+        preferences.setContentFilterStrictKeywords(true)
         coEvery { contentFilter.isBlocked(any(), any(), any(), any()) } returns true
 
         useCase.evaluateWebDomain("https://www.google.com/search?q=bbc")
@@ -148,8 +134,8 @@ class EvaluateBlockContentFilterTest {
 
     @Test
     fun `strict pref FALSE default threads strictKeywords=false into isBlocked`() = runTest {
-        every { preferences.contentFilterEnabled } returns flowOf(true)
-        every { preferences.contentFilterMode } returns flowOf("HARD_BLOCK")
+        preferences.setContentFilterEnabled(true)
+        preferences.setContentFilterMode("HARD_BLOCK")
         // contentFilterStrictKeywords defaults to false via setUp.
         coEvery { contentFilter.isBlocked(any(), any(), any(), any()) } returns false
 
@@ -162,10 +148,11 @@ class EvaluateBlockContentFilterTest {
 
     @Test
     fun `strict on threads the stored allowlist into isBlocked`() = runTest {
-        every { preferences.contentFilterEnabled } returns flowOf(true)
-        every { preferences.contentFilterMode } returns flowOf("HARD_BLOCK")
-        every { preferences.contentFilterStrictKeywords } returns flowOf(true)
-        every { preferences.contentFilterAllowlist } returns flowOf(setOf("cnc", "cnc-shop.com"))
+        preferences.setContentFilterEnabled(true)
+        preferences.setContentFilterMode("HARD_BLOCK")
+        preferences.setContentFilterStrictKeywords(true)
+        preferences.addContentFilterAllowlistEntry("cnc")
+        preferences.addContentFilterAllowlistEntry("cnc-shop.com")
         val passed = slot<ContentFilterAllowlist>()
         coEvery { contentFilter.isBlocked(any(), any(), capture(passed), any()) } returns false
 
@@ -177,22 +164,24 @@ class EvaluateBlockContentFilterTest {
 
     @Test
     fun `strict off never reads the allowlist and passes no exceptions`() = runTest {
-        every { preferences.contentFilterEnabled } returns flowOf(true)
-        every { preferences.contentFilterMode } returns flowOf("HARD_BLOCK")
+        preferences.setContentFilterEnabled(true)
+        preferences.setContentFilterMode("HARD_BLOCK")
+        // A stored allowlist that would show up in `passed` if the use case read it with strict off.
+        preferences.addContentFilterAllowlistEntry("cnc")
         val passed = slot<ContentFilterAllowlist>()
         coEvery { contentFilter.isBlocked(any(), any(), capture(passed), any()) } returns false
 
         useCase.evaluateWebDomain("https://www.google.com/search?q=cnc")
 
         assertTrue("no exceptions without strict matching", passed.captured.isEmpty)
-        verify(exactly = 0) { preferences.contentFilterAllowlist }
     }
 
     @Test
     fun `the stored block list is threaded into isBlocked`() = runTest {
-        every { preferences.contentFilterEnabled } returns flowOf(true)
-        every { preferences.contentFilterMode } returns flowOf("HARD_BLOCK")
-        every { preferences.contentFilterBlocklist } returns flowOf(setOf("crypto", "stake.com"))
+        preferences.setContentFilterEnabled(true)
+        preferences.setContentFilterMode("HARD_BLOCK")
+        preferences.addContentFilterBlocklistEntry("crypto")
+        preferences.addContentFilterBlocklistEntry("stake.com")
         val passed = slot<ContentFilterBlocklist>()
         coEvery { contentFilter.isBlocked(any(), any(), any(), capture(passed)) } returns false
 

@@ -1,13 +1,9 @@
 package com.astraedus.nudge.domain.usecase
 
-import com.astraedus.nudge.data.db.entity.AppGroup
 import com.astraedus.nudge.data.db.entity.AppGroupMember
-import com.astraedus.nudge.data.db.entity.BlockRule
-import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.data.repository.ContentFilter
 import com.astraedus.nudge.data.repository.RuleSnapshot
 import com.astraedus.nudge.data.repository.RuleSnapshots
-import com.astraedus.nudge.data.repository.UsageRepository
 import com.astraedus.nudge.domain.engine.BlockEngine
 import com.astraedus.nudge.domain.engine.RuleEvaluator
 import com.astraedus.nudge.domain.engine.ScheduleEvaluator
@@ -17,9 +13,13 @@ import com.astraedus.nudge.domain.nuke.NukeEnforcement
 import com.astraedus.nudge.domain.packages.AppCategory
 import com.astraedus.nudge.domain.packages.FakeEssentialPackages
 import com.astraedus.nudge.domain.packages.FakePackageFacts
+import com.astraedus.nudge.testing.FakeNudgePreferences
+import com.astraedus.nudge.testing.FakeUsageRepository
+import com.astraedus.nudge.testing.aBlockRule
+import com.astraedus.nudge.testing.aGroupMember
+import com.astraedus.nudge.testing.anAppGroup
 import io.mockk.every
 import io.mockk.mockk
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -40,11 +40,11 @@ class EvaluateBlockCategoryBrowserTest {
     private val chrome = "com.android.chrome"
     private val social = 7L
 
-    private val groupHard = BlockRule(id = 1, groupId = social, mode = BlockMode.HARD_BLOCK.name)
+    private val groupHard = aBlockRule(id = 1, groupId = social, mode = BlockMode.HARD_BLOCK.name)
 
     private fun snapshot(members: List<AppGroupMember> = emptyList()) = RuleSnapshot.of(
         enabledRules = listOf(groupHard),
-        groups = listOf(AppGroup(id = social, name = "Social", categories = "SOCIAL")),
+        groups = listOf(anAppGroup("Social", id = social, categories = "SOCIAL")),
         members = members
     )
 
@@ -53,11 +53,11 @@ class EvaluateBlockCategoryBrowserTest {
             override suspend fun current() = snapshot
             override suspend fun enabledRules() = snapshot.enabledRules
         },
-        usageRepository = mockk<UsageRepository> { every { getDailyForegroundTimeMs(any()) } returns 0L },
+        usageRepository = FakeUsageRepository(),
         blockEngine = BlockEngine(ScheduleEvaluator()),
         ruleEvaluator = RuleEvaluator(),
         scheduleEvaluator = ScheduleEvaluator(),
-        preferences = mockk<NudgePreferences> { every { contentFilterEnabled } returns flowOf(false) },
+        preferences = FakeNudgePreferences(),
         contentFilter = mockk<ContentFilter>(),
         nukeEnforcement = NukeEnforcement.NEVER,
         essentialPackages = FakeEssentialPackages().apply { browsers = setOf(chrome) },
@@ -79,7 +79,7 @@ class EvaluateBlockCategoryBrowserTest {
 
     @Test
     fun `a browser added to the Social group by hand is covered and blocked as an app`() = runTest {
-        val useCase = useCase(snapshot(listOf(AppGroupMember(social, chrome))))
+        val useCase = useCase(snapshot(listOf(aGroupMember(social, chrome))))
         assertTrue(useCase.isCoveredWhole(chrome))
         val decision = useCase.invoke(chrome, excludeDirectRules = true)
         assertTrue("expected a block, got $decision", decision is BlockDecision.Block)
