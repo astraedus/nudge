@@ -1,11 +1,12 @@
 package com.astraedus.nudge.ui.screens.allapps
 
-import com.astraedus.nudge.data.db.entity.AppGroup
-import com.astraedus.nudge.data.db.entity.AppGroupMember
 import com.astraedus.nudge.data.db.entity.BlockRule
-import com.astraedus.nudge.data.repository.InstalledAppsRepository
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.domain.model.ExceptCsv
+import com.astraedus.nudge.testing.aBlockRule
+import com.astraedus.nudge.testing.aGroupMember
+import com.astraedus.nudge.testing.anApp
+import com.astraedus.nudge.testing.anAppGroup
 
 /**
  * One small phone for the All apps editor's tests. Launchable: chat, feed, game, mail, notes and
@@ -27,25 +28,25 @@ internal object AllAppsFixtures {
     const val SOCIAL = 2L
     const val DELETED = 9L
 
-    fun app(pkg: String, name: String = pkg.substringAfterLast('.').replaceFirstChar(Char::uppercase)) =
-        InstalledAppsRepository.AppInfo(pkg, name, null)
+    /** An installed app labelled as the launcher would: its package's last word, capitalised. */
+    private fun labelled(pkg: String) = anApp(pkg, pkg.substringAfterLast('.').replaceFirstChar(Char::uppercase))
 
-    val installed = listOf(app(CHAT), app(DIALER), app(FEED), app(GAME), app(MAIL), app(NOTES))
+    val installed = listOf(CHAT, DIALER, FEED, GAME, MAIL, NOTES).map(::labelled)
 
     val device = DeviceApps(
         installed = installed,
         essentials = setOf(DIALER, LAUNCHER),
-        alwaysAllowed = listOf(app(DIALER))
+        alwaysAllowed = listOf(labelled(DIALER))
     )
 
-    val groups = listOf(AppGroup(id = WORK, name = "Work"), AppGroup(id = SOCIAL, name = "Social"))
+    val groups = listOf(anAppGroup("Work", id = WORK), anAppGroup("Social", id = SOCIAL))
 
     val members = listOf(
-        AppGroupMember(WORK, MAIL),
-        AppGroupMember(WORK, NOTES),
-        AppGroupMember(WORK, GONE),
-        AppGroupMember(SOCIAL, FEED),
-        AppGroupMember(DELETED, CHAT)
+        aGroupMember(WORK, MAIL),
+        aGroupMember(WORK, NOTES),
+        aGroupMember(WORK, GONE),
+        aGroupMember(SOCIAL, FEED),
+        aGroupMember(DELETED, CHAT)
     )
 
     fun tables(rules: List<BlockRule> = emptyList()) = RuleTables(rules, groups, members)
@@ -56,7 +57,7 @@ internal object AllAppsFixtures {
         allowedGroupIds: Collection<Long> = emptyList(),
         enabled: Boolean = true,
         mode: BlockMode = BlockMode.DELAY
-    ) = BlockRule(
+    ) = aBlockRule(
         id = id,
         mode = mode.name,
         enabled = enabled,
@@ -65,18 +66,6 @@ internal object AllAppsFixtures {
         exceptGroupIds = ExceptCsv.ofGroupIds(allowedGroupIds)
     )
 
-    fun appRule(id: Long, pkg: String, enabled: Boolean = true, features: String? = null) = BlockRule(
-        id = id,
-        packageName = pkg,
-        mode = BlockMode.DELAY.name,
-        enabled = enabled,
-        inAppFeatures = features
-    )
-
-    fun groupRule(id: Long, groupId: Long, enabled: Boolean = true) = BlockRule(
-        id = id,
-        groupId = groupId,
-        mode = BlockMode.DELAY.name,
-        enabled = enabled
-    )
+    fun appRule(id: Long, pkg: String, enabled: Boolean = true, features: String? = null) =
+        aBlockRule(id = id, packageName = pkg, enabled = enabled, inAppFeatures = features)
 }

@@ -5,6 +5,7 @@ import com.astraedus.nudge.data.repository.target
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.domain.model.ExceptCsv
 import com.astraedus.nudge.domain.model.RuleTarget
+import com.astraedus.nudge.testing.aBlockRule
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -26,7 +27,7 @@ class AllAppsFormTest {
         scheduleDays: String? = null,
         start: Int? = null,
         end: Int? = null
-    ) = BlockRule(
+    ) = aBlockRule(
         id = 5,
         mode = mode.name,
         delaySeconds = delaySeconds,

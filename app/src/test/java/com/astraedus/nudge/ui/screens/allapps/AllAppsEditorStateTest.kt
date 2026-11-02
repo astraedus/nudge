@@ -1,6 +1,7 @@
 package com.astraedus.nudge.ui.screens.allapps
 
 import com.astraedus.nudge.domain.model.BlockMode
+import com.astraedus.nudge.testing.aGroupRule
 import com.astraedus.nudge.ui.components.PickerGroup
 import com.astraedus.nudge.ui.components.rule.RuleSummary
 import com.astraedus.nudge.ui.screens.allapps.AllAppsFixtures.CHAT
@@ -15,7 +16,6 @@ import com.astraedus.nudge.ui.screens.allapps.AllAppsFixtures.SOCIAL
 import com.astraedus.nudge.ui.screens.allapps.AllAppsFixtures.WORK
 import com.astraedus.nudge.ui.screens.allapps.AllAppsFixtures.appRule
 import com.astraedus.nudge.ui.screens.allapps.AllAppsFixtures.device
-import com.astraedus.nudge.ui.screens.allapps.AllAppsFixtures.groupRule
 import com.astraedus.nudge.ui.screens.allapps.AllAppsFixtures.tables
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -116,7 +116,7 @@ class AllAppsEditorStateTest {
         val s = state(
             allowedPackages = linkedSetOf(GAME, GONE, CHAT, DIALER),
             allowedGroupIds = linkedSetOf(SOCIAL, DELETED, WORK)
-        ).copy(tables = tables(listOf(groupRule(id = 11, groupId = SOCIAL), appRule(id = 10, pkg = GAME))))
+        ).copy(tables = tables(listOf(aGroupRule(SOCIAL).copy(id = 11), appRule(id = 10, pkg = GAME))))
         val rows = exceptRows(s)
         assertEquals(listOf(SOCIAL, WORK), rows.groups.map { it.groupId })
         assertEquals(listOf(GAME, CHAT, DIALER), rows.apps.map { it.packageName })

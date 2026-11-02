@@ -3,7 +3,9 @@ package com.astraedus.nudge.ui.screens.apps
 import com.astraedus.nudge.data.db.entity.AppGroup
 import com.astraedus.nudge.data.db.entity.AppGroupMember
 import com.astraedus.nudge.data.db.entity.BlockRule
-import com.astraedus.nudge.data.repository.InstalledAppsRepository.AppInfo
+import com.astraedus.nudge.testing.aBlockRule
+import com.astraedus.nudge.testing.anApp
+import com.astraedus.nudge.testing.anAppGroup
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -16,17 +18,15 @@ import org.junit.Test
  */
 class ManageAppsAllAppsTest {
 
-    private fun app(pkg: String, name: String) = AppInfo(packageName = pkg, appName = name, icon = null)
-
     private val installed = listOf(
-        app("com.instagram", "Instagram"),
-        app("com.spotify", "Spotify"),
-        app("com.youtube", "YouTube")
+        anApp("com.instagram", "Instagram"),
+        anApp("com.spotify", "Spotify"),
+        anApp("com.youtube", "YouTube")
     )
 
-    private val work = AppGroup(id = 1, name = "Work")
-    private val allApps = BlockRule(id = 10, allApps = true, mode = "HARD_BLOCK", exceptPackages = "com.spotify")
-    private val allAppsOff = BlockRule(
+    private val work = anAppGroup("Work", id = 1)
+    private val allApps = aBlockRule(id = 10, allApps = true, mode = "HARD_BLOCK", exceptPackages = "com.spotify")
+    private val allAppsOff = aBlockRule(
         id = 11, allApps = true, mode = "DELAY", delaySeconds = 15, enabled = false, exceptGroupIds = "1"
     )
 
@@ -41,7 +41,7 @@ class ManageAppsAllAppsTest {
 
     @Test
     fun `no All apps rule - no section`() {
-        val s = sections(rules = listOf(BlockRule(id = 1, packageName = "com.youtube", mode = "HARD_BLOCK")))
+        val s = sections(rules = listOf(aBlockRule(id = 1, packageName = "com.youtube", mode = "HARD_BLOCK")))
 
         assertTrue(s.allApps.isEmpty())
     }

@@ -2,20 +2,18 @@ package com.astraedus.nudge.ui.screens.groups
 
 import androidx.lifecycle.SavedStateHandle
 import com.astraedus.nudge.MainDispatcherRule
-import com.astraedus.nudge.data.db.entity.AppGroup
-import com.astraedus.nudge.data.db.entity.AppGroupMember
-import com.astraedus.nudge.data.db.entity.BlockRule
-import com.astraedus.nudge.data.preferences.NudgePreferences
-import com.astraedus.nudge.data.repository.BlockRuleRepository
-import com.astraedus.nudge.data.repository.InstalledAppsRepository
-import com.astraedus.nudge.domain.lock.StrictModeChallenge
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.service.EssentialApps
+import com.astraedus.nudge.testing.FakeInstalledAppsRepository
+import com.astraedus.nudge.testing.FakeNudgePreferences
+import com.astraedus.nudge.testing.FakeRuleDatabase
+import com.astraedus.nudge.testing.aGroupRule
+import com.astraedus.nudge.testing.anApp
+import com.astraedus.nudge.testing.anAppGroup
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -34,30 +32,22 @@ class GroupEditorDiscardTest {
     @get:Rule
     val mainDispatcherRule = MainDispatcherRule(UnconfinedTestDispatcher())
 
-    private fun app(pkg: String) = InstalledAppsRepository.AppInfo(pkg, pkg, null)
-
     private fun viewModel(groupId: Long?): GroupEditorViewModel {
-        val repository = mockk<BlockRuleRepository>(relaxed = true)
-        every { repository.getAllGroups() } returns flowOf(listOf(AppGroup(id = 1, name = "Social")))
-        every { repository.getGroupMembers(1) } returns flowOf(
-            listOf(AppGroupMember(1, "com.example.chat"), AppGroupMember(1, "com.example.feed"))
+        val db = FakeRuleDatabase()
+        db.seedGroup(anAppGroup("Social", id = 1), "com.example.chat", "com.example.feed")
+        db.seedRule(aGroupRule(groupId = 1).copy(id = 7))
+        val installed = FakeInstalledAppsRepository(
+            anApp("com.example.chat"), anApp("com.example.feed"), anApp("com.example.game")
         )
-        every { repository.getAllRules() } returns flowOf(
-            listOf(BlockRule(id = 7, groupId = 1, mode = BlockMode.DELAY.name, delaySeconds = 15))
-        )
-        val installed = mockk<InstalledAppsRepository>()
-        coEvery { installed.getInstalledApps() } returns
-            listOf(app("com.example.chat"), app("com.example.feed"), app("com.example.game"))
         val essentials = mockk<EssentialApps>()
         every { essentials.packages(any()) } returns emptySet()
         coEvery { essentials.browsers() } returns emptySet()
-        val prefs = mockk<NudgePreferences>()
-        every { prefs.isStrictModeEnabled } returns flowOf(false)
-        every { prefs.strictModeChallengeLength } returns flowOf(StrictModeChallenge.DEFAULT_LENGTH)
         val handle = SavedStateHandle(
             if (groupId == null) emptyMap() else mapOf(GroupEditorViewModel.ARG_GROUP_ID to groupId)
         )
-        return GroupEditorViewModel(handle, repository, installed, essentials, prefs, UnconfinedTestDispatcher())
+        return GroupEditorViewModel(
+            handle, db.repository, installed, essentials, FakeNudgePreferences(), UnconfinedTestDispatcher()
+        )
     }
 
     private val GroupEditorViewModel.s get() = state.value

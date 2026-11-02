@@ -1,10 +1,10 @@
 package com.astraedus.nudge.ui.screens.config
 
-import com.astraedus.nudge.data.db.entity.AppGroup
-import com.astraedus.nudge.data.db.entity.AppGroupMember
-import com.astraedus.nudge.data.db.entity.BlockRule
 import com.astraedus.nudge.domain.engine.CoverageFacts
 import com.astraedus.nudge.domain.packages.AppCategory
+import com.astraedus.nudge.testing.aBlockRule
+import com.astraedus.nudge.testing.aGroupMember
+import com.astraedus.nudge.testing.anAppGroup
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -13,24 +13,24 @@ import org.junit.Test
 class CoveringGroupsTest {
 
     private val app = "com.instagram.android"
-    private val social = AppGroup(id = 1, name = "Social")
-    private val evening = AppGroup(id = 2, name = "Evening")
-    private val work = AppGroup(id = 3, name = "Work")
+    private val social = anAppGroup("Social", id = 1)
+    private val evening = anAppGroup("Evening", id = 2)
+    private val work = anAppGroup("Work", id = 3)
 
     private val facts = CoverageFacts(essential = false, launchable = true, category = AppCategory.UNDEFINED, browser = false)
 
     private val members = listOf(
-        AppGroupMember(1, app),
-        AppGroupMember(2, app),
-        AppGroupMember(3, "com.slack")
+        aGroupMember(1, app),
+        aGroupMember(2, app),
+        aGroupMember(3, "com.slack")
     )
 
     @Test
     fun `lists every group that contains the app and blocks, by name, with its rule`() {
         val rules = listOf(
-            BlockRule(groupId = 1, mode = "DELAY", delaySeconds = 15),
-            BlockRule(groupId = 2, mode = "HARD_BLOCK"),
-            BlockRule(groupId = 3, mode = "HARD_BLOCK")
+            aBlockRule(groupId = 1, mode = "DELAY", delaySeconds = 15),
+            aBlockRule(groupId = 2, mode = "HARD_BLOCK"),
+            aBlockRule(groupId = 3, mode = "HARD_BLOCK")
         )
 
         val covering = coveringGroups(app, facts, listOf(social, evening, work), members, rules)
@@ -43,7 +43,7 @@ class CoveringGroupsTest {
 
     @Test
     fun `a group whose rule is off, or that has none, is not listed`() {
-        val rules = listOf(BlockRule(groupId = 1, mode = "DELAY", enabled = false))
+        val rules = listOf(aBlockRule(groupId = 1, mode = "DELAY", enabled = false))
 
         assertTrue(coveringGroups(app, facts, listOf(social, evening), members, rules).isEmpty())
     }
@@ -51,8 +51,8 @@ class CoveringGroupsTest {
     @Test
     fun `the app's own rule and a group's feature rule do not count`() {
         val rules = listOf(
-            BlockRule(packageName = app, mode = "HARD_BLOCK"),
-            BlockRule(groupId = 1, mode = "HARD_BLOCK", inAppFeatures = "REELS")
+            aBlockRule(packageName = app, mode = "HARD_BLOCK"),
+            aBlockRule(groupId = 1, mode = "HARD_BLOCK", inAppFeatures = "REELS")
         )
 
         assertTrue(coveringGroups(app, facts, listOf(social), members, rules).isEmpty())
@@ -60,8 +60,8 @@ class CoveringGroupsTest {
 
     // -- category groups (spec 5.2) --
 
-    private val videos = AppGroup(id = 4, name = "Videos", categories = "VIDEO")
-    private val videoRule = BlockRule(groupId = 4, mode = "HARD_BLOCK")
+    private val videos = anAppGroup("Videos", id = 4, categories = "VIDEO")
+    private val videoRule = aBlockRule(groupId = 4, mode = "HARD_BLOCK")
 
     @Test
     fun `an app covered only by its category lists the group, with no member row`() {
@@ -90,14 +90,14 @@ class CoveringGroupsTest {
     @Test
     fun `an app removed from a category group by the user is not listed`() {
         val youtube = facts.copy(category = AppCategory.VIDEO)
-        val removed = listOf(AppGroupMember(4, "com.youtube", excluded = true))
+        val removed = listOf(aGroupMember(4, "com.youtube", excluded = true))
 
         assertTrue(coveringGroups("com.youtube", youtube, listOf(videos), removed, listOf(videoRule)).isEmpty())
     }
 
     @Test
     fun `an app of unknown category is covered by a category group only when added by hand`() {
-        val added = listOf(AppGroupMember(4, "com.other"))
+        val added = listOf(aGroupMember(4, "com.other"))
 
         assertTrue(coveringGroups("com.other", facts, listOf(videos), emptyList(), listOf(videoRule)).isEmpty())
         assertEquals(

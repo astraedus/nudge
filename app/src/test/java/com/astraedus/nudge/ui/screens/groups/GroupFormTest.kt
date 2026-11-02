@@ -5,6 +5,8 @@ import com.astraedus.nudge.domain.groups.GroupDefinition
 import com.astraedus.nudge.domain.lock.GroupUsage
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.domain.packages.AppCategory
+import com.astraedus.nudge.testing.aBlockRule
+import com.astraedus.nudge.testing.aGroupRule
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -19,19 +21,7 @@ class GroupFormTest {
 
     private val blocking = GroupUsage(blocks = true, allowedBy = false)
 
-    private fun groupRule(
-        mode: String = "DELAY",
-        delaySeconds: Int = 15,
-        enabled: Boolean = true,
-        dailyLimitMinutes: Int? = null
-    ) = BlockRule(
-        id = 7L,
-        groupId = 3L,
-        mode = mode,
-        delaySeconds = delaySeconds,
-        enabled = enabled,
-        dailyLimitMinutes = dailyLimitMinutes
-    )
+    private val groupRule = aGroupRule(groupId = 3L).copy(id = 7L)
 
     // ── Form <-> rule ─────────────────────────────────────────────────────
 
@@ -47,8 +37,9 @@ class GroupFormTest {
 
     @Test
     fun `every field the editor shows survives rule to form to rule`() {
-        val saved = groupRule(mode = "HOLD", delaySeconds = 30, enabled = false, dailyLimitMinutes = 45)
-            .copy(scheduleDays = "1,3,5", scheduleStartMinute = 480, scheduleEndMinute = 1080)
+        val saved = groupRule.copy(
+            mode = "HOLD", delaySeconds = 30, enabled = false, dailyLimitMinutes = 45,
+            scheduleDays = "1,3,5", scheduleStartMinute = 480, scheduleEndMinute = 1080)
 
         val back = GroupRuleForm.from(saved).toRule(saved)
 
@@ -57,7 +48,7 @@ class GroupFormTest {
 
     @Test
     fun `fields the editor does not show survive a save`() {
-        val saved = groupRule().copy(
+        val saved = groupRule.copy(
             autoKickAfter = 40,
             autoKickAfterMinutes = 12,
             showCounter = true,
@@ -73,7 +64,7 @@ class GroupFormTest {
 
     @Test
     fun `switching blocking off keeps How and When for next time`() {
-        val saved = groupRule(mode = "HARD_BLOCK", dailyLimitMinutes = 30)
+        val saved = groupRule.copy(mode = "HARD_BLOCK", dailyLimitMinutes = 30)
 
         val back = GroupRuleForm.from(saved).copy(blockEnabled = false).toRule(saved)
 
@@ -107,7 +98,7 @@ class GroupFormTest {
 
     @Test
     fun `a NONE rule shows as Delay, because a group always blocks with something`() {
-        assertEquals(BlockMode.DELAY, GroupRuleForm.from(groupRule(mode = "NONE")).mode)
+        assertEquals(BlockMode.DELAY, GroupRuleForm.from(groupRule.copy(mode = "NONE")).mode)
     }
 
     @Test
@@ -134,46 +125,46 @@ class GroupFormTest {
 
     @Test
     fun `creating a group is never weakening`() =
-        assertFalse(weakens(null, setOf("a"), null, groupRule(mode = "BREATHING")))
+        assertFalse(weakens(null, setOf("a"), null, groupRule.copy(mode = "BREATHING")))
 
     @Test
     fun `removing an app from a blocking group is weakening`() =
-        assertTrue(weakens(setOf("a", "b"), setOf("a"), groupRule(), groupRule()))
+        assertTrue(weakens(setOf("a", "b"), setOf("a"), groupRule, groupRule))
 
     @Test
     fun `adding an app to a blocking group is not`() =
-        assertFalse(weakens(setOf("a"), setOf("a", "b"), groupRule(), groupRule()))
+        assertFalse(weakens(setOf("a"), setOf("a", "b"), groupRule, groupRule))
 
     @Test
     fun `removing an app from a group that blocks nothing is free`() =
         assertFalse(
             weakens(
                 setOf("a", "b"), setOf("a"),
-                groupRule(enabled = false), groupRule(enabled = false),
+                groupRule.copy(enabled = false), groupRule.copy(enabled = false),
                 usage = GroupUsage.UNUSED
             )
         )
 
     @Test
     fun `turning the group's blocking off is weakening`() =
-        assertTrue(weakens(setOf("a"), setOf("a"), groupRule(), groupRule(enabled = false)))
+        assertTrue(weakens(setOf("a"), setOf("a"), groupRule, groupRule.copy(enabled = false)))
 
     @Test
     fun `a shorter wait or a softer mode is weakening`() {
-        assertTrue(weakens(setOf("a"), setOf("a"), groupRule(delaySeconds = 30), groupRule(delaySeconds = 15)))
-        assertTrue(weakens(setOf("a"), setOf("a"), groupRule(mode = "HARD_BLOCK"), groupRule(mode = "DELAY")))
+        assertTrue(weakens(setOf("a"), setOf("a"), groupRule.copy(delaySeconds = 30), groupRule.copy(delaySeconds = 15)))
+        assertTrue(weakens(setOf("a"), setOf("a"), groupRule.copy(mode = "HARD_BLOCK"), groupRule.copy(mode = "DELAY")))
     }
 
     @Test
     fun `a stricter edit is free`() =
-        assertFalse(weakens(setOf("a"), setOf("a"), groupRule(mode = "DELAY"), groupRule(mode = "HARD_BLOCK")))
+        assertFalse(weakens(setOf("a"), setOf("a"), groupRule.copy(mode = "DELAY"), groupRule.copy(mode = "HARD_BLOCK")))
 
     @Test
     fun `editing a rule that was off, while switching it on, is free whatever it softens`() =
         assertFalse(
             weakens(
                 setOf("a"), setOf("a"),
-                groupRule(mode = "HARD_BLOCK", enabled = false), groupRule(mode = "BREATHING"),
+                groupRule.copy(mode = "HARD_BLOCK", enabled = false), groupRule.copy(mode = "BREATHING"),
                 usage = GroupUsage.UNUSED
             )
         )
@@ -197,7 +188,7 @@ class GroupFormTest {
         installed: Map<String, AppCategory>,
         essentials: Set<String> = emptySet(),
         usage: GroupUsage = blocking
-    ) = groupSaveWeakens(old, new, usage, groupRule(), groupRule(), installed, essentials, browsers = emptySet())
+    ) = groupSaveWeakens(old, new, usage, groupRule, groupRule, installed, essentials, browsers = emptySet())
 
     @Test
     fun `unchecking a category that resolves to no installed app is not weakening`() {
@@ -272,9 +263,9 @@ class GroupFormTest {
 
     @Test
     fun `the group's own rule is its whole-group rule, not a feature rule or another group's`() {
-        val feature = BlockRule(id = 1, groupId = 3L, mode = "HARD_BLOCK", inAppFeatures = "REELS")
-        val other = BlockRule(id = 2, groupId = 4L, mode = "DELAY")
-        val own = BlockRule(id = 3, groupId = 3L, mode = "DELAY")
+        val feature = aBlockRule(id = 1, groupId = 3L, mode = "HARD_BLOCK", inAppFeatures = "REELS")
+        val other = aBlockRule(id = 2, groupId = 4L, mode = "DELAY")
+        val own = aBlockRule(id = 3, groupId = 3L, mode = "DELAY")
         assertEquals(own, ownGroupRule(3L, listOf(feature, other, own)))
         assertNull(ownGroupRule(5L, listOf(feature, other, own)))
     }
