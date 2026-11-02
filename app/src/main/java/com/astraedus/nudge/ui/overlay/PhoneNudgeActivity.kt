@@ -130,7 +130,7 @@ private fun PhoneNudgeContent(
                 onClick = onDone,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text("I'm done")
+                Text("I'm done, go Home")
             }
             Spacer(Modifier.height(12.dp))
             OutlinedButton(

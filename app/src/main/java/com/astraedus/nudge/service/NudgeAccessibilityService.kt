@@ -48,6 +48,7 @@ import com.astraedus.nudge.domain.web.WebSessionKey
 import com.astraedus.nudge.domain.usecase.EvaluateBlockUseCase
 import com.astraedus.nudge.domain.nuke.NukeEmergencyCode
 import com.astraedus.nudge.domain.nudge.PhoneNudge
+import com.astraedus.nudge.domain.nudge.PhoneNudgePolicy
 import com.astraedus.nudge.domain.nuke.NukePolicy
 import com.astraedus.nudge.ui.lock.StrictModeGuardActivity
 import com.astraedus.nudge.ui.overlay.BlockOverlayActivity
@@ -570,10 +571,17 @@ class NudgeAccessibilityService : AccessibilityService() {
      * class owns the Android half (the timer, the receiver, the activity launch).
      */
     private val phoneNudgeHandler: Handler by lazy { Handler(Looper.getMainLooper()) }
+    private val phoneNudgeIdleHandler: Handler by lazy { Handler(Looper.getMainLooper()) }
     private val phoneNudgeRunnable: Runnable by lazy {
         Runnable {
             log.d("phone nudge timer fired")
-            phoneNudge.onTimerFired()
+            phoneNudge.onTimerFired(canInterrupt = canPhoneNudgeInterrupt())
+        }
+    }
+    private val phoneNudgeIdleRunnable: Runnable by lazy {
+        Runnable {
+            log.d("phone nudge idle")
+            phoneNudge.onIdle()
         }
     }
     private val phoneNudge: PhoneNudge by lazy {
@@ -589,10 +597,97 @@ class NudgeAccessibilityService : AccessibilityService() {
         )
     }
 
+    @Volatile private var phoneNudgeEnabledCached = false
+    @Volatile private var ownUiInFront = false
+    @Volatile private var cameraInUse = false
+    private val navigationCategoryCache = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+
+    /** User-driven accessibility events. Content changes (video, animation) are not a person. */
+    private val phoneNudgeInteractionEvents = setOf(
+        AccessibilityEvent.TYPE_VIEW_CLICKED,
+        AccessibilityEvent.TYPE_VIEW_LONG_CLICKED,
+        AccessibilityEvent.TYPE_VIEW_SELECTED,
+        AccessibilityEvent.TYPE_VIEW_SCROLLED,
+        AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED
+    )
+
+    private fun armPhoneNudgeIdle() {
+        phoneNudgeIdleHandler.removeCallbacks(phoneNudgeIdleRunnable)
+        phoneNudgeIdleHandler.postDelayed(phoneNudgeIdleRunnable, PhoneNudge.IDLE_MS)
+    }
+
+    private fun cancelPhoneNudgeIdle() {
+        phoneNudgeIdleHandler.removeCallbacks(phoneNudgeIdleRunnable)
+    }
+
     /**
-     * Shows the pause. Not a block: no `UsageEvent`, no passthrough, no launch gate. Skipped while
-     * a block overlay is already up, because the user is being interrupted already and stacking a
-     * second full-screen window on it helps nobody.
+     * The platform facts the pause policy needs (#136 review). Called only when the timer fires, so
+     * the binder reads (audio mode, keyguard, package category) stay off the event path.
+     */
+    private fun canPhoneNudgeInterrupt(): Boolean {
+        val audio =
+            getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager
+        val inCall = audio.mode == android.media.AudioManager.MODE_IN_CALL ||
+            audio.mode == android.media.AudioManager.MODE_IN_COMMUNICATION ||
+            audio.mode == android.media.AudioManager.MODE_RINGTONE
+        val uiMode =
+            getSystemService(android.content.Context.UI_MODE_SERVICE) as android.app.UiModeManager
+        val carMode = uiMode.currentModeType == android.content.res.Configuration.UI_MODE_TYPE_CAR
+        val power =
+            getSystemService(android.content.Context.POWER_SERVICE) as android.os.PowerManager
+        val foreground = entryPoint.blockLaunchGuard().foregroundPackage
+        return PhoneNudgePolicy.canInterrupt(
+            PhoneNudgePolicy.Facts(
+                inCall = inCall,
+                navigationActive = PhoneNudgePolicy.isNavigationPackage(
+                    foreground,
+                    isNavigationCategory(foreground)
+                ),
+                carMode = carMode,
+                ownUiInFront = ownUiInFront,
+                blockOverlayActive = isOverlayActive,
+                deviceLocked = isDeviceLocked(),
+                screenInteractive = power.isInteractive,
+                cameraInUse = cameraInUse
+            )
+        )
+    }
+
+    private fun isNavigationCategory(packageName: String?): Boolean {
+        if (packageName == null) return false
+        navigationCategoryCache[packageName]?.let { return it }
+        val result = try {
+            packageManager.getApplicationInfo(packageName, 0).category ==
+                android.content.pm.ApplicationInfo.CATEGORY_MAPS
+        } catch (_: Exception) {
+            false
+        }
+        navigationCategoryCache[packageName] = result
+        return result
+    }
+
+    /** Camera availability for the pause policy. No CAMERA permission is needed for this callback. */
+    private val cameraAvailabilityCallback:
+        android.hardware.camera2.CameraManager.AvailabilityCallback by lazy {
+        object : android.hardware.camera2.CameraManager.AvailabilityCallback() {
+            private val unavailable =
+                java.util.Collections.synchronizedSet(mutableSetOf<String>())
+
+            override fun onCameraAvailable(cameraId: String) {
+                unavailable.remove(cameraId)
+                cameraInUse = unavailable.isNotEmpty()
+            }
+
+            override fun onCameraUnavailable(cameraId: String) {
+                unavailable.add(cameraId)
+                cameraInUse = true
+            }
+        }
+    }
+
+    /**
+     * Shows the pause. Not a block: no `UsageEvent`, no passthrough, no launch gate. The policy has
+     * already said it may interrupt; the overlay check is a belt-and-braces for a race.
      */
     private fun showPhoneNudgePause(pause: PhoneNudge.Pause) {
         if (isOverlayActive) {
@@ -780,6 +875,7 @@ class NudgeAccessibilityService : AccessibilityService() {
                 hideAllOverlays()
                 // The whole-phone session banks its screen-on time and stops its clock (#123).
                 phoneNudge.onScreenOff()
+                cancelPhoneNudgeIdle()
             }
         }
     }
@@ -793,15 +889,19 @@ class NudgeAccessibilityService : AccessibilityService() {
             override fun onReceive(context: android.content.Context?, intent: Intent?) {
                 when (intent?.action) {
                     Intent.ACTION_SCREEN_ON -> {
-                        log.d("phone nudge screen on locked=${isDeviceLocked()}")
-                        phoneNudge.onScreenOn()
-                        // A phone with no keyguard (or one already dismissed) never sends
-                        // ACTION_USER_PRESENT; the screen coming on IS the unlock there.
-                        if (!isDeviceLocked()) phoneNudge.onUnlocked()
+                        // Only an UNLOCKED screen starts or resumes a session. A locked screen is
+                        // not "using the phone", and resuming here was a real bug (#136 review).
+                        val locked = isDeviceLocked()
+                        log.d("phone nudge screen on locked=$locked")
+                        if (!locked) {
+                            phoneNudge.onUnlocked()
+                            armPhoneNudgeIdle()
+                        }
                     }
                     Intent.ACTION_USER_PRESENT -> {
                         log.i("phone nudge unlock")
                         phoneNudge.onUnlocked()
+                        armPhoneNudgeIdle()
                     }
                 }
             }
@@ -1382,6 +1482,12 @@ class NudgeAccessibilityService : AccessibilityService() {
         // delivers to runtime-registered receivers.
         try {
             registerReceiver(screenOffReceiver, android.content.IntentFilter(Intent.ACTION_SCREEN_OFF))
+        } catch (e: Exception) {
+            // A failed registration degrades to the OLD behaviour (a grant survives screen-off) —
+            // never to a false revoke. Same failure direction as an unresolvable launcher set.
+            log.w("failed to register screen-off receiver", e)
+        }
+        try {
             registerReceiver(
                 screenOnReceiver,
                 android.content.IntentFilter().apply {
@@ -1390,9 +1496,16 @@ class NudgeAccessibilityService : AccessibilityService() {
                 }
             )
         } catch (e: Exception) {
-            // A failed registration degrades to the OLD behaviour (a grant survives screen-off) —
-            // never to a false revoke. Same failure direction as an unresolvable launcher set.
-            log.w("failed to register screen-off receiver", e)
+            log.w("failed to register screen-on receiver", e)
+        }
+        try {
+            (getSystemService(android.content.Context.CAMERA_SERVICE) as
+                android.hardware.camera2.CameraManager).registerAvailabilityCallback(
+                cameraAvailabilityCallback,
+                Handler(Looper.getMainLooper())
+            )
+        } catch (e: Exception) {
+            log.w("failed to register camera availability callback", e)
         }
 
         // Keep Strict Mode state cached so the hot accessibility-event path can read it without
@@ -1433,16 +1546,19 @@ class NudgeAccessibilityService : AccessibilityService() {
         // and starts at the next unlock.
         serviceScope.launch {
             combine(
+                entryPoint.nudgePreferences().isGlobalEnabled,
                 entryPoint.nudgePreferences().phoneNudgeEnabled,
                 entryPoint.nudgePreferences().phoneNudgeThresholdMinutes,
                 entryPoint.nudgePreferences().phoneNudgePauseSeconds
-            ) { enabled, threshold, pause ->
+            ) { global, enabled, threshold, pause ->
                 PhoneNudge.Config(
-                    enabled = enabled,
+                    // Nudge off means the whole feature is off, not just the block paths (#136).
+                    enabled = global && enabled,
                     thresholdMinutes = threshold,
                     firstPauseSeconds = pause
                 )
             }.collect { config ->
+                phoneNudgeEnabledCached = config.enabled
                 phoneNudge.setConfig(config)
                 log.i(
                     "phone nudge enabled=${config.enabled} threshold=${config.thresholdMinutes} " +
@@ -1558,6 +1674,11 @@ class NudgeAccessibilityService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
+        // The phone nudge counts a sitting only while the user is touching the phone (#123, #136).
+        if (phoneNudgeEnabledCached && event.eventType in phoneNudgeInteractionEvents) {
+            phoneNudge.onInteraction()
+            armPhoneNudgeIdle()
+        }
         // `TYPE_WINDOWS_CHANGED` is raised by the platform itself and usually carries NO package,
         // so the line below drops it, and with it the only notice that a floating window closed or
         // moved (issue #71). The window list is the one thing it is evidence about, so read it
@@ -1872,8 +1993,13 @@ class NudgeAccessibilityService : AccessibilityService() {
 
         // The phone nudge's session normally starts on unlock, but a device with no keyguard never
         // sends ACTION_USER_PRESENT, and a dead process misses the broadcast. The first real app
-        // window is the same evidence one step later. A no-op while a session is already running.
-        if (signal is ForegroundSignal.AppWindow) phoneNudge.onUnlocked()
+        // window is the same evidence one step later. Only when there is no session yet, so the
+        // keyguard binder call stays off the per-event path (#136 review).
+        ownUiInFront = signal is ForegroundSignal.OwnUi || signal is ForegroundSignal.AwarenessOverlay
+        if (signal is ForegroundSignal.AppWindow && !phoneNudge.isActive && !isDeviceLocked()) {
+            phoneNudge.onUnlocked()
+            armPhoneNudgeIdle()
+        }
     }
 
     /** True while the lock screen is up. A locked screen is not "using the phone" (#123). */
@@ -3503,6 +3629,20 @@ class NudgeAccessibilityService : AccessibilityService() {
         }
         teardown.step("unregister_screen_off_receiver") { unregisterReceiver(screenOffReceiver) }
         teardown.step("unregister_screen_on_receiver") { unregisterReceiver(screenOnReceiver) }
+        teardown.step("phone_nudge_stop") {
+            phoneNudgeHandler.removeCallbacks(phoneNudgeRunnable)
+            phoneNudgeIdleHandler.removeCallbacks(phoneNudgeIdleRunnable)
+            phoneNudge.reset()
+        }
+        teardown.step("unregister_camera_callback") {
+            try {
+                (getSystemService(android.content.Context.CAMERA_SERVICE) as
+                    android.hardware.camera2.CameraManager).unregisterAvailabilityCallback(
+                    cameraAvailabilityCallback
+                )
+            } catch (_: Exception) {
+            }
+        }
         teardown.step("clear_sitting_reaction") { entryPoint.passthroughManager().setSittingReaction(null) }
         teardown.step("clear_hand_back_reaction") { entryPoint.passthroughManager().setHandBackReaction(null) }
         teardown.step("clear_counter_overlay") { entryPoint.counterOverlayManager().clearServiceContext() }

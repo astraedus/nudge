@@ -31,15 +31,15 @@ import kotlinx.coroutines.launch
 
 internal const val PHONE_NUDGE_TITLE = "Phone nudge"
 internal const val PHONE_NUDGE_SUBTITLE =
-    "A pause when you've been on your phone a while, across every app."
-internal const val PHONE_NUDGE_THRESHOLD_LABEL = "Check in after"
-internal const val PHONE_NUDGE_PAUSE_LABEL = "First pause"
+    "After 20 minutes on your phone in one go, show a pause screen. Counts every app."
+internal const val PHONE_NUDGE_THRESHOLD_LABEL = "Pause after"
+internal const val PHONE_NUDGE_PAUSE_LABEL = "First pause length"
 
 /** The thresholds the picker offers, in minutes. Bounds live in [PhoneNudge]. */
-private val THRESHOLD_CHOICES = listOf(10, 20, 30, 45, 60, 90)
+private val THRESHOLD_CHOICES = listOf(10, 15, 20, 30, 45, 60, 90)
 
 /** First-pause lengths the picker offers, in seconds. Later pauses double to a 30 s cap. */
-private val PAUSE_CHOICES = listOf(5, 10, 20, 30, 60)
+private val PAUSE_CHOICES = listOf(5, 10, 20, 30)
 
 /**
  * Settings for the whole-phone pause (issue #123). Not a protection setting: it neither blocks nor
@@ -153,8 +153,10 @@ private fun InlineDropdownRow(
     }
 }
 
-/** "Then 10 s, 20 s, 30 s, 30 s" for a 5 s first pause. Pure, so the copy is unit-testable. */
+/** "Later pauses: 10 s, 20 s, then 30 s" for a 5 s first pause. Pure, so the copy is tested. */
 internal fun escalationPreview(firstSeconds: Int): String {
-    val later = (2..5).map { PhoneNudge.pauseSeconds(it, firstSeconds) }
-    return "Then " + later.joinToString(", ") { "$it s" }
+    val later = (2..4).map { PhoneNudge.pauseSeconds(it, firstSeconds) }
+    return "Later pauses: " +
+        later.dropLast(1).joinToString(", ") { "$it s" } +
+        ", then " + later.last() + " s"
 }
