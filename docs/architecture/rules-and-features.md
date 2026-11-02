@@ -6,7 +6,7 @@ Covers what a *rule* can express beyond a plain block: schedules, in-app feature
 
 ## Capabilities
 
-- **Schedule-based rules** — day-of-week + time-of-day, overnight schedule support (spans midnight)
+- **Schedule-based rules** — day-of-week + time-of-day, overnight schedule support (spans midnight), or "for N minutes after your first unlock" with the logical day starting at a configurable hour (default 4:00 AM)
 - **In-app feature blocking** — YouTube Shorts, Instagram Reels, TikTok detection via AccessibilityService. Instagram Reels is detected by the reel player's container (`INSTAGRAM_CLIPS_VIEWER_IDS`), which covers every entry route. Home-feed and Explore detection (`Feature.EXPLORE`, the `feed_tab`/`search_tab` branches of `InAppDetector.detectInstagram`) read the bottom tab's selected state (the tab node, a child or a grandchild), so they depend on the device and Instagram build: they work where that state is exposed and never fire where every tab reads null (see the Instagram home feed entry below)
 - **Grayscale mode** — force screen to grayscale (requires ADB: `adb shell pm grant dev.astraedus.nudge android.permission.WRITE_SECURE_SETTINGS`). Grayscale guide in Settings.
 - **Rotating motivational messages** — shown on overlay screens when blocks trigger. **User-editable (v1.6.0)**: defaults live in `ui/overlay/NudgeMessages.kt` (delayTitles/delaySubtitles/hardBlockMessages); users override via Settings → Personalize → "Edit block messages" (`ui/screens/settings/MessagesEditorScreen.kt`), stored as 3 multiline strings in `NudgePreferences` (`customDelayTitles`/`customDelaySubtitles`/`customHardBlockMessages`, one message per line, empty = defaults). `NudgeMessages.resolvePool(customRaw, default)` is the pure resolver; `BlockOverlayActivity` reads the prefs once via `runBlocking{ first() }` before `setContent` (avoids a default→custom flash) and passes resolved pools into the overlay composables (which still `remember { pool.random() }`).
@@ -25,8 +25,9 @@ Covers what a *rule* can express beyond a plain block: schedules, in-app feature
 - **Rule editor UX** — info tooltips on all sections, block mode descriptions, per-app rules summary with enable/disable.
   `UnifiedAppConfigScreen` is the only per-app editor (the old `RuleEditorScreen` was deleted). Its reusable, stateless
   pieces live in `ui/components/rule/`: `InfoButton`, `TimeSelector`, `BlockModeSegmentedRow` (+ `BLOCKING_MODES`),
-  `WaitTimeChips`, `ScheduleSection` (whose days-and-times half is `DaysAndTimesFields`), `DailyLimitChips`. The group
-  editor reuses them; `DeadRuleEditorContractTest` pins it.
+  `WaitTimeChips`, `ScheduleSection` (whose days-and-times half is `DaysAndTimesFields`), `DailyLimitChips`, and
+  `WhenSection` (the three-way When, with the first-unlock fields and the day-start row). The group and All apps
+  editors reuse them; `DeadRuleEditorContractTest` pins it.
 - **Groups (spec PR 2)**: a named set of apps blocked by ONE rule of its own (`BlockRule.groupId`, `packageName = null`,
   no `inAppFeatures`; `ownGroupRule` in `ui/screens/groups/GroupForm.kt` is the one definition of "the group's rule",
   shared by the editor, the Manage Apps switch and "Also covered by"). See "Groups" below.
@@ -231,6 +232,29 @@ without the device (the rule's own apps, then each allowed group's hand-added ap
 `AllAppsBlock.exceptGroupIds`, and the overlay fills in the category members through `DeviceGroupMembers` and the same
 `AllAppsBlock.allowedPackagesOf`, off the main thread, after the first frame. A failure keeps the first frame's icons and
 never touches the block. `AllAppsBlockTest` cross-checks the list against `RuleCoverage`: listed exactly when not covered.
+
+## First unlock (spec PR 5b, section 5.3)
+
+A rule can be on for N minutes after the first unlock of the user's logical day, instead of on clock times. It is the
+third choice under "When" (`ui/components/rule/WhenSection.kt`, `ScheduleKind`), next to "All the time" and "Days and
+times", and it appears in all three editors: the group editor, the All apps editor and App config's Scheduled Override
+(where it is the second segment of `[Days and times | After first unlock]`). The days row is shared and means the
+logical day's weekday. Morning Lock is one such rule: all apps except Spotify and Maps, hard block, 30 minutes.
+
+| Piece | Where | What it owns |
+|---|---|---|
+| `FirstUnlockWindow` | `domain/engine/FirstUnlockWindow.kt` | The whole mechanism, pure: `logicalDayStart`, `logicalDayIso`, `isActive`, `endsAt`, `shouldStamp`, `startsAtNextUnlock`. `end = min(stamp + minutes, next logical day start)`, so "Until" agrees with when the window really shuts. |
+| The anchor | `NudgeAccessibilityService` | `ACTION_USER_PRESENT`, runtime-registered beside `screenOffReceiver`, plus the fallback: the first `ForegroundSignal.AppWindow` of the logical day while `KeyguardManager.isDeviceLocked` is false. Whichever comes first stamps, through `FirstUnlockStateCache.record` (in memory first, DataStore after, because the app opened straight after an unlock is the one the window is for). Both sites ask `shouldStamp`, so a second unlock cannot restart the window. PR 5a was the log-only spike; the log line is still there (`first-unlock evidence source=... screenOn=... keyguardLocked=... secureLock=... sinceBootMs=...`). |
+| Data model | `BlockRule.firstUnlockMinutes` / `armedAt` (DB 15->16), `NudgePreferences.day_start_minute` (240) / `first_unlock_at` | `firstUnlockMinutes` non-null makes it a first-unlock rule and ignores `scheduleStartMinute`/`scheduleEndMinute`. `armedAt` is wall-clock ms of the last enabled write; the repository stamps it on every save and switch-on, so a rule saved at 08:05 waits for tomorrow instead of locking the phone mid-setup (owner decision 2). `first_unlock_at` is device-local and never exported. |
+| The day start | `SetDayStartMinuteUseCase` + `DayStartRow` | One global setting, shown only where a first-unlock rule is made, always the same value. Any change is a Strict Mode challenge while an enabled first-unlock rule exists (spec 5.6). Stored 0..1439. |
+| The sentence | `startsAtNextUnlock` in each editor's state | "Starts at your next first unlock." appears when today's unlock is already recorded, because saving arms after it. |
+| Summary | `RuleSummary.scheduleText` | "Hard Block 30min after first unlock on Mon–Fri": duration first, days last, no clock times (the window starts at the user's own unlock). |
+
+Deliberate readings: a stamp in the future (the clock moved back) is discarded and replaced on the next unlock; a
+clock jump forward ends the window early; a time-zone change mid-window keeps the absolute end but can make the stamp
+stale in the new zone's logical day, which allows apps rather than blocks them; a window opened before the day start
+ends at the boundary, because the new day has no unlock yet. The full matrix, with explicit `ZoneId`s, is
+`FirstUnlockWindowTest` and `ScheduleEvaluatorFirstUnlockTest`.
 
 ## Manage Apps: one list (spec PR 3)
 
