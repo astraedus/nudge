@@ -567,6 +567,43 @@ class NudgePreferences internal constructor(
         dataStore.edit { prefs -> prefs[Keys.FIRST_UNLOCK_AT] = stampMs }
     }
 
+    /**
+     * Keep or set the day's first-unlock stamp, as ONE atomic read-compare-write (spec 5.3).
+     *
+     * Read-then-write was the first shape and review caught what it costs: `FirstUnlockStateCache`
+     * starts at [FirstUnlockWindow.NO_STAMP] and only learns the stored value once DataStore emits,
+     * so the first unlock after a process restart (a Play update, a crash, the system killing the
+     * service) compared against `0`, wrote `now`, and opened a surprise mid-afternoon window. Two
+     * recorders in the same moment could also both decide to write. Doing the comparison inside
+     * `edit` means the decision sees the stored stamp always, and DataStore's serialised writes make
+     * it a single step.
+     *
+     * Returns what is now stored plus which of the two happened, so the caller can log it and heal
+     * its in-memory copy without a second read.
+     */
+    suspend fun recordFirstUnlock(
+        nowMs: Long,
+        zone: java.time.ZoneId = java.time.ZoneId.systemDefault()
+    ): FirstUnlockStamp {
+        var result = FirstUnlockStamp(
+            stampMs = FirstUnlockWindow.NO_STAMP,
+            dayStartMinute = FirstUnlockWindow.DEFAULT_DAY_START_MINUTE,
+            written = false
+        )
+        dataStore.edit { prefs ->
+            val dayStart = prefs[Keys.DAY_START_MINUTE]
+                ?: FirstUnlockWindow.DEFAULT_DAY_START_MINUTE
+            val current = prefs[Keys.FIRST_UNLOCK_AT] ?: FirstUnlockWindow.NO_STAMP
+            result = if (FirstUnlockWindow.shouldStamp(nowMs, current, dayStart, zone)) {
+                prefs[Keys.FIRST_UNLOCK_AT] = nowMs
+                FirstUnlockStamp(stampMs = nowMs, dayStartMinute = dayStart, written = true)
+            } else {
+                FirstUnlockStamp(stampMs = current, dayStartMinute = dayStart, written = false)
+            }
+        }
+        return result
+    }
+
     // --- Backup: the settings an export file carries (see [ExportedSettings]) ---------------
 
     /**
@@ -647,3 +684,13 @@ class NudgePreferences internal constructor(
         }
     }
 }
+
+/**
+ * The outcome of [NudgePreferences.recordFirstUnlock]: the stamp now stored, the day start it was
+ * judged against, and whether this call wrote it.
+ */
+data class FirstUnlockStamp(
+    val stampMs: Long,
+    val dayStartMinute: Int,
+    val written: Boolean
+)

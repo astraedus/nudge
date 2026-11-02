@@ -69,35 +69,27 @@ class FirstUnlockStateCache @Inject constructor(
      * write it if so. Returns the stamp written, or [FirstUnlockWindow.NO_STAMP] when a fresh one
      * was kept.
      *
-     * The persisted read is the point of this function, not a belt and braces. The in-memory stamp
-     * starts at [FirstUnlockWindow.NO_STAMP] and only reaches its stored value when the Flow emits,
-     * which is a few milliseconds after this object is first touched. Device QA caught the
-     * consequence: the unlock that CREATED the cache saw `0`, concluded "no anchor today", and
-     * re-stamped, moving the window's end later and blocking longer than the rule asked. So the
-     * caller's cheap in-memory check is only a fast path; the answer that writes is this one.
+     * The decision and the write are one `dataStore.edit` inside
+     * [com.astraedus.nudge.data.preferences.NudgePreferences.recordFirstUnlock], not a read
+     * followed by a write. That matters because the in-memory copy starts at
+     * [FirstUnlockWindow.NO_STAMP] and only learns the stored value when the Flow emits: device QA
+     * caught the consequence on the bench phone, where the unlock that CREATED the cache saw `0`,
+     * re-stamped, and moved the window's end later. Two recorders in the same moment could also both
+     * decide to write. The caller's cheap in-memory check is only a fast path; the answer that
+     * writes is the stored one.
      *
-     * The day start is read the same way, for the same reason: the cached copy is also empty at
-     * that moment, and a wrong day start can make a fresh stamp look stale.
+     * The result also heals the in-memory copy, so a cache that was cold is correct from then on
+     * without waiting for the Flow.
      */
     suspend fun stampIfStale(nowMs: Long): Long = stampLock.withLock {
-        val persistedStamp = runCatching { preferences.firstUnlockAt.first() }
-            .getOrElse { stamp }
-        val persistedDayStart = runCatching { preferences.dayStartMinute.first() }
-            .getOrDefault(dayStartMinute)
-        dayStartMinute = persistedDayStart
-        val anchor = if (persistedStamp != FirstUnlockWindow.NO_STAMP) persistedStamp else stamp
-
-        if (!FirstUnlockWindow.shouldStamp(nowMs, anchor, persistedDayStart, zoneId())) {
-            // Keep the better of the two: the stored one is authoritative, and adopting it here
-            // also heals the in-memory copy without waiting for the Flow.
-            stamp = anchor
-            return@withLock FirstUnlockWindow.NO_STAMP
-        }
-
-        stamp = nowMs
-        runCatching { preferences.setFirstUnlockAt(nowMs) }
-            .onFailure { log.w("failed to persist the first-unlock stamp", it) }
-        nowMs
+        val result = runCatching { preferences.recordFirstUnlock(nowMs, zoneId()) }
+            .getOrElse { error ->
+                log.w("failed to record the first-unlock stamp", error)
+                return@withLock FirstUnlockWindow.NO_STAMP
+            }
+        stamp = result.stampMs
+        dayStartMinute = result.dayStartMinute
+        if (result.written) nowMs else FirstUnlockWindow.NO_STAMP
     }
 
     private companion object {

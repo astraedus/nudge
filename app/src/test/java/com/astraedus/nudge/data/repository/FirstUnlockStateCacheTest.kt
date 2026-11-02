@@ -55,6 +55,19 @@ class FirstUnlockStateCacheTest {
     }
 
     @Test
+    fun `recording keeps a fresh stamp that is already stored`() = runTest {
+        // The reviewer's case, one level down: the write path must decide from the STORED value,
+        // not from anything the caller believes, so a restart cannot re-stamp today.
+        val preferences = cache(persistedStamp = at(today, 8, 0))
+
+        val result = preferences.recordFirstUnlock(now, zone)
+
+        assertEquals(false, result.written)
+        assertEquals(at(today, 8, 0), result.stampMs)
+        assertEquals(at(today, 8, 0), preferences.firstUnlockAt.first())
+    }
+
+    @Test
     fun `no anchor yet stamps this unlock`() = runTest {
         val preferences = cache(persistedStamp = FirstUnlockWindow.NO_STAMP)
         val state = FirstUnlockStateCache(preferences, mockk<NudgeLog>(relaxed = true))

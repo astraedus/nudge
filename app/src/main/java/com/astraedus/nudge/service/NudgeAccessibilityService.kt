@@ -1016,7 +1016,12 @@ class NudgeAccessibilityService : AccessibilityService() {
             return
         }
         val keyguard = getSystemService(android.app.KeyguardManager::class.java) ?: return
-        if (keyguard.isDeviceLocked) return
+        // `isKeyguardLocked`, not `isDeviceLocked`: on a swipe-only or no-PIN phone the device
+        // counts as unlocked while the keyguard is still showing, so an alarm or the shade over the
+        // lock screen would otherwise read as a wake-up. `isInteractive` is the "screen is on" half
+        // of the same question (review, spec 5.3).
+        val power = getSystemService(android.os.PowerManager::class.java)
+        if (keyguard.isKeyguardLocked && power?.isInteractive == true) return
         serviceScope.launch {
             // Log only a stamp that was actually written: a kept anchor needs no second line, so
             // the log is naturally at most one per logical day without a throttle of its own.
@@ -1033,7 +1038,8 @@ class NudgeAccessibilityService : AccessibilityService() {
         val keyguard = getSystemService(android.app.KeyguardManager::class.java)
         log.i(
             "first-unlock evidence source=$source screenOn=${power?.isInteractive} " +
-                "keyguardLocked=${keyguard?.isDeviceLocked} secureLock=${keyguard?.isKeyguardSecure} " +
+                "keyguardShowing=${keyguard?.isKeyguardLocked} " +
+                "secureLock=${keyguard?.isKeyguardSecure} " +
                 "sinceBootMs=${android.os.SystemClock.elapsedRealtime()}"
         )
     }
