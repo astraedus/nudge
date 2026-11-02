@@ -214,5 +214,4 @@ class BlockRuleRepositoryTest {
         repo.setEnabledForPackage("com.a", false)
         assertEquals("a disable keeps the stamp it had", armedAt, db.rules.single().armedAt)
     }
-    }
 }

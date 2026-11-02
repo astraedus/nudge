@@ -16,6 +16,7 @@ import com.astraedus.nudge.data.repository.ScreenTimeProvider
 import com.astraedus.nudge.data.repository.UsageRepository
 import com.astraedus.nudge.data.repository.toRuleData
 import com.astraedus.nudge.di.IoDispatcher
+import com.astraedus.nudge.domain.engine.ScheduleEvaluator
 import com.astraedus.nudge.domain.engine.TimeTracker
 import com.astraedus.nudge.domain.lock.ChallengeState
 import com.astraedus.nudge.domain.nuke.NukePolicy
@@ -123,6 +124,7 @@ class HomeViewModel @Inject constructor(
     private val installedAppsRepository: InstalledAppsRepository,
     private val insightsCalculator: InsightsCalculator,
     private val essentialApps: EssentialApps,
+    private val scheduleEvaluator: ScheduleEvaluator,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) : ViewModel() {
 
@@ -195,12 +197,12 @@ class HomeViewModel @Inject constructor(
     }.flatMapLatest { (rules, labels) ->
         flow {
             if (!lockCardNeedsClock(rules)) {
-                emit(lockCardFor(rules, Calendar.getInstance(), labels))
+                emit(lockCardFor(rules, Calendar.getInstance(), labels, scheduleEvaluator))
                 return@flow
             }
             while (true) {
                 val now = Calendar.getInstance()
-                emit(lockCardFor(rules, now, labels))
+                emit(lockCardFor(rules, now, labels, scheduleEvaluator))
                 delay(millisToNextMinute(now.timeInMillis))
             }
         }

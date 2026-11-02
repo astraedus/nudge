@@ -25,10 +25,16 @@ data class GroupRuleForm(
     val scheduled: Boolean = false,
     val scheduleDays: Set<Int> = WEEKDAYS,
     val startMinute: Int = 9 * 60,
-    val endMinute: Int = 17 * 60
+    val endMinute: Int = 17 * 60,
+    val firstUnlock: Boolean = false,
+    val firstUnlockMinutes: Int = 30
 ) {
-    /** A days-and-times window with no day picked would never be active; Save waits for a day. */
-    val isComplete: Boolean get() = !scheduled || scheduleDays.isNotEmpty()
+    /**
+     * A schedule of any kind with no day picked would never be active; Save waits for a day.
+     * "All the time" is always complete.
+     */
+    val isComplete: Boolean
+        get() = (!scheduled && !firstUnlock) || scheduleDays.isNotEmpty()
 
     companion object {
         val WEEKDAYS: Set<Int> = setOf(1, 2, 3, 4, 5)
@@ -39,7 +45,8 @@ data class GroupRuleForm(
             val mode = runCatching { BlockMode.valueOf(rule.mode) }.getOrNull()
                 ?.takeIf { it != BlockMode.NONE }
                 ?: BlockMode.DELAY
-            val scheduled = rule.scheduleStartMinute != null && rule.scheduleEndMinute != null
+            val firstUnlock = rule.firstUnlockMinutes != null
+            val scheduled = !firstUnlock && rule.scheduleStartMinute != null && rule.scheduleEndMinute != null
             val defaults = GroupRuleForm()
             return GroupRuleForm(
                 blockEnabled = rule.enabled,
@@ -56,7 +63,9 @@ data class GroupRuleForm(
                     ?.takeIf { it.isNotEmpty() }
                     ?: defaults.scheduleDays,
                 startMinute = rule.scheduleStartMinute ?: defaults.startMinute,
-                endMinute = rule.scheduleEndMinute ?: defaults.endMinute
+                endMinute = rule.scheduleEndMinute ?: defaults.endMinute,
+                firstUnlock = firstUnlock,
+                firstUnlockMinutes = rule.firstUnlockMinutes ?: defaults.firstUnlockMinutes
             )
         }
     }
@@ -76,9 +85,10 @@ fun GroupRuleForm.toRule(existing: BlockRule?): BlockRule {
         delaySeconds = waitSeconds,
         dailyLimitMinutes = if (dailyLimitEnabled) dailyLimitMinutes else null,
         enabled = blockEnabled,
-        scheduleDays = if (scheduled) scheduleDays.sorted().joinToString(",") else null,
+        scheduleDays = if (scheduled || firstUnlock) scheduleDays.sorted().joinToString(",") else null,
         scheduleStartMinute = if (scheduled) startMinute else null,
-        scheduleEndMinute = if (scheduled) endMinute else null
+        scheduleEndMinute = if (scheduled) endMinute else null,
+        firstUnlockMinutes = if (firstUnlock) firstUnlockMinutes else null
     )
 }
 

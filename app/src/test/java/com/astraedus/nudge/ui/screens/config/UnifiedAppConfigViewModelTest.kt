@@ -4,8 +4,12 @@ import com.astraedus.nudge.ui.components.UsageReminderInput
 import androidx.lifecycle.SavedStateHandle
 import com.astraedus.nudge.MainDispatcherRule
 import com.astraedus.nudge.data.db.entity.BlockRule
+import com.astraedus.nudge.data.preferences.NudgePreferences
+import com.astraedus.nudge.data.repository.RuleSnapshot
+import com.astraedus.nudge.data.repository.RuleSnapshots
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.domain.model.FeatureMode
+import com.astraedus.nudge.domain.usecase.SetDayStartMinuteUseCase
 import com.astraedus.nudge.domain.packages.FakeEssentialPackages
 import com.astraedus.nudge.domain.packages.FakePackageFacts
 import com.astraedus.nudge.testing.FakeInstalledAppsRepository
@@ -14,6 +18,7 @@ import com.astraedus.nudge.testing.FakeRuleDatabase
 import com.astraedus.nudge.testing.aBlockRule
 import com.astraedus.nudge.testing.anApp
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -41,18 +46,50 @@ class UnifiedAppConfigViewModelTest {
     /** The device has Instagram installed (the app label the editor shows) and nothing else. */
     private val installedApps = FakeInstalledAppsRepository(anApp(packageName, "Instagram"))
 
-    private fun viewModel(rules: List<BlockRule> = emptyList()): UnifiedAppConfigViewModel {
+    /** The preferences the ViewModel is reading, so a test can assert what a setting actually became. */
+    private lateinit var prefs: NudgePreferences
+
+    /**
+     * The real day-start use case over this test's rules, so the Strict Mode decision is the
+     * production one. Only the snapshot port is stood in for, and only the question it is asked.
+     */
+    private fun dayStartUseCase(): SetDayStartMinuteUseCase = SetDayStartMinuteUseCase(
+        prefs,
+        object : RuleSnapshots {
+            override suspend fun current(): RuleSnapshot = RuleSnapshot.of(db.rules, emptyList(), emptyList())
+            override suspend fun enabledRules(): List<BlockRule> = db.rules.filter { it.enabled }
+        }
+    )
+
+    private fun viewModel(
+        rules: List<BlockRule> = emptyList(),
+        strictMode: Boolean = false,
+        seed: suspend NudgePreferences.() -> Unit = {}
+    ): UnifiedAppConfigViewModel {
         db = FakeRuleDatabase() // a fresh database per view model, so two in one test do not share rows
         rules.forEach { db.seedRule(it) }
+        prefs = FakeNudgePreferences {
+            setStrictModeEnabled(strictMode)
+            seed()
+        }
         return UnifiedAppConfigViewModel(
             SavedStateHandle(mapOf("packageName" to packageName)),
             db.repository,
             installedApps,
             FakeEssentialPackages(),
             FakePackageFacts(),
-            FakeNudgePreferences()
+            prefs,
+            dayStartUseCase()
         )
     }
+
+    /** An All apps rule one morning long, for the tests that need one enabled first-unlock rule. */
+    private fun firstUnlockRule(minutes: Int, days: String = "1,2,3,4,5") = aBlockRule(
+        packageName = packageName,
+        mode = "HARD_BLOCK",
+        scheduleDays = days,
+        firstUnlockMinutes = minutes
+    )
 
     // ── setBlocksWholeApp / lastBlockingMode restore ──────────────────────
 
@@ -431,5 +468,96 @@ class UnifiedAppConfigViewModelTest {
 
         assertEquals(20, rule.remindAfterMinutes)
         assertNull(rule.autoKickAfterMinutes)
+    }
+    // ── the first-unlock schedule (spec 3.5/5.3) ─────────────────────────────
+
+    @Test
+    fun `a first-unlock override saves the window, keeps the days and writes no times`() = runTest {
+        val vm = viewModel()
+        vm.setScheduledOverrideEnabled(true)
+        vm.setScheduledOverrideFirstUnlock(true)
+        vm.setFirstUnlockMinutes(45)
+
+        vm.save()
+
+        val scheduled = db.rules.single { it.scheduleDays != null }
+        assertEquals(45, scheduled.firstUnlockMinutes)
+        assertNull("a first-unlock window has no clock times", scheduled.scheduleStartMinute)
+        assertNull(scheduled.scheduleEndMinute)
+        assertEquals("the days still pick the logical day", "1,2,3,4,5", scheduled.scheduleDays)
+        assertNull("the always-on default rule has no window", db.rules.first().firstUnlockMinutes)
+    }
+
+    @Test
+    fun `loading a first-unlock override restores its kind and minutes`() = runTest {
+        val vm = viewModel(
+            listOf(firstUnlockRule(minutes = 60).copy(scheduleStartMinute = null, scheduleEndMinute = null))
+        )
+
+        assertTrue(vm.uiState.value.scheduledOverrideEnabled)
+        assertTrue(vm.uiState.value.scheduledOverrideFirstUnlock)
+        assertEquals(60, vm.uiState.value.firstUnlockMinutes)
+    }
+
+    @Test
+    fun `an existing first-unlock override opened after today's unlock says it starts at the next one`() = runTest {
+        val vm = viewModel(
+            listOf(firstUnlockRule(minutes = 60)),
+            seed = { setFirstUnlockAt(System.currentTimeMillis()) }
+        )
+
+        assertTrue(
+            "a save now arms after today's unlock, so it cannot open until tomorrow",
+            vm.uiState.value.startsAtNextUnlock
+        )
+    }
+
+    @Test
+    fun `moving the day start writes when this phone has no first-unlock rule`() = runTest {
+        val vm = viewModel()
+
+        vm.setDayStartMinute(360)
+
+        assertEquals(360, prefs.dayStartMinute.first())
+        assertNull(vm.challenge.value)
+    }
+
+    @Test
+    fun `a weakening day-start move waits for the challenge under Strict Mode`() = runTest {
+        val vm = viewModel(rules = listOf(firstUnlockRule(minutes = 30)), strictMode = true)
+
+        vm.setDayStartMinute(360)
+
+        assertNotNull("moving the day start can skip today's window (spec 5.6)", vm.challenge.value)
+        assertEquals("nothing is written before the challenge passes", 240, prefs.dayStartMinute.first())
+    }
+
+    @Test
+    fun `shrinking an existing first-unlock override takes the challenge, and writes nothing until it passes`() = runTest {
+        val vm = viewModel(rules = listOf(firstUnlockRule(minutes = 60)), strictMode = true)
+        assertTrue(vm.uiState.value.scheduledOverrideFirstUnlock)
+
+        vm.setFirstUnlockMinutes(30)
+        vm.save()
+
+        assertNotNull("60 -> 30 opens half an hour: it is weakening (spec 5.6)", vm.challenge.value)
+        assertEquals("the old rule is still the only one", 60, db.rules.single { it.scheduleDays != null }.firstUnlockMinutes)
+    }
+
+    @Test
+    fun `turning an existing override off takes the challenge, and a longer window does not`() = runTest {
+        val vm = viewModel(rules = listOf(firstUnlockRule(minutes = 30)), strictMode = true)
+
+        // Longer is stricter: no challenge, and the row on disk carries the new window.
+        vm.setFirstUnlockMinutes(60)
+        vm.save()
+        assertNull(vm.challenge.value)
+        assertEquals(60, db.rules.single { it.scheduleDays != null }.firstUnlockMinutes)
+
+        // Turning it off un-covers the rest of the day: that one challenges.
+        vm.setScheduledOverrideEnabled(false)
+        vm.save()
+        assertNotNull("removing a rule is turning it off (spec 5.6)", vm.challenge.value)
+        assertEquals("nothing is deleted before the challenge passes", 1, db.rules.count { it.scheduleDays != null })
     }
 }

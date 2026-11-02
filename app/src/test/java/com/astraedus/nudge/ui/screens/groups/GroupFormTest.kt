@@ -97,6 +97,56 @@ class GroupFormTest {
     }
 
     @Test
+    fun `after first unlock writes firstUnlockMinutes and clears the time window`() {
+        val rule = GroupRuleForm(
+            firstUnlock = true,
+            firstUnlockMinutes = 30,
+            scheduleDays = setOf(1, 2, 3, 4, 5),
+            startMinute = 540,
+            endMinute = 1020
+        ).toRule(null)
+        assertEquals(30, rule.firstUnlockMinutes)
+        assertNull(rule.scheduleStartMinute)
+        assertNull(rule.scheduleEndMinute)
+    }
+
+    @Test
+    fun `days and times writes the window and clears firstUnlockMinutes`() {
+        val rule = GroupRuleForm(
+            scheduled = true,
+            scheduleDays = setOf(5, 1),
+            startMinute = 480,
+            endMinute = 960,
+            firstUnlockMinutes = 45
+        ).toRule(null)
+        assertEquals("1,5", rule.scheduleDays)
+        assertEquals(480, rule.scheduleStartMinute)
+        assertEquals(960, rule.scheduleEndMinute)
+        assertNull(rule.firstUnlockMinutes)
+    }
+
+    @Test
+    fun `from round-trips both days and times and first unlock`() {
+        val daysTimes = groupRule.copy(
+            mode = "HARD_BLOCK",
+            scheduleDays = "1,3,5",
+            scheduleStartMinute = 540,
+            scheduleEndMinute = 1020
+        )
+        val firstUnlock = groupRule.copy(
+            mode = "HARD_BLOCK",
+            firstUnlockMinutes = 60,
+            scheduleDays = "2,4"
+        )
+
+        assertFalse(GroupRuleForm.from(daysTimes).firstUnlock)
+        assertEquals(daysTimes, GroupRuleForm.from(daysTimes).toRule(daysTimes))
+
+        assertTrue(GroupRuleForm.from(firstUnlock).firstUnlock)
+        assertEquals(firstUnlock, GroupRuleForm.from(firstUnlock).toRule(firstUnlock))
+    }
+
+    @Test
     fun `a NONE rule shows as Delay, because a group always blocks with something`() {
         assertEquals(BlockMode.DELAY, GroupRuleForm.from(groupRule.copy(mode = "NONE")).mode)
     }

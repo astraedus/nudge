@@ -22,6 +22,32 @@ private val DAY_LABELS = listOf(
 )
 
 /**
+ * The seven day-of-week chips, shared by every schedule kind so a day is picked the same way
+ * everywhere. Days are ISO day numbers (1 = Monday ... 7 = Sunday).
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun DayOfWeekChips(
+    days: Set<Int>,
+    onDaysChange: (Set<Int>) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    FlowRow(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        DAY_LABELS.forEach { (day, label) ->
+            FilterChip(
+                selected = day in days,
+                onClick = { onDaysChange(if (day in days) days - day else days + day) },
+                label = { Text(label) }
+            )
+        }
+    }
+}
+
+/**
  * The body of a "days and times" schedule: active days, start and end time, the block mode that
  * applies in the window and, for anything but a hard block, its wait time. Stateless; the caller
  * owns the "enable schedule" switch and decides when this is shown.
@@ -93,18 +119,7 @@ fun DaysAndTimesFields(
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
 
-        FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            DAY_LABELS.forEach { (day, label) ->
-                FilterChip(
-                    selected = day in days,
-                    onClick = { onDaysChange(if (day in days) days - day else days + day) },
-                    label = { Text(label) }
-                )
-            }
-        }
+        DayOfWeekChips(days = days, onDaysChange = onDaysChange)
 
         TimeRow("Start time", startHour, startMinute, onStartTimeChange)
         TimeRow("End time", endHour, endMinute, onEndTimeChange)

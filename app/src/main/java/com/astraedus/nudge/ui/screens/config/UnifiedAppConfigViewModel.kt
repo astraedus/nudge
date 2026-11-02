@@ -17,7 +17,10 @@ import com.astraedus.nudge.domain.model.FeatureMode
 import com.astraedus.nudge.ui.components.DurationInput
 import com.astraedus.nudge.ui.components.UsageReminderInput
 import com.astraedus.nudge.ui.lock.StrictModeGate
+import com.astraedus.nudge.domain.engine.FirstUnlockWindow
+import com.astraedus.nudge.domain.usecase.SetDayStartMinuteUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
+import java.time.ZoneId
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -27,6 +30,7 @@ import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -37,7 +41,8 @@ class UnifiedAppConfigViewModel @Inject constructor(
     private val installedAppsRepository: InstalledAppsRepository,
     private val essentialPackages: EssentialPackages,
     private val packageFacts: PackageFacts,
-    nudgePreferences: NudgePreferences
+    private val nudgePreferences: NudgePreferences,
+    private val setDayStartMinuteUseCase: SetDayStartMinuteUseCase
 ) : ViewModel() {
 
     private val packageName: String = savedStateHandle.get<String>("packageName") ?: ""
@@ -107,8 +112,48 @@ class UnifiedAppConfigViewModel @Inject constructor(
      */
     private var existingDefaultRule: BlockRule? = null
 
+    /**
+     * The two global first-unlock facts this screen displays: where the logical day starts, and the
+     * stamp that decides whether an override saved now waits for tomorrow. See
+     * [refreshFirstUnlockHints].
+     */
+    @Volatile private var logicalDayStartMinute: Int = FirstUnlockWindow.DEFAULT_DAY_START_MINUTE
+    @Volatile private var firstUnlockStamp: Long = FirstUnlockWindow.NO_STAMP
+
     init {
         loadState()
+        viewModelScope.launch {
+            nudgePreferences.dayStartMinute.collect { minute ->
+                logicalDayStartMinute = minute
+                refreshFirstUnlockHints()
+            }
+        }
+        viewModelScope.launch {
+            nudgePreferences.firstUnlockAt.collect { stamp ->
+                firstUnlockStamp = stamp
+                refreshFirstUnlockHints()
+            }
+        }
+    }
+
+    /**
+     * "Starts at your next first unlock." is true exactly when today's unlock has already happened:
+     * saving stamps `armedAt` after it, so the window cannot open until tomorrow (spec 5.3).
+     */
+    private fun refreshFirstUnlockHints() {
+        _uiState.update {
+            it.copy(
+                dayStartMinute = logicalDayStartMinute,
+                startsAtNextUnlock = it.scheduledOverrideEnabled &&
+                    it.scheduledOverrideFirstUnlock &&
+                    FirstUnlockWindow.startsAtNextUnlock(
+                        nowMs = System.currentTimeMillis(),
+                        stampMs = firstUnlockStamp,
+                        dayStartMinute = logicalDayStartMinute,
+                        zone = ZoneId.systemDefault()
+                    )
+            )
+        }
     }
 
     private fun loadState() {
@@ -124,18 +169,27 @@ class UnifiedAppConfigViewModel @Inject constructor(
             val directRules = allRules.filter { it.packageName == packageName && it.groupId == null }
 
             // Separate into categories
+            // A scheduled rule is either a days-and-times window or a first-unlock one (spec 3.5).
+            // A first-unlock rule carries days but NO times, so the old `scheduleDays != null` test
+            // would still classify it here; the time/null tests are added because an imported rule
+            // can carry no days at all, and it must not be mistaken for the always-on default.
+            fun isScheduled(rule: BlockRule): Boolean =
+                rule.firstUnlockMinutes != null ||
+                    rule.scheduleStartMinute != null ||
+                    rule.scheduleEndMinute != null
+
             val defaultAppRule = directRules.firstOrNull {
-                it.inAppFeatures.isNullOrEmpty() && it.scheduleDays == null
+                it.inAppFeatures.isNullOrEmpty() && !isScheduled(it)
             }
             existingDefaultRule = defaultAppRule
             val scheduledAppRule = directRules.firstOrNull {
-                it.inAppFeatures.isNullOrEmpty() && it.scheduleDays != null
+                it.inAppFeatures.isNullOrEmpty() && isScheduled(it)
             }
             val defaultFeatureRules = directRules.filter {
-                !it.inAppFeatures.isNullOrEmpty() && it.scheduleDays == null
+                !it.inAppFeatures.isNullOrEmpty() && !isScheduled(it)
             }
             val scheduledFeatureRules = directRules.filter {
-                !it.inAppFeatures.isNullOrEmpty() && it.scheduleDays != null
+                !it.inAppFeatures.isNullOrEmpty() && isScheduled(it)
             }
 
             // Build feature overrides from default feature rules
@@ -227,6 +281,9 @@ class UnifiedAppConfigViewModel @Inject constructor(
                 featureOverrides = featureOverrides,
                 // Scheduled override
                 scheduledOverrideEnabled = scheduledAppRule != null,
+                scheduledOverrideFirstUnlock = scheduledAppRule?.firstUnlockMinutes != null,
+                firstUnlockMinutes = scheduledAppRule?.firstUnlockMinutes
+                    ?: FirstUnlockWindow.DEFAULT_FIRST_UNLOCK_MINUTES,
                 scheduleDays = scheduleDays,
                 scheduleStartHour = scheduleStartMinute / 60,
                 scheduleStartMinute = scheduleStartMinute % 60,
@@ -380,6 +437,13 @@ class UnifiedAppConfigViewModel @Inject constructor(
             val scheduleDaysStr = state.scheduleDays.sorted().joinToString(",")
             val startMin = state.scheduleStartHour * 60 + state.scheduleStartMinute
             val endMin = state.scheduleEndHour * 60 + state.scheduleEndMinute
+            // One kind of schedule or the other (spec 3.5): a first-unlock override keeps its days,
+            // takes the window length, and writes NO times.
+            val firstUnlockMinutes = if (state.scheduledOverrideFirstUnlock) {
+                state.firstUnlockMinutes
+            } else {
+                null
+            }
 
             // Scheduled app-level rule. tabVanish carries here too -- same reasoning as the
             // feature override rules above: this rule can be the one that decides a HARD_BLOCK
@@ -393,8 +457,9 @@ class UnifiedAppConfigViewModel @Inject constructor(
                     delaySeconds = state.scheduledDelaySeconds,
                     enabled = state.enabled,
                     scheduleDays = scheduleDaysStr,
-                    scheduleStartMinute = startMin,
-                    scheduleEndMinute = endMin,
+                    scheduleStartMinute = if (firstUnlockMinutes != null) null else startMin,
+                    scheduleEndMinute = if (firstUnlockMinutes != null) null else endMin,
+                    firstUnlockMinutes = firstUnlockMinutes,
                     tabVanish = state.tabVanish,
                     keepPassOnShortTrips = state.effectiveKeepPassOnShortTrips
                 )
@@ -418,8 +483,9 @@ class UnifiedAppConfigViewModel @Inject constructor(
                         ),
                         showCounter = state.showCounter,
                         scheduleDays = scheduleDaysStr,
-                        scheduleStartMinute = startMin,
-                        scheduleEndMinute = endMin,
+                        scheduleStartMinute = if (firstUnlockMinutes != null) null else startMin,
+                        scheduleEndMinute = if (firstUnlockMinutes != null) null else endMin,
+                        firstUnlockMinutes = firstUnlockMinutes,
                         // Same reasoning as every other rule persisted here: tabVanish must be
                         // uniform across all of this package's rules, since the engine reads it
                         // off whichever rule decides the block.
@@ -611,6 +677,36 @@ class UnifiedAppConfigViewModel @Inject constructor(
 
     fun setScheduledOverrideEnabled(enabled: Boolean) {
         _uiState.value = _uiState.value.copy(scheduledOverrideEnabled = enabled)
+        refreshFirstUnlockHints()
+    }
+
+    fun setScheduledOverrideFirstUnlock(firstUnlock: Boolean) {
+        _uiState.value = _uiState.value.copy(scheduledOverrideFirstUnlock = firstUnlock)
+        refreshFirstUnlockHints()
+    }
+
+    fun setFirstUnlockMinutes(minutes: Int) {
+        _uiState.value = _uiState.value.copy(firstUnlockMinutes = minutes)
+    }
+
+    /**
+     * "New day starts at". One global setting, written through the use case that owns the Strict
+     * Mode question: moving it can push today's unlock out of an enabled first-unlock rule's
+     * logical day, which is weakening (spec 5.6).
+     */
+    fun setDayStartMinute(minute: Int) {
+        viewModelScope.launch {
+            val write: suspend () -> Unit = {
+                setDayStartMinuteUseCase.execute(minute)
+                logicalDayStartMinute = minute
+                refreshFirstUnlockHints()
+            }
+            if (setDayStartMinuteUseCase.requiresUnlock(minute)) {
+                strictModeGate.run(prompt = "Change when your day starts", action = write)
+            } else {
+                write()
+            }
+        }
     }
 
     fun setScheduleDays(days: Set<Int>) {

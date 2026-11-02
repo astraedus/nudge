@@ -158,6 +158,53 @@ class AllAppsFormTest {
         assertNull(always.scheduleEndMinute)
     }
 
+    @Test
+    fun `after first unlock writes firstUnlockMinutes and clears the time window`() {
+        val rule = AllAppsForm(
+            firstUnlock = true,
+            firstUnlockMinutes = 30,
+            scheduleDays = setOf(1, 2, 3, 4, 5),
+            startMinute = 540,
+            endMinute = 1020
+        ).toRule(null, emptyList(), emptyList())
+        assertEquals(30, rule.firstUnlockMinutes)
+        assertNull(rule.scheduleStartMinute)
+        assertNull(rule.scheduleEndMinute)
+    }
+
+    @Test
+    fun `days and times writes the window and clears firstUnlockMinutes`() {
+        val rule = AllAppsForm(
+            scheduled = true,
+            scheduleDays = setOf(5, 1),
+            startMinute = 480,
+            endMinute = 960,
+            firstUnlockMinutes = 45
+        ).toRule(null, emptyList(), emptyList())
+        assertEquals("1,5", rule.scheduleDays)
+        assertEquals(480, rule.scheduleStartMinute)
+        assertEquals(960, rule.scheduleEndMinute)
+        assertNull(rule.firstUnlockMinutes)
+    }
+
+    @Test
+    fun `from round-trips both days and times and first unlock`() {
+        val daysTimes = saved(
+            mode = BlockMode.HARD_BLOCK,
+            scheduleDays = "1,3,5",
+            start = 540,
+            end = 1020
+        )
+        val firstUnlock = saved(mode = BlockMode.HARD_BLOCK)
+            .copy(firstUnlockMinutes = 60, scheduleDays = "2,4")
+
+        assertFalse(AllAppsForm.from(daysTimes).firstUnlock)
+        assertEquals(daysTimes, daysTimes.edited())
+
+        assertTrue(AllAppsForm.from(firstUnlock).firstUnlock)
+        assertEquals(firstUnlock, firstUnlock.edited())
+    }
+
     // --- Strict Mode ---
 
     @Test

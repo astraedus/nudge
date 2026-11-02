@@ -542,12 +542,12 @@ class NudgePreferences internal constructor(
      * `distinctUntilChanged` for the same reason as [isGlobalEnabled]: the service collects this and
      * DataStore re-emits on every write to any key.
      */
-    val dayStartMinute: Flow<Int> = context.dataStore.data
+    val dayStartMinute: Flow<Int> = dataStore.data
         .map { prefs -> prefs[Keys.DAY_START_MINUTE] ?: FirstUnlockWindow.DEFAULT_DAY_START_MINUTE }
         .distinctUntilChanged()
 
     suspend fun setDayStartMinute(minute: Int) {
-        context.dataStore.edit { prefs -> prefs[Keys.DAY_START_MINUTE] = minute }
+        dataStore.edit { prefs -> prefs[Keys.DAY_START_MINUTE] = minute }
     }
 
     /**
@@ -559,12 +559,12 @@ class NudgePreferences internal constructor(
      * restores it (spec 5.8). Including it would let a backup from another timezone claim a window
      * the user never unlocked into.
      */
-    val firstUnlockAt: Flow<Long> = context.dataStore.data
+    val firstUnlockAt: Flow<Long> = dataStore.data
         .map { prefs -> prefs[Keys.FIRST_UNLOCK_AT] ?: FirstUnlockWindow.NO_STAMP }
         .distinctUntilChanged()
 
     suspend fun setFirstUnlockAt(stampMs: Long) {
-        context.dataStore.edit { prefs -> prefs[Keys.FIRST_UNLOCK_AT] = stampMs }
+        dataStore.edit { prefs -> prefs[Keys.FIRST_UNLOCK_AT] = stampMs }
     }
 
     // --- Backup: the settings an export file carries (see [ExportedSettings]) ---------------

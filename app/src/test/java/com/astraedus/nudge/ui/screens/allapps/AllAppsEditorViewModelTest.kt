@@ -65,7 +65,9 @@ class AllAppsEditorViewModelTest {
         )
         return AllAppsEditorViewModel(
             handle, db.repository, installed, essentials, facts,
-            FakeNudgePreferences { setStrictModeEnabled(strictOn) }, UnconfinedTestDispatcher()
+            FakeNudgePreferences { setStrictModeEnabled(strictOn) },
+            mockk<com.astraedus.nudge.domain.usecase.SetDayStartMinuteUseCase>(relaxed = true),
+            UnconfinedTestDispatcher()
         )
     }
 

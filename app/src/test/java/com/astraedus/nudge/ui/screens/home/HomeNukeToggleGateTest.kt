@@ -59,6 +59,7 @@ class HomeNukeToggleGateTest {
             installedAppsRepository = FakeInstalledAppsRepository(),
             insightsCalculator = InsightsCalculator(),
             essentialApps = mockk(relaxed = true),
+            scheduleEvaluator = com.astraedus.nudge.domain.engine.ScheduleEvaluator(),
             ioDispatcher = dispatcher
         )
     }

@@ -24,10 +24,16 @@ data class AllAppsForm(
     val scheduled: Boolean = false,
     val scheduleDays: Set<Int> = GroupRuleForm.WEEKDAYS,
     val startMinute: Int = 9 * 60,
-    val endMinute: Int = 17 * 60
+    val endMinute: Int = 17 * 60,
+    val firstUnlock: Boolean = false,
+    val firstUnlockMinutes: Int = 30
 ) {
-    /** A days-and-times window with no day picked would never be active; Save waits for a day. */
-    val isComplete: Boolean get() = !scheduled || scheduleDays.isNotEmpty()
+    /**
+     * A schedule of any kind with no day picked would never be active; Save waits for a day.
+     * "All the time" is always complete.
+     */
+    val isComplete: Boolean
+        get() = (!scheduled && !firstUnlock) || scheduleDays.isNotEmpty()
 
     /** The wait time chips show for every mode with a length ([showsWaitTime]), as in the group editor. */
     val showsWaitTime: Boolean get() = showsWaitTime(mode)
@@ -54,7 +60,9 @@ data class AllAppsForm(
                 scheduled = parsed.scheduled,
                 scheduleDays = parsed.scheduleDays,
                 startMinute = parsed.startMinute,
-                endMinute = parsed.endMinute
+                endMinute = parsed.endMinute,
+                firstUnlock = parsed.firstUnlock,
+                firstUnlockMinutes = parsed.firstUnlockMinutes
             )
         }
     }
@@ -93,7 +101,9 @@ fun AllAppsForm.toRule(
         scheduled = scheduled,
         scheduleDays = scheduleDays,
         startMinute = startMinute,
-        endMinute = endMinute
+        endMinute = endMinute,
+        firstUnlock = firstUnlock,
+        firstUnlockMinutes = firstUnlockMinutes
     ).toRule(existing)
     return schedule.copy(
         packageName = null,

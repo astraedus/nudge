@@ -145,11 +145,30 @@ object RuleSummary {
      * claim a window the engine does not enforce: a time window needs BOTH ends, and no days (or
      * all seven) means every day.
      */
-    fun scheduleText(rule: BlockRule): String? = scheduleText(
-        days = rule.scheduleDays?.split(",")?.mapNotNull { it.trim().toIntOrNull() },
-        startMinute = rule.scheduleStartMinute,
-        endMinute = rule.scheduleEndMinute
-    )
+    fun scheduleText(rule: BlockRule): String? {
+        val days = rule.scheduleDays?.split(",")?.mapNotNull { it.trim().toIntOrNull() }
+        val firstUnlockMinutes = rule.firstUnlockMinutes
+        if (firstUnlockMinutes != null) return firstUnlockText(days, firstUnlockMinutes)
+        return scheduleText(
+            days = days,
+            startMinute = rule.scheduleStartMinute,
+            endMinute = rule.scheduleEndMinute
+        )
+    }
+
+    /**
+     * A first-unlock rule's window in words: "30min after first unlock", "1h after first unlock on
+     * Mon–Fri" never happens — the duration is always minutes, like "30min limit" above, so the
+     * summary cannot read as two different durations for one rule.
+     *
+     * The days are the logical day's (spec 3.5), which is what the engine checks; no time range is
+     * shown because the window's start is the user's own unlock, not a clock time.
+     */
+    fun firstUnlockText(days: List<Int>?, minutes: Int): String {
+        val dayText = dayText(days)
+        val window = "${minutes}min after first unlock"
+        return if (dayText == null) window else "$window on $dayText"
+    }
 
     /** [scheduleText] on raw values; ISO days (1 = Mon .. 7 = Sun), minutes from midnight. */
     fun scheduleText(days: List<Int>?, startMinute: Int?, endMinute: Int?): String? {

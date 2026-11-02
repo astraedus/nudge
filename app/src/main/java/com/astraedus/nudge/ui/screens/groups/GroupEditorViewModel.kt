@@ -10,15 +10,18 @@ import com.astraedus.nudge.data.repository.BlockRuleRepository
 import com.astraedus.nudge.data.repository.InstalledAppsRepository
 import com.astraedus.nudge.data.repository.definition
 import com.astraedus.nudge.di.IoDispatcher
+import com.astraedus.nudge.domain.engine.FirstUnlockWindow
 import com.astraedus.nudge.domain.groups.GroupDefinition
 import com.astraedus.nudge.domain.lock.ChallengeState
 import com.astraedus.nudge.domain.lock.GroupUsage
 import com.astraedus.nudge.domain.packages.AppCategory
+import com.astraedus.nudge.domain.usecase.SetDayStartMinuteUseCase
 import com.astraedus.nudge.service.EssentialApps
 import com.astraedus.nudge.ui.components.rule.AllAppsRuleItem
 import com.astraedus.nudge.ui.components.rule.allAppsRulesAllowingGroup
 import com.astraedus.nudge.ui.lock.StrictModeGate
 import dagger.hilt.android.lifecycle.HiltViewModel
+import java.time.ZoneId
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -61,6 +64,16 @@ data class GroupEditorState(
     /** Labels and icons of the installed apps, by package. */
     val apps: Map<String, InstalledAppsRepository.AppInfo> = emptyMap(),
     val form: GroupRuleForm = GroupRuleForm(),
+    /**
+     * Minutes from midnight when the logical day starts. One global setting, shown while editing
+     * first-unlock rules. Wired by the ViewModel from preferences.
+     */
+    val dayStartMinute: Int = 4 * 60,
+    /**
+     * Whether a first-unlock rule edited here will not take effect until the next first unlock.
+     * Wired by the ViewModel from the rule's arming state.
+     */
+    val startsAtNextUnlock: Boolean = false,
     /** What "Add apps" offers: installed apps minus the essentials (spec 5.4), sorted by name. */
     val pickerApps: List<InstalledAppsRepository.AppInfo> = emptyList(),
     val showPicker: Boolean = false,
@@ -144,7 +157,8 @@ class GroupEditorViewModel @Inject constructor(
     private val repository: BlockRuleRepository,
     private val installedAppsRepository: InstalledAppsRepository,
     private val essentialApps: EssentialApps,
-    nudgePreferences: NudgePreferences,
+    private val nudgePreferences: NudgePreferences,
+    private val setDayStartMinuteUseCase: SetDayStartMinuteUseCase,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) : ViewModel() {
 
@@ -176,8 +190,46 @@ class GroupEditorViewModel @Inject constructor(
     private var savedDefinition: GroupDefinition? = null
     private var savedRule: BlockRule? = null
 
+    /**
+     * The two global first-unlock facts this editor displays: where the logical day starts, and the
+     * stamp that decides whether a rule saved now waits for tomorrow. Held here rather than in the
+     * state so [refreshFirstUnlockHints] can recompute from either one without re-reading DataStore.
+     */
+    @Volatile private var logicalDayStartMinute: Int = FirstUnlockWindow.DEFAULT_DAY_START_MINUTE
+    @Volatile private var firstUnlockStamp: Long = FirstUnlockWindow.NO_STAMP
+
     init {
         viewModelScope.launch { load() }
+        viewModelScope.launch {
+            nudgePreferences.dayStartMinute.collect { minute ->
+                logicalDayStartMinute = minute
+                refreshFirstUnlockHints()
+            }
+        }
+        viewModelScope.launch {
+            nudgePreferences.firstUnlockAt.collect { stamp ->
+                firstUnlockStamp = stamp
+                refreshFirstUnlockHints()
+            }
+        }
+    }
+
+    /**
+     * "Starts at your next first unlock." is true exactly when today's unlock has already happened:
+     * saving stamps `armedAt` after it, so the window cannot open until tomorrow (spec 5.3).
+     */
+    private fun refreshFirstUnlockHints() {
+        _state.update {
+            it.copy(
+                dayStartMinute = logicalDayStartMinute,
+                startsAtNextUnlock = it.form.firstUnlock && FirstUnlockWindow.startsAtNextUnlock(
+                    nowMs = System.currentTimeMillis(),
+                    stampMs = firstUnlockStamp,
+                    dayStartMinute = logicalDayStartMinute,
+                    zone = ZoneId.systemDefault()
+                )
+            )
+        }
     }
 
     private suspend fun load() {
@@ -259,8 +311,31 @@ class GroupEditorViewModel @Inject constructor(
 
     fun toggleRemoved() = _state.update { it.copy(showRemoved = !it.showRemoved) }
 
-    fun updateForm(transform: (GroupRuleForm) -> GroupRuleForm) =
+    fun updateForm(transform: (GroupRuleForm) -> GroupRuleForm) {
         _state.update { it.copy(form = transform(it.form)) }
+        // Picking "After first unlock" is what makes the "Starts at..." line relevant.
+        refreshFirstUnlockHints()
+    }
+
+    /**
+     * "New day starts at". One global setting, so it is written through the use case that owns the
+     * Strict Mode question: moving it can push today's unlock out of an enabled first-unlock rule's
+     * logical day, which is weakening (spec 5.6).
+     */
+    fun setDayStartMinute(minute: Int) {
+        viewModelScope.launch {
+            val write: suspend () -> Unit = {
+                setDayStartMinuteUseCase.execute(minute)
+                logicalDayStartMinute = minute
+                refreshFirstUnlockHints()
+            }
+            if (setDayStartMinuteUseCase.requiresUnlock(minute)) {
+                strictModeGate.run(prompt = "Change when your day starts", action = write)
+            } else {
+                write()
+            }
+        }
+    }
 
     fun save() {
         val s = _state.value
