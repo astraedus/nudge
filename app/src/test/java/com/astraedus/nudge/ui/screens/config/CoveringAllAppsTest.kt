@@ -4,6 +4,7 @@ import com.astraedus.nudge.data.db.entity.AppGroup
 import com.astraedus.nudge.data.db.entity.AppGroupMember
 import com.astraedus.nudge.data.db.entity.BlockRule
 import com.astraedus.nudge.domain.engine.CoverageFacts
+import com.astraedus.nudge.domain.packages.AppCategory
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -17,7 +18,7 @@ import org.junit.Test
 class CoveringAllAppsTest {
 
     private val app = "com.instagram.android"
-    private val normal = CoverageFacts(essential = false, launchable = true)
+    private val normal = CoverageFacts(essential = false, launchable = true, category = AppCategory.UNDEFINED)
     private val work = AppGroup(id = 1, name = "Work")
     private val groups = listOf(work)
     private val labels = mapOf("com.spotify" to "Spotify", app to "Instagram")
@@ -77,12 +78,12 @@ class CoveringAllAppsTest {
 
     @Test
     fun `an essential app is never covered`() {
-        assertTrue(cover(listOf(allApps(1)), facts = CoverageFacts(essential = true, launchable = true)).isEmpty())
+        assertTrue(cover(listOf(allApps(1)), facts = CoverageFacts(essential = true, launchable = true, category = AppCategory.UNDEFINED)).isEmpty())
     }
 
     @Test
     fun `an app with no launcher entry is not covered`() {
-        assertTrue(cover(listOf(allApps(1)), facts = CoverageFacts(essential = false, launchable = false)).isEmpty())
+        assertTrue(cover(listOf(allApps(1)), facts = CoverageFacts(essential = false, launchable = false, category = AppCategory.UNDEFINED)).isEmpty())
     }
 
     @Test
@@ -93,5 +94,20 @@ class CoveringAllAppsTest {
         )
 
         assertTrue(cover(rules, members = listOf(AppGroupMember(1, app))).isEmpty())
+    }
+
+    @Test
+    fun `an app in an allowed group by its category is not covered`() {
+        val social = AppGroup(id = 2, name = "Social", categories = "SOCIAL")
+        val rules = listOf(allApps(1, exceptGroupIds = "2"))
+        val socialApp = normal.copy(category = AppCategory.SOCIAL)
+
+        assertTrue(coveringAllApps(app, listOf(social), emptyList(), rules, labels, socialApp).isEmpty())
+        // The same rule covers an app of another category.
+        assertEquals(
+            listOf(1L),
+            coveringAllApps(app, listOf(social), emptyList(), rules, labels, normal.copy(category = AppCategory.GAME))
+                .map { it.ruleId }
+        )
     }
 }

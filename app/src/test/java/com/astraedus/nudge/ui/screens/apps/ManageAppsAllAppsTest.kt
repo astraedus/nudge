@@ -35,7 +35,7 @@ class ManageAppsAllAppsTest {
         groups: List<AppGroup> = emptyList(),
         members: List<AppGroupMember> = emptyList(),
         query: String = ""
-    ) = buildManageAppsSections(installed, groups, members, rules, query, emptyMap(), emptySet())
+    ) = buildManageAppsSections(installed, groups, members, rules, emptySet(), query, emptyMap(), emptySet())
 
     // -- Visibility ---------------------------------------------------------------------------
 
