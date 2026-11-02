@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+
+        <!-- The device-QA control channel (reset / seed-rules / state) driven by the `:qa-driver`
+             tests. Lives in the `qa` source set, so AGP merges it ONLY into the qa build type: no
+             debug or release APK declares it, and `verify<Variant>NoQaControl` plus
+             `QaControlManifestTest` fail the build if one ever does.
+
+             exported="true" so `adb shell am broadcast` (the shell uid) can reach it, and
+             android:permission="android.permission.DUMP" so ONLY the shell can: DUMP is
+             signature|privileged|development, which no installed app can hold. This differs from
+             the debug receivers on purpose: those only trigger a read-only health check, this one
+             wipes rules and history. See QaControlReceiver's KDoc. -->
+        <receiver
+            android:name=".qa.QaControlReceiver"
+            android:exported="true"
+            android:permission="android.permission.DUMP">
+            <intent-filter>
+                <action android:name="dev.astraedus.nudge.qa.CMD" />
+            </intent-filter>
+        </receiver>
+
+    </application>
+
+</manifest>
