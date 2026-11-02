@@ -4,6 +4,8 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+## [1.26.1] - 2026-11-02
+
 ### Fixed
 - The on/off switch at the top of the dashboard no longer runs off the edge of the screen.
 
