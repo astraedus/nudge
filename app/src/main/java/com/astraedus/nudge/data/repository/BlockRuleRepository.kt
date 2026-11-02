@@ -47,7 +47,7 @@ class BlockRuleRepository @Inject constructor(
      * it. An All apps rule is written as [normalizedAllAppsRule], exactly as [saveAllAppsRule]
      * writes it.
      */
-    suspend fun addRule(rule: BlockRule): Long = blockRuleDao.insert(checkedRow(rule))
+    suspend fun addRule(rule: BlockRule): Long = blockRuleDao.insert(armedForWrite(checkedRow(rule)))
 
     /**
      * Update one rule, with the same check as [addRule], except for one row shape that already exists
@@ -56,7 +56,7 @@ class BlockRuleRepository @Inject constructor(
      * has always read it as ([legacyTwoTargetRepaired]); the behaviour does not change.
      */
     suspend fun updateRule(rule: BlockRule) =
-        blockRuleDao.update(checkedRow(legacyTwoTargetRepaired(rule)))
+        blockRuleDao.update(armedForWrite(checkedRow(legacyTwoTargetRepaired(rule))))
 
     suspend fun deleteRule(id: Long) = blockRuleDao.deleteById(id)
 
@@ -64,7 +64,7 @@ class BlockRuleRepository @Inject constructor(
         blockRuleDao.deleteByPackageName(packageName)
 
     suspend fun setEnabledForPackage(packageName: String, enabled: Boolean) =
-        blockRuleDao.setEnabledForPackage(packageName, enabled)
+        blockRuleDao.setEnabledForPackage(packageName, enabled, System.currentTimeMillis())
 
     // --- All apps rules (spec 3.4) ---
 
@@ -86,7 +86,7 @@ class BlockRuleRepository @Inject constructor(
         require(rule.allApps && rule.packageName == null && rule.groupId == null) {
             "saveAllAppsRule needs an All apps rule with no package and no group"
         }
-        val row = normalizedAllAppsRule(rule)
+        val row = armedForWrite(normalizedAllAppsRule(rule))
         return if (row.id == 0L) {
             blockRuleDao.insert(row)
         } else {
@@ -141,7 +141,7 @@ class BlockRuleRepository @Inject constructor(
             categories = AppCategoryCsv.format(categories),
             includes = includes,
             excludes = excludes,
-            rule = rule
+            rule = armedForWrite(rule)
         )
     }
 
@@ -150,6 +150,20 @@ class BlockRuleRepository @Inject constructor(
 
     suspend fun renameGroup(groupId: Long, name: String) =
         appGroupDao.renameGroup(groupId, name.trim())
+
+    /**
+     * Arm a rule for the first-unlock schedule (spec 5.1/5.3): `armedAt` is the wall-clock ms of
+     * this write, so a rule saved or switched on at 08:05 does not fire on the 08:00 unlock.
+     *
+     * Here rather than in the editors on purpose. There are four save paths (app config, group
+     * editor, All apps editor, the switch in Manage Apps) plus import, and the promise "Starts at
+     * your next first unlock" is user-facing: one missed call site would lock the phone mid-setup
+     * on the one screen nobody re-tested. Every write passes through this repository, so the rule
+     * is structural. A disabled write keeps its old value (nothing reads it until it is enabled,
+     * which stamps again).
+     */
+    private fun armedForWrite(rule: BlockRule, now: Long = System.currentTimeMillis()): BlockRule =
+        if (rule.enabled) rule.copy(armedAt = now) else rule
 
     private fun checkedRow(rule: BlockRule): BlockRule {
         require(RuleTarget.isWellFormed(rule.packageName, rule.groupId, rule.allApps)) {

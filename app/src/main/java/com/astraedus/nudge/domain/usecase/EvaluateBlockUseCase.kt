@@ -267,7 +267,11 @@ class EvaluateBlockUseCase @Inject constructor(
                 scheduleEndMinute = rule.scheduleEndMinute,
                 inAppFeatures = null, // Web domain rules apply as whole-app rules
                 grayscale = rule.grayscale,
-                ruleName = buildWebDomainRuleName(rule.packageName, webMode)
+                ruleName = buildWebDomainRuleName(rule.packageName, webMode),
+                // A website rule's window is the app rule's, first-unlock included: the same rule
+                // row carries both, and on a browser the whole-app window is what decides.
+                firstUnlockMinutes = rule.firstUnlockMinutes,
+                armedAt = rule.armedAt
             )
         }
 

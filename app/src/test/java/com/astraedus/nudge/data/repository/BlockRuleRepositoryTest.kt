@@ -8,6 +8,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -29,6 +30,14 @@ class BlockRuleRepositoryTest {
         out
     }
 
+    /**
+     * The row a test expects for [rule], given what the repository actually stored: identical
+     * except the arming stamp every enabled write takes (spec 5.3). Comparing everything but that
+     * stamp is what these tests are about; the stamp has its own cases below.
+     */
+    private fun BlockRule.withArmingFrom(stored: BlockRule): BlockRule =
+        if (enabled) copy(armedAt = stored.armedAt) else this
+
     /** The one malformed shape already on phones (old hand-edited imports): an app and a group. */
     private fun isLegacyAppAndGroup(rule: BlockRule) =
         rule.packageName != null && rule.groupId != null && !rule.allApps
@@ -42,7 +51,12 @@ class BlockRuleRepositoryTest {
             else assertThrows("$rule", IllegalArgumentException::class.java) {
                 runBlocking { added.repository.addRule(rule) }
             }
-            assertEquals("$rule", if (wellFormed) listOf(rule) else emptyList<BlockRule>(), added.rules)
+            val expectedRows = if (wellFormed) {
+                listOf(rule.withArmingFrom(added.rules.single()))
+            } else {
+                emptyList()
+            }
+            assertEquals("$rule", expectedRows, added.rules)
 
             // updateRule: over a row already stored (seeded raw, so a malformed row can exist).
             val stored = FakeRuleDatabase().also { it.seedRule(rule) }
@@ -143,6 +157,14 @@ class BlockRuleRepositoryTest {
         repo.addRule(loaded)
         assertEquals(listOf(expected.copy(id = 1), expected.copy(id = 2)), db.rules)
 
+        // Armed on write (spec 5.3): the row differs from the input by exactly that stamp.
+        assertEquals(
+            listOf(expected.copy(id = 1), expected.copy(id = 2))
+                .zip(db.rules) { want, stored -> want.withArmingFrom(stored) },
+            db.rules
+        )
+        assertTrue("an enabled write is armed now", db.rules.all { it.armedAt > 0 })
+
         // The two update paths (id 9), each over a stale stored row.
         val writes: List<suspend (BlockRuleRepository) -> Unit> = listOf(
             { it.saveAllAppsRule(loaded.copy(id = 9)) },
@@ -151,7 +173,11 @@ class BlockRuleRepositoryTest {
         for (write in writes) {
             val stale = FakeRuleDatabase().also { it.seedRule(aBlockRule(id = 9, allApps = true)) }
             write(stale.repository)
-            assertEquals(listOf(expected.copy(id = 9)), stale.rules)
+            assertEquals(
+                listOf(expected.copy(id = 9).withArmingFrom(stale.rules.single())),
+                stale.rules
+            )
+            assertTrue("an enabled write is armed now", stale.rules.all { it.armedAt > 0 })
         }
     }
 
@@ -159,6 +185,34 @@ class BlockRuleRepositoryTest {
     fun `an app rule is written untouched`() = runTest {
         val appRule = aBlockRule(packageName = "com.a", keepPassOnShortTrips = true, dailyLimitMinutes = 30)
         repo.addRule(appRule)
-        assertEquals(appRule.copy(id = 1), db.rules.single())
+        val stored = db.rules.single()
+        // Untouched apart from the arming stamp every enabled write gets.
+        assertEquals(appRule.withArmingFrom(stored), stored)
+        assertTrue(stored.armedAt > 0)
+    }
+
+    @Test
+    fun `a disabled write keeps its old arming stamp`() = runTest {
+        db.seedRule(aBlockRule(id = 3, packageName = "com.a", enabled = false, armedAt = 1_000L))
+
+        repo.updateRule(aBlockRule(id = 3, packageName = "com.a", enabled = false, mode = "HARD_BLOCK"))
+
+        // Nothing reads armedAt until the rule is enabled, and enabling stamps again. Re-arming a
+        // disabled row would be harmless, but keeping it makes "save = re-arm" mean what it says.
+        assertEquals(1_000L, db.ruleWithId(3).armedAt)
+    }
+
+    @Test
+    fun `the Manage Apps switch re-arms only when it switches on`() = runTest {
+        db.seedRule(aBlockRule(packageName = "com.a", enabled = false, armedAt = 1_000L))
+
+        repo.setEnabledForPackage("com.a", true)
+
+        assertTrue("an enable is armed now", db.rules.single().armedAt > 1_000L)
+
+        val armedAt = db.rules.single().armedAt
+        repo.setEnabledForPackage("com.a", false)
+        assertEquals("a disable keeps the stamp it had", armedAt, db.rules.single().armedAt)
+    }
     }
 }

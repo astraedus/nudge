@@ -43,7 +43,9 @@ class RuleEvaluator @Inject constructor() {
                 tabVanish = rule.tabVanish,
                 followingSteer = rule.followingSteer,
                 keepPassOnShortTrips = rule.keepPassOnShortTrips,
-                allApps = allAppsBlockOf(rule, membership)
+                allApps = allAppsBlockOf(rule, membership),
+                firstUnlockMinutes = rule.firstUnlockMinutes,
+                armedAt = rule.armedAt
             )
         }
     }

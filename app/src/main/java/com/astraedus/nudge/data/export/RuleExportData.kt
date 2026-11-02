@@ -106,7 +106,14 @@ data class ExportedSettings(
      */
     val customDelayTitles: String? = null,
     val customDelaySubtitles: String? = null,
-    val customHardBlockMessages: String? = null
+    val customHardBlockMessages: String? = null,
+    /**
+     * The hour the first-unlock logical day starts, minutes from midnight (default 240). Null means
+     * the file does not carry it. Changing it is weakening while an enabled first-unlock rule
+     * exists, because it can move today's unlock into yesterday (spec 5.6), so the import gate
+     * checks it like the other protection settings.
+     */
+    val dayStartMinute: Int? = null
 ) {
     /** True when this carries no setting at all, so there is nothing to write to the file. */
     val isEmpty: Boolean
@@ -124,7 +131,8 @@ data class ExportedSettings(
             phoneNudgePauseSeconds == null &&
             customDelayTitles == null &&
             customDelaySubtitles == null &&
-            customHardBlockMessages == null
+            customHardBlockMessages == null &&
+            dayStartMinute == null
 }
 
 data class ExportedRule(

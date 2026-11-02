@@ -45,6 +45,15 @@ interface BlockRuleDao {
     @Query("DELETE FROM block_rules WHERE packageName = :packageName")
     suspend fun deleteByPackageName(packageName: String)
 
-    @Query("UPDATE block_rules SET enabled = :enabled WHERE packageName = :packageName")
-    suspend fun setEnabledForPackage(packageName: String, enabled: Boolean)
+    /**
+     * Switch a package's rules on or off, arming them when they come on (spec 5.3): the CASE leaves
+     * `armedAt` untouched on a disable and sets it to [now] on an enable, so a first-unlock rule
+     * switched on at 08:05 waits for tomorrow's unlock instead of firing on this morning's.
+     */
+    @Query(
+        "UPDATE block_rules SET enabled = :enabled, " +
+            "armedAt = CASE WHEN :enabled THEN :now ELSE armedAt END " +
+            "WHERE packageName = :packageName"
+    )
+    suspend fun setEnabledForPackage(packageName: String, enabled: Boolean, now: Long)
 }

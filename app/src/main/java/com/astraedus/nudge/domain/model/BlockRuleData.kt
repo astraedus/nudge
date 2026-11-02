@@ -36,5 +36,15 @@ data class BlockRuleData(
      * The names of [exceptGroupIds] that still exist, for the block screen's rule line. Filled by
      * `RuleSnapshot.of`, which holds the groups table, like [groupName]. A stale id has no name.
      */
-    val exceptGroupNames: List<String> = emptyList()
+    val exceptGroupNames: List<String> = emptyList(),
+    /**
+     * Non-null = active for this many minutes after the first unlock of the logical day (spec 5.3).
+     * Null = every other rule. See [com.astraedus.nudge.domain.engine.FirstUnlockWindow].
+     */
+    val firstUnlockMinutes: Int? = null,
+    /**
+     * Wall-clock ms the rule was last saved or switched on (arming, spec 5.1). Only read by the
+     * first-unlock branch of [com.astraedus.nudge.domain.engine.ScheduleEvaluator]; 0 = always armed.
+     */
+    val armedAt: Long = 0L
 )
