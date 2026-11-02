@@ -379,9 +379,15 @@ pin_screen() {
 # surface and the `setup` flow still walks them, but a Maestro flow cannot drive the
 # system accessibility Settings list reliably, so the grant itself is set here.
 
+# Reads ONLY the `Bound services:` line (user 0's, the first), and asks for Nudge's label on it:
+# a bound service prints as `Bound services:{Service[label=Nudge - App Blocker, ...]}`, without
+# the class name. The old `grep -A3 'Bound services' | grep NudgeAccessibilityService` matched the
+# `Enabled services:{{dev.astraedus.nudge/...NudgeAccessibilityService}}` line UNDER it, so a
+# granted-but-suppressed service (a UiAutomation session holding it off) read as bound: a false
+# PASS on the gate. Same parse as qa-driver's DeviceText.isNudgeBound; test-device-qa.sh pins it.
 a11y_is_bound() {
   ash dumpsys accessibility 2>/dev/null |
-    tr -d '\r' | grep -A3 'Bound services' | grep 'NudgeAccessibilityService' >/dev/null
+    tr -d '\r' | grep -m1 'Bound services:' | grep -E 'label=Nudge|NudgeAccessibilityService' >/dev/null
 }
 
 # Turns the accessibility grant OFF, and PROVES it went off. Returns 1 if it could not.

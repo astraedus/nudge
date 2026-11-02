@@ -41,9 +41,11 @@ check() { # <name> <command...>, passes when the command succeeds
 SHIMS="$TMP/shims"; mkdir -p "$SHIMS"
 cat >"$SHIMS/adb" <<'EOF'
 #!/usr/bin/env bash
-# `adb -s <serial> shell dumpsys notification --noredact` prints the fixture; nothing else is answered.
+# `adb -s <serial> shell dumpsys notification --noredact` / `... dumpsys accessibility` print their
+# fixtures; nothing else is answered.
 [[ "${1:-}" == "-s" ]] && shift 2
 [[ "$*" == "shell dumpsys notification --noredact" ]] && cat "$NOTIF_FIXTURE"
+[[ "$*" == "shell dumpsys accessibility" ]] && cat "$A11Y_FIXTURE"
 exit 0
 EOF
 chmod +x "$SHIMS/adb"
@@ -229,6 +231,28 @@ check "a run that never reached home-reopen touches nothing at cleanup" \
 check "a run killed mid-case: the EXIT trap's cleanup puts it back" \
   test "$(pip 'PICTURE_IN_PICTURE: allow' 'youtube_pip_off; exit 1')" = \
   "SET appops set $Y PICTURE_IN_PICTURE ignore|SET appops set $Y PICTURE_IN_PICTURE allow|"
+
+# ─── 6. a11y_is_bound reads the Bound line, never the Enabled line under it ────
+echo "a11y_is_bound:"
+# Shaped like the Pixel 3 (API 31) dump. A bound service prints by LABEL; only the Enabled line
+# names the class. The old `grep -A3 'Bound services'` reached the Enabled line, so a granted but
+# suppressed service (a UiAutomation session holding it off) read as bound: a false gate PASS.
+# Same cases as qa-driver's DeviceTextTest.
+a11y_dump() { # <file> <Bound services value> <Enabled services value>
+  printf 'ACCESSIBILITY MANAGER (dumpsys accessibility)\n\nUser state[\n    attributes:{id=0, touchExplorationEnabled=false}\n    Bound services:%s\n    Enabled services:%s\n    Binding services:{}\n' \
+    "$2" "$3" >"$1"
+}
+bound()     { run_qa "$OUT" A11Y_FIXTURE="$1" -- "a11y_is_bound"; }
+not_bound() { ! bound "$1"; }
+ENABLED='{{dev.astraedus.nudge/com.astraedus.nudge.service.NudgeAccessibilityService}}'
+a11y_dump "$TMP/a11y_bound"      '{Service[label=Nudge - App Blocker, feedbackType[FEEDBACK_GENERIC], capabilities=1, eventTypes=TYPES_ALL_MASK, notificationTimeout=100]}' "$ENABLED"
+a11y_dump "$TMP/a11y_suppressed" '{}' "$ENABLED"
+a11y_dump "$TMP/a11y_off"        '{}' '{}'
+a11y_dump "$TMP/a11y_other"      '{Service[label=TalkBack, feedbackType[FEEDBACK_SPOKEN]]}' "$ENABLED"
+check "bound: Nudge's label on the Bound line" bound "$TMP/a11y_bound"
+check "granted but suppressed (Bound {}): NOT bound, despite the Enabled line" not_bound "$TMP/a11y_suppressed"
+check "grant off: NOT bound" not_bound "$TMP/a11y_off"
+check "another service bound, Nudge only enabled: NOT bound" not_bound "$TMP/a11y_other"
 
 echo
 echo "$pass passed, $fail failed"
