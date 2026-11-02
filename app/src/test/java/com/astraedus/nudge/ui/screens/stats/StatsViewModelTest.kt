@@ -1,7 +1,7 @@
 package com.astraedus.nudge.ui.screens.stats
 
-import com.astraedus.nudge.data.db.entity.UsageEvent
 import com.astraedus.nudge.domain.engine.TimeTracker
+import com.astraedus.nudge.testing.aUsageEvent
 import com.astraedus.nudge.ui.screens.stats.charts.DayData
 import com.astraedus.nudge.ui.screens.stats.charts.TrendDay
 import org.junit.Assert.assertEquals
@@ -40,9 +40,9 @@ class StatsViewModelTest {
         val dayMs = 24L * 60L * 60L * 1000L
 
         val events = listOf(
-            makeEvent(todayStart + 1000, userChangedMind = true),
-            makeEvent(todayStart - dayMs + 5000, wasBlocked = true),
-            makeEvent(todayStart - 2 * dayMs + 3000, userChangedMind = true),
+            aUsageEvent(TEST_PACKAGE, todayStart + 1000, userChangedMind = true),
+            aUsageEvent(TEST_PACKAGE, todayStart - dayMs + 5000, wasBlocked = true),
+            aUsageEvent(TEST_PACKAGE, todayStart - 2 * dayMs + 3000, userChangedMind = true),
         )
 
         val streak = calculator.calculateStreak(events)
@@ -55,10 +55,10 @@ class StatsViewModelTest {
         val dayMs = 24L * 60L * 60L * 1000L
 
         val events = listOf(
-            makeEvent(todayStart + 1000, userChangedMind = true),
+            aUsageEvent(TEST_PACKAGE, todayStart + 1000, userChangedMind = true),
             // Yesterday - only regular usage, no block/walk-away
-            makeEvent(todayStart - dayMs + 5000, wasBlocked = false, userChangedMind = false),
-            makeEvent(todayStart - 2 * dayMs + 3000, wasBlocked = true),
+            aUsageEvent(TEST_PACKAGE, todayStart - dayMs + 5000, wasBlocked = false, userChangedMind = false),
+            aUsageEvent(TEST_PACKAGE, todayStart - 2 * dayMs + 3000, wasBlocked = true),
         )
 
         val streak = calculator.calculateStreak(events)
@@ -71,8 +71,8 @@ class StatsViewModelTest {
         val dayMs = 24L * 60L * 60L * 1000L
 
         val events = listOf(
-            makeEvent(todayStart - dayMs + 5000, wasBlocked = true),
-            makeEvent(todayStart - 2 * dayMs + 3000, userChangedMind = true),
+            aUsageEvent(TEST_PACKAGE, todayStart - dayMs + 5000, wasBlocked = true),
+            aUsageEvent(TEST_PACKAGE, todayStart - 2 * dayMs + 3000, userChangedMind = true),
         )
 
         val streak = calculator.calculateStreak(events)
@@ -85,7 +85,7 @@ class StatsViewModelTest {
         val dayMs = 24L * 60L * 60L * 1000L
 
         val events = (0..6).map { i ->
-            makeEvent(todayStart - i * dayMs + 1000, wasBlocked = true)
+            aUsageEvent(TEST_PACKAGE, todayStart - i * dayMs + 1000, wasBlocked = true)
         }
 
         val streak = calculator.calculateStreak(events)
@@ -105,9 +105,9 @@ class StatsViewModelTest {
         val todayStart = timeTracker.startOfToday()
 
         val events = listOf(
-            makeEvent(todayStart + 1000, wasBlocked = true),
-            makeEvent(todayStart + 2000, wasBlocked = true),
-            makeEvent(todayStart + 3000, userChangedMind = true),
+            aUsageEvent(TEST_PACKAGE, todayStart + 1000, wasBlocked = true),
+            aUsageEvent(TEST_PACKAGE, todayStart + 2000, wasBlocked = true),
+            aUsageEvent(TEST_PACKAGE, todayStart + 3000, userChangedMind = true),
         )
 
         val trend = calculator.buildTrendData(events)
@@ -174,9 +174,9 @@ class StatsViewModelTest {
         val todayStart = timeTracker.startOfToday()
 
         val events = listOf(
-            makeEvent(todayStart + 1000, wasBlocked = true, packageName = "com.test.app"),
-            makeEvent(todayStart + 2000, wasBlocked = true, packageName = "com.other.app"),
-            makeEvent(todayStart + 3000, userChangedMind = true, packageName = "com.test.app"),
+            aUsageEvent(TEST_PACKAGE, todayStart + 1000, wasBlocked = true),
+            aUsageEvent("com.other.app", todayStart + 2000, wasBlocked = true),
+            aUsageEvent(TEST_PACKAGE, todayStart + 3000, userChangedMind = true),
         )
 
         val trend = calculator.buildAppTrendData(events, "com.test.app")
@@ -190,8 +190,8 @@ class StatsViewModelTest {
         val todayStart = timeTracker.startOfToday()
 
         val events = listOf(
-            makeEvent(todayStart + 1000, wasBlocked = true, packageName = "com.other.app"),
-            makeEvent(todayStart + 2000, userChangedMind = true, packageName = "com.other.app"),
+            aUsageEvent("com.other.app", todayStart + 1000, wasBlocked = true),
+            aUsageEvent("com.other.app", todayStart + 2000, userChangedMind = true),
         )
 
         val trend = calculator.buildAppTrendData(events, "com.test.app")
@@ -209,8 +209,8 @@ class StatsViewModelTest {
         val yesterdayStart = todayStart - dayMs
 
         val events = listOf(
-            makeEvent(yesterdayStart + 1000, wasBlocked = true),
-            makeEvent(todayStart + 1000, wasBlocked = true),
+            aUsageEvent(TEST_PACKAGE, yesterdayStart + 1000, wasBlocked = true),
+            aUsageEvent(TEST_PACKAGE, todayStart + 1000, wasBlocked = true),
         )
 
         val trend = calculator.buildTrendData(events, referenceDayStartMs = yesterdayStart)
@@ -226,8 +226,8 @@ class StatsViewModelTest {
         val yesterdayStart = todayStart - dayMs
 
         val events = listOf(
-            makeEvent(yesterdayStart + 1000, wasBlocked = true),
-            makeEvent(yesterdayStart - dayMs + 1000, wasBlocked = true),
+            aUsageEvent(TEST_PACKAGE, yesterdayStart + 1000, wasBlocked = true),
+            aUsageEvent(TEST_PACKAGE, yesterdayStart - dayMs + 1000, wasBlocked = true),
         )
 
         val streak = calculator.calculateStreak(events, referenceDayStartMs = yesterdayStart)
@@ -259,8 +259,8 @@ class StatsViewModelTest {
         val yesterdayStart = todayStart - dayMs
 
         val events = listOf(
-            makeEvent(yesterdayStart + 1000, wasBlocked = true, packageName = "com.test.app"),
-            makeEvent(todayStart + 1000, wasBlocked = true, packageName = "com.test.app"),
+            aUsageEvent(TEST_PACKAGE, yesterdayStart + 1000, wasBlocked = true),
+            aUsageEvent(TEST_PACKAGE, todayStart + 1000, wasBlocked = true),
         )
 
         val trend = calculator.buildAppTrendData(events, "com.test.app", referenceDayStartMs = yesterdayStart)
@@ -322,18 +322,7 @@ class StatsViewModelTest {
         )
     }
 
-    // --- Helpers ---
-
-    private fun makeEvent(
-        timestamp: Long,
-        wasBlocked: Boolean = false,
-        userChangedMind: Boolean = false,
-        packageName: String = "com.test.app"
-    ): UsageEvent = UsageEvent(
-        id = 0,
-        packageName = packageName,
-        timestamp = timestamp,
-        wasBlocked = wasBlocked,
-        userChangedMind = userChangedMind
-    )
+    private companion object {
+        const val TEST_PACKAGE = "com.test.app"
+    }
 }

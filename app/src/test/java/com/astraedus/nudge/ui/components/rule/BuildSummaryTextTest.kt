@@ -1,7 +1,7 @@
 package com.astraedus.nudge.ui.components.rule
 
-import com.astraedus.nudge.data.db.entity.BlockRule
 import com.astraedus.nudge.domain.model.BlockMode
+import com.astraedus.nudge.testing.aBlockRule
 import com.astraedus.nudge.ui.screens.groups.GroupRuleForm
 import com.astraedus.nudge.ui.screens.groups.toRule
 import org.junit.Assert.assertEquals
@@ -22,36 +22,19 @@ import org.junit.Test
  */
 class BuildSummaryTextTest {
 
-    private fun rule(
-        mode: String = "DELAY",
-        delaySeconds: Int = 15,
-        inAppFeatures: String? = null,
-        dailyLimitMinutes: Int? = null,
-        scheduleDays: String? = null,
-        scheduleStartMinute: Int? = null,
-        scheduleEndMinute: Int? = null
-    ) = BlockRule(
-        id = 0,
-        packageName = "com.test",
-        mode = mode,
-        delaySeconds = delaySeconds,
-        inAppFeatures = inAppFeatures,
-        dailyLimitMinutes = dailyLimitMinutes,
-        scheduleDays = scheduleDays,
-        scheduleStartMinute = scheduleStartMinute,
-        scheduleEndMinute = scheduleEndMinute
-    )
+    /** A rule on one app; each case copies in just the field it is about. */
+    private val appRule = aBlockRule(packageName = "com.test")
 
     @Test
     fun `simple hard block`() {
-        val result = RuleSummary.buildSummaryText(listOf(rule(mode = "HARD_BLOCK")))
+        val result = RuleSummary.buildSummaryText(listOf(appRule.copy(mode = "HARD_BLOCK")))
         assertEquals("Hard Block", result)
     }
 
     @Test
     fun `delay with daily limit`() {
         val result = RuleSummary.buildSummaryText(
-            listOf(rule(mode = "DELAY", delaySeconds = 15, dailyLimitMinutes = 30))
+            listOf(appRule.copy(mode = "DELAY", delaySeconds = 15, dailyLimitMinutes = 30))
         )
         assertEquals("Delay 15s · 30min limit", result)
     }
@@ -59,7 +42,7 @@ class BuildSummaryTextTest {
     @Test
     fun `breathing with schedule`() {
         val result = RuleSummary.buildSummaryText(
-            listOf(rule(mode = "BREATHING", delaySeconds = 30, scheduleDays = "1,2,3,4,5"))
+            listOf(appRule.copy(mode = "BREATHING", delaySeconds = 30, scheduleDays = "1,2,3,4,5"))
         )
         assertEquals("Breathing 30s Mon–Fri", result)
     }
@@ -67,8 +50,8 @@ class BuildSummaryTextTest {
     @Test
     fun `default rule with feature override`() {
         val rules = listOf(
-            rule(mode = "DELAY", delaySeconds = 15),
-            rule(mode = "HARD_BLOCK", inAppFeatures = "REELS")
+            appRule.copy(mode = "DELAY", delaySeconds = 15),
+            appRule.copy(mode = "HARD_BLOCK", inAppFeatures = "REELS")
         )
         val result = RuleSummary.buildSummaryText(rules)
         assertEquals("Delay 15s · Reels: Hard Block", result)
@@ -77,9 +60,9 @@ class BuildSummaryTextTest {
     @Test
     fun `multiple feature overrides`() {
         val rules = listOf(
-            rule(mode = "DELAY", delaySeconds = 10),
-            rule(mode = "HARD_BLOCK", inAppFeatures = "REELS"),
-            rule(mode = "HARD_BLOCK", inAppFeatures = "SHORTS")
+            appRule.copy(mode = "DELAY", delaySeconds = 10),
+            appRule.copy(mode = "HARD_BLOCK", inAppFeatures = "REELS"),
+            appRule.copy(mode = "HARD_BLOCK", inAppFeatures = "SHORTS")
         )
         val result = RuleSummary.buildSummaryText(rules)
         assertEquals("Delay 10s · Reels: Hard Block · Shorts: Hard Block", result)
@@ -88,7 +71,7 @@ class BuildSummaryTextTest {
     @Test
     fun `feature-only rule with no default`() {
         val result = RuleSummary.buildSummaryText(
-            listOf(rule(mode = "HARD_BLOCK", inAppFeatures = "REELS"))
+            listOf(appRule.copy(mode = "HARD_BLOCK", inAppFeatures = "REELS"))
         )
         assertEquals("Reels: Hard Block", result)
     }
@@ -96,7 +79,7 @@ class BuildSummaryTextTest {
     @Test
     fun `daily limit and schedule together`() {
         val result = RuleSummary.buildSummaryText(
-            listOf(rule(mode = "DELAY", delaySeconds = 15, dailyLimitMinutes = 60, scheduleDays = "1,2,3"))
+            listOf(appRule.copy(mode = "DELAY", delaySeconds = 15, dailyLimitMinutes = 60, scheduleDays = "1,2,3"))
         )
         assertEquals("Delay 15s Mon–Wed · 60min limit", result)
     }
@@ -104,7 +87,7 @@ class BuildSummaryTextTest {
     @Test
     fun `comma-separated features in single rule`() {
         val result = RuleSummary.buildSummaryText(
-            listOf(rule(mode = "HARD_BLOCK", inAppFeatures = "REELS,EXPLORE"))
+            listOf(appRule.copy(mode = "HARD_BLOCK", inAppFeatures = "REELS,EXPLORE"))
         )
         assertEquals("Reels/Explore: Hard Block", result)
     }
@@ -114,7 +97,7 @@ class BuildSummaryTextTest {
         // ScheduleEvaluator only applies a time window when BOTH ends are set; this rule is active
         // all the time, and "All the time" is left out of a summary.
         val result = RuleSummary.buildSummaryText(
-            listOf(rule(mode = "DELAY", delaySeconds = 15, scheduleStartMinute = 540))
+            listOf(appRule.copy(mode = "DELAY", delaySeconds = 15, scheduleStartMinute = 540))
         )
         assertEquals("Delay 15s", result)
     }
@@ -123,7 +106,7 @@ class BuildSummaryTextTest {
     fun `days and a time window read as both`() {
         val result = RuleSummary.buildSummaryText(
             listOf(
-                rule(
+                appRule.copy(
                     mode = "HARD_BLOCK",
                     scheduleDays = "1,2,3,4,5",
                     scheduleStartMinute = 540,
@@ -137,9 +120,9 @@ class BuildSummaryTextTest {
     @Test
     fun `an app's always-on rule comes before its scheduled rule, then its features`() {
         val rules = listOf(
-            rule(mode = "HARD_BLOCK", inAppFeatures = "REELS"),
-            rule(mode = "HARD_BLOCK", scheduleDays = "6,7"),
-            rule(mode = "DELAY", delaySeconds = 15, dailyLimitMinutes = 30)
+            appRule.copy(mode = "HARD_BLOCK", inAppFeatures = "REELS"),
+            appRule.copy(mode = "HARD_BLOCK", scheduleDays = "6,7"),
+            appRule.copy(mode = "DELAY", delaySeconds = 15, dailyLimitMinutes = 30)
         )
         assertEquals(
             "Delay 15s · 30min limit · Hard Block Sat, Sun · Reels: Hard Block",
@@ -151,8 +134,8 @@ class BuildSummaryTextTest {
     fun `two rules - each schedule stays with its own mode`() {
         // Firefox in the heavy fixture: Delay 30s all the time, and a Hard Block at weekends.
         val rules = listOf(
-            rule(mode = "HARD_BLOCK", scheduleDays = "6,7"),
-            rule(mode = "DELAY", delaySeconds = 30)
+            appRule.copy(mode = "HARD_BLOCK", scheduleDays = "6,7"),
+            appRule.copy(mode = "DELAY", delaySeconds = 30)
         )
         assertEquals("Delay 30s · Hard Block Sat, Sun", RuleSummary.buildSummaryText(rules))
     }
@@ -160,10 +143,10 @@ class BuildSummaryTextTest {
     @Test
     fun `a schedule never stands alone between separators`() {
         val samples = listOf(
-            listOf(rule(mode = "HARD_BLOCK", scheduleDays = "6,7"), rule(mode = "DELAY", delaySeconds = 30)),
-            listOf(rule(mode = "NONE", dailyLimitMinutes = 30, scheduleDays = "6,7")),
-            listOf(rule(mode = "DELAY", dailyLimitMinutes = 60, scheduleDays = "1,2,3,4,5", scheduleStartMinute = 540, scheduleEndMinute = 1020)),
-            listOf(rule(mode = "HARD_BLOCK", inAppFeatures = "REELS", scheduleDays = "6,7"))
+            listOf(appRule.copy(mode = "HARD_BLOCK", scheduleDays = "6,7"), appRule.copy(mode = "DELAY", delaySeconds = 30)),
+            listOf(appRule.copy(mode = "NONE", dailyLimitMinutes = 30, scheduleDays = "6,7")),
+            listOf(appRule.copy(mode = "DELAY", dailyLimitMinutes = 60, scheduleDays = "1,2,3,4,5", scheduleStartMinute = 540, scheduleEndMinute = 1020)),
+            listOf(appRule.copy(mode = "HARD_BLOCK", inAppFeatures = "REELS", scheduleDays = "6,7"))
         )
         for (rules in samples) {
             val pieces = RuleSummary.buildSummaryText(rules).split(" · ")
@@ -176,7 +159,7 @@ class BuildSummaryTextTest {
     fun `a scheduled limit reads as the limit, then when`() {
         assertEquals(
             "30min limit Sat, Sun",
-            RuleSummary.buildSummaryText(listOf(rule(mode = "NONE", dailyLimitMinutes = 30, scheduleDays = "6,7")))
+            RuleSummary.buildSummaryText(listOf(appRule.copy(mode = "NONE", dailyLimitMinutes = 30, scheduleDays = "6,7")))
         )
     }
 
@@ -184,7 +167,7 @@ class BuildSummaryTextTest {
     fun `a scheduled feature rule keeps its schedule`() {
         assertEquals(
             "Reels: Hard Block Sat, Sun",
-            RuleSummary.buildSummaryText(listOf(rule(mode = "HARD_BLOCK", inAppFeatures = "REELS", scheduleDays = "6,7")))
+            RuleSummary.buildSummaryText(listOf(appRule.copy(mode = "HARD_BLOCK", inAppFeatures = "REELS", scheduleDays = "6,7")))
         )
     }
 
@@ -200,22 +183,22 @@ class BuildSummaryTextTest {
     fun `a rule that only caps the day reads as its limit, not as Not blocked`() {
         assertEquals(
             "30min limit",
-            RuleSummary.buildSummaryText(listOf(rule(mode = "NONE", dailyLimitMinutes = 30)))
+            RuleSummary.buildSummaryText(listOf(appRule.copy(mode = "NONE", dailyLimitMinutes = 30)))
         )
         // The app opens freely and only Reels is blocked: both halves are true, so both are said.
         assertEquals(
             "Not blocked · Reels: Hard Block",
             RuleSummary.buildSummaryText(
-                listOf(rule(mode = "NONE"), rule(mode = "HARD_BLOCK", inAppFeatures = "REELS"))
+                listOf(appRule.copy(mode = "NONE"), appRule.copy(mode = "HARD_BLOCK", inAppFeatures = "REELS"))
             )
         )
-        assertEquals("Not blocked", RuleSummary.buildSummaryText(listOf(rule(mode = "NONE"))))
+        assertEquals("Not blocked", RuleSummary.buildSummaryText(listOf(appRule.copy(mode = "NONE"))))
     }
 
     @Test
     fun `every mode has words`() {
-        assertEquals("Hold 10s", RuleSummary.buildSummaryText(listOf(rule(mode = "HOLD", delaySeconds = 10))))
-        assertEquals("Breathing 30s", RuleSummary.buildSummaryText(listOf(rule(mode = "BREATHING", delaySeconds = 30))))
+        assertEquals("Hold 10s", RuleSummary.buildSummaryText(listOf(appRule.copy(mode = "HOLD", delaySeconds = 10))))
+        assertEquals("Breathing 30s", RuleSummary.buildSummaryText(listOf(appRule.copy(mode = "BREATHING", delaySeconds = 30))))
     }
 
     // --- Group rows on Manage Apps (spec PR 2) ---
@@ -250,7 +233,7 @@ class BuildSummaryTextTest {
 
     @Test
     fun `a hard-blocking group summarises as Hard Block`() {
-        val saved = BlockRule(groupId = 4L, mode = "HARD_BLOCK")
+        val saved = aBlockRule(groupId = 4L, mode = "HARD_BLOCK")
         assertEquals("Hard Block", RuleSummary.groupSummaryText(saved))
     }
 }

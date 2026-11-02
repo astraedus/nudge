@@ -1,9 +1,9 @@
 package com.astraedus.nudge.ui.components.rule
 
-import com.astraedus.nudge.data.db.entity.AppGroup
-import com.astraedus.nudge.data.db.entity.BlockRule
 import com.astraedus.nudge.domain.model.BlockMode
-import com.astraedus.nudge.domain.model.BlockRuleData
+import com.astraedus.nudge.testing.aBlockRule
+import com.astraedus.nudge.testing.aBlockRuleData
+import com.astraedus.nudge.testing.anAppGroup
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -16,39 +16,19 @@ import org.junit.Test
 class AllAppsRuleItemsTest {
 
     private val labels = mapOf("com.spotify" to "Spotify", "com.maps" to "Maps", "com.mail" to "Mail")
-    private val work = AppGroup(id = 1, name = "Work")
-    private val family = AppGroup(id = 2, name = "Family")
+    private val work = anAppGroup("Work", id = 1)
+    private val family = anAppGroup("Family", id = 2)
     private val groups = listOf(work, family)
 
-    private fun rule(
-        id: Long,
-        enabled: Boolean = true,
-        mode: String = "HARD_BLOCK",
-        delay: Int = 0,
-        exceptPackages: String? = null,
-        exceptGroupIds: String? = null,
-        days: String? = null,
-        start: Int? = null,
-        end: Int? = null
-    ) = BlockRule(
-        id = id,
-        allApps = true,
-        mode = mode,
-        delaySeconds = delay,
-        enabled = enabled,
-        exceptPackages = exceptPackages,
-        exceptGroupIds = exceptGroupIds,
-        scheduleDays = days,
-        scheduleStartMinute = start,
-        scheduleEndMinute = end
-    )
+    /** An All apps rule as these cases read it: hard block, no delay. Each case copies in its own fields. */
+    private val allAppsRule = aBlockRule(allApps = true, mode = "HARD_BLOCK", delaySeconds = 0)
 
     // -- Title -------------------------------------------------------------------------------
 
     @Test
     fun `no exceptions - All apps`() {
         assertEquals("All apps", RuleSummary.allAppsTitle(listOf<String>()))
-        assertEquals("All apps", allAppsRuleItems(listOf(rule(1)), groups, labels).single().title)
+        assertEquals("All apps", allAppsRuleItems(listOf(allAppsRule.copy(id = 1)), groups, labels).single().title)
     }
 
     @Test
@@ -64,7 +44,7 @@ class AllAppsRuleItemsTest {
     @Test
     fun `groups come before apps, a deleted group and an uninstalled app are left out`() {
         val item = allAppsRuleItems(
-            listOf(rule(1, exceptPackages = "com.spotify,com.gone", exceptGroupIds = "2,99")),
+            listOf(allAppsRule.copy(id = 1, exceptPackages = "com.spotify,com.gone", exceptGroupIds = "2,99")),
             groups,
             labels
         ).single()
@@ -74,10 +54,9 @@ class AllAppsRuleItemsTest {
 
     @Test
     fun `the domain form of a rule is titled the same as the row form`() {
-        val row = rule(1, exceptPackages = "com.maps", exceptGroupIds = "1")
-        val domain = BlockRuleData(
-            id = 1, packageName = null, groupId = null, mode = BlockMode.HARD_BLOCK, delaySeconds = 0,
-            dailyLimitMinutes = null, enabled = true, allApps = true,
+        val row = allAppsRule.copy(id = 1, exceptPackages = "com.maps", exceptGroupIds = "1")
+        val domain = aBlockRuleData(
+            id = 1, mode = BlockMode.HARD_BLOCK, delaySeconds = 0, allApps = true,
             exceptPackages = setOf("com.maps"), exceptGroupIds = setOf(1L), exceptGroupNames = listOf("Work")
         )
 
@@ -91,12 +70,12 @@ class AllAppsRuleItemsTest {
 
     @Test
     fun `summary is the mode, then the schedule`() {
-        assertEquals("Hard Block", RuleSummary.allAppsSummaryText(rule(1)))
-        assertEquals("Delay 15s", RuleSummary.allAppsSummaryText(rule(1, mode = "DELAY", delay = 15)))
+        assertEquals("Hard Block", RuleSummary.allAppsSummaryText(allAppsRule.copy(id = 1)))
+        assertEquals("Delay 15s", RuleSummary.allAppsSummaryText(allAppsRule.copy(id = 1, mode = "DELAY", delaySeconds = 15)))
         assertEquals(
             "Hard Block Mon–Fri 9:00–17:00",
             RuleSummary.allAppsSummaryText(
-                rule(1, days = "1,2,3,4,5", start = 9 * 60, end = 17 * 60)
+                allAppsRule.copy(id = 1, scheduleDays = "1,2,3,4,5", scheduleStartMinute = 9 * 60, scheduleEndMinute = 17 * 60)
             )
         )
     }
@@ -105,10 +84,10 @@ class AllAppsRuleItemsTest {
 
     @Test
     fun `only All apps rules become rows, oldest first, with their on state`() {
-        val appRule = BlockRule(id = 3, packageName = "com.instagram", mode = "HARD_BLOCK")
-        val groupRule = BlockRule(id = 4, groupId = 1, mode = "HARD_BLOCK")
+        val appRule = aBlockRule(id = 3, packageName = "com.instagram", mode = "HARD_BLOCK")
+        val groupRule = aBlockRule(id = 4, groupId = 1, mode = "HARD_BLOCK")
 
-        val items = allAppsRuleItems(listOf(rule(9, enabled = false), appRule, rule(2), groupRule), groups, labels)
+        val items = allAppsRuleItems(listOf(allAppsRule.copy(id = 9, enabled = false), appRule, allAppsRule.copy(id = 2), groupRule), groups, labels)
 
         assertEquals(listOf(2L, 9L), items.map { it.ruleId })
         assertEquals(listOf(true, false), items.map { it.enabled })
@@ -119,10 +98,10 @@ class AllAppsRuleItemsTest {
     @Test
     fun `a group is allowed during every All apps rule that lists it, on or off`() {
         val rules = listOf(
-            rule(1, exceptGroupIds = "1"),
-            rule(2, exceptGroupIds = "2"),
-            rule(3, exceptGroupIds = "1,2", enabled = false),
-            rule(4, exceptPackages = "com.spotify")
+            allAppsRule.copy(id = 1, exceptGroupIds = "1"),
+            allAppsRule.copy(id = 2, exceptGroupIds = "2"),
+            allAppsRule.copy(id = 3, exceptGroupIds = "1,2", enabled = false),
+            allAppsRule.copy(id = 4, exceptPackages = "com.spotify")
         )
 
         val allowed = allAppsRulesAllowingGroup(1, rules, groups, labels)
@@ -134,14 +113,14 @@ class AllAppsRuleItemsTest {
 
     @Test
     fun `a group no rule lists has no Allowed during rows`() {
-        val rules = listOf(rule(1, exceptGroupIds = "2"), rule(2))
+        val rules = listOf(allAppsRule.copy(id = 1, exceptGroupIds = "2"), allAppsRule.copy(id = 2))
 
         assertTrue(allAppsRulesAllowingGroup(1, rules, groups, labels).isEmpty())
     }
 
     @Test
     fun `an app or group rule never counts as allowing a group`() {
-        val groupRule = BlockRule(id = 5, groupId = 2, mode = "HARD_BLOCK", exceptGroupIds = "1")
+        val groupRule = aBlockRule(id = 5, groupId = 2, mode = "HARD_BLOCK", exceptGroupIds = "1")
 
         assertFalse(allAppsRulesAllowingGroup(1, listOf(groupRule), groups, labels).isNotEmpty())
     }

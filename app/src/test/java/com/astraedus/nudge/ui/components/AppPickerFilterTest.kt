@@ -1,15 +1,16 @@
 package com.astraedus.nudge.ui.components
 
 import com.astraedus.nudge.data.repository.InstalledAppsRepository.AppInfo
+import com.astraedus.nudge.testing.anApp
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class AppPickerFilterTest {
 
     private val apps = listOf(
-        AppInfo("com.cal", "Calendar", null),
-        AppInfo("com.cam", "Camera", null),
-        AppInfo("com.maps", "Maps", null)
+        anApp("com.cal", "Calendar"),
+        anApp("com.cam", "Camera"),
+        anApp("com.maps", "Maps")
     )
 
     @Test

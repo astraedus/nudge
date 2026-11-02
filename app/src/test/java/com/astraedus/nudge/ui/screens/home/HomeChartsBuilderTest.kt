@@ -1,7 +1,7 @@
 package com.astraedus.nudge.ui.screens.home
 
-import com.astraedus.nudge.data.db.entity.UsageEvent
 import com.astraedus.nudge.domain.engine.TimeTracker
+import com.astraedus.nudge.testing.aUsageEvent
 import com.astraedus.nudge.ui.screens.stats.StatsCalculator
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -21,6 +21,10 @@ class HomeChartsBuilderTest {
     private lateinit var builder: HomeChartsBuilder
 
     private val dayMs = 24L * 60L * 60L * 1000L
+
+    private companion object {
+        const val PACKAGE = "com.test.app"
+    }
 
     @Before
     fun setup() {
@@ -75,10 +79,10 @@ class HomeChartsBuilderTest {
     fun `a walk-away is charted as a walk-away, never as an extra block`() {
         val todayStart = timeTracker.startOfToday()
         val events = listOf(
-            event(todayStart + 1_000, wasBlocked = true),
-            event(todayStart + 2_000, wasBlocked = true, userChangedMind = true),
-            event(todayStart - 3 * dayMs + 1_000, wasBlocked = true),
-            event(todayStart - 6 * dayMs + 1_000, userChangedMind = true)
+            aUsageEvent(PACKAGE, todayStart + 1_000, wasBlocked = true),
+            aUsageEvent(PACKAGE, todayStart + 2_000, wasBlocked = true, userChangedMind = true),
+            aUsageEvent(PACKAGE, todayStart - 3 * dayMs + 1_000, wasBlocked = true),
+            aUsageEvent(PACKAGE, todayStart - 6 * dayMs + 1_000, userChangedMind = true)
         )
 
         val charts = builder.build(List(7) { 0L }, events, todayStart)
@@ -93,7 +97,7 @@ class HomeChartsBuilderTest {
     @Test
     fun `events older than the window are not charted`() {
         val todayStart = timeTracker.startOfToday()
-        val events = listOf(event(todayStart - 30 * dayMs, wasBlocked = true))
+        val events = listOf(aUsageEvent(PACKAGE, todayStart - 30 * dayMs, wasBlocked = true))
 
         val charts = builder.build(List(7) { 0L }, events, todayStart)
 
@@ -124,7 +128,7 @@ class HomeChartsBuilderTest {
         val todayStart = timeTracker.startOfToday()
         val charts = builder.build(
             weeklyTotals = List(7) { 0L },
-            weekEvents = listOf(event(todayStart + 1_000, wasBlocked = true)),
+            weekEvents = listOf(aUsageEvent(PACKAGE, todayStart + 1_000, wasBlocked = true)),
             todayStartMs = todayStart
         )
 
@@ -138,16 +142,4 @@ class HomeChartsBuilderTest {
         assertEquals(7, charts.weeklyScreenTime.size)
         assertEquals(0L, charts.weekTotalMs)
     }
-
-    private fun event(
-        timestamp: Long,
-        wasBlocked: Boolean = false,
-        userChangedMind: Boolean = false
-    ) = UsageEvent(
-        id = 0,
-        packageName = "com.test.app",
-        timestamp = timestamp,
-        wasBlocked = wasBlocked,
-        userChangedMind = userChangedMind
-    )
 }
