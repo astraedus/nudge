@@ -27,10 +27,21 @@ import javax.inject.Singleton
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "nudge_prefs")
 
+/**
+ * Every setting the app keeps, each with its default, over one [DataStore].
+ *
+ * The primary constructor takes the store itself so a JVM test can run THIS class, defaults and
+ * read-modify-write rules included, over an in-memory store (`testing/FakeNudgePreferences.kt`)
+ * instead of a mock that restates each default by hand. The app only ever builds it from a
+ * [Context], through the `@Inject` constructor below.
+ */
 @Singleton
-class NudgePreferences @Inject constructor(
-    @ApplicationContext private val context: Context
+class NudgePreferences internal constructor(
+    private val dataStore: DataStore<Preferences>
 ) : GlobalEnabledProvider {
+
+    @Inject
+    constructor(@ApplicationContext context: Context) : this(context.dataStore)
 
     private object Keys {
         val GLOBAL_ENABLED = booleanPreferencesKey("global_enabled")
@@ -78,52 +89,52 @@ class NudgePreferences @Inject constructor(
      * Nothing may depend on this re-emitting an unchanged value: that was never a signal, only a
      * side effect of which key someone else happened to write.
      */
-    override val isGlobalEnabled: Flow<Boolean> = context.dataStore.data
+    override val isGlobalEnabled: Flow<Boolean> = dataStore.data
         .map { prefs -> prefs[Keys.GLOBAL_ENABLED] ?: true }
         .distinctUntilChanged()
 
     suspend fun setGlobalEnabled(enabled: Boolean) {
-        context.dataStore.edit { prefs ->
+        dataStore.edit { prefs ->
             prefs[Keys.GLOBAL_ENABLED] = enabled
         }
     }
 
     /** Same reason as [isGlobalEnabled]: this pair drives the monitor service's existence. */
-    val isOnboardingComplete: Flow<Boolean> = context.dataStore.data
+    val isOnboardingComplete: Flow<Boolean> = dataStore.data
         .map { prefs -> prefs[Keys.ONBOARDING_COMPLETE] ?: false }
         .distinctUntilChanged()
 
     suspend fun setOnboardingComplete(complete: Boolean) {
-        context.dataStore.edit { prefs ->
+        dataStore.edit { prefs ->
             prefs[Keys.ONBOARDING_COMPLETE] = complete
         }
     }
 
-    val isDebugLoggingEnabled: Flow<Boolean> = context.dataStore.data
+    val isDebugLoggingEnabled: Flow<Boolean> = dataStore.data
         .map { prefs -> prefs[Keys.DEBUG_LOGGING_ENABLED] ?: false }
 
     suspend fun setDebugLoggingEnabled(enabled: Boolean) {
-        context.dataStore.edit { prefs ->
+        dataStore.edit { prefs ->
             prefs[Keys.DEBUG_LOGGING_ENABLED] = enabled
         }
     }
 
     /** Generic "Content Filter" master switch. Opt-in: defaults to false. */
-    val contentFilterEnabled: Flow<Boolean> = context.dataStore.data
+    val contentFilterEnabled: Flow<Boolean> = dataStore.data
         .map { prefs -> prefs[Keys.CONTENT_FILTER_ENABLED] ?: false }
 
     suspend fun setContentFilterEnabled(enabled: Boolean) {
-        context.dataStore.edit { prefs ->
+        dataStore.edit { prefs ->
             prefs[Keys.CONTENT_FILTER_ENABLED] = enabled
         }
     }
 
     /** Block mode applied to content-filter hits. One of BlockMode names. Defaults to HARD_BLOCK. */
-    val contentFilterMode: Flow<String> = context.dataStore.data
+    val contentFilterMode: Flow<String> = dataStore.data
         .map { prefs -> prefs[Keys.CONTENT_FILTER_MODE] ?: "HARD_BLOCK" }
 
     suspend fun setContentFilterMode(mode: String) {
-        context.dataStore.edit { prefs ->
+        dataStore.edit { prefs ->
             prefs[Keys.CONTENT_FILTER_MODE] = mode
         }
     }
@@ -133,11 +144,11 @@ class NudgePreferences @Inject constructor(
      * found in a URL's search query. Defaults to false so the general userbase is
      * unaffected; only matters when [contentFilterEnabled] is also on.
      */
-    val contentFilterStrictKeywords: Flow<Boolean> = context.dataStore.data
+    val contentFilterStrictKeywords: Flow<Boolean> = dataStore.data
         .map { prefs -> prefs[Keys.CONTENT_FILTER_STRICT_KEYWORDS] ?: false }
 
     suspend fun setContentFilterStrictKeywords(enabled: Boolean) {
-        context.dataStore.edit { prefs ->
+        dataStore.edit { prefs ->
             prefs[Keys.CONTENT_FILTER_STRICT_KEYWORDS] = enabled
         }
     }
@@ -151,13 +162,13 @@ class NudgePreferences @Inject constructor(
      * gate ([com.astraedus.nudge.domain.lock.ContentFilterAllowlistWeakening]); these writers do not
      * gate, exactly like every other setter here.
      */
-    val contentFilterAllowlist: Flow<Set<String>> = context.dataStore.data
+    val contentFilterAllowlist: Flow<Set<String>> = dataStore.data
         .map { prefs -> prefs[Keys.CONTENT_FILTER_ALLOWLIST] ?: emptySet() }
         .distinctUntilChanged()
 
     /** Add one entry, normalised; invalid input is dropped and the [ContentFilterUserList.MAX_ENTRIES] cap holds. */
     suspend fun addContentFilterAllowlistEntry(raw: String) {
-        context.dataStore.edit { prefs ->
+        dataStore.edit { prefs ->
             val current = prefs[Keys.CONTENT_FILTER_ALLOWLIST] ?: emptySet()
             prefs[Keys.CONTENT_FILTER_ALLOWLIST] =
                 ContentFilterUserList.withEntry(current, raw).toSet()
@@ -166,7 +177,7 @@ class NudgePreferences @Inject constructor(
 
     /** Remove one entry. Always allowed: removing an exception can only block more. */
     suspend fun removeContentFilterAllowlistEntry(entry: String) {
-        context.dataStore.edit { prefs ->
+        dataStore.edit { prefs ->
             prefs[Keys.CONTENT_FILTER_ALLOWLIST] =
                 (prefs[Keys.CONTENT_FILTER_ALLOWLIST] ?: emptySet()) - entry
         }
@@ -182,13 +193,13 @@ class NudgePreferences @Inject constructor(
      * gate ([com.astraedus.nudge.domain.lock.ContentFilterBlocklistWeakening]); these writers do not
      * gate, exactly like every other setter here.
      */
-    val contentFilterBlocklist: Flow<Set<String>> = context.dataStore.data
+    val contentFilterBlocklist: Flow<Set<String>> = dataStore.data
         .map { prefs -> prefs[Keys.CONTENT_FILTER_BLOCKLIST] ?: emptySet() }
         .distinctUntilChanged()
 
     /** Add one entry, normalised; invalid input is dropped and the [ContentFilterUserList.MAX_ENTRIES] cap holds. */
     suspend fun addContentFilterBlocklistEntry(raw: String) {
-        context.dataStore.edit { prefs ->
+        dataStore.edit { prefs ->
             val current = prefs[Keys.CONTENT_FILTER_BLOCKLIST] ?: emptySet()
             prefs[Keys.CONTENT_FILTER_BLOCKLIST] =
                 ContentFilterUserList.withEntry(current, raw).toSet()
@@ -197,7 +208,7 @@ class NudgePreferences @Inject constructor(
 
     /** Remove one entry. Removing a block weakens the filter; the caller owns the Strict Mode gate. */
     suspend fun removeContentFilterBlocklistEntry(entry: String) {
-        context.dataStore.edit { prefs ->
+        dataStore.edit { prefs ->
             prefs[Keys.CONTENT_FILTER_BLOCKLIST] =
                 (prefs[Keys.CONTENT_FILTER_BLOCKLIST] ?: emptySet()) - entry
         }
@@ -207,29 +218,29 @@ class NudgePreferences @Inject constructor(
      * User-edited overlay messages, one per line. Empty string ("") means "use the
      * built-in defaults" — resolved via [com.astraedus.nudge.ui.overlay.NudgeMessages.resolvePool].
      */
-    val customDelayTitles: Flow<String> = context.dataStore.data
+    val customDelayTitles: Flow<String> = dataStore.data
         .map { prefs -> prefs[Keys.CUSTOM_DELAY_TITLES] ?: "" }
 
     suspend fun setCustomDelayTitles(value: String) {
-        context.dataStore.edit { prefs ->
+        dataStore.edit { prefs ->
             prefs[Keys.CUSTOM_DELAY_TITLES] = value
         }
     }
 
-    val customDelaySubtitles: Flow<String> = context.dataStore.data
+    val customDelaySubtitles: Flow<String> = dataStore.data
         .map { prefs -> prefs[Keys.CUSTOM_DELAY_SUBTITLES] ?: "" }
 
     suspend fun setCustomDelaySubtitles(value: String) {
-        context.dataStore.edit { prefs ->
+        dataStore.edit { prefs ->
             prefs[Keys.CUSTOM_DELAY_SUBTITLES] = value
         }
     }
 
-    val customHardBlockMessages: Flow<String> = context.dataStore.data
+    val customHardBlockMessages: Flow<String> = dataStore.data
         .map { prefs -> prefs[Keys.CUSTOM_HARD_BLOCK_MESSAGES] ?: "" }
 
     suspend fun setCustomHardBlockMessages(value: String) {
-        context.dataStore.edit { prefs ->
+        dataStore.edit { prefs ->
             prefs[Keys.CUSTOM_HARD_BLOCK_MESSAGES] = value
         }
     }
@@ -239,11 +250,11 @@ class NudgePreferences @Inject constructor(
      * action that WEAKENS protection — including turning this off — requires passing the unlock
      * challenge. Strengthening protection is always free.
      */
-    val isStrictModeEnabled: Flow<Boolean> = context.dataStore.data
+    val isStrictModeEnabled: Flow<Boolean> = dataStore.data
         .map { prefs -> prefs[Keys.STRICT_MODE_ENABLED] ?: false }
 
     suspend fun setStrictModeEnabled(enabled: Boolean) {
-        context.dataStore.edit { prefs ->
+        dataStore.edit { prefs ->
             prefs[Keys.STRICT_MODE_ENABLED] = enabled
         }
     }
@@ -252,14 +263,14 @@ class NudgePreferences @Inject constructor(
      * Strict Mode challenge difficulty: number of raw characters the user must type to unlock.
      * Defaults to [com.astraedus.nudge.domain.lock.StrictModeChallenge.DEFAULT_LENGTH] (24).
      */
-    val strictModeChallengeLength: Flow<Int> = context.dataStore.data
+    val strictModeChallengeLength: Flow<Int> = dataStore.data
         .map { prefs ->
             prefs[Keys.STRICT_MODE_CHALLENGE_LENGTH]
                 ?: com.astraedus.nudge.domain.lock.StrictModeChallenge.DEFAULT_LENGTH
         }
 
     suspend fun setStrictModeChallengeLength(length: Int) {
-        context.dataStore.edit { prefs ->
+        dataStore.edit { prefs ->
             prefs[Keys.STRICT_MODE_CHALLENGE_LENGTH] = length
         }
     }
@@ -269,11 +280,11 @@ class NudgePreferences @Inject constructor(
      * escape hatch is available out of the box); users can disable it entirely. Independent of Strict
      * Mode, which hides the pass button while it is on.
      */
-    val emergencyPassEnabled: Flow<Boolean> = context.dataStore.data
+    val emergencyPassEnabled: Flow<Boolean> = dataStore.data
         .map { prefs -> prefs[Keys.EMERGENCY_PASS_ENABLED] ?: true }
 
     suspend fun setEmergencyPassEnabled(enabled: Boolean) {
-        context.dataStore.edit { prefs ->
+        dataStore.edit { prefs ->
             prefs[Keys.EMERGENCY_PASS_ENABLED] = enabled
         }
     }
@@ -289,12 +300,12 @@ class NudgePreferences @Inject constructor(
      * is not weakening and needs no gate; a restore that turns it on simply restores the nudge the
      * user had already opted into.
      */
-    val bounceCheckInEnabled: Flow<Boolean> = context.dataStore.data
+    val bounceCheckInEnabled: Flow<Boolean> = dataStore.data
         .map { prefs -> prefs[Keys.BOUNCE_CHECK_IN_ENABLED] ?: false }
         .distinctUntilChanged()
 
     suspend fun setBounceCheckInEnabled(enabled: Boolean) {
-        context.dataStore.edit { prefs -> prefs[Keys.BOUNCE_CHECK_IN_ENABLED] = enabled }
+        dataStore.edit { prefs -> prefs[Keys.BOUNCE_CHECK_IN_ENABLED] = enabled }
     }
 
     /**
@@ -303,11 +314,11 @@ class NudgePreferences @Inject constructor(
      * transparently — [com.astraedus.nudge.domain.emergency.EmergencyPass.globalLastUsed] reads the
      * MAX timestamp across entries. A fresh use collapses it to the single global entry.
      */
-    val emergencyPassUsage: Flow<String> = context.dataStore.data
+    val emergencyPassUsage: Flow<String> = dataStore.data
         .map { prefs -> prefs[Keys.EMERGENCY_PASS_USAGE] ?: "" }
 
     suspend fun setEmergencyPassUsage(raw: String) {
-        context.dataStore.edit { prefs ->
+        dataStore.edit { prefs ->
             prefs[Keys.EMERGENCY_PASS_USAGE] = raw
         }
     }
@@ -332,7 +343,7 @@ class NudgePreferences @Inject constructor(
      * The explainer is one-shot education about a platform limitation Nudge cannot fix in code, so
      * this exists purely to stop it nagging.
      */
-    val pipEscapePromptedPackages: Flow<String> = context.dataStore.data
+    val pipEscapePromptedPackages: Flow<String> = dataStore.data
         .map { prefs -> prefs[Keys.PIP_ESCAPE_PROMPTED] ?: "" }
 
     /**
@@ -340,7 +351,7 @@ class NudgePreferences @Inject constructor(
      * a single `edit` so two apps escaping close together cannot clobber each other's entry.
      */
     suspend fun recordPipEscapePrompted(packageName: String) {
-        context.dataStore.edit { prefs ->
+        dataStore.edit { prefs ->
             val current = com.astraedus.nudge.domain.pip.PipEscapeLedger.parse(
                 prefs[Keys.PIP_ESCAPE_PROMPTED] ?: ""
             )
@@ -357,11 +368,11 @@ class NudgePreferences @Inject constructor(
      * memory on purpose: the failure this exists for is the OS killing our process, so the very
      * state the next run needs is the state a field would have lost.
      */
-    val protectionDegraded: Flow<Boolean> = context.dataStore.data
+    val protectionDegraded: Flow<Boolean> = dataStore.data
         .map { prefs -> prefs[Keys.PROTECTION_DEGRADED] ?: false }
 
     /** Epoch millis of the last protection alert we posted; 0 = never. Backs the alert cooldown. */
-    val protectionAlertShownAt: Flow<Long> = context.dataStore.data
+    val protectionAlertShownAt: Flow<Long> = dataStore.data
         .map { prefs -> prefs[Keys.PROTECTION_ALERT_SHOWN_AT] ?: 0L }
 
     /**
@@ -370,7 +381,7 @@ class NudgePreferences @Inject constructor(
      * would re-alert on the next run and burn through the cooldown the user is being spared.
      */
     suspend fun recordProtectionCheck(degraded: Boolean, alertShownAtMs: Long?) {
-        context.dataStore.edit { prefs ->
+        dataStore.edit { prefs ->
             prefs[Keys.PROTECTION_DEGRADED] = degraded
             alertShownAtMs?.let { prefs[Keys.PROTECTION_ALERT_SHOWN_AT] = it }
         }
@@ -388,7 +399,7 @@ class NudgePreferences @Inject constructor(
      * [isGlobalEnabled] documents: the accessibility service collects this, and DataStore re-emits
      * every snapshot on every write to ANY key.
      */
-    val nukeState: Flow<NukeState> = context.dataStore.data
+    val nukeState: Flow<NukeState> = dataStore.data
         .map { prefs ->
             val hash = prefs[Keys.NUKE_KEY_HASH]?.takeIf { it.isNotBlank() }
             NukeState(
@@ -402,14 +413,14 @@ class NudgePreferences @Inject constructor(
 
     /** Turn Nuke on or off. Refuses to turn it ON with no key paired (it stays off). */
     suspend fun setNukeActive(active: Boolean) {
-        context.dataStore.edit { prefs ->
+        dataStore.edit { prefs ->
             prefs[Keys.NUKE_ACTIVE] = active && !prefs[Keys.NUKE_KEY_HASH].isNullOrBlank()
         }
     }
 
     /** Add [packages] to the Nuke list. Read-modify-write under one `edit`. */
     suspend fun addNukePackages(packages: Collection<String>) {
-        context.dataStore.edit { prefs ->
+        dataStore.edit { prefs ->
             prefs[Keys.NUKE_PACKAGES] = (prefs[Keys.NUKE_PACKAGES] ?: emptySet()) +
                 packages.filter { it.isNotBlank() }
         }
@@ -417,7 +428,7 @@ class NudgePreferences @Inject constructor(
 
     /** Remove [packages] from the Nuke list. Read-modify-write under one `edit`. */
     suspend fun removeNukePackages(packages: Collection<String>) {
-        context.dataStore.edit { prefs ->
+        dataStore.edit { prefs ->
             prefs[Keys.NUKE_PACKAGES] = (prefs[Keys.NUKE_PACKAGES] ?: emptySet()) - packages.toSet()
         }
     }
@@ -425,7 +436,7 @@ class NudgePreferences @Inject constructor(
     /** Pair a key: only its hash is stored, never the payload. */
     suspend fun setNukeKey(keyHash: String, kind: NukeKeyKind) {
         require(keyHash.isNotBlank()) { "a Nuke key hash must not be blank" }
-        context.dataStore.edit { prefs ->
+        dataStore.edit { prefs ->
             prefs[Keys.NUKE_KEY_HASH] = keyHash
             prefs[Keys.NUKE_KEY_KIND] = kind.name
         }
@@ -433,7 +444,7 @@ class NudgePreferences @Inject constructor(
 
     /** Unpair the key. Also turns Nuke OFF, in the same transaction: no key, no Nuke. */
     suspend fun clearNukeKey() {
-        context.dataStore.edit { prefs ->
+        dataStore.edit { prefs ->
             prefs.remove(Keys.NUKE_KEY_HASH)
             prefs.remove(Keys.NUKE_KEY_KIND)
             prefs[Keys.NUKE_ACTIVE] = false
@@ -441,12 +452,12 @@ class NudgePreferences @Inject constructor(
     }
 
     /** Whether the one-time Nuke explainer has been shown. */
-    val nukeIntroSeen: Flow<Boolean> = context.dataStore.data
+    val nukeIntroSeen: Flow<Boolean> = dataStore.data
         .map { prefs -> prefs[Keys.NUKE_INTRO_SEEN] ?: false }
         .distinctUntilChanged()
 
     suspend fun setNukeIntroSeen() {
-        context.dataStore.edit { prefs -> prefs[Keys.NUKE_INTRO_SEEN] = true }
+        dataStore.edit { prefs -> prefs[Keys.NUKE_INTRO_SEEN] = true }
     }
 
     /**
@@ -455,13 +466,13 @@ class NudgePreferences @Inject constructor(
      * be shown is `RedirectAppPolicy.resolve`'s decision, never this raw value's. Device-local, not
      * exported.
      */
-    val redirectAppPackage: Flow<String?> = context.dataStore.data
+    val redirectAppPackage: Flow<String?> = dataStore.data
         .map { prefs -> RedirectAppPref.read(prefs) }
         .distinctUntilChanged()
 
     /** Choose [packageName] as the redirect app, or clear it with null. */
     suspend fun setRedirectAppPackage(packageName: String?) {
-        context.dataStore.edit { prefs -> RedirectAppPref.write(prefs, packageName) }
+        dataStore.edit { prefs -> RedirectAppPref.write(prefs, packageName) }
     }
 
     // --- Backup: the settings an export file carries (see [ExportedSettings]) ---------------
@@ -504,7 +515,7 @@ class NudgePreferences @Inject constructor(
      */
     suspend fun applyImportedSettings(settings: ExportedSettings) {
         if (settings.isEmpty) return
-        context.dataStore.edit { prefs ->
+        dataStore.edit { prefs ->
             settings.contentFilterEnabled?.let { prefs[Keys.CONTENT_FILTER_ENABLED] = it }
             settings.contentFilterMode?.let { prefs[Keys.CONTENT_FILTER_MODE] = it }
             settings.contentFilterStrictKeywords?.let {
