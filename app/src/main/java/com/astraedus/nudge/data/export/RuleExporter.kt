@@ -24,8 +24,8 @@ import javax.inject.Singleton
 data class ImportResult(
     /**
      * Every readable rule in the file: the `rules` array, then the `extendedRules` array (whose
-     * entries have [ExportedRule.allApps] set). One list, so every count the user is shown covers
-     * both.
+     * entries have [ExportedRule.allApps] or [ExportedRule.firstUnlockMinutes] set). One list, so
+     * every count the user is shown covers both.
      */
     val rules: List<ExportedRule>,
     val groups: List<ExportedGroup>,
@@ -97,6 +97,14 @@ class RuleExporter @Inject constructor() {
 
         /** Rough per-entry size, used only to pre-size the output buffer. */
         private const val ESTIMATED_HISTORY_ENTRY_CHARS = 120
+
+        /**
+         * The minutes in a day, as the upper bound for `dayStartMinute` on import. An out-of-range
+         * value is skipped rather than clamped: the runtime clamps a corrupt preference on the
+         * event path, but a FILE is user input and a silently clamped day start would reorganise
+         * the user's first-unlock windows under a number they never chose.
+         */
+        private const val MINUTES_PER_DAY = 24 * 60
     }
 
     /**
@@ -122,8 +130,14 @@ class RuleExporter @Inject constructor() {
         // An All apps rule goes to `extendedRules`, never `rules` (spec 5.8): an older Nudge would
         // import it from `rules` as a rule with no target. Decided by the engine's own reading of
         // the row, so a corrupt row that also names an app is exported as the app rule it acts as.
-        val (allAppsRules, targetedRules) = rules.partition {
-            RuleTarget.of(it.packageName, it.groupId, it.allApps, emptySet(), emptySet()) is RuleTarget.AllApps
+        //
+        // A first-unlock rule goes there too, whatever its target (spec 5.8). An older Nudge does
+        // not know `firstUnlockMinutes`, so from `rules` it would import the rule with no window at
+        // all -- always on, the opposite of the "for a few minutes after you unlock" window the
+        // user wrote. In `extendedRules` that Nudge skips it and restores everything else, so the
+        // user loses one rule on that phone rather than gaining a lock that never ends.
+        val (extendedRules, targetedRules) = rules.partition { rule ->
+            rule.firstUnlockMinutes != null || isAllAppsRule(rule)
         }
 
         val export = NudgeExport(
@@ -139,15 +153,21 @@ class RuleExporter @Inject constructor() {
                     hasDefinition = true
                 )
             },
-            extendedRules = allAppsRules.map { rule ->
-                exportedRule(rule, groupIdToName).copy(
-                    packageName = null,
-                    groupName = null,
-                    allApps = true,
-                    exceptPackages = ExceptCsv.packages(rule.exceptPackages).toList(),
-                    // A stale id (its group deleted) has no name and allows nothing: dropped.
-                    exceptGroups = ExceptCsv.groupIds(rule.exceptGroupIds).mapNotNull { groupIdToName[it] }
-                )
+            extendedRules = extendedRules.map { rule ->
+                if (isAllAppsRule(rule)) {
+                    exportedRule(rule, groupIdToName).copy(
+                        packageName = null,
+                        groupName = null,
+                        allApps = true,
+                        exceptPackages = ExceptCsv.packages(rule.exceptPackages).toList(),
+                        // A stale id (its group deleted) has no name and allows nothing: dropped.
+                        exceptGroups = ExceptCsv.groupIds(rule.exceptGroupIds).mapNotNull { groupIdToName[it] }
+                    )
+                } else {
+                    // A first-unlock app or group rule: it names its target normally. Only the
+                    // window makes it extended.
+                    exportedRule(rule, groupIdToName)
+                }
             },
             history = history.map(HistoryMerge::toExported),
             settings = settings?.takeIf { !it.isEmpty }
@@ -155,6 +175,10 @@ class RuleExporter @Inject constructor() {
 
         return serializeToJson(export)
     }
+
+    /** The engine's own reading, so export and evaluation can never disagree about the target. */
+    private fun isAllAppsRule(rule: BlockRule): Boolean =
+        RuleTarget.of(rule.packageName, rule.groupId, rule.allApps, emptySet(), emptySet()) is RuleTarget.AllApps
 
     private fun exportedRule(rule: BlockRule, groupIdToName: Map<Long, String>): ExportedRule =
         ExportedRule(
@@ -179,7 +203,8 @@ class RuleExporter @Inject constructor() {
             webBlockMode = rule.webBlockMode,
             tabVanish = rule.tabVanish,
             followingSteer = rule.followingSteer,
-            keepPassOnShortTrips = rule.keepPassOnShortTrips
+            keepPassOnShortTrips = rule.keepPassOnShortTrips,
+            firstUnlockMinutes = rule.firstUnlockMinutes
         )
 
     /**
@@ -334,12 +359,15 @@ class RuleExporter @Inject constructor() {
         if (export.extendedRules.isNotEmpty()) {
             val extendedArray = JSONArray()
             export.extendedRules.forEach { rule ->
-                extendedArray.put(
-                    ruleJson(rule)
-                        .put("allApps", rule.allApps)
-                        .put("exceptPackages", JSONArray(rule.exceptPackages))
-                        .put("exceptGroups", JSONArray(rule.exceptGroups))
-                )
+                val obj = ruleJson(rule)
+                    .put("allApps", rule.allApps)
+                    .put("exceptPackages", JSONArray(rule.exceptPackages))
+                    .put("exceptGroups", JSONArray(rule.exceptGroups))
+                // Written only when set, never as JSON null: absent is the format's word for "not
+                // carried" (see [ExportedSettings]). `armedAt` is deliberately NOT written -- it is
+                // this phone's clock, and the importing repository stamps its own on write.
+                rule.firstUnlockMinutes?.let { obj.put("firstUnlockMinutes", it) }
+                extendedArray.put(obj)
             }
             root.put("extendedRules", extendedArray)
         }
@@ -398,6 +426,9 @@ class RuleExporter @Inject constructor() {
         settings.customDelayTitles?.let { put("customDelayTitles", it) }
         settings.customDelaySubtitles?.let { put("customDelaySubtitles", it) }
         settings.customHardBlockMessages?.let { put("customHardBlockMessages", it) }
+        // The logical day's start, 0..1439 minutes from midnight. Written only when carried, like
+        // every other setting here.
+        settings.dayStartMinute?.let { put("dayStartMinute", it) }
     }
 
     /**
@@ -570,7 +601,23 @@ class RuleExporter @Inject constructor() {
             customDelayTitles = obj.setting("customDelayTitles", onSkip) { stringValue(it) },
             customDelaySubtitles = obj.setting("customDelaySubtitles", onSkip) { stringValue(it) },
             customHardBlockMessages =
-                obj.setting("customHardBlockMessages", onSkip) { stringValue(it) }
+                obj.setting("customHardBlockMessages", onSkip) { stringValue(it) },
+            dayStartMinute = obj.setting("dayStartMinute", onSkip) { key ->
+                val minute = intValue(key)
+                // `intValue` truncates a fractional Number, which is harmless for a length but
+                // not for a clock time: 12.5 would silently become 12:00 and move the user's
+                // logical day. Refuse it instead -- the brief treats a non-int as a skipped key.
+                require((opt(key) as? Number)?.toDouble() == minute.toDouble()) {
+                    "is not a whole number of minutes"
+                }
+                // 0..1439 is a real minute of a day. Anything else would be clamped at runtime,
+                // so importing it would silently reorganise the user's logical day around a
+                // number the file does not really describe.
+                require(minute in 0 until MINUTES_PER_DAY) {
+                    "day start $minute is outside 0..${MINUTES_PER_DAY - 1}"
+                }
+                minute
+            }
         )
         return settings.takeIf { !it.isEmpty }
     }
@@ -601,7 +648,9 @@ class RuleExporter @Inject constructor() {
      * One entry of `rules`: an app rule or a group rule, exactly one of the two. An entry naming
      * neither (or both) is skipped with a reason: it used to import as a row with no target, which
      * blocks nothing and can not be edited, and the repository now refuses to write one. Any
-     * `allApps` key here is ignored (see [ExportedRule.allApps]).
+     * `allApps` or `firstUnlockMinutes` key here is ignored (see [ExportedRule.allApps] and
+     * [ExportedRule.firstUnlockMinutes]): those shapes live only in `extendedRules`, so a
+     * hand-edited key can not turn an ordinary rule into a lock on everything or give it a window.
      */
     private fun parseRule(obj: JSONObject): ExportedRule {
         val rule = parseRuleFields(obj)
@@ -611,24 +660,68 @@ class RuleExporter @Inject constructor() {
     }
 
     /**
-     * One entry of `extendedRules`: an All apps rule (spec 5.8). An entry that is not an All apps
-     * rule was written by a newer Nudge for a rule kind this one does not know, and is skipped with
-     * a reason rather than imported without the part that made it extended.
+     * One entry of `extendedRules`: an All apps rule or a first-unlock rule (spec 5.8).
+     *
+     * An All apps entry must name no app and no group, exactly as before. A first-unlock entry may
+     * name an app OR a group -- that is the new shape -- and must carry a positive
+     * `firstUnlockMinutes`. An entry that is neither was written by a newer Nudge for a rule kind
+     * this build does not know, and is skipped with a reason rather than imported without the part
+     * that made it extended.
      *
      * Unreadable or blank entries in the except lists are dropped rather than failing the rule: a
      * shorter except list only blocks more, while losing the rule would block less.
      */
     private fun parseExtendedRule(obj: JSONObject): ExportedRule {
         val rule = parseRuleFields(obj)
-        require(obj.opt("allApps") == true) { "Needs a newer version of Nudge" }
-        require(rule.packageName == null && rule.groupName == null) {
-            "Names an app or a group as well as all apps"
+        val firstUnlockMinutes = obj.firstUnlockMinutesValue()
+        val allApps = obj.opt("allApps") == true
+
+        if (allApps) {
+            require(rule.packageName == null && rule.groupName == null) {
+                "Names an app or a group as well as all apps"
+            }
+        } else {
+            require(firstUnlockMinutes != null) { "Needs a newer version of Nudge" }
+            // Same invariant `rules` enforces: exactly one target. A row naming both would be
+            // refused by the repository on write, and a row naming NEITHER would be written as a
+            // rule that targets nothing, which the repository now refuses too.
+            require(rule.packageName != null || rule.groupName != null) {
+                "Names no app and no group"
+            }
+            require(rule.packageName == null || rule.groupName == null) {
+                "Names both an app and a group"
+            }
         }
+
         return rule.copy(
-            allApps = true,
+            allApps = allApps,
             exceptPackages = obj.textList("exceptPackages"),
-            exceptGroups = obj.textList("exceptGroups")
+            exceptGroups = obj.textList("exceptGroups"),
+            firstUnlockMinutes = firstUnlockMinutes
         )
+    }
+
+    /**
+     * A rule's first-unlock window, or null when the entry does not carry one.
+     *
+     * Only `extendedRules` ever asks: `rules` never reads the key, so a hand-edited
+     * `"firstUnlockMinutes"` there can not add a schedule this reader would then act on.
+     *
+     * `<= 0`, a non-number and a fractional value are refused rather than clamped. The runtime
+     * clamps a corrupt preference because it must not throw on the event path, but a file is user
+     * input on the one write path that bypasses every screen: a silently adjusted window is a rule
+     * the user never wrote.
+     */
+    private fun JSONObject.firstUnlockMinutesValue(): Int? {
+        if (!has("firstUnlockMinutes") || isNull("firstUnlockMinutes")) return null
+        val number = opt("firstUnlockMinutes") as? Number
+            ?: throw JSONException("\"firstUnlockMinutes\" is not a number")
+        val minutes = number.toInt()
+        require(number.toDouble() == minutes.toDouble()) {
+            "\"firstUnlockMinutes\" is not a whole number of minutes"
+        }
+        require(minutes > 0) { "\"firstUnlockMinutes\" must be a positive number of minutes" }
+        return minutes
     }
 
     /** The text entries of an optional array, trimmed, blanks and non-text dropped, in order. */
