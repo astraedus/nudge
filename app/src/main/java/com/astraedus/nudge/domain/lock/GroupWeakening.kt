@@ -65,7 +65,8 @@ object GroupWeakening {
 
     /**
      * The same question over two group DEFINITIONS (spec 5.2), resolved on this device first:
-     * [installed] maps each installed app to its category, [essentials] are never members. So the
+     * [installed] maps each installed app to its category, [essentials] are never members, and
+     * [browsers] join only by hand. So the
      * answer is about apps, not settings: unchecking a category no installed app is in removes
      * nobody and is free, unchecking one five apps are in is five members leaving, and "Removed by
      * you" on a category app is one member leaving.
@@ -75,10 +76,11 @@ object GroupWeakening {
         new: GroupDefinition,
         usage: GroupUsage,
         installed: Map<String, AppCategory>,
-        essentials: Set<String>
+        essentials: Set<String>,
+        browsers: Set<String>
     ): Boolean = isWeakening(
-        ResolvedGroup(old.id, GroupMembershipResolver.membersOf(old, installed, essentials)),
-        ResolvedGroup(new.id, GroupMembershipResolver.membersOf(new, installed, essentials)),
+        ResolvedGroup(old.id, GroupMembershipResolver.membersOf(old, installed, essentials, browsers)),
+        ResolvedGroup(new.id, GroupMembershipResolver.membersOf(new, installed, essentials, browsers)),
         usage
     )
 }

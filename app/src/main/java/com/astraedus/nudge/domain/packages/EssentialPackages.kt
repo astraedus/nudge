@@ -18,4 +18,12 @@ interface EssentialPackages {
      * accessibility service's synchronous browser check). Null before the first resolution.
      */
     fun cachedOrNull(): Set<String>?
+
+    /**
+     * The one browser list: the browsers Nudge reads website addresses from, plus every app on this
+     * phone that opens an ordinary web link. Never essential (spec 5.4), and never a member of a
+     * group by category, only by hand ([com.astraedus.nudge.domain.groups.GroupMembershipResolver]).
+     * Suspends, like [current]; resolved and cached with it.
+     */
+    suspend fun browsers(): Set<String>
 }

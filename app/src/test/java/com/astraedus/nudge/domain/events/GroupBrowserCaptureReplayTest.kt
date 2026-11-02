@@ -142,7 +142,7 @@ class GroupBrowserCaptureReplayTest {
             pkg,
             snapshot.ruleData,
             snapshot.membership,
-            CoverageFacts(essential = false, launchable = true, category = null)
+            CoverageFacts(essential = false, launchable = true, category = null, browser = false)
         ) { schedule.isActiveNow(it) }
 
     @Test

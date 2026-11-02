@@ -17,7 +17,16 @@ import com.astraedus.nudge.domain.packages.AppCategory
  * essential" is how an essential app ends up under an All apps rule, and a defaulted null category
  * is how a category group silently covers nothing.
  */
-data class CoverageFacts(val essential: Boolean, val launchable: Boolean, val category: AppCategory?)
+data class CoverageFacts(
+    val essential: Boolean,
+    val launchable: Boolean,
+    val category: AppCategory?,
+    /**
+     * On the one browser list ([com.astraedus.nudge.domain.packages.EssentialPackages.browsers]): a
+     * browser joins no group by [category], only by hand. Only consulted when [category] is read.
+     */
+    val browser: Boolean
+)
 
 /**
  * Which rules cover a package (spec 4.1). The ONE coverage answer: block evaluation
@@ -57,10 +66,10 @@ object RuleCoverage {
 
     /**
      * The groups [packageName] is a member of, by [membership] (spec 5.2) with [facts]' category.
-     * Essentials are applied by [covers], per rule kind.
+     * Essentials are applied by [covers], per rule kind; a browser joins by hand only.
      */
     fun groupIdsOf(packageName: String, membership: GroupMembershipResolver, facts: CoverageFacts): Set<Long> =
-        membership.groupIdsOf(packageName, facts.category)
+        membership.groupIdsOf(packageName, facts.category, facts.browser)
 
     /**
      * Does evaluating [rules] need the package's category? True when a rule targets, or (All apps)

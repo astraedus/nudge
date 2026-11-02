@@ -117,12 +117,12 @@ class RulesOnlyAddInvariantTest {
     }
 
     private val factsCases = listOf(
-        CoverageFacts(essential = false, launchable = true, category = null),
-        CoverageFacts(essential = true, launchable = true, category = null),
-        CoverageFacts(essential = false, launchable = false, category = null),
+        CoverageFacts(essential = false, launchable = true, category = null, browser = false),
+        CoverageFacts(essential = true, launchable = true, category = null, browser = false),
+        CoverageFacts(essential = false, launchable = false, category = null, browser = false),
         // [pkg] is in a SOCIAL category group; an essential never is, whatever its category.
-        CoverageFacts(essential = false, launchable = true, category = AppCategory.SOCIAL),
-        CoverageFacts(essential = true, launchable = true, category = AppCategory.SOCIAL)
+        CoverageFacts(essential = false, launchable = true, category = AppCategory.SOCIAL, browser = false),
+        CoverageFacts(essential = true, launchable = true, category = AppCategory.SOCIAL, browser = false)
     )
 
     private fun decide(rules: List<BlockRuleData>, facts: CoverageFacts, usageMs: Long, feature: String?) =

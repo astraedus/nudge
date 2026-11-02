@@ -90,7 +90,7 @@ class RuleEvaluatorGroupNameTest {
             "com.instagram.android",
             listOf(rule()),
             membership(7L to "com.instagram.android"),
-            CoverageFacts(essential = false, launchable = true, category = null)
+            CoverageFacts(essential = false, launchable = true, category = null, browser = false)
         )
         assertEquals("Social", resolved.single().ruleName)
     }

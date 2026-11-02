@@ -17,7 +17,7 @@ class CoveringGroupsTest {
     private val evening = AppGroup(id = 2, name = "Evening")
     private val work = AppGroup(id = 3, name = "Work")
 
-    private val facts = CoverageFacts(essential = false, launchable = true, category = AppCategory.UNDEFINED)
+    private val facts = CoverageFacts(essential = false, launchable = true, category = AppCategory.UNDEFINED, browser = false)
 
     private val members = listOf(
         AppGroupMember(1, app),
@@ -81,7 +81,7 @@ class CoveringGroupsTest {
 
     @Test
     fun `an essential app with a matching category lists nothing`() {
-        val essentialVideo = CoverageFacts(essential = true, launchable = true, category = AppCategory.VIDEO)
+        val essentialVideo = CoverageFacts(essential = true, launchable = true, category = AppCategory.VIDEO, browser = false)
         assertTrue(
             coveringGroups("com.dialer", essentialVideo, listOf(videos), emptyList(), listOf(videoRule)).isEmpty()
         )

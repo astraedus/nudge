@@ -22,31 +22,31 @@ class GroupMembershipResolverTest {
     private val resolver = GroupMembershipResolver(listOf(social))
 
     @Test fun `an app whose category is checked is a member`() {
-        assertTrue(resolver.isMember(1, "com.chat", AppCategory.SOCIAL, essential = false))
-        assertEquals(setOf(1L), resolver.groupIdsOf("com.chat", AppCategory.SOCIAL))
+        assertTrue(resolver.isMember(1, "com.chat", AppCategory.SOCIAL, essential = false, browser = false))
+        assertEquals(setOf(1L), resolver.groupIdsOf("com.chat", AppCategory.SOCIAL, browser = false))
     }
 
     @Test fun `an app in another category is not`() {
-        assertFalse(resolver.isMember(1, "com.game", AppCategory.GAME, essential = false))
-        assertEquals(emptySet<Long>(), resolver.groupIdsOf("com.game", AppCategory.GAME))
+        assertFalse(resolver.isMember(1, "com.game", AppCategory.GAME, essential = false, browser = false))
+        assertEquals(emptySet<Long>(), resolver.groupIdsOf("com.game", AppCategory.GAME, browser = false))
     }
 
     @Test fun `an app added by hand is a member whatever its category`() {
-        assertTrue(resolver.isMember(1, "com.handpicked", AppCategory.GAME, essential = false))
-        assertTrue(resolver.isMember(1, "com.handpicked", null, essential = false))
-        assertEquals(setOf(1L), resolver.groupIdsOf("com.handpicked", null))
+        assertTrue(resolver.isMember(1, "com.handpicked", AppCategory.GAME, essential = false, browser = false))
+        assertTrue(resolver.isMember(1, "com.handpicked", null, essential = false, browser = false))
+        assertEquals(setOf(1L), resolver.groupIdsOf("com.handpicked", null, browser = false))
     }
 
     @Test fun `removed by you beats the category`() {
-        assertFalse(resolver.isMember(1, "com.removed", AppCategory.SOCIAL, essential = false))
-        assertEquals(emptySet<Long>(), resolver.groupIdsOf("com.removed", AppCategory.SOCIAL))
+        assertFalse(resolver.isMember(1, "com.removed", AppCategory.SOCIAL, essential = false, browser = false))
+        assertEquals(emptySet<Long>(), resolver.groupIdsOf("com.removed", AppCategory.SOCIAL, browser = false))
     }
 
     @Test fun `an essential app is never a member, however it would match`() {
         val handPickedEssential = GroupDefinition(2, setOf(AppCategory.SOCIAL), includes = setOf("com.dialer"))
         for (category in AppCategory.entries + listOf(null)) {
-            assertFalse(GroupMembershipResolver.isMember(handPickedEssential, "com.dialer", category, essential = true))
-            assertFalse(GroupMembershipResolver.isMember(handPickedEssential, "com.chat", category, essential = true))
+            assertFalse(GroupMembershipResolver.isMember(handPickedEssential, "com.dialer", category, essential = true, browser = false))
+            assertFalse(GroupMembershipResolver.isMember(handPickedEssential, "com.chat", category, essential = true, browser = false))
         }
     }
 
@@ -54,21 +54,21 @@ class GroupMembershipResolverTest {
         // A definition can only hold UNDEFINED through a bug or a hand-edited row; it still matches nothing.
         val corrupt = GroupDefinition(3, categories = AppCategory.entries.toSet())
         val r = GroupMembershipResolver(listOf(corrupt))
-        assertFalse(r.isMember(3, "com.nocat", AppCategory.UNDEFINED, essential = false))
-        assertEquals(emptySet<Long>(), r.groupIdsOf("com.nocat", AppCategory.UNDEFINED))
-        assertFalse(GroupMembershipResolver.matchesCategory(corrupt, AppCategory.UNDEFINED))
+        assertFalse(r.isMember(3, "com.nocat", AppCategory.UNDEFINED, essential = false, browser = false))
+        assertEquals(emptySet<Long>(), r.groupIdsOf("com.nocat", AppCategory.UNDEFINED, browser = false))
+        assertFalse(GroupMembershipResolver.matchesCategory(corrupt, AppCategory.UNDEFINED, browser = false))
     }
 
     @Test fun `a null category matches only by hand`() {
-        assertFalse(resolver.isMember(1, "com.chat", null, essential = false))
-        assertEquals(emptySet<Long>(), resolver.groupIdsOf("com.chat", null))
+        assertFalse(resolver.isMember(1, "com.chat", null, essential = false, browser = false))
+        assertEquals(emptySet<Long>(), resolver.groupIdsOf("com.chat", null, browser = false))
     }
 
     @Test fun `groupIdsOf finds every group, by hand or by category, minus the ones that removed it`() {
         val video = GroupDefinition(4, setOf(AppCategory.VIDEO), includes = setOf("com.chat"))
         val removesChat = GroupDefinition(5, setOf(AppCategory.SOCIAL), excludes = setOf("com.chat"))
         val r = GroupMembershipResolver(listOf(social, video, removesChat))
-        assertEquals(setOf(1L, 4L), r.groupIdsOf("com.chat", AppCategory.SOCIAL))
+        assertEquals(setOf(1L, 4L), r.groupIdsOf("com.chat", AppCategory.SOCIAL, browser = false))
     }
 
     @Test fun `membersOf resolves includes, installed category apps, minus removed and essentials`() {
@@ -82,17 +82,17 @@ class GroupMembershipResolverTest {
         )
         assertEquals(
             setOf("com.handpicked", "com.chat", "com.mail"),
-            resolver.membersOf(1, installed, essentials = setOf("com.dialer"))
+            resolver.membersOf(1, installed, essentials = setOf("com.dialer"), browsers = emptySet())
         )
     }
 
     @Test fun `a hand-added app that is not installed stays a member`() {
-        assertEquals(setOf("com.handpicked"), resolver.membersOf(1, emptyMap(), emptySet()))
+        assertEquals(setOf("com.handpicked"), resolver.membersOf(1, emptyMap(), emptySet(), browsers = emptySet()))
     }
 
     @Test fun `a stale group id has no members and uses no categories`() {
-        assertEquals(emptySet<String>(), resolver.membersOf(99, mapOf("com.chat" to AppCategory.SOCIAL), emptySet()))
-        assertFalse(resolver.isMember(99, "com.chat", AppCategory.SOCIAL, essential = false))
+        assertEquals(emptySet<String>(), resolver.membersOf(99, mapOf("com.chat" to AppCategory.SOCIAL), emptySet(), browsers = emptySet()))
+        assertFalse(resolver.isMember(99, "com.chat", AppCategory.SOCIAL, essential = false, browser = false))
         assertFalse(resolver.usesCategories(listOf(99L)))
     }
 
@@ -125,5 +125,46 @@ class GroupMembershipResolverTest {
         assertFalse(AppCategory.UNDEFINED in OFFERED_CATEGORIES)
         assertEquals(OFFERED_CATEGORIES.size, OFFERED_CATEGORIES.toSet().size)
         assertEquals(AppCategory.entries.toSet() - AppCategory.UNDEFINED, OFFERED_CATEGORIES.toSet())
+    }
+
+
+    // ── A browser never joins by category (Chrome reports SOCIAL, Firefox PRODUCTIVITY) ──────
+
+    @Test fun `a browser whose category is checked is not a member`() {
+        assertFalse(resolver.isMember(1, "com.android.chrome", AppCategory.SOCIAL, essential = false, browser = true))
+        assertEquals(emptySet<Long>(), resolver.groupIdsOf("com.android.chrome", AppCategory.SOCIAL, browser = true))
+        assertFalse(GroupMembershipResolver.matchesCategory(social, AppCategory.SOCIAL, browser = true))
+        assertEquals(
+            setOf("com.handpicked", "com.chat"),
+            resolver.membersOf(
+                1,
+                mapOf("com.chat" to AppCategory.SOCIAL, "com.android.chrome" to AppCategory.SOCIAL),
+                essentials = emptySet(),
+                browsers = setOf("com.android.chrome")
+            )
+        )
+    }
+
+    @Test fun `a browser added by hand is a member`() {
+        val withChrome = GroupMembershipResolver(listOf(social.copy(includes = setOf("com.android.chrome"))))
+        assertTrue(withChrome.isMember(1, "com.android.chrome", AppCategory.SOCIAL, essential = false, browser = true))
+        assertTrue(withChrome.isMember(1, "com.android.chrome", null, essential = false, browser = true))
+        assertEquals(setOf(1L), withChrome.groupIdsOf("com.android.chrome", AppCategory.SOCIAL, browser = true))
+        assertEquals(
+            setOf("com.android.chrome"),
+            withChrome.membersOf(
+                1,
+                mapOf("com.android.chrome" to AppCategory.SOCIAL),
+                essentials = emptySet(),
+                browsers = setOf("com.android.chrome")
+            )
+        )
+    }
+
+    @Test fun `Removed by you still beats a hand-added browser`() {
+        val both = GroupMembershipResolver(
+            listOf(social.copy(includes = setOf("com.android.chrome"), excludes = setOf("com.android.chrome")))
+        )
+        assertFalse(both.isMember(1, "com.android.chrome", AppCategory.SOCIAL, essential = false, browser = true))
     }
 }

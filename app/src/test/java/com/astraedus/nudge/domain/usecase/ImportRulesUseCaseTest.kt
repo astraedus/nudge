@@ -106,6 +106,7 @@ class ImportRulesUseCaseTest {
         essentials = mockk()
         coEvery { installedApps.getInstalledApps() } returns emptyList()
         coEvery { essentials.current() } returns emptySet()
+        coEvery { essentials.browsers() } returns emptySet()
 
         useCase = ImportRulesUseCase(repository, usageRepository, preferences, RuleExporter(), installedApps, essentials)
     }

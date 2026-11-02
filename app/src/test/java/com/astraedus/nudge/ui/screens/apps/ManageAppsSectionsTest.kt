@@ -34,7 +34,7 @@ class ManageAppsSectionsTest {
         query: String = "",
         extraApps: Map<String, AppInfo> = emptyMap(),
         keepInPlace: Set<String> = emptySet()
-    ) = buildManageAppsSections(installed, groups, members, rules, emptySet(), query, extraApps, keepInPlace)
+    ) = buildManageAppsSections(installed, groups, members, rules, emptySet(), emptySet(), query, extraApps, keepInPlace)
 
     private fun ManageAppsSections.names(list: List<AppRow>) = list.map { it.appInfo.appName }
 
@@ -178,7 +178,7 @@ class ManageAppsSectionsTest {
             BlockRule(id = 40, groupId = 1, mode = "HARD_BLOCK"),
             BlockRule(id = 41, groupId = 2, mode = "DELAY", enabled = false)
         )
-        val s = buildManageAppsSections(installed + many, groups, emptyList(), rules, emptySet(), query = "")
+        val s = buildManageAppsSections(installed + many, groups, emptyList(), rules, emptySet(), query = "", browsers = emptySet())
 
         assertEquals(listOf("games · 0 apps", "Social · 0 apps", "Work · 0 apps"), s.groups.map { it.title })
         assertEquals(listOf(true, false, false), s.groups.map { it.blocking })
@@ -317,7 +317,7 @@ class ManageAppsSectionsTest {
     fun `a category group row counts its category apps, minus essentials and removed ones`() {
         val s = buildManageAppsSections(
             phone, listOf(socialApps), listOf(AppGroupMember(7, "com.tiktok", excluded = true)),
-            emptyList(), setOf("com.dialer"), query = ""
+            emptyList(), setOf("com.dialer"), query = "", browsers = emptySet()
         )
 
         assertEquals(listOf("Social apps · 1 app"), s.groups.map { it.title })
@@ -326,7 +326,7 @@ class ManageAppsSectionsTest {
     @Test
     fun `an app covered only by a blocking category group reads In that group`() {
         val rules = listOf(BlockRule(id = 1, groupId = 7, mode = "HARD_BLOCK"))
-        val s = buildManageAppsSections(phone, listOf(socialApps), emptyList(), rules, setOf("com.dialer"), query = "")
+        val s = buildManageAppsSections(phone, listOf(socialApps), emptyList(), rules, setOf("com.dialer"), query = "", browsers = emptySet())
         val byName = s.otherApps.associateBy { it.appInfo.appName }
 
         assertEquals("In Social apps", byName.getValue("Instagram").coveredBy)

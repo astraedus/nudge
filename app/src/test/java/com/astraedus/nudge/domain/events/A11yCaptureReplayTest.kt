@@ -438,7 +438,7 @@ class A11yCaptureReplayTest {
         val engine = BlockEngine(ScheduleEvaluator())
         fun decide(pkg: String) = engine.evaluate(
             packageName = pkg,
-            activeRules = evaluator.resolveRulesForPackage(pkg, rules, GroupMembershipResolver.NONE, CoverageFacts(essential = false, launchable = true, category = null)),
+            activeRules = evaluator.resolveRulesForPackage(pkg, rules, GroupMembershipResolver.NONE, CoverageFacts(essential = false, launchable = true, category = null, browser = false)),
             dailyUsageMs = 0L
         ) as BlockDecision.Block
 

@@ -63,6 +63,7 @@ class NukeCountParityTest {
 
     private fun essentials(vararg packages: String): EssentialApps = mockk {
         every { packages(any()) } returns packages.toSet()
+        coEvery { browsers() } returns emptySet()
     }
 
     private fun home(essentials: EssentialApps): HomeViewModel {

@@ -6,7 +6,8 @@ import com.astraedus.nudge.domain.packages.AppCategory
  * Who is in a group (spec 5.2):
  *
  * ```
- * member(p, g) = !essential(p) && !(p in g.excludes) && (p in g.includes || category(p) in g.categories)
+ * member(p, g) = !essential(p) && !(p in g.excludes) &&
+ *                 (p in g.includes || (!browser(p) && category(p) in g.categories))
  * ```
  *
  * The ONE membership answer. Block evaluation, the browser check, Manage Apps, App config, the All
@@ -17,6 +18,12 @@ import com.astraedus.nudge.domain.packages.AppCategory
  * Precedence, in order: an essential app is never a member; "Removed by you" beats a category; an
  * app added by hand or matching a checked category is a member. [AppCategory.UNDEFINED] never
  * matches, whatever a definition holds (a category-less app joins a group only by hand).
+ *
+ * **A browser never joins by category.** Browsers report whatever category their maker picked
+ * (Chrome says SOCIAL, Firefox PRODUCTIVITY), and a browser in a blocking group is blocked as an
+ * app on every site (spec 5.5). Checking "Social" must not silently take the whole web away, so a
+ * browser is a member only when added by hand. Which apps are browsers is the one browser list,
+ * [com.astraedus.nudge.domain.packages.EssentialPackages.browsers].
  *
  * **Category unknown.** A `null` category means the caller did not read it, and then only
  * [GroupDefinition.includes] can match. That is correct only when no group the question can reach
@@ -51,11 +58,11 @@ class GroupMembershipResolver(definitions: List<GroupDefinition>) {
     /**
      * The groups [packageName] is a member of, ESSENTIALS NOT APPLIED: [com.astraedus.nudge.domain.engine.RuleCoverage]
      * applies them per rule kind (an explicit app rule on an essential app is honoured, spec 4.2).
-     * [category] null = not read: includes only (see the class doc).
+     * [category] null = not read: includes only (see the class doc). A [browser] matches no category.
      */
-    fun groupIdsOf(packageName: String, category: AppCategory?): Set<Long> {
+    fun groupIdsOf(packageName: String, category: AppCategory?, browser: Boolean): Set<Long> {
         val byInclude = groupsByInclude[packageName].orEmpty()
-        val byCategory = category?.let { groupsByCategory[it] }.orEmpty()
+        val byCategory = category?.takeUnless { browser }?.let { groupsByCategory[it] }.orEmpty()
         if (byInclude.isEmpty() && byCategory.isEmpty()) return emptySet()
         val ids = HashSet<Long>(byInclude.size + byCategory.size)
         ids += byInclude
@@ -65,20 +72,32 @@ class GroupMembershipResolver(definitions: List<GroupDefinition>) {
     }
 
     /** Is [packageName] a member of [groupId]? A stale id has no members. */
-    fun isMember(groupId: Long, packageName: String, category: AppCategory?, essential: Boolean): Boolean {
+    fun isMember(
+        groupId: Long,
+        packageName: String,
+        category: AppCategory?,
+        essential: Boolean,
+        browser: Boolean
+    ): Boolean {
         val definition = definitions[groupId] ?: return false
-        return isMember(definition, packageName, category, essential)
+        return isMember(definition, packageName, category, essential, browser)
     }
 
     /**
      * The members of [groupId] on this device: its includes (installed or not: a hand-added app that
      * is uninstalled stays added, and is a member again when reinstalled) plus every app in
-     * [installed] whose category the group checks, minus "Removed by you", minus [essentials].
-     * [installed] maps each installed package to its category. A stale id has no members.
+     * [installed] whose category the group checks (never one of [browsers]), minus "Removed by you",
+     * minus [essentials]. [installed] maps each installed package to its category. A stale id has no
+     * members.
      */
-    fun membersOf(groupId: Long, installed: Map<String, AppCategory>, essentials: Set<String>): Set<String> {
+    fun membersOf(
+        groupId: Long,
+        installed: Map<String, AppCategory>,
+        essentials: Set<String>,
+        browsers: Set<String>
+    ): Set<String> {
         val definition = definitions[groupId] ?: return emptySet()
-        return membersOf(definition, installed, essentials)
+        return membersOf(definition, installed, essentials, browsers)
     }
 
     companion object {
@@ -91,29 +110,34 @@ class GroupMembershipResolver(definitions: List<GroupDefinition>) {
             definition: GroupDefinition,
             packageName: String,
             category: AppCategory?,
-            essential: Boolean
+            essential: Boolean,
+            browser: Boolean
         ): Boolean =
             !essential &&
                 packageName !in definition.excludes &&
-                (packageName in definition.includes || matchesCategory(definition, category))
+                (packageName in definition.includes || matchesCategory(definition, category, browser))
 
-        /** Would [category] alone make an app a member of [definition]? UNDEFINED and null never do. */
-        fun matchesCategory(definition: GroupDefinition, category: AppCategory?): Boolean =
-            category != null && category != AppCategory.UNDEFINED && category in definition.categories
+        /**
+         * Would [category] alone make an app a member of [definition]? UNDEFINED and null never do,
+         * and neither does any category of a [browser] (see the class doc).
+         */
+        fun matchesCategory(definition: GroupDefinition, category: AppCategory?, browser: Boolean): Boolean =
+            !browser && category != null && category != AppCategory.UNDEFINED && category in definition.categories
 
         /** [GroupMembershipResolver.membersOf] for one definition. */
         fun membersOf(
             definition: GroupDefinition,
             installed: Map<String, AppCategory>,
-            essentials: Set<String>
+            essentials: Set<String>,
+            browsers: Set<String>
         ): Set<String> {
             val members = LinkedHashSet<String>()
             definition.includes.forEach { pkg ->
-                if (isMember(definition, pkg, installed[pkg], pkg in essentials)) members += pkg
+                if (isMember(definition, pkg, installed[pkg], pkg in essentials, pkg in browsers)) members += pkg
             }
             if (definition.categories.isNotEmpty()) {
                 installed.forEach { (pkg, category) ->
-                    if (isMember(definition, pkg, category, pkg in essentials)) members += pkg
+                    if (isMember(definition, pkg, category, pkg in essentials, pkg in browsers)) members += pkg
                 }
             }
             return members

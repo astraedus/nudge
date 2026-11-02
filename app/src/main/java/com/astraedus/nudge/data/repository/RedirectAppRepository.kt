@@ -4,7 +4,6 @@ import android.content.Context
 import android.content.Intent
 import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.di.IoDispatcher
-import com.astraedus.nudge.domain.packages.EssentialPackages
 import com.astraedus.nudge.domain.redirect.RedirectAppPolicy
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineDispatcher
@@ -27,7 +26,7 @@ class RedirectAppRepository @Inject constructor(
     private val preferences: NudgePreferences,
     private val blockRuleRepository: BlockRuleRepository,
     private val installedAppsRepository: InstalledAppsRepository,
-    private val essentialPackages: EssentialPackages,
+    private val deviceGroupMembers: DeviceGroupMembers,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) {
 
@@ -38,21 +37,9 @@ class RedirectAppRepository @Inject constructor(
     suspend fun excluded(blockPackages: Set<String> = emptySet()): Set<String> {
         val rules = blockRuleRepository.getEnabledRules().first()
         val groupIds = rules.mapNotNull { it.groupId }.toSet()
-        val membership = groupResolverOf(
-            blockRuleRepository.getAllGroups().first(),
-            blockRuleRepository.getAllGroupMembers().first()
-        )
         // A group's members are resolved (spec 5.2): a category app is in it without a row of its
-        // own. The installed apps and essentials are only read when a blocking group checks a
-        // category; otherwise its members are its "Add apps" rows minus "Removed by you".
-        val usesCategories = membership.usesCategories(groupIds)
-        val installed = if (usesCategories) {
-            installedAppsRepository.getInstalledApps().associate { it.packageName to it.category }
-        } else {
-            emptyMap()
-        }
-        val essentials = if (usesCategories) essentialPackages.current() else emptySet()
-        val members = groupIds.associateWith { id -> membership.membersOf(id, installed, essentials) }
+        // own ([DeviceGroupMembers], which reads the installed apps only when a group checks a category).
+        val members = deviceGroupMembers.of(groupIds)
         val targets = RedirectAppPolicy.ruleTargets(
             rules.map { RedirectAppPolicy.RuleTarget(it.packageName, it.groupId, it.enabled) },
             members

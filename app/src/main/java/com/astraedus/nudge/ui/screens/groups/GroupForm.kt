@@ -87,7 +87,7 @@ fun GroupRuleForm.toRule(existing: BlockRule?): BlockRule {
  * (spec 5.6): a member leaving a group that blocks ([GroupWeakening]), or the group's own rule
  * getting softer ([RuleWeakening]).
  *
- * Members are RESOLVED on this device ([installed], [essentials]) before they are compared, so
+ * Members are RESOLVED on this device ([installed], [essentials], [browsers]) before they are compared, so
  * unchecking a category that brings in five apps is five members leaving, unchecking one no app
  * here is in is free, and "Removed by you" on a category app is that app leaving.
  *
@@ -102,10 +102,11 @@ fun groupSaveWeakens(
     oldRule: BlockRule?,
     newRule: BlockRule,
     installed: Map<String, AppCategory>,
-    essentials: Set<String>
+    essentials: Set<String>,
+    browsers: Set<String>
 ): Boolean {
     if (old == null) return false
-    if (GroupWeakening.isWeakening(old, new, usage, installed, essentials)) return true
+    if (GroupWeakening.isWeakening(old, new, usage, installed, essentials, browsers)) return true
     return oldRule != null && oldRule.enabled && RuleWeakening.isWeakening(oldRule, newRule)
 }
 
@@ -114,8 +115,9 @@ fun groupDeleteWeakens(
     old: GroupDefinition,
     usage: GroupUsage,
     installed: Map<String, AppCategory>,
-    essentials: Set<String>
-): Boolean = GroupWeakening.isWeakening(old, GroupDefinition(old.id), usage, installed, essentials)
+    essentials: Set<String>,
+    browsers: Set<String>
+): Boolean = GroupWeakening.isWeakening(old, GroupDefinition(old.id), usage, installed, essentials, browsers)
 
 /**
  * A plain package set after the picker returns [picked]: the picker's choice, plus any entry the

@@ -16,6 +16,29 @@ data class AllAppsBlock(
     val exceptPackages: List<String>,
     /** The names of the rule's allowed groups that still exist. */
     val exceptGroupNames: List<String>,
-    /** Every app this rule leaves open: [exceptPackages], then the allowed groups' current members. */
+    /** The ids of the rule's allowed groups that still exist, in the rule's order. */
+    val exceptGroupIds: List<Long>,
+    /**
+     * Every app this rule leaves open that the engine can name without the device: [exceptPackages],
+     * then the allowed groups' hand-added apps. A group's CATEGORY members need the installed apps,
+     * which the engine does not hold (nothing per app is stored, spec 5.2); the block screen adds
+     * them on the device through [allowedPackagesOf] over [exceptGroupIds], the same resolution
+     * coverage uses.
+     */
     val allowedPackages: List<String>
-)
+) {
+    companion object {
+        /**
+         * The apps an All apps rule leaves open, in display order: its own [exceptPackages] first,
+         * then each allowed group's members ([membersOf], by group id) in [exceptGroupIds] order,
+         * without repeats. [membersOf] is the group's resolved membership, so an app "Removed by you",
+         * an essential, or a browser a category would match is not listed, exactly as it is not
+         * allowed by the group.
+         */
+        fun allowedPackagesOf(
+            exceptPackages: List<String>,
+            exceptGroupIds: List<Long>,
+            membersOf: (Long) -> Collection<String>
+        ): List<String> = (exceptPackages + exceptGroupIds.flatMap(membersOf)).distinct()
+    }
+}

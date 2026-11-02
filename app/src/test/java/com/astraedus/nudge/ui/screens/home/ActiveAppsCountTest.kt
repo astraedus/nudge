@@ -27,7 +27,7 @@ class ActiveAppsCountTest {
 
     /** No All apps rule in these cases, so the device facts never matter. */
     private fun count(rules: List<BlockRule>, groups: List<AppGroup>, members: List<AppGroupMember>) =
-        activeAppsCount(rules, groups, members, launchable = emptyMap(), essentials = emptySet())
+        activeAppsCount(rules, groups, members, launchable = emptyMap(), essentials = emptySet(), browsers = emptySet())
 
     @Test
     fun `nothing set up counts nothing`() {
@@ -96,14 +96,14 @@ class ActiveAppsCountTest {
             allApps(id = 3, except = "com.maps")
         )
         // instagram, tiktok, chess. Not maps (allowed), not the dialer (essential): 3, not 3 + 2 + 1.
-        assertEquals(3, activeAppsCount(rules, listOf(social, games), members, launchable, essentials))
+        assertEquals(3, activeAppsCount(rules, listOf(social, games), members, launchable, essentials, browsers = emptySet()))
     }
 
     @Test
     fun `two All apps rules on at once count each app once`() {
         val rules = listOf(allApps(id = 1), allApps(id = 2, except = "com.maps"))
         // Every launchable app but the essential dialer; maps is still covered by rule 1.
-        assertEquals(4, activeAppsCount(rules, emptyList(), emptyList(), launchable, essentials))
+        assertEquals(4, activeAppsCount(rules, emptyList(), emptyList(), launchable, essentials, browsers = emptySet()))
     }
 
     @Test
@@ -112,13 +112,13 @@ class ActiveAppsCountTest {
             BlockRule(id = 1, packageName = "com.maps", mode = "DELAY"),
             allApps(id = 2, except = "com.maps")
         )
-        assertEquals(4, activeAppsCount(rules, emptyList(), emptyList(), launchable, essentials))
+        assertEquals(4, activeAppsCount(rules, emptyList(), emptyList(), launchable, essentials, browsers = emptySet()))
     }
 
     @Test
     fun `an All apps rule that is off adds nothing`() {
         val rules = listOf(BlockRule(id = 1, packageName = "com.instagram", mode = "DELAY"), allApps(id = 2, enabled = false))
-        assertEquals(1, activeAppsCount(rules, emptyList(), emptyList(), launchable, essentials))
+        assertEquals(1, activeAppsCount(rules, emptyList(), emptyList(), launchable, essentials, browsers = emptySet()))
     }
 
     @Test
@@ -130,7 +130,7 @@ class ActiveAppsCountTest {
             allApps(id = 4),
             allApps(id = 5, exceptGroups = "1")
         )
-        val count = activeAppsCount(rules, listOf(social, games), members, launchable, essentials)
+        val count = activeAppsCount(rules, listOf(social, games), members, launchable, essentials, browsers = emptySet())
         val ceiling = (launchable.keys - essentials + "com.notinstalled").size
         assertEquals(ceiling, count)
     }
@@ -145,11 +145,11 @@ class ActiveAppsCountTest {
             BlockRule(id = 4, groupId = 2, mode = "DELAY", enabled = false)
         )
         val snapshot = RuleSnapshot.of(rules.filter { it.enabled }, listOf(social, games), members)
-        val covered = CoveredApps.packages(snapshot.ruleData, snapshot.membership, emptyMap(), emptySet())
+        val covered = CoveredApps.packages(snapshot.ruleData, snapshot.membership, emptyMap(), emptySet(), browsers = emptySet())
         val everyPackage = listOf("com.instagram", "com.tiktok", "com.youtube", "com.chess", "com.other")
 
         everyPackage.forEach { pkg ->
-            val facts = CoverageFacts(essential = false, launchable = false, category = AppCategory.UNDEFINED)
+            val facts = CoverageFacts(essential = false, launchable = false, category = AppCategory.UNDEFINED, browser = false)
             val engine = RuleEvaluator().resolveRulesForPackage(pkg, snapshot.ruleData, snapshot.membership, facts)
             assertEquals(pkg, engine.any { it.enabled }, pkg in covered)
         }
@@ -173,7 +173,7 @@ class ActiveAppsCountTest {
         val added = listOf(AppGroupMember(5, "com.instagram"))
 
         // instagram (category + hand + own rule) once, tiktok (category): 2. Chess is a game.
-        assertEquals(2, activeAppsCount(rules, listOf(cat), added, installed, emptySet()))
+        assertEquals(2, activeAppsCount(rules, listOf(cat), added, installed, emptySet(), browsers = emptySet()))
     }
 
     @Test
@@ -187,6 +187,6 @@ class ActiveAppsCountTest {
         val rules = listOf(BlockRule(id = 1, groupId = 5, mode = "DELAY"))
         val removed = listOf(AppGroupMember(5, "com.tiktok", excluded = true))
 
-        assertEquals(1, activeAppsCount(rules, listOf(cat), removed, installed, setOf("com.dialer")))
+        assertEquals(1, activeAppsCount(rules, listOf(cat), removed, installed, setOf("com.dialer"), browsers = emptySet()))
     }
 }

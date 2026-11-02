@@ -40,7 +40,7 @@ class CoveredAppsAllAppsTest {
     )
 
     private fun covered(rules: List<BlockRuleData>) =
-        CoveredApps.packages(rules, memberships, launchable.associateWith { AppCategory.UNDEFINED }, essentials)
+        CoveredApps.packages(rules, memberships, launchable.associateWith { AppCategory.UNDEFINED }, essentials, browsers = emptySet())
 
     @Test
     fun `All apps covers launchable minus essentials, allowed apps and allowed groups' members`() {

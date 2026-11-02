@@ -11,7 +11,8 @@ import com.astraedus.nudge.domain.packages.AppCategory
  * is a JVM-tested function of this value and the device facts.
  *
  * The device facts come in per call: [installed] maps each installed app to its category, and
- * [essentials] are never members. Membership is always [GroupMembershipResolver]'s answer, so the
+ * [essentials] are never members, and [browsers] join only by hand (a browser's category never
+ * brings it in: Chrome says SOCIAL, and checking Social must not take the whole web). Membership is always [GroupMembershipResolver]'s answer, so the
  * editor shows exactly the apps the engine blocks.
  *
  * [includes] and [excludes] never overlap (the database holds one row per app).
@@ -24,21 +25,25 @@ data class GroupMembersDraft(
     fun definition(groupId: Long): GroupDefinition = GroupDefinition(groupId, categories, includes, excludes)
 
     /** The group's members on this device. */
-    fun members(installed: Map<String, AppCategory>, essentials: Set<String>): Set<String> =
-        GroupMembershipResolver.membersOf(definition(NO_ID), installed, essentials)
+    fun members(installed: Map<String, AppCategory>, essentials: Set<String>, browsers: Set<String>): Set<String> =
+        GroupMembershipResolver.membersOf(definition(NO_ID), installed, essentials, browsers)
 
-    /** Would [category] alone bring this app in? (UNDEFINED and unknown never do.) */
-    fun matchesCategory(category: AppCategory?): Boolean =
-        GroupMembershipResolver.matchesCategory(definition(NO_ID), category)
+    /** Would [category] alone bring this app in? (UNDEFINED, unknown and a [browser] never do.) */
+    fun matchesCategory(category: AppCategory?, browser: Boolean): Boolean =
+        GroupMembershipResolver.matchesCategory(definition(NO_ID), category, browser)
 
     /**
      * "Removed by you" as the screen lists it: removed apps that are installed and that a checked
      * category would otherwise bring in. A removed app whose category is no longer checked is kept
      * (checking it again keeps it out) but not listed: it would not be in the group anyway.
      */
-    fun removedByYou(installed: Map<String, AppCategory>, essentials: Set<String>): Set<String> =
+    fun removedByYou(
+        installed: Map<String, AppCategory>,
+        essentials: Set<String>,
+        browsers: Set<String>
+    ): Set<String> =
         excludes.filterTo(LinkedHashSet()) { pkg ->
-            pkg !in essentials && installed[pkg]?.let(::matchesCategory) == true
+            pkg !in essentials && installed[pkg]?.let { matchesCategory(it, pkg in browsers) } == true
         }
 
     /** Check or uncheck [category]. Never UNDEFINED, never one the editor does not offer. */
@@ -51,8 +56,8 @@ data class GroupMembersDraft(
      * The ✕ on a member. An app its category brings in would come straight back, so it moves to
      * "Removed by you"; an app that is only in by hand just stops being added.
      */
-    fun remove(packageName: String, category: AppCategory?): GroupMembersDraft =
-        if (matchesCategory(category)) {
+    fun remove(packageName: String, category: AppCategory?, browser: Boolean): GroupMembersDraft =
+        if (matchesCategory(category, browser)) {
             copy(includes = includes - packageName, excludes = excludes + packageName)
         } else {
             copy(includes = includes - packageName)
@@ -72,30 +77,37 @@ data class GroupMembersDraft(
         picked: Set<String>,
         pickable: Set<String>,
         installed: Map<String, AppCategory>,
-        essentials: Set<String>
+        essentials: Set<String>,
+        browsers: Set<String>
     ): GroupMembersDraft {
-        val current = members(installed, essentials)
+        val current = members(installed, essentials, browsers)
         var next = this
         pickable.forEach { pkg ->
             val category = installed[pkg]
+            val browser = pkg in browsers
             when {
                 pkg in picked && pkg !in current -> {
                     next = next.addBack(pkg)
-                    if (!next.matchesCategory(category)) next = next.copy(includes = next.includes + pkg)
+                    if (!next.matchesCategory(category, browser)) next = next.copy(includes = next.includes + pkg)
                 }
-                pkg !in picked && pkg in current -> next = next.remove(pkg, category)
+                pkg !in picked && pkg in current -> next = next.remove(pkg, category, browser)
             }
         }
         return next
     }
 
     /**
-     * The count on [category]'s chip: the installed apps it brings in, minus essentials and "Removed
-     * by you". The same whether it is checked or not, so the number says what checking it does.
+     * The count on [category]'s chip: the installed apps it brings in, minus essentials, browsers and
+     * "Removed by you". The same whether it is checked or not, so the number says what checking it does.
      */
-    fun categoryCount(category: AppCategory, installed: Map<String, AppCategory>, essentials: Set<String>): Int =
+    fun categoryCount(
+        category: AppCategory,
+        installed: Map<String, AppCategory>,
+        essentials: Set<String>,
+        browsers: Set<String>
+    ): Int =
         installed.count { (pkg, appCategory) ->
-            appCategory == category && pkg !in essentials && pkg !in excludes
+            appCategory == category && pkg !in essentials && pkg !in browsers && pkg !in excludes
         }
 
     /**
@@ -104,11 +116,11 @@ data class GroupMembersDraft(
      * blocks the next game before they install it. Hiding the empty ones (the first build) made that
      * impossible, and made a chip vanish once every app in it was "Removed by you".
      */
-    fun chips(installed: Map<String, AppCategory>, essentials: Set<String>): List<CategoryChip> =
+    fun chips(installed: Map<String, AppCategory>, essentials: Set<String>, browsers: Set<String>): List<CategoryChip> =
         OFFERED_CATEGORIES.map { category ->
             CategoryChip(
                 category = category,
-                count = categoryCount(category, installed, essentials),
+                count = categoryCount(category, installed, essentials, browsers),
                 checked = category in categories
             )
         }

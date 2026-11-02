@@ -27,7 +27,7 @@ class CategoryCoverageTest {
     )
 
     private fun facts(category: AppCategory?, essential: Boolean = false) =
-        CoverageFacts(essential = essential, launchable = true, category = category)
+        CoverageFacts(essential = essential, launchable = true, category = category, browser = false)
 
     private fun rule(groupId: Long? = null, allApps: Boolean = false, exceptGroups: Set<Long> = emptySet()) =
         BlockRuleData(

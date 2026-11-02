@@ -56,6 +56,8 @@ data class GroupEditorState(
     val installed: Map<String, AppCategory> = emptyMap(),
     /** The one essentials list: never a member, never counted. */
     val essentials: Set<String> = emptySet(),
+    /** The one browser list: a browser is a member only when added by hand, never by category. */
+    val browsers: Set<String> = emptySet(),
     /** Labels and icons of the installed apps, by package. */
     val apps: Map<String, InstalledAppsRepository.AppInfo> = emptyMap(),
     val form: GroupRuleForm = GroupRuleForm(),
@@ -76,7 +78,7 @@ data class GroupEditorState(
     val isFinished: Boolean = false
 ) {
     /** The members on this phone, resolved exactly as the engine resolves them. */
-    val memberPackages: Set<String> get() = membersDraft.members(installed, essentials)
+    val memberPackages: Set<String> get() = membersDraft.members(installed, essentials, browsers)
 
     /** The member rows, sorted by name. A member that is no longer installed shows its package name. */
     val members: List<GroupMemberRow>
@@ -84,20 +86,20 @@ data class GroupEditorState(
             .map { pkg ->
                 GroupMemberRow(
                     app = apps[pkg] ?: placeholder(pkg),
-                    category = installed[pkg]?.takeIf(membersDraft::matchesCategory)
+                    category = installed[pkg]?.takeIf { membersDraft.matchesCategory(it, pkg in browsers) }
                 )
             }
             .sortedBy { it.app.appName.lowercase() }
 
     /** "Removed by you", sorted by name. */
     val removed: List<InstalledAppsRepository.AppInfo>
-        get() = membersDraft.removedByYou(installed, essentials)
+        get() = membersDraft.removedByYou(installed, essentials, browsers)
             .map { apps[it] ?: placeholder(it) }
             .sortedBy { it.appName.lowercase() }
 
     /** The category chips, in the order the editor offers them. */
     val chips: List<CategoryChip>
-        get() = membersDraft.chips(installed, essentials)
+        get() = membersDraft.chips(installed, essentials, browsers)
 
     /**
      * A group needs a name and something in it: an app, or a checked category (one with no app on
@@ -181,6 +183,7 @@ class GroupEditorViewModel @Inject constructor(
     private suspend fun load() {
         val installedApps = installedAppsRepository.getInstalledApps()
         val essentials = withContext(ioDispatcher) { essentialApps.packages() }
+        val browsers = essentialApps.browsers()
         val installed = installedApps.associate { it.packageName to it.category }
         val apps = installedApps.associateBy { it.packageName }
         val pickerApps = installedApps
@@ -194,6 +197,7 @@ class GroupEditorViewModel @Inject constructor(
                     isLoading = false,
                     installed = installed,
                     essentials = essentials,
+                    browsers = browsers,
                     apps = apps,
                     pickerApps = pickerApps,
                     baseline = GroupDraft(name = "", members = it.membersDraft, form = it.form)
@@ -220,6 +224,7 @@ class GroupEditorViewModel @Inject constructor(
                 membersDraft = membersDraft,
                 installed = installed,
                 essentials = essentials,
+                browsers = browsers,
                 apps = apps,
                 form = GroupRuleForm.from(rule),
                 pickerApps = pickerApps,
@@ -238,7 +243,7 @@ class GroupEditorViewModel @Inject constructor(
         val pickable = s.pickerApps.mapTo(HashSet()) { it.packageName }
         s.copy(
             showPicker = false,
-            membersDraft = s.membersDraft.afterPick(picked, pickable, s.installed, s.essentials)
+            membersDraft = s.membersDraft.afterPick(picked, pickable, s.installed, s.essentials, s.browsers)
         )
     }
 
@@ -246,7 +251,7 @@ class GroupEditorViewModel @Inject constructor(
         _state.update { it.copy(membersDraft = it.membersDraft.toggleCategory(category)) }
 
     fun removeMember(packageName: String) = _state.update { s ->
-        s.copy(membersDraft = s.membersDraft.remove(packageName, s.installed[packageName]))
+        s.copy(membersDraft = s.membersDraft.remove(packageName, s.installed[packageName], packageName in s.browsers))
     }
 
     fun addBack(packageName: String) =
@@ -271,7 +276,8 @@ class GroupEditorViewModel @Inject constructor(
                 oldRule = savedRule,
                 newRule = newRule,
                 installed = s.installed,
-                essentials = s.essentials
+                essentials = s.essentials,
+                browsers = s.browsers
             )
             val write: suspend () -> Unit = {
                 repository.saveGroup(groupId, s.name, draft.categories, draft.includes, draft.excludes, newRule)
@@ -307,7 +313,8 @@ class GroupEditorViewModel @Inject constructor(
                 old = savedDefinition ?: GroupDefinition(groupId),
                 usage = GroupUsage.of(groupId, repository.getAllRules().first()),
                 installed = s.installed,
-                essentials = s.essentials
+                essentials = s.essentials,
+                browsers = s.browsers
             )
             val delete: suspend () -> Unit = {
                 repository.deleteGroupWithRules(groupId)

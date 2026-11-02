@@ -111,7 +111,12 @@ class AllAppsEditorViewModel @Inject constructor(
                 )
             }
             .sortedBy { it.appName.lowercase() }
-        return DeviceApps(installed = installed, essentials = essentials, alwaysAllowed = alwaysAllowed)
+        return DeviceApps(
+            installed = installed,
+            essentials = essentials,
+            browsers = essentialApps.browsers(),
+            alwaysAllowed = alwaysAllowed
+        )
     }
 
     fun setEnabled(enabled: Boolean) = updateForm { it.copy(enabled = enabled) }

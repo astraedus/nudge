@@ -34,7 +34,7 @@ class BuildGroupRowsTest {
     private fun rows(
         groups: List<AppGroup>, members: List<AppGroupMember>, rules: List<BlockRule>, query: String = "",
         installed: Map<String, AppCategory> = this.installed, essentials: Set<String> = emptySet()
-    ) = buildGroupRows(groups, groupResolverOf(groups, members), installed, essentials, rules, query)
+    ) = buildGroupRows(groups, groupResolverOf(groups, members), installed, essentials, emptySet(), rules, query)
 
     @Test
     fun `rows are sorted by name and carry count, summary and switch state`() {

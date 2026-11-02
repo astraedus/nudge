@@ -66,15 +66,17 @@ class UnifiedAppConfigViewModel @Inject constructor(
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     /**
-     * This app's device facts: essential (never in a group or All apps rule), launchable, and its
-     * category (what a category group matches). Read once per screen, off the main thread.
+     * This app's device facts: essential (never in a group or All apps rule), launchable, its
+     * category (what a category group matches) and whether it is a browser (which a category never
+     * brings into a group). Read once per screen, off the main thread.
      */
     private suspend fun deviceFacts(): CoverageFacts {
         val fact = packageFacts.factsFor(packageName)
         return CoverageFacts(
             essential = packageName in essentialPackages.current(),
             launchable = fact.launchable,
-            category = fact.category
+            category = fact.category,
+            browser = packageName in essentialPackages.browsers()
         )
     }
 

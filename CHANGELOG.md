@@ -5,9 +5,11 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
 ## [Unreleased]
 
 ### Added
-- Groups can include whole categories. The group editor shows a chip for each kind of app (Social & Communication, Movies & Video, Games, News and more), each with how many of your apps it brings in. Check one and its apps join the group, including apps you install later, which are blocked the first time you open them. A category you have no apps in yet can be checked too, so you can block games before you install one. Your essentials never join.
+- Groups can include whole categories. The group editor shows a chip for each kind of app (Social & Communication, Movies & Video, Games, Music & Audio, News & Magazines and more), each with how many of your apps it brings in. Check one and its apps join the group, including apps you install later, which are blocked the first time you open them. A category you have no apps in yet can be checked too, so you can block games before you install one. Your essentials never join.
 - Take one app out of a checked category with its ✕: it moves to "Removed by you" at the bottom of the list and stays out. "Add back" puts it back in, and so does picking it again under "Add apps".
 - Apps in a group because of their category show the category's name next to them, and Manage Apps counts them in the group.
+- A browser never joins a group through its category. Chrome calls itself Social and Firefox calls itself Productivity, and a browser in a blocking group is blocked on every site, so checking Social would have shut off your whole browser. To block a browser with a group, add it under "Add apps" as before.
+- An All apps block screen's "Open an allowed app" also offers the apps a category group lets through, not only the ones you picked by hand.
 
 ### Changed
 - With Strict Mode on, unchecking a category that brings apps into a blocking group, or removing one of its apps, asks for the challenge. A category with no apps on your phone can be unchecked freely.

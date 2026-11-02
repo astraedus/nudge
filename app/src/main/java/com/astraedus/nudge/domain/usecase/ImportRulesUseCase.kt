@@ -116,32 +116,40 @@ class ImportRulesUseCase @Inject constructor(
         val idsByName = groupIdsByName(allGroups)
         val existingGroups = allGroups.filter { it.name in entriesByName && idsByName[it.name] == it.id }
         if (existingGroups.isEmpty()) return false
-        val (installed, essentials) = deviceFacts()
+        val device = deviceFacts()
+        val installed = device.installed
         val existing = HashMap<String, ResolvedGroup>()
         val merged = HashMap<String, ResolvedGroup>()
         for (group in existingGroups) {
             val current = definitionOf(group)
             val after = ImportedGroupMerge.merge(current, entriesByName.getValue(group.name), installed)
-            existing[group.name] = resolved(current, installed, essentials)
-            merged[group.name] = resolved(after, installed, essentials)
+            existing[group.name] = resolved(current, device)
+            merged[group.name] = resolved(after, device)
         }
         val rules = repository.getAllRules().firstOrNull() ?: emptyList()
         return ImportedGroupsWeakening.isWeakening(existing, merged, rules)
     }
 
-    /** Installed app -> category, and the essentials: what group membership resolves against here. */
-    private suspend fun deviceFacts(): Pair<Map<String, AppCategory>, Set<String>> =
-        installedApps.getInstalledApps().associate { it.packageName to it.category } to
-            essentialPackages.current()
+    /** Installed app -> category, the essentials and the browsers: what membership resolves against here. */
+    private class DeviceFacts(
+        val installed: Map<String, AppCategory>,
+        val essentials: Set<String>,
+        val browsers: Set<String>
+    )
+
+    private suspend fun deviceFacts() = DeviceFacts(
+        installed = installedApps.getInstalledApps().associate { it.packageName to it.category },
+        essentials = essentialPackages.current(),
+        browsers = essentialPackages.browsers()
+    )
 
     private suspend fun definitionOf(group: AppGroup): GroupDefinition =
         group.definition(repository.getGroupMembers(group.id).firstOrNull() ?: emptyList())
 
-    private fun resolved(
-        definition: GroupDefinition,
-        installed: Map<String, AppCategory>,
-        essentials: Set<String>
-    ) = ResolvedGroup(definition.id, GroupMembershipResolver.membersOf(definition, installed, essentials))
+    private fun resolved(definition: GroupDefinition, device: DeviceFacts) = ResolvedGroup(
+        definition.id,
+        GroupMembershipResolver.membersOf(definition, device.installed, device.essentials, device.browsers)
+    )
 
     /**
      * Parses and validates JSON without inserting, and asks the DB how much of the file's history
@@ -191,7 +199,7 @@ class ImportRulesUseCase @Inject constructor(
         val groupNameToId = groupIdsByName(existingGroups).toMutableMap()
         val existingById = existingGroups.associateBy { it.id }
         var groupsCreated = 0
-        val installed = if (result.groups.isEmpty()) emptyMap() else deviceFacts().first
+        val installed = if (result.groups.isEmpty()) emptyMap() else deviceFacts().installed
 
         for ((name, entries) in result.groups.groupBy { it.name }) {
             val existing = groupNameToId[name]?.let { existingById[it] }

@@ -102,7 +102,10 @@ class CategoryGroupBackupTest {
         }
     }
 
-    private fun essentialsOf(set: Set<String>) = mockk<EssentialPackages> { coEvery { current() } returns set }
+    private fun essentialsOf(set: Set<String>) = mockk<EssentialPackages> {
+        coEvery { current() } returns set
+        coEvery { browsers() } returns emptySet()
+    }
 
     private fun exportUseCase(db: FakeDb, installed: Map<String, AppCategory> = installedHere, essentials: Set<String> = essentialsHere) =
         ExportRulesUseCase(

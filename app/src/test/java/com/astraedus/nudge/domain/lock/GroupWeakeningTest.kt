@@ -140,30 +140,30 @@ class GroupWeakeningTest {
 
     @Test fun `unchecking a category no installed app is in is free`() =
         assertFalse(
-            GroupWeakening.isWeakening(def(AppCategory.SOCIAL, AppCategory.NEWS), def(AppCategory.SOCIAL), blocks, fiveSocial, essentials)
+            GroupWeakening.isWeakening(def(AppCategory.SOCIAL, AppCategory.NEWS), def(AppCategory.SOCIAL), blocks, fiveSocial, essentials, emptySet())
         )
 
     @Test fun `unchecking a category that brings in five apps is weakening`() =
-        assertTrue(GroupWeakening.isWeakening(def(AppCategory.SOCIAL), def(), blocks, fiveSocial, essentials))
+        assertTrue(GroupWeakening.isWeakening(def(AppCategory.SOCIAL), def(), blocks, fiveSocial, essentials, emptySet()))
 
     @Test fun `unchecking a category whose only app is essential is free`() =
         assertFalse(
-            GroupWeakening.isWeakening(def(AppCategory.SOCIAL), def(), blocks, mapOf("com.dialer" to AppCategory.SOCIAL), essentials)
+            GroupWeakening.isWeakening(def(AppCategory.SOCIAL), def(), blocks, mapOf("com.dialer" to AppCategory.SOCIAL), essentials, emptySet())
         )
 
     @Test fun `removed by you on a category app is weakening`() =
         assertTrue(
-            GroupWeakening.isWeakening(def(AppCategory.SOCIAL), def(AppCategory.SOCIAL, excludes = setOf("com.social1")), blocks, fiveSocial, essentials)
+            GroupWeakening.isWeakening(def(AppCategory.SOCIAL), def(AppCategory.SOCIAL, excludes = setOf("com.social1")), blocks, fiveSocial, essentials, emptySet())
         )
 
     @Test fun `add back is free while blocking`() =
         assertFalse(
-            GroupWeakening.isWeakening(def(AppCategory.SOCIAL, excludes = setOf("com.social1")), def(AppCategory.SOCIAL), blocks, fiveSocial, essentials)
+            GroupWeakening.isWeakening(def(AppCategory.SOCIAL, excludes = setOf("com.social1")), def(AppCategory.SOCIAL), blocks, fiveSocial, essentials, emptySet())
         )
 
     @Test fun `checking a category is free while blocking and weakening while an All apps rule allows the group`() {
-        assertFalse(GroupWeakening.isWeakening(def(), def(AppCategory.GAME), blocks, fiveSocial, essentials))
-        assertTrue(GroupWeakening.isWeakening(def(), def(AppCategory.GAME), allowed, fiveSocial, essentials))
+        assertFalse(GroupWeakening.isWeakening(def(), def(AppCategory.GAME), blocks, fiveSocial, essentials, emptySet()))
+        assertTrue(GroupWeakening.isWeakening(def(), def(AppCategory.GAME), allowed, fiveSocial, essentials, emptySet()))
     }
 
     @Test fun `swapping a hand-picked app for its category is free when the members are the same`() =
@@ -173,7 +173,8 @@ class GroupWeakeningTest {
                 def(AppCategory.SOCIAL),
                 both,
                 fiveSocial,
-                essentials
+                essentials,
+                emptySet()
             )
         )
 

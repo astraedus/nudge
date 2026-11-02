@@ -18,7 +18,7 @@ import org.junit.Test
 class CoveringAllAppsTest {
 
     private val app = "com.instagram.android"
-    private val normal = CoverageFacts(essential = false, launchable = true, category = AppCategory.UNDEFINED)
+    private val normal = CoverageFacts(essential = false, launchable = true, category = AppCategory.UNDEFINED, browser = false)
     private val work = AppGroup(id = 1, name = "Work")
     private val groups = listOf(work)
     private val labels = mapOf("com.spotify" to "Spotify", app to "Instagram")
@@ -78,12 +78,12 @@ class CoveringAllAppsTest {
 
     @Test
     fun `an essential app is never covered`() {
-        assertTrue(cover(listOf(allApps(1)), facts = CoverageFacts(essential = true, launchable = true, category = AppCategory.UNDEFINED)).isEmpty())
+        assertTrue(cover(listOf(allApps(1)), facts = CoverageFacts(essential = true, launchable = true, category = AppCategory.UNDEFINED, browser = false)).isEmpty())
     }
 
     @Test
     fun `an app with no launcher entry is not covered`() {
-        assertTrue(cover(listOf(allApps(1)), facts = CoverageFacts(essential = false, launchable = false, category = AppCategory.UNDEFINED)).isEmpty())
+        assertTrue(cover(listOf(allApps(1)), facts = CoverageFacts(essential = false, launchable = false, category = AppCategory.UNDEFINED, browser = false)).isEmpty())
     }
 
     @Test

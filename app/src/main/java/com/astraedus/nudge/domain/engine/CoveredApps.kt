@@ -31,7 +31,8 @@ object CoveredApps {
         ruleData: List<BlockRuleData>,
         membership: GroupMembershipResolver,
         launchable: Map<String, AppCategory>,
-        essentials: Set<String>
+        essentials: Set<String>,
+        browsers: Set<String>
     ): Set<String> {
         // Only a package named by a rule, added to a group by hand, or (with an All apps rule on, or
         // a category group) launchable can resolve to anything.
@@ -47,7 +48,8 @@ object CoveredApps {
             val facts = CoverageFacts(
                 essential = pkg in essentials,
                 launchable = pkg in launchable,
-                category = launchable[pkg]
+                category = launchable[pkg],
+                browser = pkg in browsers
             )
             evaluator.resolveRulesForPackage(pkg, ruleData, membership, facts).any { it.enabled }
         }

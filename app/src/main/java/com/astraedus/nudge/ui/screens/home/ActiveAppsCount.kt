@@ -14,16 +14,17 @@ import com.astraedus.nudge.domain.packages.AppCategory
  * It used to count the packages named by enabled rule rows, which missed every app a group covers.
  * Now the rows go through [RuleSnapshot.of], the mapping block evaluation reads, and
  * [CoveredApps] asks the engine's own resolver. [rules] may hold disabled rows; only enabled ones
- * cover anything. [launchable] (each launchable app's category) and [essentials] are the device facts an All apps or group rule
- * needs (see [CoveredApps]).
+ * cover anything. [launchable] (each launchable app's category), [essentials] and [browsers] are the
+ * device facts an All apps or group rule needs (see [CoveredApps]).
  */
 fun activeAppsCount(
     rules: List<BlockRule>,
     groups: List<AppGroup>,
     members: List<AppGroupMember>,
     launchable: Map<String, AppCategory>,
-    essentials: Set<String>
+    essentials: Set<String>,
+    browsers: Set<String>
 ): Int {
     val snapshot = RuleSnapshot.of(rules.filter { it.enabled }, groups, members)
-    return CoveredApps.packages(snapshot.ruleData, snapshot.membership, launchable, essentials).size
+    return CoveredApps.packages(snapshot.ruleData, snapshot.membership, launchable, essentials, browsers).size
 }

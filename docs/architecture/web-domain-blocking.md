@@ -40,6 +40,12 @@ in-app features (a feature rule blocks a part of an app, never a whole one) and
 inside its schedule right now. The mode is NOT checked: a NONE group rule still covers, and its app
 evaluation simply allows and hands over to the website path.
 
+"Contains" means added to the group by hand. A browser never joins a group through a category (spec
+PR 6): Chrome reports Social and Firefox Productivity, so checking either would otherwise hard-block
+the whole browser without the user ever picking it. For the same reason a category group an All apps
+rule allows does not let a browser through; only a hand-added row does. See `rules-and-features.md`,
+"A browser never joins by category".
+
 The flow, in `evaluateBrowser(browserPackage, grantAlive)`:
 
 1. `coveredWhole = !grantAlive && EvaluateBlockUseCase.isCoveredWhole(browser)`, and

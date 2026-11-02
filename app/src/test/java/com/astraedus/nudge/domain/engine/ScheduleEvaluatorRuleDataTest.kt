@@ -37,7 +37,7 @@ class ScheduleEvaluatorRuleDataTest {
                 scheduleStartMinute = shape.start, scheduleEndMinute = shape.end
             )
             val active = RuleEvaluator()
-                .resolveRulesForPackage("pkg", listOf(data), membership(1L to "pkg"), CoverageFacts(essential = false, launchable = true, category = null))
+                .resolveRulesForPackage("pkg", listOf(data), membership(1L to "pkg"), CoverageFacts(essential = false, launchable = true, category = null, browser = false))
                 .single()
             for (day in Calendar.SUNDAY..Calendar.SATURDAY) {
                 for (hour in 0..23) {

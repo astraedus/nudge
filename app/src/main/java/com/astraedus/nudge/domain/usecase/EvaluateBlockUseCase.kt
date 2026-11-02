@@ -180,7 +180,9 @@ class EvaluateBlockUseCase @Inject constructor(
      * reaches a group that matches by category ([RuleCoverage.categoryNeeded]), because it decides
      * which groups the package is in; that decides whether essentials and launchability matter
      * ([RuleCoverage.factsNeeded]). Category and launchability are one cached [PackageFacts] read,
-     * the essentials list a 5-minute cache, so once warm this adds no database or binder call.
+     * the essentials list a 5-minute cache, so once warm this adds no database or binder call. A
+     * browser (the one browser list, cached with the essentials) joins no group by category, so it is
+     * checked exactly when the category is read.
      *
      * A fact that is not needed is reported as false (or a null category); no rule in [rules] reads it.
      */
@@ -195,11 +197,13 @@ class EvaluateBlockUseCase @Inject constructor(
             null
         }
         val category = categoryFact?.category
-        val needed = RuleCoverage.factsNeeded(rules, membership.groupIdsOf(packageName, category))
+        val browser = category != null && packageName in essentialPackages.browsers()
+        val needed = RuleCoverage.factsNeeded(rules, membership.groupIdsOf(packageName, category, browser))
         return CoverageFacts(
             essential = needed.essential && packageName in essentialPackages.current(),
             launchable = needed.launchable && (categoryFact ?: packageFacts.factsFor(packageName)).launchable,
-            category = category
+            category = category,
+            browser = browser
         )
     }
 

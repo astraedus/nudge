@@ -27,7 +27,7 @@ class RuleEvaluatorTest {
                 dailyLimitMinutes = null, enabled = true
             )
         )
-        val result = evaluator.resolveRulesForPackage("com.example.app", rules, GroupMembershipResolver.NONE, CoverageFacts(essential = false, launchable = true, category = null))
+        val result = evaluator.resolveRulesForPackage("com.example.app", rules, GroupMembershipResolver.NONE, CoverageFacts(essential = false, launchable = true, category = null, browser = false))
         assertEquals(1, result.size)
         assertEquals(BlockMode.HARD_BLOCK, result[0].mode)
     }
@@ -42,7 +42,7 @@ class RuleEvaluatorTest {
             )
         )
         val memberships = membership(10L to "com.example.app")
-        val result = evaluator.resolveRulesForPackage("com.example.app", rules, memberships, CoverageFacts(essential = false, launchable = true, category = null))
+        val result = evaluator.resolveRulesForPackage("com.example.app", rules, memberships, CoverageFacts(essential = false, launchable = true, category = null, browser = false))
         assertEquals(1, result.size)
         assertEquals(BlockMode.DELAY, result[0].mode)
         assertEquals(15, result[0].delaySeconds)
@@ -57,7 +57,7 @@ class RuleEvaluatorTest {
                 dailyLimitMinutes = null, enabled = true
             )
         )
-        val result = evaluator.resolveRulesForPackage("com.example.app", rules, GroupMembershipResolver.NONE, CoverageFacts(essential = false, launchable = true, category = null))
+        val result = evaluator.resolveRulesForPackage("com.example.app", rules, GroupMembershipResolver.NONE, CoverageFacts(essential = false, launchable = true, category = null, browser = false))
         assertTrue(result.isEmpty())
     }
 
@@ -76,7 +76,7 @@ class RuleEvaluatorTest {
             )
         )
         val memberships = membership(5L to "com.example.app")
-        val result = evaluator.resolveRulesForPackage("com.example.app", rules, memberships, CoverageFacts(essential = false, launchable = true, category = null))
+        val result = evaluator.resolveRulesForPackage("com.example.app", rules, memberships, CoverageFacts(essential = false, launchable = true, category = null, browser = false))
         assertEquals(2, result.size)
     }
 
@@ -90,7 +90,7 @@ class RuleEvaluatorTest {
             )
         )
         val memberships = membership(5L to "com.example.app")
-        val result = evaluator.resolveRulesForPackage("com.example.app", rules, memberships, CoverageFacts(essential = false, launchable = true, category = null))
+        val result = evaluator.resolveRulesForPackage("com.example.app", rules, memberships, CoverageFacts(essential = false, launchable = true, category = null, browser = false))
         assertTrue(result.isEmpty())
     }
 
@@ -104,7 +104,7 @@ class RuleEvaluatorTest {
                 tabVanish = false, followingSteer = true
             )
         )
-        val result = evaluator.resolveRulesForPackage("com.instagram.android", rules, GroupMembershipResolver.NONE, CoverageFacts(essential = false, launchable = true, category = null))
+        val result = evaluator.resolveRulesForPackage("com.instagram.android", rules, GroupMembershipResolver.NONE, CoverageFacts(essential = false, launchable = true, category = null, browser = false))
         assertEquals(1, result.size)
         assertFalse(result[0].tabVanish)
         assertTrue(result[0].followingSteer)
@@ -119,7 +119,7 @@ class RuleEvaluatorTest {
                 dailyLimitMinutes = null, enabled = true
             )
         )
-        val result = evaluator.resolveRulesForPackage("com.instagram.android", rules, GroupMembershipResolver.NONE, CoverageFacts(essential = false, launchable = true, category = null))
+        val result = evaluator.resolveRulesForPackage("com.instagram.android", rules, GroupMembershipResolver.NONE, CoverageFacts(essential = false, launchable = true, category = null, browser = false))
         assertTrue(result[0].tabVanish)
         assertFalse(result[0].followingSteer)
     }
@@ -139,7 +139,7 @@ class RuleEvaluatorTest {
                 dailyLimitMinutes = null, enabled = true
             )
         )
-        val result = evaluator.resolveRulesForPackage("com.instagram.android", rules, GroupMembershipResolver.NONE, CoverageFacts(essential = false, launchable = true, category = null))
+        val result = evaluator.resolveRulesForPackage("com.instagram.android", rules, GroupMembershipResolver.NONE, CoverageFacts(essential = false, launchable = true, category = null, browser = false))
         assertEquals(2, result.size)
         assertTrue(result.single { it.keepPassOnShortTrips }.keepPassOnShortTrips)
         assertEquals(1, result.count { !it.keepPassOnShortTrips })

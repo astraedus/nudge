@@ -19,7 +19,6 @@ import com.astraedus.nudge.data.repository.UsageRepository
 import com.astraedus.nudge.domain.WebDomainMatcher
 import com.astraedus.nudge.domain.engine.BrowserRouting
 import com.astraedus.nudge.domain.engine.CoverageFacts
-import com.astraedus.nudge.domain.engine.RuleCoverage
 import com.astraedus.nudge.domain.packages.PackageFacts
 import com.astraedus.nudge.domain.engine.ScheduleEvaluator
 import com.astraedus.nudge.domain.engine.WholeAppCoverage
@@ -619,13 +618,10 @@ class NudgeAccessibilityService : AccessibilityService() {
         // Fail closed on both facts: a browser is treated as launchable, and an essentials list not
         // resolved yet as empty. Either only sends the browser to the real (suspending) evaluation.
         val essentials = entryPoint.essentialApps().cachedOrNull() ?: emptySet()
-        // A category group needs the browser's category, and this site must not read PackageManager:
-        // a category not cached yet also fails closed (spec 5.2, "the snapshot is the only hot-path
-        // read").
-        val category = entryPoint.packageFacts().cachedOrNull(packageName)?.category
-        if (category == null && RuleCoverage.categoryNeeded(snapshot.ruleData, snapshot.membership)) {
-            return true
-        }
+        // A browser joins no group by category (spec 5.2: Chrome says SOCIAL, and checking Social
+        // must not take the whole web), so its category is never needed here: only a group it was
+        // added to by hand, or an All apps rule, covers it whole. Every browser this site sees is on
+        // the one browser list ([EssentialApps.KNOWN_BROWSERS] is part of it).
         return WholeAppCoverage.coversNow(
             packageName = packageName,
             rules = snapshot.ruleData,
@@ -633,7 +629,8 @@ class NudgeAccessibilityService : AccessibilityService() {
             facts = CoverageFacts(
                 essential = packageName in essentials,
                 launchable = true,
-                category = category
+                category = null,
+                browser = true
             )
         ) { rule -> schedule.isActiveNow(rule) }
     }
@@ -3337,6 +3334,10 @@ class NudgeAccessibilityService : AccessibilityService() {
                         putExtra(
                             BlockOverlayActivity.EXTRA_ALL_APPS_ALLOWED_PACKAGES,
                             it.allowedPackages.toTypedArray()
+                        )
+                        putExtra(
+                            BlockOverlayActivity.EXTRA_ALL_APPS_EXCEPT_GROUP_IDS,
+                            it.exceptGroupIds.toLongArray()
                         )
                     }
                 }

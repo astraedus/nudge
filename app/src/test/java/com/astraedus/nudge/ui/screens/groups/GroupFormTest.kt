@@ -129,7 +129,7 @@ class GroupFormTest {
         oldMembers?.let { GroupDefinition(3L, includes = it) },
         GroupDefinition(3L, includes = newMembers),
         usage, oldRule, newRule,
-        installed = emptyMap(), essentials = emptySet()
+        installed = emptyMap(), essentials = emptySet(), browsers = emptySet()
     )
 
     @Test
@@ -182,8 +182,8 @@ class GroupFormTest {
 
     @Test
     fun `deleting a blocking group is weakening, an unused one is free`() {
-        assertTrue(groupDeleteWeakens(GroupDefinition(3L, includes = setOf("a")), blocking, emptyMap(), emptySet()))
-        assertFalse(groupDeleteWeakens(GroupDefinition(3L, includes = setOf("a")), GroupUsage.UNUSED, emptyMap(), emptySet()))
+        assertTrue(groupDeleteWeakens(GroupDefinition(3L, includes = setOf("a")), blocking, emptyMap(), emptySet(), browsers = emptySet()))
+        assertFalse(groupDeleteWeakens(GroupDefinition(3L, includes = setOf("a")), GroupUsage.UNUSED, emptyMap(), emptySet(), browsers = emptySet()))
     }
 
     // ── Category groups (spec 5.2): membership is resolved before it is compared ──
@@ -197,7 +197,7 @@ class GroupFormTest {
         installed: Map<String, AppCategory>,
         essentials: Set<String> = emptySet(),
         usage: GroupUsage = blocking
-    ) = groupSaveWeakens(old, new, usage, groupRule(), groupRule(), installed, essentials)
+    ) = groupSaveWeakens(old, new, usage, groupRule(), groupRule(), installed, essentials, browsers = emptySet())
 
     @Test
     fun `unchecking a category that resolves to no installed app is not weakening`() {
@@ -247,13 +247,13 @@ class GroupFormTest {
 
     @Test
     fun `deleting a category group is weakening while it blocks, free when unused`() {
-        assertTrue(groupDeleteWeakens(socialGroup, blocking, fiveSocial, emptySet()))
-        assertFalse(groupDeleteWeakens(socialGroup, GroupUsage.UNUSED, fiveSocial, emptySet()))
+        assertTrue(groupDeleteWeakens(socialGroup, blocking, fiveSocial, emptySet(), browsers = emptySet()))
+        assertFalse(groupDeleteWeakens(socialGroup, GroupUsage.UNUSED, fiveSocial, emptySet(), browsers = emptySet()))
     }
 
     @Test
     fun `deleting a category group with no installed member is free`() {
-        assertFalse(groupDeleteWeakens(socialGroup, blocking, emptyMap(), emptySet()))
+        assertFalse(groupDeleteWeakens(socialGroup, blocking, emptyMap(), emptySet(), browsers = emptySet()))
     }
 
     // ── The picker ────────────────────────────────────────────────────────

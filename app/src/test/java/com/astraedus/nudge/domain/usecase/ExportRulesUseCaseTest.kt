@@ -56,6 +56,7 @@ class ExportRulesUseCaseTest {
         essentials = mockk()
         coEvery { installedApps.getInstalledApps() } returns emptyList()
         coEvery { essentials.current() } returns emptySet()
+        coEvery { essentials.browsers() } returns emptySet()
 
         useCase = ExportRulesUseCase(repository, usageRepository, preferences, RuleExporter(), installedApps, essentials)
     }

@@ -87,7 +87,7 @@ fun blockingGroupsOf(
     rules: List<BlockRule>
 ): List<Pair<AppGroup, BlockRule>> {
     if (facts.essential) return emptyList()
-    val memberOf = membership.groupIdsOf(packageName, facts.category)
+    val memberOf = membership.groupIdsOf(packageName, facts.category, facts.browser)
     return groups
         .filter { it.id in memberOf }
         .mapNotNull { group ->

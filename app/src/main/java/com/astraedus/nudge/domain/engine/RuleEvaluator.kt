@@ -51,24 +51,27 @@ class RuleEvaluator @Inject constructor() {
     /**
      * What an All apps rule's block screen shows; null for any other rule.
      *
-     * An allowed group contributes its hand-added apps (minus "Removed by you"). Its CATEGORY members
-     * are not listed: the engine holds no installed-app list (nothing per app is stored, spec 5.2),
-     * and the block screen offers a few allowed apps to open, not the whole set. Coverage itself is
-     * unaffected: a category member of an allowed group is not covered, through [RuleCoverage].
+     * An allowed group contributes its hand-added apps (minus "Removed by you") here. Its CATEGORY
+     * members need the installed apps, which the engine does not hold (nothing per app is stored,
+     * spec 5.2), so the block screen resolves them on the device from [AllAppsBlock.exceptGroupIds]
+     * through the same [AllAppsBlock.allowedPackagesOf]. Coverage itself never depended on this list:
+     * a category member of an allowed group is not covered, through [RuleCoverage].
      */
     private fun allAppsBlockOf(
         rule: BlockRuleData,
         membership: GroupMembershipResolver
     ): AllAppsBlock? {
         val target = RuleTarget.of(rule) as? RuleTarget.AllApps ?: return null
-        val groupMembers = target.exceptGroupIds.flatMap { id ->
-            val definition = membership.definitions[id] ?: return@flatMap emptyList()
-            definition.includes.filter { it !in definition.excludes }
-        }
+        val exceptPackages = target.exceptPackages.toList()
+        val liveGroupIds = target.exceptGroupIds.filter { it in membership.definitions }
         return AllAppsBlock(
-            exceptPackages = target.exceptPackages.toList(),
+            exceptPackages = exceptPackages,
             exceptGroupNames = rule.exceptGroupNames,
-            allowedPackages = (target.exceptPackages + groupMembers).distinct()
+            exceptGroupIds = liveGroupIds,
+            // No device facts: each group's hand-added apps minus "Removed by you".
+            allowedPackages = AllAppsBlock.allowedPackagesOf(exceptPackages, liveGroupIds) { id ->
+                membership.membersOf(id, installed = emptyMap(), essentials = emptySet(), browsers = emptySet())
+            }
         )
     }
 

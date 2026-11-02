@@ -113,16 +113,3 @@ internal fun categoryOf(androidCategory: Int): AppCategory = when (androidCatego
     ApplicationInfo.CATEGORY_PRODUCTIVITY -> AppCategory.PRODUCTIVITY
     else -> AppCategory.UNDEFINED
 }
-
-/** The inverse of [categoryOf], for asking Android about a category (its localized title). */
-internal fun androidCategoryOf(category: AppCategory): Int = when (category) {
-    AppCategory.GAME -> ApplicationInfo.CATEGORY_GAME
-    AppCategory.AUDIO -> ApplicationInfo.CATEGORY_AUDIO
-    AppCategory.VIDEO -> ApplicationInfo.CATEGORY_VIDEO
-    AppCategory.IMAGE -> ApplicationInfo.CATEGORY_IMAGE
-    AppCategory.SOCIAL -> ApplicationInfo.CATEGORY_SOCIAL
-    AppCategory.NEWS -> ApplicationInfo.CATEGORY_NEWS
-    AppCategory.MAPS -> ApplicationInfo.CATEGORY_MAPS
-    AppCategory.PRODUCTIVITY -> ApplicationInfo.CATEGORY_PRODUCTIVITY
-    AppCategory.UNDEFINED -> ApplicationInfo.CATEGORY_UNDEFINED
-}

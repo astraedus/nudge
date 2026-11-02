@@ -35,9 +35,9 @@ class GroupDefinitionsTest {
 
     @Test fun `a removed by you row is not a member and an orphan row reaches no group`() {
         val resolver = groupResolverOf(groups, rows)
-        assertFalse(resolver.isMember(1, "com.removed", AppCategory.SOCIAL, essential = false))
-        assertTrue(resolver.isMember(1, "com.added", null, essential = false))
-        assertEquals(emptySet<Long>(), resolver.groupIdsOf("com.orphan", null))
+        assertFalse(resolver.isMember(1, "com.removed", AppCategory.SOCIAL, essential = false, browser = false))
+        assertTrue(resolver.isMember(1, "com.added", null, essential = false, browser = false))
+        assertEquals(emptySet<Long>(), resolver.groupIdsOf("com.orphan", null, browser = false))
     }
 
     @Test fun `a group from before categories (NULL column, no excluded rows) reads exactly as before`() {

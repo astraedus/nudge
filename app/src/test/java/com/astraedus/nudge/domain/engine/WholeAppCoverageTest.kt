@@ -47,7 +47,7 @@ class WholeAppCoverageTest {
         rules: List<BlockRuleData>,
         pkg: String = chrome,
         memberships: GroupMembershipResolver = members,
-        facts: CoverageFacts = CoverageFacts(essential = false, launchable = true, category = null),
+        facts: CoverageFacts = CoverageFacts(essential = false, launchable = true, category = null, browser = false),
         isInSchedule: (BlockRuleData) -> Boolean = always
     ) = WholeAppCoverage.coversNow(pkg, rules, memberships, facts, isInSchedule)
 
@@ -137,7 +137,7 @@ class WholeAppCoverageTest {
         )
         for (rule in candidates) {
             if (covers(listOf(rule))) {
-                val resolved = RuleEvaluator().resolveRulesForPackage(chrome, listOf(rule), members, CoverageFacts(essential = false, launchable = true, category = null))
+                val resolved = RuleEvaluator().resolveRulesForPackage(chrome, listOf(rule), members, CoverageFacts(essential = false, launchable = true, category = null, browser = false))
                 assertEquals("rule $rule", 1, resolved.size)
             }
         }

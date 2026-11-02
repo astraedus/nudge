@@ -90,7 +90,10 @@ class ImportAllAppsRulesTest {
         mockk<NudgePreferences>(relaxed = true),
         RuleExporter(),
         mockk<InstalledAppsRepository> { coEvery { getInstalledApps() } returns emptyList() },
-        mockk<EssentialPackages> { coEvery { current() } returns emptySet() }
+        mockk<EssentialPackages> {
+            coEvery { current() } returns emptySet()
+            coEvery { browsers() } returns emptySet()
+        }
     )
 
     private suspend fun import(db: FakeDb, json: String): ImportOutcome {

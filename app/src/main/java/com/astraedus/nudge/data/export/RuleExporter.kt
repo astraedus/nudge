@@ -113,7 +113,8 @@ class RuleExporter @Inject constructor() {
         history: List<UsageEvent> = emptyList(),
         settings: ExportedSettings? = null,
         installed: Map<String, AppCategory> = emptyMap(),
-        essentials: Set<String> = emptySet()
+        essentials: Set<String> = emptySet(),
+        browsers: Set<String> = emptySet()
     ): String {
         val groupIdToName = groups.associateBy({ it.id }, { it.name })
 
@@ -130,7 +131,7 @@ class RuleExporter @Inject constructor() {
                 val definition = group.definition(groupMembers[group.id].orEmpty())
                 ExportedGroup(
                     name = group.name,
-                    members = GroupMembershipResolver.membersOf(definition, installed, essentials).toList(),
+                    members = GroupMembershipResolver.membersOf(definition, installed, essentials, browsers).toList(),
                     categories = OFFERED_CATEGORIES.filter { it in definition.categories }.map { it.name },
                     includes = definition.includes.toList(),
                     excluded = definition.excludes.toList(),

@@ -37,7 +37,7 @@ data class RuleTables(
      * checked categories, minus "Removed by you" and essentials. What "Work · 6 apps" counts.
      */
     fun memberCount(groupId: Long, device: DeviceApps): Int =
-        membership.membersOf(groupId, device.categories, device.essentials).size
+        membership.membersOf(groupId, device.categories, device.essentials, device.browsers).size
 
     /**
      * Every rule but the one being edited ([editedRuleId], null for a new rule), as the engine
@@ -53,13 +53,15 @@ data class RuleTables(
  * What the device holds, read once when the editor opens.
  *
  * [installed] is the installed apps with a launcher entry (labelled, sorted by name), which is what
- * an All apps rule can cover; [essentials] is the one essentials list; [alwaysAllowed] is the
+ * an All apps rule can cover; [essentials] is the one essentials list; [browsers] is the one
+ * browser list (a browser joins a group only by hand, never by category); [alwaysAllowed] is the
  * essentials this phone can open (Phone, Messages, Settings, ...), labelled and sorted by name, for
  * the locked row and its sheet.
  */
 data class DeviceApps(
     val installed: List<InstalledAppsRepository.AppInfo> = emptyList(),
     val essentials: Set<String> = emptySet(),
+    val browsers: Set<String> = emptySet(),
     val alwaysAllowed: List<InstalledAppsRepository.AppInfo> = emptyList()
 ) {
     val launchable: Set<String> = installed.mapTo(HashSet()) { it.packageName }
@@ -79,7 +81,8 @@ data class DeviceApps(
     fun factsFor(packageName: String) = CoverageFacts(
         essential = packageName in essentials,
         launchable = packageName in launchable,
-        category = categories[packageName]
+        category = categories[packageName],
+        browser = packageName in browsers
     )
 }
 
@@ -94,7 +97,8 @@ fun blockedCount(rule: BlockRule, tables: RuleTables, device: DeviceApps): Int =
         ruleData = listOf(rule.copy(enabled = true).toRuleData(groupNames = tables.groupNames)),
         membership = tables.membership,
         launchable = device.categories,
-        essentials = device.essentials
+        essentials = device.essentials,
+        browsers = device.browsers
     ).size
 
 /**
@@ -143,7 +147,7 @@ fun stillBlockedCount(
     tables: RuleTables,
     device: DeviceApps
 ): Int = tables.membership
-    .membersOf(groupId, device.categories, device.essentials)
+    .membersOf(groupId, device.categories, device.essentials, device.browsers)
     .filter { it in device.launchable }
     .count { alsoBlockedBy(it, otherRules, tables, device).isNotEmpty() }
 

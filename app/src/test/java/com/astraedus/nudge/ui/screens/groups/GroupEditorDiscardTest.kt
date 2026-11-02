@@ -50,6 +50,7 @@ class GroupEditorDiscardTest {
             listOf(app("com.example.chat"), app("com.example.feed"), app("com.example.game"))
         val essentials = mockk<EssentialApps>()
         every { essentials.packages(any()) } returns emptySet()
+        coEvery { essentials.browsers() } returns emptySet()
         val prefs = mockk<NudgePreferences>()
         every { prefs.isStrictModeEnabled } returns flowOf(false)
         every { prefs.strictModeChallengeLength } returns flowOf(StrictModeChallenge.DEFAULT_LENGTH)

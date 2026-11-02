@@ -85,19 +85,22 @@ the suspending evaluation, which reads the real facts.
 
 The snapshot carries `membership`, a `GroupMembershipResolver` built once by `groupResolverOf`
 (`data/repository/GroupDefinitions.kt`) from each group's `categories` CSV and its include and
-"Removed by you" rows. Membership is `!essential && !excluded && (included || category in
-categories)`; UNDEFINED never matches. The resolver itself does not apply essentials: `RuleCoverage`
+"Removed by you" rows. Membership is `!essential && !excluded && (included || (!browser && category
+in categories))`; UNDEFINED never matches, and a browser joins only by hand (see
+`rules-and-features.md`, "A browser never joins by category"). The resolver itself does not apply essentials: `RuleCoverage`
 does, per rule kind, exactly as for hand-picked members.
 
 A package's category is read only when a rule can reach a group that matches by category
 (`RuleCoverage.categoryNeeded`). With no category group in any enabled rule, evaluation reads no
 category at all. When it is needed, `EvaluateBlockUseCase` reads it through the cached
 `PackageFacts.factsFor` (one cached read, the same one that holds launchability), so once warm a
-category group adds no binder call per event.
+category group adds no binder call per event. `browser` is `pkg in EssentialPackages.browsers()`,
+the one browser list, cached with the essentials, and checked only when a category was read.
 
-The service's synchronous `isCoveredWholeNow` reads `PackageFacts.cachedOrNull(pkg)` only, never
-PackageManager. A category not cached yet while a rule needs one answers **true** (fail closed), so a
-browser in a category group is sent to the suspending evaluation, which reads the real category.
+The service's synchronous `isCoveredWholeNow` is only ever asked about a browser, and a browser never
+joins by category, so it passes `browser = true` and no category: it reads no category at all, and
+only a hand-added row can cover it. (Before the browser rule it read `PackageFacts.cachedOrNull` and
+failed closed on a miss; that branch is gone with the case it covered.)
 
 ## Group names
 

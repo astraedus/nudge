@@ -13,9 +13,9 @@ import org.junit.Test
  */
 class RuleCoverageTest {
 
-    private val plain = CoverageFacts(essential = false, launchable = true, category = null)
-    private val essential = CoverageFacts(essential = true, launchable = true, category = null)
-    private val notLaunchable = CoverageFacts(essential = false, launchable = false, category = null)
+    private val plain = CoverageFacts(essential = false, launchable = true, category = null, browser = false)
+    private val essential = CoverageFacts(essential = true, launchable = true, category = null, browser = false)
+    private val notLaunchable = CoverageFacts(essential = false, launchable = false, category = null, browser = false)
 
     private fun appRule(pkg: String) = rule(packageName = pkg)
     private fun groupRule(groupId: Long) = rule(groupId = groupId)
@@ -153,11 +153,11 @@ class RuleCoverageTest {
         for (rules in ruleSets) for (pkg in pkgs) for (groups in groupSets) {
             val needed = RuleCoverage.factsNeeded(rules, groups)
             for (e in listOf(false, true)) for (l in listOf(false, true)) {
-                val facts = CoverageFacts(essential = e, launchable = l, category = null)
+                val facts = CoverageFacts(essential = e, launchable = l, category = null, browser = false)
                 val flipped = CoverageFacts(
                     essential = if (needed.essential) e else !e,
                     launchable = if (needed.launchable) l else !l,
-                    category = null
+                    category = null, browser = false
                 )
                 for (rule in rules) {
                     assertEquals(

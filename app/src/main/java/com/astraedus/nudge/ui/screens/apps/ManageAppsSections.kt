@@ -107,6 +107,7 @@ fun buildManageAppsSections(
     members: List<AppGroupMember>,
     rules: List<BlockRule>,
     essentials: Set<String>,
+    browsers: Set<String>,
     query: String,
     extraApps: Map<String, AppInfo> = emptyMap(),
     keepInPlace: Set<String> = emptySet()
@@ -133,7 +134,8 @@ fun buildManageAppsSections(
                     facts = CoverageFacts(
                         essential = info.packageName in essentials,
                         launchable = true,
-                        category = categories[info.packageName]
+                        category = categories[info.packageName],
+                        browser = info.packageName in browsers
                     ),
                     groups = groups,
                     membership = membership,
@@ -164,7 +166,7 @@ fun buildManageAppsSections(
     val firstRun = allAppsAll.isEmpty() && groups.isEmpty() && rulesByPackage.keys.none(::belowWithRules)
     return ManageAppsSections(
         allApps = allAppsAll.filter { needle.isEmpty() || it.title.contains(needle, ignoreCase = true) },
-        groups = buildGroupRows(groups, membership, categories, essentials, rules, needle),
+        groups = buildGroupRows(groups, membership, categories, essentials, browsers, rules, needle),
         showNewGroup = needle.isEmpty(),
         appsWithRules = appsWithRules,
         otherApps = otherApps,
@@ -181,10 +183,11 @@ fun buildGroupRows(
     membership: GroupMembershipResolver,
     installed: Map<String, AppCategory>,
     essentials: Set<String>,
+    browsers: Set<String>,
     rules: List<BlockRule>,
     query: String
 ): List<GroupRow> {
-    fun count(groupId: Long) = membership.membersOf(groupId, installed, essentials).size
+    fun count(groupId: Long) = membership.membersOf(groupId, installed, essentials, browsers).size
     val needle = query.trim()
     return groups
         .filter { needle.isEmpty() || it.name.contains(needle, ignoreCase = true) }

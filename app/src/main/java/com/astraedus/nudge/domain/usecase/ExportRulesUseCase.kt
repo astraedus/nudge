@@ -66,7 +66,8 @@ class ExportRulesUseCase @Inject constructor(
         exporter.exportRules(
             rules, groups, groupMembers, history, settings,
             installed = installed,
-            essentials = essentialPackages.current()
+            essentials = essentialPackages.current(),
+            browsers = essentialPackages.browsers()
         )
     }
 }
