@@ -1,5 +1,6 @@
 package com.astraedus.nudge.service
 
+import com.astraedus.nudge.testing.SourceScan
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -10,11 +11,6 @@ import java.io.File
  */
 class CategoryDebugReceiverScopeContractTest {
 
-    private val srcDir: File by lazy {
-        listOf(File("app/src"), File("src")).firstOrNull { File(it, "main").isDirectory }
-            ?: error("app/src not found from ${File("").absolutePath}")
-    }
-
     private val needles = listOf("CategoryCoverageDebugReceiver", "dev.astraedus.nudge.debug.LOG_CATEGORIES")
 
     private fun sourcesUnder(dir: File): List<File> =
@@ -22,10 +18,10 @@ class CategoryDebugReceiverScopeContractTest {
 
     @Test
     fun `debug receiver and action appear only under src debug`() {
-        val debugText = sourcesUnder(File(srcDir, "debug")).joinToString("\n") { it.readText() }
+        val debugText = sourcesUnder(SourceScan.appFile("src/debug")).joinToString("\n") { it.readText() }
         needles.forEach { assertTrue("$it must exist under src/debug", debugText.contains(it)) }
 
-        val leaks = sourcesUnder(File(srcDir, "main"))
+        val leaks = sourcesUnder(SourceScan.appFile("src/main"))
             .filter { f -> needles.any { f.readText().contains(it) } }
             .map { it.path }
         assertTrue("debug-only receiver leaked into src/main: $leaks", leaks.isEmpty())

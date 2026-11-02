@@ -1,9 +1,9 @@
 package com.astraedus.nudge.ui.overlay
 
+import com.astraedus.nudge.testing.SourceScan
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.io.File
 
 /**
  * The shared [LeaveButton]'s WIRING. Compose UI is not JVM-testable in this repo, so, like
@@ -19,16 +19,8 @@ import java.io.File
  */
 class LeaveButtonContractTest {
 
-    private fun sourceRoot(): File =
-        listOf(File("src/main/java"), File("app/src/main/java")).firstOrNull { it.isDirectory }
-            ?: error("main source set not found from working dir ${File("").absolutePath}")
-
-    private fun code(name: String): String {
-        val file = File(sourceRoot(), "com/astraedus/nudge/ui/overlay/$name.kt")
-        assertTrue("$name.kt must exist", file.exists())
-        return file.readText().replace(Regex("""/\*[\s\S]*?\*/"""), " ")
-            .lines().joinToString("\n") { it.substringBefore("//") }
-    }
+    private fun code(name: String): String =
+        SourceScan.code(SourceScan.kotlinFile("com/astraedus/nudge/ui/overlay/$name.kt"))
 
     /** Body file -> the exact call it must make to the shared button. */
     private val bodies = mapOf(

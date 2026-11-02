@@ -1,5 +1,6 @@
 package com.astraedus.nudge.ui
 
+import com.astraedus.nudge.testing.SourceScan
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -39,11 +40,7 @@ import org.junit.Test
 class ViewModelDispatcherContractTest {
 
     private val uiSourceRoot: File by lazy {
-        listOf(
-            File("src/main/java/com/astraedus/nudge/ui"),
-            File("app/src/main/java/com/astraedus/nudge/ui")
-        ).firstOrNull { it.isDirectory }
-            ?: error("ui sources not found from working dir ${File("").absolutePath}")
+        SourceScan.kotlinFile("com/astraedus/nudge/ui")
     }
 
     private val viewModels: List<File> by lazy {
@@ -52,12 +49,6 @@ class ViewModelDispatcherContractTest {
             .sortedBy { it.name }
             .toList()
     }
-
-    /** A contract test that greps raw source reads its own explanation as code. */
-    private fun stripComments(text: String): String = text
-        .replace(Regex("""/\*[\s\S]*?\*/"""), " ")
-        .lines()
-        .joinToString("\n") { line -> line.substringBefore("//") }
 
     @Test
     fun `the scan finds the ViewModels at all`() {
@@ -70,7 +61,7 @@ class ViewModelDispatcherContractTest {
     @Test
     fun `no ViewModel names a dispatcher of its own`() {
         val offenders = viewModels
-            .filter { stripComments(it.readText()).contains("Dispatchers.") }
+            .filter { SourceScan.stripComments(it.readText()).contains("Dispatchers.") }
             .map { it.name }
 
         assertEquals(
@@ -93,7 +84,7 @@ class ViewModelDispatcherContractTest {
      */
     @Test
     fun `the ViewModel that shipped the defect routes its off-main work through the parameter`() {
-        val source = stripComments(
+        val source = SourceScan.stripComments(
             viewModels.single { it.name == "HomeViewModel.kt" }.readText()
         )
         assertTrue(

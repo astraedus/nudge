@@ -6,7 +6,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.io.File
+import com.astraedus.nudge.testing.SourceScan
 
 /**
  * L1 (pure unit) + a source scan. The sentence under the mode picker said "Completely blocks the
@@ -37,9 +37,8 @@ class BlockModeDescriptionTest {
 
     @Test
     fun `the group and All apps editors ask for the many-apps sentence`() {
-        val root = File("src/main/java/com/astraedus/nudge/ui/screens")
         for (path in listOf("groups/GroupEditorScreen.kt", "allapps/AllAppsEditorScreen.kt")) {
-            val source = File(root, path).readText()
+            val source = SourceScan.kotlinFile("com/astraedus/nudge/ui/screens/$path").readText()
             assertTrue(path, source.contains("blockModeDescription(form.mode, manyApps = true)"))
         }
     }

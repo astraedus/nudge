@@ -1,9 +1,9 @@
 package com.astraedus.nudge.ui
 
+import com.astraedus.nudge.testing.SourceScan
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.io.File
 
 /**
  * Source-level copy gate on the "Display Over Other Apps" / "Overlay Permission" rows in
@@ -45,16 +45,7 @@ import java.io.File
  */
 class OverlayPermissionCopyTest {
 
-    private fun sourceRoot(): File =
-        listOf(File("src/main"), File("app/src/main"))
-            .firstOrNull { it.isDirectory }
-            ?: error("main source set not found from working dir ${File("").absolutePath}")
-
-    private fun read(relativePath: String): String {
-        val file = File(sourceRoot(), relativePath)
-        assertTrue("$relativePath must exist", file.exists())
-        return file.readText()
-    }
+    private fun read(relativePath: String): String = SourceScan.mainFile(relativePath).readText()
 
     private val onboardingSource by lazy {
         read("java/com/astraedus/nudge/ui/screens/onboarding/OnboardingScreen.kt")

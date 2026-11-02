@@ -1,10 +1,12 @@
 package com.astraedus.nudge.service
 
 import com.astraedus.nudge.BuildConfig
+import com.astraedus.nudge.domain.block.BlockLaunchGate
 import com.astraedus.nudge.domain.bounce.BounceAlert
 import com.astraedus.nudge.domain.bounce.BounceDetector
 import com.astraedus.nudge.domain.events.ForegroundSignal
 import com.astraedus.nudge.domain.logging.NudgeLog
+import com.astraedus.nudge.domain.web.WebSessionKey
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -157,6 +159,79 @@ class BounceCheckInTest {
         )
         executor.kick(instagram, reason = "test")
         assertEquals(listOf(instagram), kicked)
+    }
+
+    /**
+     * The service hands every gate verdict to [BounceCheckIn.onBlockLaunched]; only a NEW launch is
+     * a wall. A refused launch put nothing in front of the user, and a re-show of a buried overlay
+     * is a wall already reported (#143). (This replaced a source scan of the service's branch.)
+     */
+    @Test
+    fun `only a new launch is a wall, never a refusal or a re-show`() {
+        BlockLaunchGate.Decision.values()
+            .filter { it != BlockLaunchGate.Decision.LAUNCH }
+            .forEach { refused ->
+                val c = checkIn()
+                bounceWith(c) { c.onBlockLaunched(refused, instagram) }
+                assertTrue("$refused must not count as a wall", posted.isEmpty())
+            }
+        val c = checkIn()
+        bounceWith(c) { c.onBlockLaunched(BlockLaunchGate.Decision.LAUNCH, instagram) }
+        assertEquals("LAUNCH is the one verdict that is a wall", 1, posted.size)
+    }
+
+    /** #106: the site must reach the detector, or three blocked sites are one browser wall. */
+    @Test
+    fun `a launch for a blocked site carries the site`() {
+        val c = checkIn()
+        val chrome = "com.android.chrome"
+        listOf("example.com", "example.org", "example.net").forEach { site ->
+            now += 20_000L
+            c.onBlockLaunched(BlockLaunchGate.Decision.LAUNCH, chrome, site)
+        }
+        assertEquals(BounceAlert.Unit.SITES, posted.single().unit)
+    }
+
+    /** A web kick is keyed `web:<domain>`: reported as the browser the user was in, plus the site. */
+    @Test
+    fun `a web kick is reported as the browser and the site`() {
+        val c = checkIn()
+        val chrome = "com.android.chrome"
+        listOf("example.com", "example.org", "example.net").forEach { site ->
+            now += 20_000L
+            c.onKicked(WebSessionKey.PREFIX + site, browserPackage = chrome)
+        }
+        assertEquals(BounceAlert.Unit.SITES, posted.single().unit)
+    }
+
+    @Test
+    fun `an app kick is reported as that app`() {
+        val c = checkIn()
+        bounceWith(c) { c.onKicked(instagram, browserPackage = "com.android.chrome") }
+        assertEquals(1, posted.size)
+        assertEquals(BounceAlert.Unit.APPS, posted.single().unit)
+    }
+
+    @Test
+    fun `a web kick with no known browser has nothing to attribute and is dropped`() {
+        val c = checkIn()
+        c.onKicked(WebSessionKey.PREFIX + "example.com", browserPackage = null)
+        assertFalse(c.isTracking)
+    }
+
+    /** [bounce] with the wall reported by [wall] instead of a direct `onWall`. */
+    private fun bounceWith(c: BounceCheckIn, wall: () -> Unit) {
+        c.onForegroundSignal(ForegroundSignal.AppWindow(instagram))
+        wall()
+        c.onForegroundSignal(ForegroundSignal.OwnUi(ownPackage))
+        c.onForegroundSignal(ForegroundSignal.Home("com.google.android.apps.nexuslauncher"))
+        others.forEach { pkg ->
+            now += 20_000L
+            c.onForegroundSignal(ForegroundSignal.AppWindow(pkg))
+        }
+        now += 20_000L
+        c.onForegroundSignal(ForegroundSignal.AppWindow(instagram))
+        wall()
     }
 
     private object NoOpCounterOverlay : CounterOverlayManagerApi {

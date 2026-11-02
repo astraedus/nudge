@@ -1,8 +1,8 @@
 package com.astraedus.nudge.ui.overlay
 
+import com.astraedus.nudge.testing.SourceScan
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.io.File
 
 /**
  * Issue #71: a block screen shrunk into a floating window or a split-screen half leaves the
@@ -17,10 +17,7 @@ import java.io.File
 class OverlayManifestContractTest {
 
     private val manifest: String by lazy {
-        listOf(File("app/src/main/AndroidManifest.xml"), File("src/main/AndroidManifest.xml"))
-            .firstOrNull { it.isFile }
-            ?.readText()
-            ?: error("AndroidManifest.xml not found from ${File("").absolutePath}")
+        SourceScan.mainFile("AndroidManifest.xml").readText()
     }
 
     private val overlayActivities: List<String> by lazy {

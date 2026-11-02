@@ -1,5 +1,6 @@
 package com.astraedus.nudge.ui.overlay
 
+import com.astraedus.nudge.testing.SourceScan
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -13,11 +14,7 @@ import java.io.File
  */
 class RuleFooterContractTest {
 
-    private fun overlayDir(): File =
-        listOf(
-            File("src/main/java/com/astraedus/nudge/ui/overlay"),
-            File("app/src/main/java/com/astraedus/nudge/ui/overlay")
-        ).firstOrNull { it.isDirectory } ?: error("overlay source dir not found")
+    private fun overlayDir(): File = SourceScan.kotlinFile("com/astraedus/nudge/ui/overlay")
 
     private fun code(source: String): String =
         source.lines().filterNot { it.trimStart().startsWith("//") || it.trimStart().startsWith("*") }
@@ -64,8 +61,9 @@ class RuleFooterContractTest {
         assertTrue(activity.contains("if (isAllApps) fillInGroupMembers(intent, blockPackages)"))
         assertTrue(activity.contains("deviceGroupMembers.of(groupIds)"))
         assertTrue(activity.contains("AllAppsBlock.allowedPackagesOf(own, groupIds)"))
-        val serviceDir = File(overlayDir(), "../../service")
-        val service = code(File(serviceDir, "NudgeAccessibilityService.kt").readText())
+        val service = code(
+            SourceScan.kotlinFile("com/astraedus/nudge/service/NudgeAccessibilityService.kt").readText()
+        )
         assertTrue(
             Regex("""BlockOverlayActivity\.EXTRA_ALL_APPS_EXCEPT_GROUP_IDS,\s*it\.exceptGroupIds\.toLongArray\(\)""")
                 .containsMatchIn(service)

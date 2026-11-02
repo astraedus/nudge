@@ -1,5 +1,6 @@
 package com.astraedus.nudge.service
 
+import com.astraedus.nudge.testing.SourceScan
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -33,8 +34,7 @@ import java.io.File
 class SharedNamespaceUniquenessTest {
 
     private fun mainSources(): List<File> {
-        val root = listOf(File("src/main/java"), File("app/src/main/java")).first { it.isDirectory }
-        return root.walkTopDown().filter { it.isFile && it.extension == "kt" }.toList()
+        return SourceScan.kotlinSources()
     }
 
     /** Strip comments, so prose naming an id is not mistaken for a declaration of it. */

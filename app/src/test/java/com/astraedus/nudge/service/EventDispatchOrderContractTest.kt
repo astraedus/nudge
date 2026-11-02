@@ -1,6 +1,6 @@
 package com.astraedus.nudge.service
 
-import java.io.File
+import com.astraedus.nudge.testing.SourceScan
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -32,13 +32,7 @@ import org.junit.Test
 class EventDispatchOrderContractTest {
 
     private val source: String by lazy {
-        val candidates = listOf(
-            File("src/main/java/com/astraedus/nudge/service/NudgeAccessibilityService.kt"),
-            File("app/src/main/java/com/astraedus/nudge/service/NudgeAccessibilityService.kt")
-        )
-        (candidates.firstOrNull { it.exists() }
-            ?: error("NudgeAccessibilityService.kt not found from ${File("").absolutePath}"))
-            .readText()
+        SourceScan.kotlinFile("com/astraedus/nudge/service/NudgeAccessibilityService.kt").readText()
     }
 
     /** The body of `onAccessibilityEvent`, up to the start of the next top-level declaration. */
@@ -61,10 +55,7 @@ class EventDispatchOrderContractTest {
      */
     private val dispatchCode: String by lazy { stripComments(dispatchBody) }
 
-    private fun stripComments(text: String): String = text
-        .replace(Regex("""/\*[\s\S]*?\*/"""), " ")
-        .lines()
-        .joinToString("\n") { line -> line.substringBefore("//") }
+    private fun stripComments(text: String): String = SourceScan.stripComments(text)
 
     private fun indexIn(body: String, needle: String): Int {
         val i = body.indexOf(needle)
@@ -381,10 +372,7 @@ class EventDispatchOrderContractTest {
         // ...and the OTHER caller must keep reading it in every build. This half is what makes the
         // counter able to tell a comments sheet from the feed behind it, so an "optimisation" that
         // gated it on the trace would silently break the fix in release only -- the worst place.
-        val handler = listOf(
-            java.io.File("src/main/java/com/astraedus/nudge/service/InteractionHandler.kt"),
-            java.io.File("app/src/main/java/com/astraedus/nudge/service/InteractionHandler.kt")
-        ).first { it.exists() }.readText()
+        val handler = SourceScan.kotlinFile("com/astraedus/nudge/service/InteractionHandler.kt").readText()
         assertFalse(
             "the counter's source read must NOT be gated on debug logging",
             stripComments(handler).contains("isDebugEnabled")
@@ -452,10 +440,7 @@ class EventDispatchOrderContractTest {
      */
     @Test
     fun `every sitting-model call from the service uses the monotonic clock`() {
-        val manager = listOf(
-            java.io.File("src/main/java/com/astraedus/nudge/service/PassthroughManager.kt"),
-            java.io.File("app/src/main/java/com/astraedus/nudge/service/PassthroughManager.kt")
-        ).first { it.exists() }.readText()
+        val manager = SourceScan.kotlinFile("com/astraedus/nudge/service/PassthroughManager.kt").readText()
 
         val clockTakingMethods = Regex("""fun (\w+)\([^)]*\bnowMs: Long""")
             .findAll(stripComments(manager))

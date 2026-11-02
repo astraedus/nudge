@@ -23,7 +23,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
-import java.io.File
+import com.astraedus.nudge.testing.SourceScan
 
 /**
  * The security contract of the import path: **an import must not be a way around Strict Mode.**
@@ -189,9 +189,7 @@ class BackupImportGateTest {
      */
     @Test
     fun `there is exactly one call site that writes an import, and it consults the gate`() {
-        val mainSources = listOf(File("src/main/java"), File("app/src/main/java"))
-            .firstOrNull { it.exists() }
-            ?: error("main sources not found from working dir ${File("").absolutePath}")
+        val mainSources = SourceScan.kotlinFile("")
 
         val writers = mainSources.walkTopDown()
             .filter { it.isFile && it.extension == "kt" }
@@ -206,7 +204,7 @@ class BackupImportGateTest {
         )
         assertTrue(
             "the writer must ask whether the payload weakens protection",
-            File(mainSources, "com/astraedus/nudge/ui/backup/BackupViewModel.kt")
+            SourceScan.kotlinFile("com/astraedus/nudge/ui/backup/BackupViewModel.kt")
                 .readText()
                 .contains("importRulesUseCase.weakensProtection(")
         )

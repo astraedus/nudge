@@ -1,5 +1,6 @@
 package com.astraedus.nudge.service
 
+import com.astraedus.nudge.testing.SourceScan
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -28,10 +29,7 @@ class ServiceLifecycleContractTest {
      * text would let an explanation satisfy the test that protects it.
      */
     private fun source(relativePath: String): String {
-        val candidates = listOf(File("src/$relativePath"), File("app/src/$relativePath"))
-        val text = (candidates.firstOrNull { it.exists() }
-            ?: error("$relativePath not found from working dir ${File("").absolutePath}"))
-            .readText()
+        val text = SourceScan.appFile("src/$relativePath").readText()
         return text
             .replace(Regex("""/\*[\s\S]*?\*/"""), "")
             .lines()
@@ -40,8 +38,7 @@ class ServiceLifecycleContractTest {
 
     /** XML carries no `//` comments; strip only the XML form. */
     private fun manifest(): String {
-        val candidates = listOf(File("src/main/AndroidManifest.xml"), File("app/src/main/AndroidManifest.xml"))
-        val text = (candidates.firstOrNull { it.exists() } ?: error("manifest not found")).readText()
+        val text = SourceScan.mainFile("AndroidManifest.xml").readText()
         return text.replace(Regex("""<!--[\s\S]*?-->"""), "")
     }
 
@@ -57,8 +54,7 @@ class ServiceLifecycleContractTest {
      * assertion below is that there is MORE THAN ONE, so it has to look everywhere.
      */
     private fun allMainSources(): List<File> {
-        val root = listOf(File("src/main/java"), File("app/src/main/java")).first { it.exists() }
-        return root.walkTopDown().filter { it.isFile && it.extension == "kt" }.toList()
+        return SourceScan.kotlinSources()
     }
 
     // --- The receiver ------------------------------------------------------------------------

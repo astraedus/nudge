@@ -6,12 +6,12 @@ import com.astraedus.nudge.domain.WebDomainMatcher
 import com.astraedus.nudge.domain.block.WebBlockEscape.Exit
 import com.astraedus.nudge.domain.web.WebDomainGate
 import com.astraedus.nudge.service.WebDomainDetector
+import com.astraedus.nudge.testing.SourceScan
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.io.File
 
 /**
  * [WebBlockEscape]: the exit a website block takes so the browser is not left on the blocked page
@@ -219,10 +219,7 @@ class WebBlockEscapeTest {
     }
 
     private fun shippedBlocklist(): Set<String> {
-        val file = listOf(
-            File("src/main/assets/content_filter_domains.txt"),
-            File("app/src/main/assets/content_filter_domains.txt")
-        ).firstOrNull { it.exists() } ?: error("content_filter_domains.txt not found")
+        val file = SourceScan.mainFile("assets/content_filter_domains.txt")
         return file.readLines().mapNotNull { ContentFilterRepository.parseLine(it) }.toSet()
     }
 }

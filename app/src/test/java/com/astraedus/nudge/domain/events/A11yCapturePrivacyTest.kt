@@ -1,5 +1,6 @@
 package com.astraedus.nudge.domain.events
 
+import com.astraedus.nudge.testing.SourceScan
 import java.io.File
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -23,10 +24,7 @@ import org.junit.Test
  */
 class A11yCapturePrivacyTest {
 
-    private fun sourceFile(relative: String): File = listOf(
-        File("src/main/java/com/astraedus/nudge/$relative"),
-        File("app/src/main/java/com/astraedus/nudge/$relative")
-    ).firstOrNull { it.exists() } ?: error("$relative not found from ${File("").absolutePath}")
+    private fun sourceFile(relative: String): File = SourceScan.kotlinFile("com/astraedus/nudge/$relative")
 
     @Test
     fun `the event record has no field that could carry user text`() {
@@ -91,9 +89,8 @@ class A11yCapturePrivacyTest {
      */
     @Test
     fun `the capture script extracts only the structured trace payload`() {
-        val script = listOf(File("../scripts/a11y-capture.sh"), File("scripts/a11y-capture.sh"))
-            .firstOrNull { it.exists() }
-            ?: error("a11y-capture.sh not found from ${File("").absolutePath}")
+        val script = SourceScan.projectRoot.resolve("scripts/a11y-capture.sh")
+        assertTrue("scripts/a11y-capture.sh must exist under ${SourceScan.projectRoot}", script.exists())
         val text = script.readText()
         assertTrue(
             "the script must filter logcat to the trace tag alone",

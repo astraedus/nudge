@@ -1,8 +1,10 @@
 package com.astraedus.nudge.service
 
 import com.astraedus.nudge.domain.bounce.BounceAlert
+import com.astraedus.nudge.domain.block.BlockLaunchGate
 import com.astraedus.nudge.domain.bounce.BounceDetector
 import com.astraedus.nudge.domain.events.ForegroundSignal
+import com.astraedus.nudge.domain.web.WebSessionKey
 
 /**
  * The service-side adapter for the "Bro. wtf." check-in: holds the cached on/off switch, the one
@@ -93,5 +95,30 @@ class BounceCheckIn(
             detector.onWall(packageName, clock(), siteDomain)
         }
         alert?.let(notify)
+    }
+
+    /**
+     * The overlay launch for [targetPackage] was settled by the launch gate as [decision]. Only a
+     * genuinely NEW launch is a wall: a refusal never put anything in front of the user, and a
+     * re-show of a buried overlay is a wall already reported (#143). Counting either would fire the
+     * check-in on the gate's internal churn.
+     */
+    fun onBlockLaunched(
+        decision: BlockLaunchGate.Decision,
+        targetPackage: String,
+        siteDomain: String? = null
+    ) {
+        if (decision == BlockLaunchGate.Decision.LAUNCH) onWall(targetPackage, siteDomain)
+    }
+
+    /**
+     * The auto-kick executor removed [key] from the user. An app kick is keyed by its package; a
+     * web kick by `web:<domain>`, which is no package, so it is reported as the browser the user
+     * was actually in ([browserPackage]) plus the site. A web kick with no known browser has
+     * nothing to attribute the wall to and is dropped.
+     */
+    fun onKicked(key: String, browserPackage: String?) {
+        val app = if (WebSessionKey.isWebKey(key)) browserPackage else key
+        app?.let { onWall(it, WebSessionKey.domainOf(key)) }
     }
 }

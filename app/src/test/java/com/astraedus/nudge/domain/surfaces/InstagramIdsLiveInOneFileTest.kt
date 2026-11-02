@@ -1,5 +1,6 @@
 package com.astraedus.nudge.domain.surfaces
 
+import com.astraedus.nudge.testing.SourceScan
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -41,21 +42,14 @@ class InstagramIdsLiveInOneFileTest {
         "InAppDetector.kt"
     )
 
-    private fun mainSourceRoot(): File = listOf(
-        File("src/main/java"),
-        File("app/src/main/java")
-    ).firstOrNull { it.isDirectory }
-        ?: error("main source root not found from ${File("").absolutePath}")
+    private fun mainSourceRoot(): File = SourceScan.mainFile("java")
 
     /**
      * Comments are stripped before grepping (repo convention, `docs/TESTING.md`): a KDoc block that
      * quotes the ids it explains would otherwise be read as code, and both of the allowed files have
      * exactly that shape.
      */
-    private fun stripComments(text: String): String = text
-        .replace(Regex("""/\*[\s\S]*?\*/"""), " ")
-        .lines()
-        .joinToString("\n") { line -> line.substringBefore("//") }
+    private fun stripComments(text: String): String = SourceScan.stripComments(text)
 
     private fun filesCarryingInstagramIds(): Set<String> = mainSourceRoot()
         .walkTopDown()

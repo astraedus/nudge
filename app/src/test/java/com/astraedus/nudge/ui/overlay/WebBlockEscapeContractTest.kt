@@ -1,9 +1,9 @@
 package com.astraedus.nudge.ui.overlay
 
+import com.astraedus.nudge.testing.SourceScan
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.io.File
 
 /**
  * Source-level half of issue [#78](https://github.com/astraedus/nudge/issues/78): that
@@ -18,14 +18,7 @@ import java.io.File
 class WebBlockEscapeContractTest {
 
     private val source: String by lazy {
-        val raw = listOf(
-            File("src/main/java/com/astraedus/nudge/ui/overlay/BlockOverlayActivity.kt"),
-            File("app/src/main/java/com/astraedus/nudge/ui/overlay/BlockOverlayActivity.kt")
-        ).firstOrNull { it.exists() }?.readText()
-            ?: error("BlockOverlayActivity.kt not found from working dir ${File("").absolutePath}")
-        raw.replace(Regex("""/\*[\s\S]*?\*/"""), " ")
-            .lines()
-            .joinToString("\n") { it.substringBefore("//") }
+        SourceScan.code(SourceScan.kotlinFile("com/astraedus/nudge/ui/overlay/BlockOverlayActivity.kt"))
     }
 
     /** The body of `private fun <name>(`, refusing to fall back to the whole file. */

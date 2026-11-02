@@ -1268,10 +1268,7 @@ class NudgeAccessibilityService : AccessibilityService() {
             logger = entryPoint.nudgeLogger(),
             // A kick is a wall too. A web kick is keyed by `web:<domain>`, not a package, so it is
             // reported as the browser the user was actually in, plus the site that was kicked.
-            onKicked = { key ->
-                val app = if (WebSessionKey.isWebKey(key)) webSessionUsageProvider.browserPackage else key
-                app?.let { bounceCheckIn.onWall(it, WebSessionKey.domainOf(key)) }
-            },
+            onKicked = { key -> bounceCheckIn.onKicked(key, webSessionUsageProvider.browserPackage) },
             // Prefer the accessibility global action, exactly as EmergencyPassManager does: a HOME
             // intent is not always honoured from inside another app's task, and a kick that leaves
             // the user sitting in the app they were meant to be removed from is a silent failure.
@@ -3190,7 +3187,7 @@ class NudgeAccessibilityService : AccessibilityService() {
             // a website block) and, when it is a website, the site. Every NEW overlay in this
             // service passes through here exactly once per launch the gate allows, which is what
             // makes this the one place to report it. A re-show is the same wall, already reported.
-            bounceCheckIn.onWall(targetPackage, webDomain)
+            bounceCheckIn.onBlockLaunched(decision, targetPackage, webDomain)
             // ...and record that it is only STARTED, not yet on screen. Those are different facts
             // and conflating them is what produced two blocks for one app entry: see
             // [BlockLaunchGate.isGenuineBypass]. Keyed on the TARGET, because that is the package

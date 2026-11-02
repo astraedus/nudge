@@ -1,12 +1,12 @@
 package com.astraedus.nudge.data.export
 
+import com.astraedus.nudge.testing.SourceScan
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.io.File
 
 /**
  * Nuke Mode never leaves the phone in a backup, and a backup can never change Nuke.
@@ -73,10 +73,8 @@ class NukeExportExclusionTest {
 
     @Test
     fun `the preference writer an import uses cannot reach a Nuke key`() {
-        val source = listOf(
-            File("src/main/java/com/astraedus/nudge/data/preferences/NudgePreferences.kt"),
-            File("app/src/main/java/com/astraedus/nudge/data/preferences/NudgePreferences.kt")
-        ).first { it.exists() }.readText()
+        val source =
+            SourceScan.kotlinFile("com/astraedus/nudge/data/preferences/NudgePreferences.kt").readText()
         val start = source.indexOf("suspend fun applyImportedSettings(")
         assertTrue("applyImportedSettings must exist", start >= 0)
         val body = source.substring(start, source.indexOf("\n    }\n", start))

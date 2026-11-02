@@ -1,11 +1,11 @@
 package com.astraedus.nudge.ui.overlay
 
+import com.astraedus.nudge.testing.SourceScan
 import androidx.lifecycle.Lifecycle
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.io.File
 
 /**
  * The redirect-app bubble's WIRING, which no value test can see: the overlay activity is not
@@ -22,15 +22,7 @@ import java.io.File
  */
 class RedirectAppContractTest {
 
-    private fun sourceRoot(): File =
-        listOf(File("src/main/java"), File("app/src/main/java")).firstOrNull { it.isDirectory }
-            ?: error("main source set not found from working dir ${File("").absolutePath}")
-
-    private fun read(relativePath: String): String {
-        val file = File(sourceRoot(), relativePath)
-        assertTrue("$relativePath must exist", file.exists())
-        return file.readText()
-    }
+    private fun read(relativePath: String): String = SourceScan.kotlinFile(relativePath).readText()
 
     private fun code(source: String): String =
         source.lines().filterNot { it.trimStart().startsWith("//") || it.trimStart().startsWith("*") }
