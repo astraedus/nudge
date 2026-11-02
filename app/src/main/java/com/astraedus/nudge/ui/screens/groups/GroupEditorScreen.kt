@@ -62,8 +62,8 @@ import com.astraedus.nudge.ui.components.AppPicker
 import com.astraedus.nudge.ui.components.StrictModeChallengeHost
 import com.astraedus.nudge.ui.components.TonalIcon
 import com.astraedus.nudge.ui.components.blockModeDescription
-import com.astraedus.nudge.ui.components.rememberCategoryTitle
-import com.astraedus.nudge.ui.components.rememberShortCategoryTitle
+import com.astraedus.nudge.ui.components.categoryTitle
+import com.astraedus.nudge.ui.components.shortCategoryTitle
 import com.astraedus.nudge.ui.components.rule.AllAppsIcon
 import com.astraedus.nudge.ui.components.rule.AllAppsRuleItem
 import com.astraedus.nudge.ui.components.rule.BlockModeSegmentedRow
@@ -254,7 +254,7 @@ private fun CategoryChips(chips: List<CategoryChip>, onToggle: (AppCategory) -> 
         modifier = Modifier.padding(horizontal = 16.dp)
     ) {
         chips.forEach { chip ->
-            val title = rememberCategoryTitle(chip.category)
+            val title = categoryTitle(chip.category)
             FilterChip(
                 selected = chip.checked,
                 onClick = { onToggle(chip.category) },
@@ -299,7 +299,7 @@ private fun MemberRow(row: GroupMemberRow, onRemove: () -> Unit) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 row.category?.let { category ->
                     Text(
-                        rememberShortCategoryTitle(category),
+                        shortCategoryTitle(category),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,

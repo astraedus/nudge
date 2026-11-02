@@ -1,38 +1,29 @@
 package com.astraedus.nudge.ui.components
 
-import android.content.Context
-import android.content.pm.ApplicationInfo
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
-import androidx.compose.ui.platform.LocalContext
 import com.astraedus.nudge.domain.packages.AppCategory
-import com.astraedus.nudge.service.androidCategoryOf
 
 /**
- * A category's name in the phone's language, as Android itself names it ("Social & Communication"):
- * `ApplicationInfo.getCategoryTitle` (API 26, our minSdk). Falls back to the enum name in plain case
- * for a category the platform has no title for.
+ * A category's name on a chip: "Social & Communication", "Music & Audio". Nudge's own titles, in one
+ * style (Title Case, joined by "&"). Android's `ApplicationInfo.getCategoryTitle` was used first, and
+ * it named seven categories "X & Y" and one "Music and audio", so one chip read differently from the
+ * other seven. The app is English-only, so its own strings lose nothing.
+ *
+ * UNDEFINED is never offered as a chip; it is named for exhaustiveness only.
  */
-fun categoryTitle(context: Context, category: AppCategory): String =
-    ApplicationInfo.getCategoryTitle(context, androidCategoryOf(category))?.toString()
-        ?: category.name.lowercase().replaceFirstChar { it.uppercase() }
-
-@Composable
-fun rememberCategoryTitle(category: AppCategory): String {
-    val context = LocalContext.current
-    return remember(context, category) { categoryTitle(context, category) }
+fun categoryTitle(category: AppCategory): String = when (category) {
+    AppCategory.SOCIAL -> "Social & Communication"
+    AppCategory.VIDEO -> "Movies & Video"
+    AppCategory.GAME -> "Games"
+    AppCategory.NEWS -> "News & Magazines"
+    AppCategory.AUDIO -> "Music & Audio"
+    AppCategory.IMAGE -> "Photos & Images"
+    AppCategory.MAPS -> "Maps & Navigation"
+    AppCategory.PRODUCTIVITY -> "Productivity"
+    AppCategory.UNDEFINED -> "Other"
 }
 
 /**
- * The first half of a two-part category title, for a tag that sits on every row: "Social &
- * Communication" is "Social", "Music and audio" is "Music". A one-part title is returned whole. On
- * the bench the full title ellipsised on every member row ("Social & Communica…").
+ * The tag on a member row: the first part of [categoryTitle] ("Social", "Music"). The full title
+ * ellipsised on every row on the bench ("Social & Communica…").
  */
-fun shortCategoryTitle(title: String): String =
-    SHORT_TITLE_SEPARATORS.fold(title) { acc, sep -> acc.substringBefore(sep) }.trim().ifEmpty { title }
-
-private val SHORT_TITLE_SEPARATORS = listOf(" & ", " and ")
-
-@Composable
-fun rememberShortCategoryTitle(category: AppCategory): String =
-    shortCategoryTitle(rememberCategoryTitle(category))
+fun shortCategoryTitle(category: AppCategory): String = categoryTitle(category).substringBefore(" & ")
