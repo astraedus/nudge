@@ -81,6 +81,24 @@ The service's synchronous check (above) cannot suspend, so it reads `EssentialAp
 (empty if never resolved) and treats a browser as launchable. Both mistakes only send the browser to
 the suspending evaluation, which reads the real facts.
 
+## Category groups on the hot path (spec PR 6)
+
+The snapshot carries `membership`, a `GroupMembershipResolver` built once by `groupResolverOf`
+(`data/repository/GroupDefinitions.kt`) from each group's `categories` CSV and its include and
+"Removed by you" rows. Membership is `!essential && !excluded && (included || category in
+categories)`; UNDEFINED never matches. The resolver itself does not apply essentials: `RuleCoverage`
+does, per rule kind, exactly as for hand-picked members.
+
+A package's category is read only when a rule can reach a group that matches by category
+(`RuleCoverage.categoryNeeded`). With no category group in any enabled rule, evaluation reads no
+category at all. When it is needed, `EvaluateBlockUseCase` reads it through the cached
+`PackageFacts.factsFor` (one cached read, the same one that holds launchability), so once warm a
+category group adds no binder call per event.
+
+The service's synchronous `isCoveredWholeNow` reads `PackageFacts.cachedOrNull(pkg)` only, never
+PackageManager. A category not cached yet while a rule needs one answers **true** (fail closed), so a
+browser in a category group is sent to the suspending evaluation, which reads the real category.
+
 ## Group names
 
 `RuleSnapshot.of` maps each group rule with the name of its group (`BlockRuleData.groupName`,
@@ -106,4 +124,5 @@ broadcast invalidates it; any other failure is not cached, so the next read retr
 | L1 | `RuleEvaluatorGroupNameTest` | a group rule is named after its group in every mode, with qualifiers and feature prefix; "Group" for a missing name; direct rules unchanged; `RuleSnapshot.of` fills `groupName` |
 | L1 | `PackageFactsCacheTest`, `AndroidPackageFactsCategoryTest` | cache hit/miss/invalidate, a throwing resolve is not cached; every `CATEGORY_*` mapping, unknown → `UNDEFINED` |
 | L3 | `EvaluateBlockAllAppsTest` | with an All apps rule: zero table opens and zero per-group reads once warm (including `isCoveredWhole`); no device-fact read for a package with only its own rule; one read of each fact per All apps evaluation; a newly installed app covered on its first evaluation |
+| L1 | `GroupMembershipResolverTest`, `GroupDefinitionsTest`, `CategoryCoverageTest` | category match, include, "Removed by you" beats category, essentials never members, UNDEFINED never matches; rows to definitions; coverage of a category member under group and All apps rules |
 | L1 | `RuleCoverageTest` | `factsNeeded` asks for nothing with app-only rules, and a fact it skips never changes any rule's coverage |
