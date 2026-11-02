@@ -3,6 +3,7 @@ package com.astraedus.nudge.domain.engine
 import com.astraedus.nudge.domain.groups.GroupMembershipResolver
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.domain.model.BlockRuleData
+import com.astraedus.nudge.testing.aBlockRuleData
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -19,29 +20,9 @@ class WholeAppCoverageTest {
     private val social = 7L
     private val always: (BlockRuleData) -> Boolean = { true }
 
-    private val members = membership(social to chrome, social to "com.instagram.android")
+    private val socialRule = aBlockRuleData(id = 1, groupId = social, mode = BlockMode.HARD_BLOCK)
 
-    private fun groupRule(
-        mode: BlockMode = BlockMode.HARD_BLOCK,
-        groupId: Long? = social,
-        enabled: Boolean = true,
-        features: List<String>? = null,
-        scheduleDays: List<Int>? = null,
-        start: Int? = null,
-        end: Int? = null
-    ) = BlockRuleData(
-        id = 1,
-        packageName = null,
-        groupId = groupId,
-        mode = mode,
-        delaySeconds = 15,
-        dailyLimitMinutes = null,
-        enabled = enabled,
-        scheduleDays = scheduleDays,
-        scheduleStartMinute = start,
-        scheduleEndMinute = end,
-        inAppFeatures = features
-    )
+    private val members = membership(social to chrome, social to "com.instagram.android")
 
     private fun covers(
         rules: List<BlockRuleData>,
@@ -53,52 +34,52 @@ class WholeAppCoverageTest {
 
     @Test
     fun `an enabled whole-app group rule over a member covers it`() {
-        assertTrue(covers(listOf(groupRule())))
+        assertTrue(covers(listOf(socialRule)))
     }
 
     @Test
     fun `every mode covers, including NONE`() {
         for (mode in BlockMode.values()) {
-            assertTrue("mode $mode", covers(listOf(groupRule(mode = mode))))
+            assertTrue("mode $mode", covers(listOf(socialRule.copy(mode = mode))))
         }
     }
 
     @Test
     fun `a disabled group rule does not cover`() {
-        assertFalse(covers(listOf(groupRule(enabled = false))))
+        assertFalse(covers(listOf(socialRule.copy(enabled = false))))
     }
 
     @Test
     fun `a DIRECT rule on the browser does not cover (F5)`() {
-        val direct = groupRule(groupId = null).copy(packageName = chrome)
+        val direct = socialRule.copy(groupId = null).copy(packageName = chrome)
         assertFalse(covers(listOf(direct)))
     }
 
     @Test
     fun `a feature rule does not cover, an empty feature list does`() {
-        assertFalse(covers(listOf(groupRule(features = listOf("reels")))))
-        assertTrue(covers(listOf(groupRule(features = emptyList()))))
+        assertFalse(covers(listOf(socialRule.copy(inAppFeatures = listOf("reels")))))
+        assertTrue(covers(listOf(socialRule.copy(inAppFeatures = emptyList()))))
     }
 
     @Test
     fun `a package outside the group is not covered`() {
-        assertFalse(covers(listOf(groupRule()), pkg = "org.mozilla.firefox"))
-        assertFalse(covers(listOf(groupRule()), memberships = GroupMembershipResolver.NONE))
+        assertFalse(covers(listOf(socialRule), pkg = "org.mozilla.firefox"))
+        assertFalse(covers(listOf(socialRule), memberships = GroupMembershipResolver.NONE))
     }
 
     @Test
     fun `a rule for a different group does not cover`() {
-        assertFalse(covers(listOf(groupRule(groupId = 99L))))
+        assertFalse(covers(listOf(socialRule.copy(groupId = 99L))))
     }
 
     @Test
     fun `a group rule out of its schedule does not cover`() {
-        assertFalse(covers(listOf(groupRule()), isInSchedule = { false }))
+        assertFalse(covers(listOf(socialRule), isInSchedule = { false }))
     }
 
     @Test
     fun `any one covering rule is enough`() {
-        val rules = listOf(groupRule(enabled = false), groupRule(features = listOf("reels")), groupRule())
+        val rules = listOf(socialRule.copy(enabled = false), socialRule.copy(inAppFeatures = listOf("reels")), socialRule)
         assertTrue(covers(rules))
     }
 
@@ -114,7 +95,7 @@ class WholeAppCoverageTest {
     @Test
     fun `the schedule is the engine's schedule`() {
         val schedule = ScheduleEvaluator()
-        val rule = groupRule(scheduleDays = listOf(1, 2, 3, 4, 5), start = 9 * 60, end = 17 * 60)
+        val rule = socialRule.copy(scheduleDays = listOf(1, 2, 3, 4, 5), scheduleStartMinute = 9 * 60, scheduleEndMinute = 17 * 60)
         val mondayNoon = calendar(Calendar.MONDAY, 12)
         val mondayEvening = calendar(Calendar.MONDAY, 20)
         assertTrue(covers(listOf(rule)) { schedule.isActiveAt(it, mondayNoon) })
@@ -129,11 +110,11 @@ class WholeAppCoverageTest {
     @Test
     fun `a covering rule is always among the rules resolved for the package`() {
         val candidates = listOf(
-            groupRule(),
-            groupRule(enabled = false),
-            groupRule(groupId = 99L),
-            groupRule(features = listOf("reels")),
-            groupRule(groupId = null).copy(packageName = chrome)
+            socialRule,
+            socialRule.copy(enabled = false),
+            socialRule.copy(groupId = 99L),
+            socialRule.copy(inAppFeatures = listOf("reels")),
+            socialRule.copy(groupId = null).copy(packageName = chrome)
         )
         for (rule in candidates) {
             if (covers(listOf(rule))) {

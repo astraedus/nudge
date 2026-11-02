@@ -3,6 +3,7 @@ package com.astraedus.nudge.domain.engine
 import com.astraedus.nudge.domain.model.ActiveRule
 import com.astraedus.nudge.domain.model.BlockDecision
 import com.astraedus.nudge.domain.model.BlockMode
+import com.astraedus.nudge.testing.anActiveRule
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -23,27 +24,22 @@ class BlockEngineNukeTest {
     private val pkg = "com.instagram.android"
     private val spentMs = 61L * 60_000L
 
-    private fun rule(mode: BlockMode, limit: Int? = null, features: List<String>? = null) = ActiveRule(
-        mode = mode,
-        delaySeconds = 30,
-        dailyLimitMinutes = limit,
-        enabled = true,
-        inAppFeatures = features,
-        grayscale = true,
-        ruleName = "User rule",
-        tabVanish = true
-    )
+    /**
+     * A user rule carrying everything a Nuke block must NOT inherit: a delay, grayscale, a name and
+     * the tab cover. Each set is explicit on purpose, whatever the shipped defaults are.
+     */
+    private val userRule = anActiveRule(delaySeconds = 30, grayscale = true, ruleName = "User rule", tabVanish = true)
 
     /** Every rule shape the engine can see, including none at all. */
     private fun ruleSets(): List<List<ActiveRule>> {
         val sets = mutableListOf<List<ActiveRule>>(emptyList())
         BlockMode.entries.forEach { mode ->
-            sets += listOf(rule(mode))
-            sets += listOf(rule(mode, limit = 60))
-            sets += listOf(rule(mode, features = listOf("REELS")))
+            sets += listOf(userRule.copy(mode = mode))
+            sets += listOf(userRule.copy(mode = mode, dailyLimitMinutes = 60))
+            sets += listOf(userRule.copy(mode = mode, inAppFeatures = listOf("REELS")))
         }
-        sets += BlockMode.entries.map { rule(it) } // every mode at once
-        sets += listOf(rule(BlockMode.NONE, limit = 60)) // "don't block, cap at 60"
+        sets += BlockMode.entries.map { userRule.copy(mode = it) } // every mode at once
+        sets += listOf(userRule.copy(mode = BlockMode.NONE, dailyLimitMinutes = 60)) // "don't block, cap at 60"
         return sets
     }
 
