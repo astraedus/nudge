@@ -25,7 +25,6 @@ like a switch losing its end padding, fails the comparison and produces a diff i
   - On the unit-test classpath its runtime asks for kotlin-stdlib 2.1 and coroutines 1.10.
     `app/build.gradle.kts` resolves both unit-test classpaths consistently with the app's own
     classpaths, so every JVM test still runs on the library versions the app ships.
-
   - layoutlib's jar is the real Android framework, not the android.jar stubs. On one test
     classpath, every JVM test that mocks a framework class (PackageManager,
     AccessibilityNodeInfo, WindowManager) runs that class's real static initialiser and dies in
@@ -38,8 +37,6 @@ like a switch losing its end padding, fails the comparison and produces a diff i
   None of this touches what ships: `releaseRuntimeClasspath` is identical with and without the
   plugin. Re-check the version before any compileSdk, AGP, Java or Kotlin bump; the Kotlin 2.3
   bump is when to move to the current 2.0.0 release and drop the exclude.
-
-  Re-check this pair before any compileSdk, AGP or Kotlin bump.
 
 ## Add a screen
 
