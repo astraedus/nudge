@@ -1,0 +1,58 @@
+name: CI
+
+# Pull-request gate for the Android app. release.yml only runs on main and v* tags, so before this
+# existed a PR (ours or a contributor's) reached main with no check at all, and lanes had to
+# workflow_dispatch release.yml on their branch to see a result. Same checks as release.yml's
+# test step, nothing that needs a secret: `pull_request` (never `pull_request_target`) gives a
+# fork's PR a read-only token and no secrets, so running its code here cannot reach the keystore.
+
+on:
+  pull_request:
+    paths-ignore:
+      - 'extension/**'   # extension-ci.yml covers the Chrome extension
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check store release notes
+        run: |
+          scripts/test-store-notes.sh
+          scripts/check-store-notes.sh
+
+      - name: Test device-QA signing-key guard
+        run: scripts/test-cert-guard.sh
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          validate-wrappers: false
+          cache-read-only: true   # PRs read main's Gradle cache but never write to it
+
+      - name: Run tests and lint
+        run: ./gradlew testDebugUnitTest lintDebug
+
+      - name: Upload unit test reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-reports
+          path: |
+            app/build/reports/tests/**
+            app/build/test-results/**
+            app/build/reports/lint-results-debug.html
+          if-no-files-found: warn
+          retention-days: 7
