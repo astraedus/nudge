@@ -1,5 +1,6 @@
 package com.astraedus.nudge.domain.engine
 
+import com.astraedus.nudge.domain.engine.FirstUnlockState
 import com.astraedus.nudge.domain.groups.GroupDefinition
 import com.astraedus.nudge.domain.groups.GroupMembershipResolver
 import com.astraedus.nudge.domain.lock.RuleWeakening
@@ -41,7 +42,7 @@ class RulesOnlyAddInvariantTest {
         set(2026, Calendar.NOVEMBER, 4, 10, 0, 0)
         set(Calendar.MILLISECOND, 0)
     }
-    private val engine = BlockEngine(ScheduleEvaluator(), NudgeLog.NoOp) { now.clone() as Calendar }
+    private val engine = BlockEngine(ScheduleEvaluator(FirstUnlockState.NONE), NudgeLog.NoOp) { now.clone() as Calendar }
     private val evaluator = RuleEvaluator()
 
     /** One target per way a rule can relate to [pkg]. Every [RuleTarget] kind is here (pinned below). */

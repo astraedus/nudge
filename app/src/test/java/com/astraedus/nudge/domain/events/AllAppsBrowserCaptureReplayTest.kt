@@ -1,5 +1,6 @@
 package com.astraedus.nudge.domain.events
 
+import com.astraedus.nudge.domain.engine.FirstUnlockState
 import com.astraedus.nudge.data.db.entity.BlockRule
 import com.astraedus.nudge.data.repository.ContentFilter
 import com.astraedus.nudge.data.repository.RuleSnapshot
@@ -83,9 +84,9 @@ class AllAppsBrowserCaptureReplayTest {
                 override suspend fun enabledRules() = snapshot.enabledRules
             },
             usageRepository = FakeUsageRepository(),
-            blockEngine = BlockEngine(ScheduleEvaluator()),
+            blockEngine = BlockEngine(ScheduleEvaluator(FirstUnlockState.NONE)),
             ruleEvaluator = RuleEvaluator(),
-            scheduleEvaluator = ScheduleEvaluator(),
+            scheduleEvaluator = ScheduleEvaluator(FirstUnlockState.NONE),
             preferences = FakeNudgePreferences(),
             contentFilter = mockk<ContentFilter>(),
             nukeEnforcement = NukeEnforcement.NEVER,

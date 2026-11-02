@@ -1,5 +1,6 @@
 package com.astraedus.nudge.domain.events
 
+import com.astraedus.nudge.domain.engine.FirstUnlockState
 import com.astraedus.nudge.data.repository.ContentFilter
 import com.astraedus.nudge.data.repository.RuleSnapshot
 import com.astraedus.nudge.data.repository.RuleSnapshots
@@ -93,9 +94,9 @@ class GroupBrowserCaptureReplayTest {
             override suspend fun enabledRules() = snapshot.enabledRules
         },
         usageRepository = FakeUsageRepository(),
-        blockEngine = BlockEngine(ScheduleEvaluator()),
+        blockEngine = BlockEngine(ScheduleEvaluator(FirstUnlockState.NONE)),
         ruleEvaluator = RuleEvaluator(),
-        scheduleEvaluator = ScheduleEvaluator(),
+        scheduleEvaluator = ScheduleEvaluator(FirstUnlockState.NONE),
         preferences = FakeNudgePreferences(),
         contentFilter = mockk<ContentFilter>(),
         nukeEnforcement = NukeEnforcement.NEVER,
@@ -104,7 +105,7 @@ class GroupBrowserCaptureReplayTest {
     )
 
     private val detector = WebDomainDetector()
-    private val schedule = ScheduleEvaluator()
+    private val schedule = ScheduleEvaluator(FirstUnlockState.NONE)
 
     private class Outcome(var browserEvaluations: Int = 0, var webEvaluations: Int = 0) {
         val blocks = mutableListOf<BlockDecision.Block>()

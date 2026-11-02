@@ -1,5 +1,6 @@
 package com.astraedus.nudge.domain.engine
 
+import com.astraedus.nudge.domain.engine.FirstUnlockState
 import com.astraedus.nudge.domain.model.ActiveRule
 import com.astraedus.nudge.domain.model.BlockMode
 import org.junit.Assert.assertFalse
@@ -14,7 +15,7 @@ class ScheduleEvaluatorTest {
 
     @Before
     fun setUp() {
-        evaluator = ScheduleEvaluator()
+        evaluator = ScheduleEvaluator(FirstUnlockState.NONE)
     }
 
     private fun ruleWithSchedule(

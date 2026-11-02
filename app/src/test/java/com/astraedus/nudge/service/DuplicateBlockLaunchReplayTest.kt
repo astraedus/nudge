@@ -1,5 +1,6 @@
 package com.astraedus.nudge.service
 
+import com.astraedus.nudge.domain.engine.FirstUnlockState
 import com.astraedus.nudge.domain.block.BlockLaunchGate
 import com.astraedus.nudge.domain.block.BlockLaunchGate.BlockIdentity
 import com.astraedus.nudge.domain.engine.BlockEngine
@@ -57,7 +58,7 @@ class DuplicateBlockLaunchReplayTest {
         anActiveRule(mode = BlockMode.DELAY, delaySeconds = 5, dailyLimitMinutes = null, enabled = true)
     )
 
-    private val engine = BlockEngine(ScheduleEvaluator())
+    private val engine = BlockEngine(ScheduleEvaluator(FirstUnlockState.NONE))
 
     private val classifier = EventClassifier(
         ownPackageName = nudge,

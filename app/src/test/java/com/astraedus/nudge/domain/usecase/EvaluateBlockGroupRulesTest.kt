@@ -1,5 +1,6 @@
 package com.astraedus.nudge.domain.usecase
 
+import com.astraedus.nudge.domain.engine.FirstUnlockState
 import com.astraedus.nudge.data.db.entity.BlockRule
 import com.astraedus.nudge.data.repository.BlockRuleRepository
 import com.astraedus.nudge.data.repository.ContentFilter
@@ -69,9 +70,9 @@ class EvaluateBlockGroupRulesTest {
     private fun useCase(snapshots: RuleSnapshots) = EvaluateBlockUseCase(
         ruleSnapshots = snapshots,
         usageRepository = FakeUsageRepository(),
-        blockEngine = BlockEngine(ScheduleEvaluator()),
+        blockEngine = BlockEngine(ScheduleEvaluator(FirstUnlockState.NONE)),
         ruleEvaluator = RuleEvaluator(),
-        scheduleEvaluator = ScheduleEvaluator(),
+        scheduleEvaluator = ScheduleEvaluator(FirstUnlockState.NONE),
         preferences = FakeNudgePreferences(),
         contentFilter = mockk<ContentFilter>(),
         nukeEnforcement = NukeEnforcement.NEVER,

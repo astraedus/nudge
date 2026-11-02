@@ -1,5 +1,6 @@
 package com.astraedus.nudge.domain.engine
 
+import com.astraedus.nudge.domain.engine.FirstUnlockState
 import com.astraedus.nudge.testing.aBlockRuleData
 import com.astraedus.nudge.testing.anActiveRule
 import java.util.Calendar
@@ -10,7 +11,7 @@ import org.junit.Test
 /** L1: [ScheduleEvaluator.windowEndAt], the "Until 8:42 AM" on the block screen and the Home lock card. */
 class ScheduleEvaluatorWindowEndTest {
 
-    private val evaluator = ScheduleEvaluator()
+    private val evaluator = ScheduleEvaluator(FirstUnlockState.NONE)
 
     /** November 2026: the 2nd is a Monday (ISO day 1), the 4th a Wednesday (3). */
     private fun at(day: Int, hour: Int, minute: Int, second: Int = 0, millis: Int = 0): Calendar =

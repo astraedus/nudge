@@ -1,5 +1,6 @@
 package com.astraedus.nudge.domain.block
 
+import com.astraedus.nudge.domain.engine.FirstUnlockState
 import com.astraedus.nudge.domain.engine.BlockEngine
 import com.astraedus.nudge.domain.engine.ScheduleEvaluator
 import com.astraedus.nudge.domain.model.ActiveRule
@@ -27,7 +28,7 @@ import com.astraedus.nudge.testing.anActiveRule
  */
 class BlockIdentityTest {
 
-    private val engine = BlockEngine(ScheduleEvaluator())
+    private val engine = BlockEngine(ScheduleEvaluator(FirstUnlockState.NONE))
     private val youtube = "com.google.android.youtube"
 
     private fun wholeApp(mode: BlockMode, dailyLimitMinutes: Int? = null) = anActiveRule(

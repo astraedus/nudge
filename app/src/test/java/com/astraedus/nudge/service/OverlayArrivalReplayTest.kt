@@ -1,5 +1,6 @@
 package com.astraedus.nudge.service
 
+import com.astraedus.nudge.domain.engine.FirstUnlockState
 import com.astraedus.nudge.BuildConfig
 import com.astraedus.nudge.domain.block.BlockLaunchGate
 import com.astraedus.nudge.domain.block.BlockLaunchGate.ArrivalVerdict
@@ -63,7 +64,7 @@ class OverlayArrivalReplayTest {
         anActiveRule(mode = BlockMode.HARD_BLOCK, delaySeconds = 0, dailyLimitMinutes = null, enabled = true)
     )
 
-    private val engine = BlockEngine(ScheduleEvaluator())
+    private val engine = BlockEngine(ScheduleEvaluator(FirstUnlockState.NONE))
 
     private val classifier = EventClassifier(
         ownPackageName = nudge,

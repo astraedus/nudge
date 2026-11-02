@@ -1,5 +1,6 @@
 package com.astraedus.nudge.domain.engine
 
+import com.astraedus.nudge.domain.engine.FirstUnlockState
 import com.astraedus.nudge.domain.model.ActiveRule
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.domain.model.BlockRuleData
@@ -132,7 +133,7 @@ class ScheduleEvaluatorFirstUnlockTest {
     fun `the no-argument constructor never activates a first-unlock rule`() {
         // Fail-open default for hand-built evaluators: no anchor means no window. Production binds
         // FirstUnlockStateCache, so this is never the app's path.
-        val evaluated = ScheduleEvaluator().isActiveAt(
+        val evaluated = ScheduleEvaluator(FirstUnlockState.NONE).isActiveAt(
             rule(minutes = 30),
             calendarAt(System.currentTimeMillis())
         )
