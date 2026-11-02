@@ -9,6 +9,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
+import com.astraedus.nudge.testing.anActiveRule
 
 /**
  * ISSUE [#131](https://github.com/astraedus/nudge/issues/131): one tap on YouTube, one whole-app
@@ -29,7 +30,7 @@ class BlockIdentityTest {
     private val engine = BlockEngine(ScheduleEvaluator())
     private val youtube = "com.google.android.youtube"
 
-    private fun wholeApp(mode: BlockMode, dailyLimitMinutes: Int? = null) = ActiveRule(
+    private fun wholeApp(mode: BlockMode, dailyLimitMinutes: Int? = null) = anActiveRule(
         mode = mode,
         delaySeconds = 15,
         dailyLimitMinutes = dailyLimitMinutes,
@@ -37,7 +38,7 @@ class BlockIdentityTest {
         ruleName = "whole app ${mode.name}"
     )
 
-    private fun shortsRule(mode: BlockMode) = ActiveRule(
+    private fun shortsRule(mode: BlockMode) = anActiveRule(
         mode = mode,
         delaySeconds = 15,
         dailyLimitMinutes = null,

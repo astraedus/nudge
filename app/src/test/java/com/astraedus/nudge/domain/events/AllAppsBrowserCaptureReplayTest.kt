@@ -1,11 +1,9 @@
 package com.astraedus.nudge.domain.events
 
 import com.astraedus.nudge.data.db.entity.BlockRule
-import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.data.repository.ContentFilter
 import com.astraedus.nudge.data.repository.RuleSnapshot
 import com.astraedus.nudge.data.repository.RuleSnapshots
-import com.astraedus.nudge.data.repository.UsageRepository
 import com.astraedus.nudge.domain.engine.BlockEngine
 import com.astraedus.nudge.domain.engine.BrowserRouting
 import com.astraedus.nudge.domain.engine.RuleEvaluator
@@ -18,9 +16,10 @@ import com.astraedus.nudge.domain.packages.FakePackageFacts
 import com.astraedus.nudge.domain.usecase.EvaluateBlockUseCase
 import com.astraedus.nudge.service.AwarenessOverlayWindow
 import com.astraedus.nudge.service.WebDomainDetector
-import io.mockk.every
+import com.astraedus.nudge.testing.FakeNudgePreferences
+import com.astraedus.nudge.testing.FakeUsageRepository
+import com.astraedus.nudge.testing.aBlockRule
 import io.mockk.mockk
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -69,7 +68,7 @@ class AllAppsBrowserCaptureReplayTest {
     private fun reachesDispatch(signal: ForegroundSignal) =
         signal is ForegroundSignal.AppWindow || signal is ForegroundSignal.NotForeground
 
-    private fun allAppsRule(exceptPackages: String? = null) = BlockRule(
+    private fun allAppsRule(exceptPackages: String? = null) = aBlockRule(
         id = 1,
         allApps = true,
         exceptPackages = exceptPackages,
@@ -83,11 +82,11 @@ class AllAppsBrowserCaptureReplayTest {
                 override suspend fun current() = snapshot
                 override suspend fun enabledRules() = snapshot.enabledRules
             },
-            usageRepository = mockk<UsageRepository> { every { getDailyForegroundTimeMs(any()) } returns 0L },
+            usageRepository = FakeUsageRepository(),
             blockEngine = BlockEngine(ScheduleEvaluator()),
             ruleEvaluator = RuleEvaluator(),
             scheduleEvaluator = ScheduleEvaluator(),
-            preferences = mockk<NudgePreferences> { every { contentFilterEnabled } returns flowOf(false) },
+            preferences = FakeNudgePreferences(),
             contentFilter = mockk<ContentFilter>(),
             nukeEnforcement = NukeEnforcement.NEVER,
             essentialPackages = FakeEssentialPackages(),

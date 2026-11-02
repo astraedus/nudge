@@ -10,6 +10,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.astraedus.nudge.testing.aBlockRuleData
 
 /**
  * L1: the All apps block screen's "Open an allowed app" list is the set the ENGINE allows. An app
@@ -47,7 +48,7 @@ class AllAppsBlockTest {
         )
     )
 
-    private val rule = BlockRuleData(
+    private val rule = aBlockRuleData(
         id = 1L, packageName = null, groupId = null, mode = BlockMode.HARD_BLOCK, delaySeconds = 15,
         dailyLimitMinutes = null, enabled = true, allApps = true,
         exceptPackages = setOf("com.maps"), exceptGroupIds = setOf(work, music, deleted)

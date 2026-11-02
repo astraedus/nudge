@@ -1,6 +1,7 @@
 package com.astraedus.nudge.domain.events
 
 import com.astraedus.nudge.service.AwarenessOverlayWindow
+import com.astraedus.nudge.testing.anAccessibilityEvent
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -70,12 +71,6 @@ class EventClassifierTest {
 
     private val launcherSet = setOf(launcher)
 
-    private fun event(
-        pkg: String,
-        type: A11yEventType = A11yEventType.WINDOW_STATE_CHANGED,
-        className: String? = null
-    ) = AccessibilityEventRecord(type = type, packageName = pkg, className = className)
-
     private fun classify(
         record: AccessibilityEventRecord,
         ime: String? = futo,
@@ -102,14 +97,14 @@ class EventClassifierTest {
     @Test
     fun `every ForegroundSignal type is produced by some input`() {
         val produced = listOf(
-            classify(event(instagram)),
-            classify(event(launcher)),
-            classify(event("com.android.systemui")),
-            classify(event(ownPackage)),
-            classify(event(framework)),
-            classify(event(youtube), pip = setOf(youtube)),
-            classify(event(instagram, A11yEventType.VIEW_SCROLLED)),
-            classify(event(ownPackage, className = AwarenessOverlayWindow.CLASS_NAME))
+            classify(anAccessibilityEvent(A11yEventType.WINDOW_STATE_CHANGED, instagram)),
+            classify(anAccessibilityEvent(A11yEventType.WINDOW_STATE_CHANGED, launcher)),
+            classify(anAccessibilityEvent(A11yEventType.WINDOW_STATE_CHANGED, "com.android.systemui")),
+            classify(anAccessibilityEvent(A11yEventType.WINDOW_STATE_CHANGED, ownPackage)),
+            classify(anAccessibilityEvent(A11yEventType.WINDOW_STATE_CHANGED, framework)),
+            classify(anAccessibilityEvent(A11yEventType.WINDOW_STATE_CHANGED, youtube), pip = setOf(youtube)),
+            classify(anAccessibilityEvent(A11yEventType.VIEW_SCROLLED, instagram)),
+            classify(anAccessibilityEvent(A11yEventType.WINDOW_STATE_CHANGED, ownPackage, className = AwarenessOverlayWindow.CLASS_NAME))
         ).mapTo(mutableSetOf()) { nameOf(it) }
 
         assertEquals(
@@ -136,7 +131,7 @@ class EventClassifierTest {
             assertEquals(
                 "$pkg is only a PiP bubble; nothing may reclassify it",
                 ForegroundSignal.PipOnly(pkg),
-                classify(event(pkg), pip = pip)
+                classify(anAccessibilityEvent(A11yEventType.WINDOW_STATE_CHANGED, pkg), pip = pip)
             )
         }
     }
@@ -145,7 +140,7 @@ class EventClassifierTest {
 
     @Test
     fun `our own package is OwnUi`() {
-        assertEquals(ForegroundSignal.OwnUi(ownPackage), classify(event(ownPackage)))
+        assertEquals(ForegroundSignal.OwnUi(ownPackage), classify(anAccessibilityEvent(A11yEventType.WINDOW_STATE_CHANGED, ownPackage)))
     }
 
     /**
@@ -158,7 +153,7 @@ class EventClassifierTest {
     fun `our awareness overlay is AwarenessOverlay, not OwnUi`() {
         assertEquals(
             ForegroundSignal.AwarenessOverlay(ownPackage),
-            classify(event(ownPackage, className = AwarenessOverlayWindow.CLASS_NAME))
+            classify(anAccessibilityEvent(A11yEventType.WINDOW_STATE_CHANGED, ownPackage, className = AwarenessOverlayWindow.CLASS_NAME))
         )
     }
 
@@ -173,11 +168,7 @@ class EventClassifierTest {
         assertEquals(
             ForegroundSignal.AwarenessOverlay(ownPackage),
             classify(
-                event(
-                    ownPackage,
-                    A11yEventType.WINDOW_CONTENT_CHANGED,
-                    className = AwarenessOverlayWindow.CLASS_NAME
-                )
+                anAccessibilityEvent(A11yEventType.WINDOW_CONTENT_CHANGED, ownPackage, className = AwarenessOverlayWindow.CLASS_NAME)
             )
         )
     }
@@ -200,7 +191,7 @@ class EventClassifierTest {
             assertEquals(
                 "a Nudge window named $className is not an awareness overlay",
                 ForegroundSignal.OwnUi(ownPackage),
-                classify(event(ownPackage, className = className))
+                classify(anAccessibilityEvent(A11yEventType.WINDOW_STATE_CHANGED, ownPackage, className = className))
             )
         }
     }
@@ -211,7 +202,7 @@ class EventClassifierTest {
         assertEquals(
             ForegroundSignal.PipOnly(ownPackage),
             classify(
-                event(ownPackage, className = AwarenessOverlayWindow.CLASS_NAME),
+                anAccessibilityEvent(A11yEventType.WINDOW_STATE_CHANGED, ownPackage, className = AwarenessOverlayWindow.CLASS_NAME),
                 pip = setOf(ownPackage)
             )
         )
@@ -222,19 +213,19 @@ class EventClassifierTest {
     fun `another app reporting our overlay class name is still just an app`() {
         assertEquals(
             ForegroundSignal.AppWindow(instagram),
-            classify(event(instagram, className = AwarenessOverlayWindow.CLASS_NAME))
+            classify(anAccessibilityEvent(A11yEventType.WINDOW_STATE_CHANGED, instagram, className = AwarenessOverlayWindow.CLASS_NAME))
         )
     }
 
     /** The `android` package hosts toasts, long-press menus and the paste toolbar — issue #5. */
     @Test
     fun `the framework package is Transient`() {
-        assertEquals(ForegroundSignal.Transient(framework), classify(event(framework)))
+        assertEquals(ForegroundSignal.Transient(framework), classify(anAccessibilityEvent(A11yEventType.WINDOW_STATE_CHANGED, framework)))
     }
 
     @Test
     fun `a hardcoded keyboard is Transient even when it is not the active IME`() {
-        assertEquals(ForegroundSignal.Transient(gboard), classify(event(gboard), ime = null))
+        assertEquals(ForegroundSignal.Transient(gboard), classify(anAccessibilityEvent(A11yEventType.WINDOW_STATE_CHANGED, gboard), ime = null))
     }
 
     /**
@@ -245,7 +236,7 @@ class EventClassifierTest {
     @Test
     fun `a third-party keyboard matched only via the active IME is Transient`() {
         assertTrue(futo !in imePackages)
-        assertEquals(ForegroundSignal.Transient(futo), classify(event(futo), ime = futo))
+        assertEquals(ForegroundSignal.Transient(futo), classify(anAccessibilityEvent(A11yEventType.WINDOW_STATE_CHANGED, futo), ime = futo))
     }
 
     /**
@@ -254,21 +245,21 @@ class EventClassifierTest {
      */
     @Test
     fun `a null active IME neither crashes nor makes everything Transient`() {
-        assertEquals(ForegroundSignal.AppWindow(instagram), classify(event(instagram), ime = null))
-        assertEquals(ForegroundSignal.Transient(framework), classify(event(framework), ime = null))
-        assertEquals(ForegroundSignal.Transient(gboard), classify(event(gboard), ime = null))
+        assertEquals(ForegroundSignal.AppWindow(instagram), classify(anAccessibilityEvent(A11yEventType.WINDOW_STATE_CHANGED, instagram), ime = null))
+        assertEquals(ForegroundSignal.Transient(framework), classify(anAccessibilityEvent(A11yEventType.WINDOW_STATE_CHANGED, framework), ime = null))
+        assertEquals(ForegroundSignal.Transient(gboard), classify(anAccessibilityEvent(A11yEventType.WINDOW_STATE_CHANGED, gboard), ime = null))
     }
 
     // --- what is actually in front ---------------------------------------------------------------
 
     @Test
     fun `a real app on a window state change is AppWindow`() {
-        assertEquals(ForegroundSignal.AppWindow(instagram), classify(event(instagram)))
+        assertEquals(ForegroundSignal.AppWindow(instagram), classify(anAccessibilityEvent(A11yEventType.WINDOW_STATE_CHANGED, instagram)))
     }
 
     @Test
     fun `the launcher on a window state change is Home`() {
-        assertEquals(ForegroundSignal.Home(launcher), classify(event(launcher)))
+        assertEquals(ForegroundSignal.Home(launcher), classify(anAccessibilityEvent(A11yEventType.WINDOW_STATE_CHANGED, launcher)))
     }
 
     /**
@@ -280,7 +271,7 @@ class EventClassifierTest {
     fun `the launcher on a content change is NotForeground and not Home`() {
         assertEquals(
             ForegroundSignal.NotForeground(launcher),
-            classify(event(launcher, A11yEventType.WINDOW_CONTENT_CHANGED))
+            classify(anAccessibilityEvent(A11yEventType.WINDOW_CONTENT_CHANGED, launcher))
         )
     }
 
@@ -292,7 +283,7 @@ class EventClassifierTest {
      */
     @Test
     fun `the launcher on a windows-changed event is not Home`() {
-        val signal = classify(event(launcher, A11yEventType.WINDOWS_CHANGED))
+        val signal = classify(anAccessibilityEvent(A11yEventType.WINDOWS_CHANGED, launcher))
         assertEquals(ForegroundSignal.SystemSurface(launcher), signal)
     }
 
@@ -302,7 +293,7 @@ class EventClassifierTest {
      */
     @Test
     fun `an empty launcher set classifies nothing as Home`() {
-        val signal = classify(event(launcher), launchers = emptySet())
+        val signal = classify(anAccessibilityEvent(A11yEventType.WINDOW_STATE_CHANGED, launcher), launchers = emptySet())
         assertTrue("with no launcher set, no event may be Home", signal !is ForegroundSignal.Home)
         assertEquals(ForegroundSignal.SystemSurface(launcher), signal)
     }
@@ -311,11 +302,11 @@ class EventClassifierTest {
     fun `a system package that is not the launcher is SystemSurface`() {
         assertEquals(
             ForegroundSignal.SystemSurface("com.android.systemui"),
-            classify(event("com.android.systemui"))
+            classify(anAccessibilityEvent(A11yEventType.WINDOW_STATE_CHANGED, "com.android.systemui"))
         )
         assertEquals(
             ForegroundSignal.SystemSurface("com.android.settings"),
-            classify(event("com.android.settings"))
+            classify(anAccessibilityEvent(A11yEventType.WINDOW_STATE_CHANGED, "com.android.settings"))
         )
     }
 
@@ -331,7 +322,7 @@ class EventClassifierTest {
         val thirdParty = "com.some.third.party.launcher"
         assertEquals(
             ForegroundSignal.Home(thirdParty),
-            classify(event(thirdParty), launchers = setOf(thirdParty))
+            classify(anAccessibilityEvent(A11yEventType.WINDOW_STATE_CHANGED, thirdParty), launchers = setOf(thirdParty))
         )
     }
 
@@ -347,7 +338,7 @@ class EventClassifierTest {
             assertEquals(
                 "$type makes no claim about what is in front",
                 ForegroundSignal.NotForeground(instagram),
-                classify(event(instagram, type))
+                classify(anAccessibilityEvent(type, instagram))
             )
         }
     }
@@ -368,7 +359,7 @@ class EventClassifierTest {
     fun `sub-flow packages are ordinary app windows rather than special cases`() {
         listOf(picker, shareSheet, pixelPermissions).forEach { pkg ->
             assertTrue("$pkg must not be on any hardcoded set", pkg !in systemPackages)
-            assertEquals(ForegroundSignal.AppWindow(pkg), classify(event(pkg)))
+            assertEquals(ForegroundSignal.AppWindow(pkg), classify(anAccessibilityEvent(A11yEventType.WINDOW_STATE_CHANGED, pkg)))
         }
     }
 
@@ -381,7 +372,7 @@ class EventClassifierTest {
      */
     @Test
     fun `a verified content change is promoted to AppWindow`() {
-        val record = event(instagram, A11yEventType.WINDOW_CONTENT_CHANGED)
+        val record = anAccessibilityEvent(A11yEventType.WINDOW_CONTENT_CHANGED, instagram)
         assertEquals(ForegroundSignal.NotForeground(instagram), classify(record))
         assertEquals(
             ForegroundSignal.AppWindow(instagram),
@@ -401,7 +392,7 @@ class EventClassifierTest {
      */
     @Test
     fun `a verified launcher content change is Home`() {
-        val record = event(launcher, A11yEventType.WINDOW_CONTENT_CHANGED)
+        val record = anAccessibilityEvent(A11yEventType.WINDOW_CONTENT_CHANGED, launcher)
         assertEquals(
             "unverified, a launcher content change is still nothing: widget churn behind a " +
                 "fullscreen app must never end a sitting",
@@ -427,7 +418,7 @@ class EventClassifierTest {
      */
     @Test
     fun `with no launcher packages known a verified launcher content change is not Home`() {
-        val record = event(launcher, A11yEventType.WINDOW_CONTENT_CHANGED)
+        val record = anAccessibilityEvent(A11yEventType.WINDOW_CONTENT_CHANGED, launcher)
         assertEquals(
             ForegroundSignal.SystemSurface(launcher),
             classifier.classifyVerifiedContentChangeAsSwitch(record, futo, emptySet(), emptySet())
@@ -448,7 +439,7 @@ class EventClassifierTest {
         assertEquals(
             ForegroundSignal.Home(launcher),
             classifier.classifyVerifiedContentChangeAsSwitch(
-                event(launcher, A11yEventType.WINDOW_CONTENT_CHANGED), futo, launcherSet, emptySet()
+                anAccessibilityEvent(A11yEventType.WINDOW_CONTENT_CHANGED, launcher), futo, launcherSet, emptySet()
             )
         )
     }
@@ -460,7 +451,7 @@ class EventClassifierTest {
      */
     @Test
     fun `a PiP launcher is still PiP, never Home`() {
-        val record = event(launcher, A11yEventType.WINDOW_CONTENT_CHANGED)
+        val record = anAccessibilityEvent(A11yEventType.WINDOW_CONTENT_CHANGED, launcher)
         assertEquals(
             ForegroundSignal.PipOnly(launcher),
             classifier.classifyVerifiedContentChangeAsSwitch(
@@ -478,7 +469,7 @@ class EventClassifierTest {
     fun `a verified content change still rejects PiP own UI keyboards and system packages`() {
         fun promote(pkg: String, pip: Set<String> = emptySet()) =
             classifier.classifyVerifiedContentChangeAsSwitch(
-                event(pkg, A11yEventType.WINDOW_CONTENT_CHANGED), futo, launcherSet, pip
+                anAccessibilityEvent(A11yEventType.WINDOW_CONTENT_CHANGED, pkg), futo, launcherSet, pip
             )
 
         assertEquals(ForegroundSignal.PipOnly(youtube), promote(youtube, pip = setOf(youtube)))

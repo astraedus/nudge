@@ -5,6 +5,7 @@ import com.astraedus.nudge.domain.events.AccessibilityEventRecord
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.astraedus.nudge.testing.anAccessibilityEvent
 
 /**
  * Issue #28 bug 2: *"the tap/scroll counter is extremely faulty"*.
@@ -63,7 +64,7 @@ class InteractionCounterTest {
         isScrollable = true
     )
 
-    private fun click() = AccessibilityEventRecord(
+    private fun click() = anAccessibilityEvent(
         type = A11yEventType.VIEW_CLICKED,
         packageName = instagram,
         windowId = igWindow
@@ -485,7 +486,7 @@ class InteractionCounterTest {
     @Test
     fun `a content change is not an interaction`() {
         val counter = InteractionCounter()
-        val contentChange = AccessibilityEventRecord(
+        val contentChange = anAccessibilityEvent(
             type = A11yEventType.WINDOW_CONTENT_CHANGED,
             packageName = instagram,
             windowId = igWindow
@@ -497,7 +498,7 @@ class InteractionCounterTest {
     @Test
     fun `window state changes are not interactions either`() {
         val counter = InteractionCounter()
-        val record = AccessibilityEventRecord(
+        val record = anAccessibilityEvent(
             type = A11yEventType.WINDOW_STATE_CHANGED,
             packageName = instagram,
             windowId = igWindow

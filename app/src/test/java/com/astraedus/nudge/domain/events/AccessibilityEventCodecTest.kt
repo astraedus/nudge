@@ -5,6 +5,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.astraedus.nudge.testing.anAccessibilityEvent
 
 /**
  * The codec is the contract between the device and the test suite: the service writes these lines,
@@ -43,7 +44,7 @@ class AccessibilityEventCodecTest {
 
     @Test
     fun `a minimal record survives a round trip unchanged`() {
-        val minimal = AccessibilityEventRecord(
+        val minimal = anAccessibilityEvent(
             type = A11yEventType.WINDOW_STATE_CHANGED,
             packageName = "com.android.systemui"
         )
@@ -53,7 +54,7 @@ class AccessibilityEventCodecTest {
     @Test
     fun `every event type round trips`() {
         A11yEventType.entries.forEach { type ->
-            val record = AccessibilityEventRecord(type = type, packageName = "p")
+            val record = anAccessibilityEvent(type = type, packageName = "p")
             assertEquals(type, AccessibilityEventCodec.decode(AccessibilityEventCodec.encode(record))?.type)
         }
     }
