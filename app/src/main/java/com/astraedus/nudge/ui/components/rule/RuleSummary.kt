@@ -157,18 +157,22 @@ object RuleSummary {
     }
 
     /**
-     * A first-unlock rule's window in words: "30min after first unlock", "1h after first unlock on
-     * Mon–Fri" never happens — the duration is always minutes, like "30min limit" above, so the
-     * summary cannot read as two different durations for one rule.
+     * A first-unlock rule's window in words: "30min after first unlock", "1 h after first unlock on
+     * Mon–Fri". Minutes below an hour, whole hours above it, so a 240-minute window reads "4 h"
+     * rather than "240min" in a list where every other number is small.
      *
      * The days are the logical day's (spec 3.5), which is what the engine checks; no time range is
      * shown because the window's start is the user's own unlock, not a clock time.
      */
     fun firstUnlockText(days: List<Int>?, minutes: Int): String {
         val dayText = dayText(days)
-        val window = "${minutes}min after first unlock"
+        val window = "${durationText(minutes)} after first unlock"
         return if (dayText == null) window else "$window on $dayText"
     }
+
+    /** "30min", "1 h", "4 h": minutes under an hour, whole hours above it. */
+    private fun durationText(minutes: Int): String =
+        if (minutes >= 60 && minutes % 60 == 0) "${minutes / 60} h" else "${minutes}min"
 
     /** [scheduleText] on raw values; ISO days (1 = Mon .. 7 = Sun), minutes from midnight. */
     fun scheduleText(days: List<Int>?, startMinute: Int?, endMinute: Int?): String? {

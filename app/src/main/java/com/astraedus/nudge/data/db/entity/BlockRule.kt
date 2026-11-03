@@ -124,9 +124,10 @@ data class BlockRule(
      * window only counts if its stamp is at or after this, so a rule made at 08:05 after an 08:00
      * unlock starts tomorrow instead of locking the phone mid-setup (owner decision 2).
      *
-     * 0 for every pre-migration rule, which means "always armed": those rules did not have this
-     * behaviour to wait for. Stamped by [com.astraedus.nudge.data.repository.BlockRuleRepository] on
-     * every enabled write, so callers cannot forget it.
+     * 0 for every pre-migration rule, which means "never armed": those rules did not have this
+     * behaviour to wait for. `RuleArming` moves it only when a write creates the rule, switches it
+     * from off to on, or newly makes it a first-unlock rule; every other save keeps the stored
+     * value, so a stronger edit cannot end a window that is running.
      */
     val armedAt: Long = 0L
 )
