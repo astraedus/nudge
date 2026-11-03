@@ -315,26 +315,15 @@ class FirstUnlockWindowTest {
     }
 
     @Test
-    fun `the editor promises tomorrow only when today's unlock has already happened`() {
-        val now = at(newYork, "2026-06-06", 8, 0)
-
-        assertTrue(
-            "an 08:00 unlock means a rule saved at 08:00 starts tomorrow",
-            FirstUnlockWindow.startsAtNextUnlock(now, at(newYork, "2026-06-06", 8, 0), 240, newYork)
-        )
-        assertFalse(
-            "no unlock yet today, so the next one starts the window",
-            FirstUnlockWindow.startsAtNextUnlock(now, FirstUnlockWindow.NO_STAMP, 240, newYork)
-        )
-        assertFalse(
-            "yesterday's stamp is stale, so the next unlock starts the window",
-            FirstUnlockWindow.startsAtNextUnlock(
-                now,
-                at(newYork, "2026-06-05", 8, 0),
-                240,
-                newYork
-            )
-        )
+    fun `past the keyguard needs an unlocked, interactive screen`() {
+        // The four rows review asked for, plus a null PowerManager. An earlier version of the
+        // service's fallback used `locked && interactive` as its exit, which stamped while the
+        // screen was OFF: an alarm over the lock screen anchored the day before the user woke up.
+        assertTrue(FirstUnlockWindow.isPastKeyguard(keyguardLocked = false, interactive = true))
+        assertFalse(FirstUnlockWindow.isPastKeyguard(keyguardLocked = true, interactive = true))
+        assertFalse(FirstUnlockWindow.isPastKeyguard(keyguardLocked = false, interactive = false))
+        assertFalse(FirstUnlockWindow.isPastKeyguard(keyguardLocked = true, interactive = false))
+        assertFalse(FirstUnlockWindow.isPastKeyguard(keyguardLocked = false, interactive = null))
     }
 
     @Test

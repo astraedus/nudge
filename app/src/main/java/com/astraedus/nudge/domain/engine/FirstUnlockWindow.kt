@@ -146,15 +146,18 @@ object FirstUnlockWindow {
     }
 
     /**
-     * The editor's one honest sentence (spec 5.3, owner decision 2): true when today's first unlock
-     * is already recorded, so a rule saved now arms after it and waits for tomorrow's.
+     * The AppWindow fallback's gate: is the device actually past the keyguard?
      *
-     * Saving stamps `armedAt = now`, and a window needs `stamp >= armedAt`. So with a fresh stamp
-     * today the new window cannot open until the next unlock; with no stamp yet (or a stale one) the
-     * very next unlock opens it, and the editor stays quiet.
+     * `KeyguardManager.isDeviceLocked` is NOT this question. It is false on swipe-only and no-PIN
+     * phones while the lock screen is showing, so an alarm or an incoming-call screen over the
+     * keyguard would read as a wake-up and stamp the day's anchor while the user is still in bed.
+     * The two facts that answer it are whether the keyguard is showing and whether the screen is
+     * interactive; [interactive] is nullable because `PowerManager` can be absent.
+     *
+     * Pure and separate from the service so the truth table is pinned by a JVM test.
      */
-    fun startsAtNextUnlock(nowMs: Long, stampMs: Long, dayStartMinute: Int, zone: ZoneId): Boolean =
-        !shouldStamp(nowMs, stampMs, dayStartMinute, zone)
+    fun isPastKeyguard(keyguardLocked: Boolean, interactive: Boolean?): Boolean =
+        !keyguardLocked && interactive == true
 
     private fun logicalDayDate(nowMs: Long, dayStartMinute: Int, zone: ZoneId): LocalDate {
         val local = Instant.ofEpochMilli(nowMs).atZone(zone)

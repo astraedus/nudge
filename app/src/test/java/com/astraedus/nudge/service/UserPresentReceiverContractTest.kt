@@ -132,6 +132,21 @@ class UserPresentReceiverContractTest {
     }
 
     @Test
+    fun `the fallback returns unless the device is past the keyguard`() {
+        // Blocker 1: the first version used `locked && interactive` as the exit, which stamped
+        // while the screen was OFF (an alarm over the lock screen anchored the day in bed). The
+        // truth table is in FirstUnlockWindowTest; this pins that the service USES it.
+        assertTrue(
+            "the fallback must ask the shared predicate",
+            fallbackBody.contains("FirstUnlockWindow.isPastKeyguard(")
+        )
+        assertTrue(
+            "the inverted form must not come back",
+            !fallbackBody.contains("isKeyguardLocked && power?.isInteractive == true")
+        )
+    }
+
+    @Test
     fun `the fallback keeps its cheap exit before the keyguard call`() {
         // Device QA found the cold-cache bug this guards: the in-memory stamp reads 0 for the first
         // moments of a process. The cheap check must stay (it keeps the binder call off app

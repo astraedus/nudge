@@ -956,7 +956,7 @@ class NudgeAccessibilityService : AccessibilityService() {
      *
      * The evidence fields name what the delivery depends on:
      * - `screenOn` — `isInteractive`, because a delivery while the screen is off would be suspicious;
-     * - `keyguardLocked` — `isDeviceLocked`, which must be false by the time USER_PRESENT arrives;
+     * - `keyguardShowing` — `isKeyguardLocked`, which must be false by the time USER_PRESENT arrives;
      * - `secureLock` — `isKeyguardSecure`, "swipe only" vs "PIN/pattern/biometric";
      * - `sinceBootMs` — `elapsedRealtime`, monotonic and jump-proof, so a reboot is obvious in the log
      *   (a small value) and a wall-clock change cannot fake one.
@@ -987,9 +987,9 @@ class NudgeAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * The fallback anchor (spec 5.3, #109): an app window in front while the keyguard is unlocked
-     * means the user got past it even though no USER_PRESENT reached us. Covers devices with no
-     * secure lock and a broadcast an OEM dropped.
+     * The fallback anchor (spec 5.3, #109): an app window in front while the device is past the
+     * keyguard means the user got there even though no USER_PRESENT reached us. Covers devices with
+     * no secure lock and a broadcast an OEM dropped.
      *
      * The write goes through the same `FirstUnlockStateCache.stampIfStale` the receiver uses, so the
      * two sites converge on one anchor and neither restarts a fresh one. The cheap check above is
@@ -1003,7 +1003,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         val now = System.currentTimeMillis()
         val state = firstUnlockState
         // Cheapest exit first, on the app-switch hot path: with a fresh anchor there is nothing to
-        // do, and `KeyguardManager.isDeviceLocked` is a binder call this must not spend per event.
+        // do, and the keyguard read is a binder call this must not spend per event.
         // On a cold cache this reads `0` and falls through once; [stampIfStale] then re-checks the
         // persisted anchor and writes nothing if there is one.
         if (!FirstUnlockWindow.shouldStamp(
@@ -1016,12 +1016,13 @@ class NudgeAccessibilityService : AccessibilityService() {
             return
         }
         val keyguard = getSystemService(android.app.KeyguardManager::class.java) ?: return
-        // `isKeyguardLocked`, not `isDeviceLocked`: on a swipe-only or no-PIN phone the device
-        // counts as unlocked while the keyguard is still showing, so an alarm or the shade over the
-        // lock screen would otherwise read as a wake-up. `isInteractive` is the "screen is on" half
-        // of the same question (review, spec 5.3).
+        // Return unless the device is actually PAST the keyguard (review, spec 5.3). An earlier
+        // version returned only when the keyguard was locked AND the screen was on, which stamped
+        // while the screen was off: an alarm or an incoming call over the lock screen anchored the
+        // day before the user woke up. `isKeyguardLocked`, not `isDeviceLocked`, is the right fact
+        // on swipe-only and no-PIN phones.
         val power = getSystemService(android.os.PowerManager::class.java)
-        if (keyguard.isKeyguardLocked && power?.isInteractive == true) return
+        if (!FirstUnlockWindow.isPastKeyguard(keyguard.isKeyguardLocked, power?.isInteractive)) return
         serviceScope.launch {
             // Log only a stamp that was actually written: a kept anchor needs no second line, so
             // the log is naturally at most one per logical day without a throttle of its own.
