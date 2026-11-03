@@ -31,7 +31,7 @@ Two paths: fast (instant) or CI (verified).
 **Fast path** -- release is live in seconds, CI verifies in the background:
 ```bash
 # 1. Bump version in app/build.gradle.kts (versionCode + versionName)
-# 2. Build locally: ./gradlew test && ./gradlew assembleRelease
+# 2. Make sure main's CI (Release workflow) is green on the commit you tag; never run the full suite locally
 # 3. Commit, tag, push
 git add app/build.gradle.kts
 git commit -m "chore: bump version to 1.4.0"
@@ -198,7 +198,7 @@ one that matches what you are about to edit. Nothing here is optional reading if
 
 ## Testing (never regress)
 
-**Every new feature MUST ship with tests, and `./gradlew test` must pass before every commit.** If tests fail,
+**Every new feature MUST ship with tests, and CI (`ci.yml`, the full `testDebugUnitTest` + lint) must be green before merge.** Locally run only the scoped tests for what you touched (`./gradlew testDebugUnitTest --tests '<pattern>' --max-workers=2`); the full suite runs on CI, never on the laptop. If tests fail,
 the feature isn't done. When fixing a bug, write the test that reproduces it FIRST. Regression = blocker.
 The domain layer is pure Kotlin with no Android deps, so it is fast to JVM-test and carries the highest bar.
 
@@ -228,9 +228,9 @@ lifecycle class (branch `test/overlay-lifecycle-pure`) — read it before adding
 
 After any feature addition or significant change:
 1. Write tests covering the new behavior (unit + integration as appropriate)
-2. Run `./gradlew test` and verify ALL tests pass (not just new ones)
-3. Build debug APK: `./gradlew assembleDebug`
-4. Install on Pixel 3: `adb -s 192.168.1.68:5555 install -r app/build/outputs/apk/debug/app-debug.apk`
+2. Run the scoped tests locally; open the PR and let `ci.yml` run ALL tests (plus `screenshots.yml`). Merge only on green
+3. After merge, main's Release workflow refreshes the `main-latest` APK (release-signed); the gate installs it with `APK=main`, never a local debug build (the bench carries the release key)
+4. How we test and why, across repos: `~/.claude/context/testing-playbook.md`; this repo's layers: `docs/TESTING.md`
 5. **QA on device** — run `scripts/device-qa.sh all` (scripted gate: 9 cases, ~18 min, PASS/FAIL table, nonzero exit; screenshots to `~/Pictures/screenshots/nudge/qa-<ts>/`). **`all` outlasts a 10-minute tool call**, so an agent without a background shell runs the same cases as three bounded chunks, in this order: `scripts/device-qa.sh group1 && APK=installed scripts/device-qa.sh group2 && APK=installed scripts/device-qa.sh group3` (about 6 / 8 / 7 min; PASS = all three exit 0; `group1` carries `setup` and opens the `crash-check` baseline the other two reuse; `--help` shows which cases are in which). PASS required before push. `device-tester` only for exploratory cases the script does not cover. **Never rebuild it as a Maestro suite** — `UiAutomation` suppresses all other accessibility services, and Nudge is one; why, and the ADB+logcat oracle that replaces it: `docs/TESTING.md` → "L6 — Release-gate device QA". The bench carries the RELEASE key: an install that would change it (e.g. `APK=debug`) refuses unless `ALLOW_CERT_SWITCH=1`; put it back with `APK=main ALLOW_CERT_SWITCH=1 scripts/device-qa.sh setup`.
    **The typed successor is `scripts/qa-driver.sh`** (`:qa-driver` instrumented tests against the debug-signed `qa` build type, whose adb-only control receiver lives in `app/src/qa/` and nowhere else). Its UiAutomation sets `FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES`, which keeps Nudge bound (proved, with a control, by its `spike` cases). Not the release gate yet; the rules that keep the qa receiver out of release are merge gates: `docs/TESTING.md` → "L6b".
 6. If QA passes: bump `versionCode` + `versionName` (patch) in `app/build.gradle.kts`
