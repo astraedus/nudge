@@ -487,6 +487,7 @@ class UnifiedAppConfigViewModel @Inject constructor(
         existingDefaultRule = blockRuleRepository.getRule(defaultId) ?: newDefault
 
         // 3. Create feature override rules (non-INHERIT only)
+        val writtenDefaultFeatureRules = mutableMapOf<String, BlockRule>()
         for ((featureKey, override) in state.featureOverrides) {
             if (override.mode == FeatureMode.INHERIT) continue
             val ruleMode = override.mode.toBlockMode()?.name ?: continue
@@ -512,7 +513,7 @@ class UnifiedAppConfigViewModel @Inject constructor(
                     // grant, so it must not depend on which of this app's rules happened to win.
                     keepPassOnShortTrips = state.effectiveKeepPassOnShortTrips
             )
-            blockRuleRepository.addRule(
+            val id = blockRuleRepository.addRule(
                 candidate.copy(
                     armedAt = RuleArming.carriedArmedAt(
                         existingDefaultFeatureRules[featureKey],
@@ -520,7 +521,10 @@ class UnifiedAppConfigViewModel @Inject constructor(
                     )
                 )
             )
+            writtenDefaultFeatureRules[featureKey] =
+                blockRuleRepository.getRule(id) ?: candidate
         }
+        existingDefaultFeatureRules = writtenDefaultFeatureRules
 
         // 4. Create scheduled override rules
         val scheduledRule = buildScheduledRule(state)
@@ -535,6 +539,7 @@ class UnifiedAppConfigViewModel @Inject constructor(
             existingScheduledRule = blockRuleRepository.getRule(scheduledId) ?: scheduledRule
 
             // Scheduled feature override rules
+            val writtenScheduledFeatureRules = mutableMapOf<String, BlockRule>()
             for ((featureKey, override) in state.scheduledFeatureOverrides) {
                 if (override.mode == FeatureMode.INHERIT) continue
                 val ruleMode = override.mode.toBlockMode()?.name ?: continue
@@ -567,7 +572,7 @@ class UnifiedAppConfigViewModel @Inject constructor(
                     tabVanish = state.tabVanish,
                     keepPassOnShortTrips = state.effectiveKeepPassOnShortTrips
                 )
-                blockRuleRepository.addRule(
+                val id = blockRuleRepository.addRule(
                     candidate.copy(
                         armedAt = RuleArming.carriedArmedAt(
                             existingScheduledFeatureRules[featureKey],
@@ -575,7 +580,10 @@ class UnifiedAppConfigViewModel @Inject constructor(
                         )
                     )
                 )
+                writtenScheduledFeatureRules[featureKey] =
+                    blockRuleRepository.getRule(id) ?: candidate
             }
+            existingScheduledFeatureRules = writtenScheduledFeatureRules
         }
 
         _uiState.value = state.copy(isSaved = true)
