@@ -121,6 +121,14 @@ class UnifiedAppConfigViewModel @Inject constructor(
     private var existingScheduledRule: BlockRule? = null
 
     /**
+     * The feature-override rules at load time, by feature key, for the same reason as the two above:
+     * `performSave` deletes and re-adds them, so the arming stamp has to be carried by the caller or
+     * a free save ends a running scheduled window (review blocker 2).
+     */
+    private var existingDefaultFeatureRules: Map<String, BlockRule> = emptyMap()
+    private var existingScheduledFeatureRules: Map<String, BlockRule> = emptyMap()
+
+    /**
      * The two global first-unlock facts this screen displays: where the logical day starts, and the
      * stamp that decides whether an override saved now waits for tomorrow. See
      * [refreshFirstUnlockHints].
@@ -145,21 +153,23 @@ class UnifiedAppConfigViewModel @Inject constructor(
     }
 
     /**
-     * "Starts at your next first unlock." is true exactly when today's unlock has already happened:
-     * saving stamps `armedAt` after it, so the window cannot open until tomorrow (spec 5.3).
+     * "Starts at your next first unlock." comes from the one pure rule, which knows whether this
+     * save re-arms ([RuleArming.startsAtNextUnlock]): an existing rule whose window is running now
+     * keeps its stamp, so the line must stay quiet for it (review should-fix 2).
      */
     private fun refreshFirstUnlockHints() {
-        _uiState.update {
-            it.copy(
+        _uiState.update { state ->
+            val next = buildScheduledRule(state)
+            state.copy(
                 dayStartMinute = logicalDayStartMinute,
-                startsAtNextUnlock = it.scheduledOverrideEnabled &&
-                    it.scheduledOverrideFirstUnlock &&
-                    FirstUnlockWindow.startsAtNextUnlock(
-                        nowMs = System.currentTimeMillis(),
-                        stampMs = firstUnlockStamp,
-                        dayStartMinute = logicalDayStartMinute,
-                        zone = ZoneId.systemDefault()
-                    )
+                startsAtNextUnlock = next != null && RuleArming.startsAtNextUnlock(
+                    previous = existingScheduledRule,
+                    next = next,
+                    stampMs = firstUnlockStamp,
+                    nowMs = System.currentTimeMillis(),
+                    dayStartMinute = logicalDayStartMinute,
+                    zone = ZoneId.systemDefault()
+                )
             )
         }
     }
@@ -201,6 +211,12 @@ class UnifiedAppConfigViewModel @Inject constructor(
             }
             val scheduledFeatureRules = directRules.filter {
                 !it.inAppFeatures.isNullOrEmpty() && isScheduled(it)
+            }
+            existingDefaultFeatureRules = defaultFeatureRules.associateBy {
+                it.inAppFeatures.orEmpty()
+            }
+            existingScheduledFeatureRules = scheduledFeatureRules.associateBy {
+                it.inAppFeatures.orEmpty()
             }
 
             // Build feature overrides from default feature rules
@@ -354,19 +370,7 @@ class UnifiedAppConfigViewModel @Inject constructor(
         } else {
             null
         }
-        // `performSave` deletes and re-adds this row, so the repository sees it as new and honours
-        // whatever stamp is carried here (RuleArming). Carrying is what lets a stronger edit keep a
-        // running window; a rule that only NOW becomes a first-unlock one carries NEVER_ARMED, so
-        // the repository arms it for the next unlock.
-        val wasFirstUnlock = existingScheduledRule?.firstUnlockMinutes != null
-        val armedAt = if (firstUnlockMinutes != null && wasFirstUnlock) {
-            existingScheduledRule?.armedAt ?: RuleArming.NEVER_ARMED
-        } else if (firstUnlockMinutes == null) {
-            existingScheduledRule?.armedAt ?: RuleArming.NEVER_ARMED
-        } else {
-            RuleArming.NEVER_ARMED
-        }
-        return BlockRule(
+        val rule = BlockRule(
             packageName = packageName,
             mode = state.scheduledMode.name,
             delaySeconds = state.scheduledDelaySeconds,
@@ -375,10 +379,14 @@ class UnifiedAppConfigViewModel @Inject constructor(
             scheduleStartMinute = if (firstUnlockMinutes != null) null else startMin,
             scheduleEndMinute = if (firstUnlockMinutes != null) null else endMin,
             firstUnlockMinutes = firstUnlockMinutes,
-            armedAt = armedAt,
             tabVanish = state.tabVanish,
             keepPassOnShortTrips = state.effectiveKeepPassOnShortTrips
         )
+        // `performSave` deletes and re-adds this row, so the repository cannot see the row it
+        // replaces; the stamp is carried here. `carriedArmedAt` is the same three-way rule the
+        // repository applies: keep it for an ordinary save (including a stronger window), and let
+        // the repository arm now for a create, an off-to-on switch or a newly first-unlock rule.
+        return rule.copy(armedAt = RuleArming.carriedArmedAt(existingScheduledRule, rule))
     }
 
     /** Builds the app-level default rule that [save] would persist for the current state. */
@@ -394,7 +402,7 @@ class UnifiedAppConfigViewModel @Inject constructor(
             state.webBlockMode.name
         } else null
 
-        return BlockRule(
+        val rule = BlockRule(
             packageName = packageName,
             mode = state.defaultMode.name,
             delaySeconds = state.defaultDelaySeconds,
@@ -430,12 +438,12 @@ class UnifiedAppConfigViewModel @Inject constructor(
             followingSteer = state.followingSteer,
             // Unlike followingSteer, also copied onto every other rule in performSave: the engine
             // reads it off whichever rule DECIDED the block, exactly like tabVanish.
-            keepPassOnShortTrips = state.effectiveKeepPassOnShortTrips,
-            // Carried across the delete and re-add in performSave, so an ordinary save does not
-            // re-arm the package's rules (RuleArming). The default rule is never a first-unlock
-            // rule, so it can only ever keep the stamp it had.
-            armedAt = existingDefaultRule?.armedAt ?: RuleArming.NEVER_ARMED
+            keepPassOnShortTrips = state.effectiveKeepPassOnShortTrips
         )
+        // Carried across the delete and re-add in performSave, so an ordinary save does not re-arm
+        // the package's rules. The default rule is never a first-unlock rule, so it can only ever
+        // keep the stamp it had -- or re-arm when the app goes from off to on.
+        return rule.copy(armedAt = RuleArming.carriedArmedAt(existingDefaultRule, rule))
     }
 
     fun save() {
@@ -472,16 +480,17 @@ class UnifiedAppConfigViewModel @Inject constructor(
         blockRuleRepository.deleteDirectRulesForPackage(packageName)
 
         // 2. Create app-level default rule
-        blockRuleRepository.addRule(newDefault)
-        // Keep the snapshot in sync so a second save in the same session compares correctly.
-        existingDefaultRule = newDefault
+        val defaultId = blockRuleRepository.addRule(newDefault)
+        // Keep the snapshot in sync so a second save in the same session compares correctly. Read
+        // it back rather than reusing the built row: the repository is what stamped `armedAt`, and
+        // a stale NEVER_ARMED here would re-arm on the next save (review nit).
+        existingDefaultRule = blockRuleRepository.getRule(defaultId) ?: newDefault
 
         // 3. Create feature override rules (non-INHERIT only)
         for ((featureKey, override) in state.featureOverrides) {
             if (override.mode == FeatureMode.INHERIT) continue
             val ruleMode = override.mode.toBlockMode()?.name ?: continue
-            blockRuleRepository.addRule(
-                BlockRule(
+            val candidate = BlockRule(
                     packageName = packageName,
                     mode = ruleMode,
                     delaySeconds = override.delaySeconds,
@@ -502,52 +511,68 @@ class UnifiedAppConfigViewModel @Inject constructor(
                     // Same reasoning (#110): the deciding rule's value is the one handed to the
                     // grant, so it must not depend on which of this app's rules happened to win.
                     keepPassOnShortTrips = state.effectiveKeepPassOnShortTrips
+            )
+            blockRuleRepository.addRule(
+                candidate.copy(
+                    armedAt = RuleArming.carriedArmedAt(
+                        existingDefaultFeatureRules[featureKey],
+                        candidate
+                    )
                 )
             )
         }
 
         // 4. Create scheduled override rules
         val scheduledRule = buildScheduledRule(state)
-        // Keep the snapshot in sync so a second save in the same session compares correctly, the
-        // same reason [existingDefaultRule] is replaced above.
-        existingScheduledRule = scheduledRule
         if (scheduledRule != null) {
             // Scheduled app-level rule. tabVanish carries here too -- same reasoning as the
             // feature override rules above: this rule can be the one that decides a HARD_BLOCK
             // during the scheduled window, so it needs the same flag as every other rule for
             // this package. followingSteer does NOT go here: it belongs on the app-level
             // DEFAULT rule only (see buildDefaultRule), never on a scheduled rule.
-            blockRuleRepository.addRule(scheduledRule)
+            val scheduledId = blockRuleRepository.addRule(scheduledRule)
+            // Read back for the real stamp, for the same reason as the default rule above.
+            existingScheduledRule = blockRuleRepository.getRule(scheduledId) ?: scheduledRule
 
             // Scheduled feature override rules
             for ((featureKey, override) in state.scheduledFeatureOverrides) {
                 if (override.mode == FeatureMode.INHERIT) continue
                 val ruleMode = override.mode.toBlockMode()?.name ?: continue
+                val candidate = BlockRule(
+                    packageName = packageName,
+                    mode = ruleMode,
+                    delaySeconds = override.delaySeconds,
+                    enabled = state.enabled,
+                    inAppFeatures = featureKey,
+                    autoKickAfter = if (override.autoKickEnabled) override.autoKickAfter else null,
+                    autoKickCooldownSeconds = DurationInput.resolveCooldownSeconds(
+                        override.autoKickCooldownMinutesText,
+                        override.originalAutoKickCooldownSeconds
+                    ),
+                    showCounter = state.showCounter,
+                    // The schedule is the parent rule's, read off the one construction, so a
+                    // feature override can never be in a different window from the rule that
+                    // owns it (first-unlock included).
+                    scheduleDays = scheduledRule.scheduleDays,
+                    scheduleStartMinute = scheduledRule.scheduleStartMinute,
+                    scheduleEndMinute = scheduledRule.scheduleEndMinute,
+                    firstUnlockMinutes = scheduledRule.firstUnlockMinutes,
+                    // The override carries the schedule's window, so it carries its stamp too.
+                    // Without it, `performSave`'s delete and re-add re-armed the override on every
+                    // save, and a free save ended the window for the feature it blocks (review
+                    // blocker 2).
+                    // Same reasoning as every other rule persisted here: tabVanish must be
+                    // uniform across all of this package's rules, since the engine reads it
+                    // off whichever rule decides the block.
+                    tabVanish = state.tabVanish,
+                    keepPassOnShortTrips = state.effectiveKeepPassOnShortTrips
+                )
                 blockRuleRepository.addRule(
-                    BlockRule(
-                        packageName = packageName,
-                        mode = ruleMode,
-                        delaySeconds = override.delaySeconds,
-                        enabled = state.enabled,
-                        inAppFeatures = featureKey,
-                        autoKickAfter = if (override.autoKickEnabled) override.autoKickAfter else null,
-                        autoKickCooldownSeconds = DurationInput.resolveCooldownSeconds(
-                            override.autoKickCooldownMinutesText,
-                            override.originalAutoKickCooldownSeconds
-                        ),
-                        showCounter = state.showCounter,
-                        // The schedule is the parent rule's, read off the one construction, so a
-                        // feature override can never be in a different window from the rule that
-                        // owns it (first-unlock included).
-                        scheduleDays = scheduledRule.scheduleDays,
-                        scheduleStartMinute = scheduledRule.scheduleStartMinute,
-                        scheduleEndMinute = scheduledRule.scheduleEndMinute,
-                        firstUnlockMinutes = scheduledRule.firstUnlockMinutes,
-                        // Same reasoning as every other rule persisted here: tabVanish must be
-                        // uniform across all of this package's rules, since the engine reads it
-                        // off whichever rule decides the block.
-                        tabVanish = state.tabVanish,
-                        keepPassOnShortTrips = state.effectiveKeepPassOnShortTrips
+                    candidate.copy(
+                        armedAt = RuleArming.carriedArmedAt(
+                            existingScheduledFeatureRules[featureKey],
+                            candidate
+                        )
                     )
                 )
             }

@@ -65,7 +65,7 @@ class FirstUnlockEditorWiringContractTest {
             )
             assertTrue(
                 "$path must use the one pure arming rule",
-                text.contains("FirstUnlockWindow.startsAtNextUnlock(")
+                text.contains("RuleArming.startsAtNextUnlock(")
             )
         }
     }

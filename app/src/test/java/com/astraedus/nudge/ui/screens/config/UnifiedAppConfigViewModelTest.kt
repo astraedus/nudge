@@ -504,15 +504,75 @@ class UnifiedAppConfigViewModelTest {
     }
 
     @Test
-    fun `an existing first-unlock override opened after today's unlock says it starts at the next one`() = runTest {
+    fun `an existing first-unlock override whose window is running does not claim it starts at the next one`() = runTest {
+        // The reviewer's case (should-fix 2): the rule was armed before today's unlock, so it is
+        // blocking now. Saving keeps that window, and the sentence would be a lie.
+        val stamp = System.currentTimeMillis() - 60_000L
         val vm = viewModel(
-            listOf(firstUnlockRule(minutes = 60)),
+            listOf(firstUnlockRule(minutes = 60).copy(armedAt = stamp)),
+            seed = { setFirstUnlockAt(stamp) }
+        )
+
+        assertFalse(vm.uiState.value.startsAtNextUnlock)
+    }
+
+    @Test
+    fun `a rule newly switched to first unlock says it starts at the next one`() = runTest {
+        val vm = viewModel(
+            listOf(aBlockRule(packageName = packageName, mode = "HARD_BLOCK")),
             seed = { setFirstUnlockAt(System.currentTimeMillis()) }
         )
 
+        vm.setScheduledOverrideEnabled(true)
+        vm.setScheduledOverrideFirstUnlock(true)
+
         assertTrue(
-            "a save now arms after today's unlock, so it cannot open until tomorrow",
+            "switching the kind arms the new window after today's unlock",
             vm.uiState.value.startsAtNextUnlock
+        )
+    }
+
+    @Test
+    fun `re-enabling a disabled first-unlock rule re-arms it`() = runTest {
+        // Should-fix 1: a disabled rule keeps its old stamp across App config's delete and re-add,
+        // and RuleArming honours a carried stamp, so turning it back on mid-morning must re-arm.
+        val vm = viewModel(
+            listOf(firstUnlockRule(minutes = 30).copy(enabled = false, armedAt = 4_000L))
+        )
+
+        vm.setEnabled(true)
+        vm.save()
+
+        assertTrue(
+            "off to on arms now",
+            db.rules.single { it.scheduleDays != null }.armedAt > 4_000L
+        )
+    }
+
+    @Test
+    fun `a free save keeps the scheduled feature override's window too`() = runTest {
+        // Blocker 2: the override row carries the schedule's window, so it needs the schedule's
+        // stamp. It used to be written with none, and every save re-armed it.
+        val stamp = System.currentTimeMillis() - 60_000L
+        val override = aBlockRule(
+            packageName = packageName,
+            mode = "HARD_BLOCK",
+            inAppFeatures = "REELS",
+            scheduleDays = "1,2,3,4,5",
+            firstUnlockMinutes = 30,
+            armedAt = stamp
+        )
+        val vm = viewModel(
+            listOf(firstUnlockRule(minutes = 30).copy(armedAt = stamp), override)
+        )
+
+        vm.save()
+
+        val windows = db.rules.filter { it.firstUnlockMinutes != null }
+        assertEquals("the parent rule and its override", 2, windows.size)
+        assertTrue(
+            "every row with a window keeps its stamp: ${windows.map { it.armedAt }}",
+            windows.all { it.armedAt == stamp }
         )
     }
 

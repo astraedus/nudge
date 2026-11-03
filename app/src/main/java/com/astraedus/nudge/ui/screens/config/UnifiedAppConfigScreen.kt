@@ -66,11 +66,9 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import com.astraedus.nudge.ui.components.TonalIcon
 import com.astraedus.nudge.ui.components.rule.AllAppsIcon
 import com.astraedus.nudge.ui.components.rule.BlockModeSegmentedRow
+import com.astraedus.nudge.ui.components.rule.FirstUnlockFields
 import com.astraedus.nudge.ui.components.rule.DailyLimitChips
-import com.astraedus.nudge.ui.components.rule.DayOfWeekChips
 import com.astraedus.nudge.ui.components.rule.DayStartDialog
-import com.astraedus.nudge.ui.components.rule.DayStartRow
-import com.astraedus.nudge.ui.components.rule.FirstUnlockMinuteChips
 import com.astraedus.nudge.ui.components.rule.InfoButton
 import com.astraedus.nudge.ui.components.rule.ScheduleSection
 import com.astraedus.nudge.ui.components.rule.WaitTimeChips
@@ -786,39 +784,17 @@ fun UnifiedAppConfigScreen(
                                 customDialogTitle = "Custom ${state.delayDurationLabel}"
                             )
                         }
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text(
-                                "For",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            FirstUnlockMinuteChips(
-                                minutes = state.firstUnlockMinutes,
-                                onSelect = viewModel::setFirstUnlockMinutes
-                            )
-                        }
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text(
-                                "Days",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            DayOfWeekChips(
-                                days = state.scheduleDays,
-                                onDaysChange = viewModel::setScheduleDays
-                            )
-                        }
-                        DayStartRow(
-                            minute = state.dayStartMinute,
-                            onClick = { showDayStartDialog = true }
+                        // The same layout the group and All apps editors use, labels to the
+                        // left: one first-unlock row for all three editors (review should-fix 3).
+                        FirstUnlockFields(
+                            days = state.scheduleDays,
+                            onDaysChange = viewModel::setScheduleDays,
+                            firstUnlockMinutes = state.firstUnlockMinutes,
+                            onFirstUnlockMinutesChange = viewModel::setFirstUnlockMinutes,
+                            dayStartMinute = state.dayStartMinute,
+                            onDayStartClick = { showDayStartDialog = true },
+                            startsAtNextUnlock = state.startsAtNextUnlock
                         )
-                        if (state.startsAtNextUnlock) {
-                            Text(
-                                "Starts at your next first unlock.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
                         ScheduledFeatureOverridesSection(
                             state = state,
                             onUpdate = viewModel::setScheduledFeatureOverride

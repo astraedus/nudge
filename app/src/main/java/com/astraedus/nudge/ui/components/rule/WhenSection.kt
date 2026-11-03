@@ -118,7 +118,7 @@ fun WhenSection(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun FirstUnlockFields(
+internal fun FirstUnlockFields(
     days: Set<Int>,
     onDaysChange: (Set<Int>) -> Unit,
     firstUnlockMinutes: Int,

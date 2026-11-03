@@ -7,6 +7,7 @@ import com.astraedus.nudge.data.db.entity.BlockRule
 import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.data.repository.BlockRuleRepository
 import com.astraedus.nudge.data.repository.InstalledAppsRepository
+import com.astraedus.nudge.data.repository.RuleArming
 import com.astraedus.nudge.data.repository.target
 import com.astraedus.nudge.di.IoDispatcher
 import com.astraedus.nudge.domain.engine.FirstUnlockWindow
@@ -92,9 +93,11 @@ class AllAppsEditorViewModel @Inject constructor(
         _state.update {
             it.copy(
                 dayStartMinute = logicalDayStartMinute,
-                startsAtNextUnlock = it.form.firstUnlock && FirstUnlockWindow.startsAtNextUnlock(
-                    nowMs = System.currentTimeMillis(),
+                startsAtNextUnlock = RuleArming.startsAtNextUnlock(
+                    previous = savedRule,
+                    next = it.form.toRule(savedRule, it.allowedPackages, it.allowedGroupIds),
                     stampMs = firstUnlockStamp,
+                    nowMs = System.currentTimeMillis(),
                     dayStartMinute = logicalDayStartMinute,
                     zone = ZoneId.systemDefault()
                 )
