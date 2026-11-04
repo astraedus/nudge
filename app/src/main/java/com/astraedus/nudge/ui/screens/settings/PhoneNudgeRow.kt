@@ -30,8 +30,8 @@ import com.astraedus.nudge.domain.nudge.PhoneNudge
 import kotlinx.coroutines.launch
 
 internal const val PHONE_NUDGE_TITLE = "Phone nudge"
-internal const val PHONE_NUDGE_SUBTITLE =
-    "After 20 minutes on your phone in one go, show a pause screen. Counts every app."
+internal fun phoneNudgeSubtitle(thresholdMinutes: Int): String =
+    "After $thresholdMinutes minutes on your phone in one go, show a pause screen. Counts every app."
 internal const val PHONE_NUDGE_THRESHOLD_LABEL = "Pause after"
 internal const val PHONE_NUDGE_PAUSE_LABEL = "First pause length"
 
@@ -60,7 +60,7 @@ internal fun PhoneNudgeRow(preferences: NudgePreferences) {
 
     ListItem(
         headlineContent = { Text(PHONE_NUDGE_TITLE) },
-        supportingContent = { Text(PHONE_NUDGE_SUBTITLE) },
+        supportingContent = { Text(phoneNudgeSubtitle(threshold)) },
         leadingContent = { Icon(Icons.Outlined.Timer, contentDescription = null) },
         trailingContent = {
             Switch(
@@ -156,6 +156,8 @@ private fun InlineDropdownRow(
 /** "Later pauses: 10 s, 20 s, then 30 s" for a 5 s first pause. Pure, so the copy is tested. */
 internal fun escalationPreview(firstSeconds: Int): String {
     val later = (2..4).map { PhoneNudge.pauseSeconds(it, firstSeconds) }
+    val distinct = later.distinct()
+    if (distinct.size == 1) return "Later pauses: ${distinct.single()} s"
     return "Later pauses: " +
         later.dropLast(1).joinToString(", ") { "$it s" } +
         ", then " + later.last() + " s"

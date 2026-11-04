@@ -3,10 +3,9 @@ package com.astraedus.nudge.domain.nudge
 /**
  * The whole-phone "you've been here a while" pause (issue #123, review #136).
  *
- * One SESSION runs from the first unlock until the screen goes off for longer than [GRACE_MS]. All
- * screen-on time counts, but only while the user is actually there: [onIdle] stops the clock after
- * [IDLE_MS] without a touch, so a screen left on over ADB, or a video nobody is touching, cannot
- * accumulate a sitting. [onInteraction] resumes it.
+ * One SESSION runs from the first unlock until the screen goes off for longer than [GRACE_MS]. Every
+ * unlocked screen-on minute counts, across every app, because the failure this exists for is
+ * drifting between apps that no per-app rule ever sees.
  *
  * A pause is due one [Config.thresholdMinutes] after the LAST pause (not on a fixed grid), which is
  * what stops a lowered threshold firing a catch-up burst. [onTimerFired] is given the interruption
@@ -52,12 +51,10 @@ class PhoneNudge(
     private var segmentStartMs: Long? = null
     private var accumulatedMs: Long = 0L
     private var offAtMs: Long? = null
-    private var idleAtMs: Long? = null
-    private var lastInteractionMs: Long = 0L
     private var pausesShown: Int = 0
     private var lastPauseAtMs: Long = 0L
 
-    /** True while a session is being tracked, including while it is idle. For tests and logs. */
+    /** True while a session is being tracked. For tests and logs. */
     val isActive: Boolean @Synchronized get() = sessionStartMs != null
 
     @Synchronized
@@ -72,7 +69,7 @@ class PhoneNudge(
         }
     }
 
-    /** The device was unlocked. Starts a session, or resumes one after a brief blank or an idle. */
+    /** The device was unlocked. Starts a session, or resumes one after a brief blank. */
     @Synchronized
     fun onUnlocked() {
         if (!config.enabled) return
@@ -81,49 +78,20 @@ class PhoneNudge(
             sessionStartMs == null -> startLocked(now)
             offAtMs != null && now - offAtMs!! <= GRACE_MS -> resumeLocked(now)
             offAtMs != null -> startLocked(now)
-            idleAtMs != null -> resumeLocked(now)
             segmentStartMs == null -> resumeLocked(now)
-        }
-        lastInteractionMs = now
-    }
-
-    /** A user-driven touch, scroll or text change. Resumes the clock after an idle stretch. */
-    @Synchronized
-    fun onInteraction() {
-        if (!config.enabled) return
-        if (sessionStartMs == null) return
-        val now = clock()
-        lastInteractionMs = now
-        if (idleAtMs != null) {
-            idleAtMs = null
-            segmentStartMs = now
-            armLocked()
         }
     }
 
     /**
-     * No user interaction for [IDLE_MS]. The session is kept but its clock stops, so a screen left
-     * on does not accumulate time. The next interaction resumes it.
+     * The screen went off: bank the screen-on time and stop the clock. [offAtMs] is set even when no
+     * segment was running, so a later unlock always measures the real gap and can never resume a
+     * sitting whose end was not observed (#136 review).
      */
-    @Synchronized
-    fun onIdle() {
-        if (!config.enabled) return
-        val now = clock()
-        val segment = segmentStartMs ?: return
-        accumulatedMs += now - segment
-        segmentStartMs = null
-        idleAtMs = now
-        cancelSchedule()
-    }
-
-    /** The screen went off: bank the screen-on time, stop the clock and the idle timer. */
     @Synchronized
     fun onScreenOff() {
         cancelSchedule()
         val now = clock()
-        idleAtMs = null
-        val segment = segmentStartMs ?: return
-        accumulatedMs += now - segment
+        segmentStartMs?.let { segment -> accumulatedMs += now - segment }
         segmentStartMs = null
         offAtMs = now
     }
@@ -169,8 +137,6 @@ class PhoneNudge(
         segmentStartMs = now
         accumulatedMs = 0L
         offAtMs = null
-        idleAtMs = null
-        lastInteractionMs = now
         pausesShown = 0
         lastPauseAtMs = 0L
         armLocked()
@@ -183,7 +149,6 @@ class PhoneNudge(
         }
         segmentStartMs = now
         offAtMs = null
-        idleAtMs = null
         armLocked()
     }
 
@@ -193,8 +158,6 @@ class PhoneNudge(
         segmentStartMs = null
         accumulatedMs = 0L
         offAtMs = null
-        idleAtMs = null
-        lastInteractionMs = 0L
         pausesShown = 0
         lastPauseAtMs = 0L
     }
@@ -224,9 +187,6 @@ class PhoneNudge(
 
         /** A blank shorter than this continues the session, the same window `SittingTracker` uses. */
         const val GRACE_MS = 2 * 60_000L
-
-        /** No touch for this long stops the session clock. A screen left on is not a sitting. */
-        const val IDLE_MS = 2 * 60_000L
 
         /** How soon a deferred pause retries. */
         const val DEFER_MS = 30_000L

@@ -117,43 +117,6 @@ class PhoneNudgeTest {
         assertEquals("next due is anchored to the shown pause", 20 * 60_000L, scheduledMs)
     }
 
-    // ── idle ──
-
-    @Test
-    fun `idle stops the clock and interaction resumes it`() {
-        ready()
-        minutes(10)
-        phoneNudge.onIdle()
-        minutes(5)
-        phoneNudge.onInteraction()
-        minutes(9)
-
-        assertTrue("15 active minutes, not 24", pauses.isEmpty())
-        minutes(1)
-        fire()
-        assertEquals(1, pauses.size)
-        assertEquals(20, pauses.single().minutes)
-    }
-
-    @Test
-    fun `an idle stretch never fires on its own`() {
-        ready()
-        minutes(10)
-        phoneNudge.onIdle()
-        minutes(60)
-        fire()
-
-        assertTrue(pauses.isEmpty())
-    }
-
-    @Test
-    fun `interaction without a session does nothing`() {
-        phoneNudge = nudge()
-        phoneNudge.onInteraction()
-        assertFalse(phoneNudge.isActive)
-        assertEquals(null, scheduledMs)
-    }
-
     // ── session boundaries ──
 
     @Test
@@ -166,6 +129,35 @@ class PhoneNudgeTest {
 
         assertTrue(phoneNudge.isActive)
         minutes(10)
+        fire()
+        assertEquals(1, pauses.size)
+        assertEquals(20, pauses.single().minutes)
+    }
+
+    /**
+     * The case the old `onScreenOff` early return missed: a long blank must never resume a sitting
+     * whose end was not observed (#136 review).
+     */
+    @Test
+    fun `a sitting ends after the grace however it got there`() {
+        ready()
+        minutes(19)
+        phoneNudge.onScreenOff()
+        minutes(60)
+        phoneNudge.onUnlocked()
+        minutes(1)
+        fire()
+        assertTrue("the old 19 minutes must not carry over", pauses.isEmpty())
+    }
+
+    @Test
+    fun `a blank inside the grace resumes the same sitting`() {
+        ready()
+        minutes(19)
+        phoneNudge.onScreenOff()
+        minutes(1)
+        phoneNudge.onUnlocked()
+        minutes(1)
         fire()
         assertEquals(1, pauses.size)
         assertEquals(20, pauses.single().minutes)

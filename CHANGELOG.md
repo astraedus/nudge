@@ -6,7 +6,7 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
 
 ### Added
 - **Phone nudge.** An opt-in pause when you've been on your phone for a while in one sitting, across
-  every app: a full-screen "20 minutes. What were you going to do?" with a countdown, then "I'm done"
+  every app: a full-screen "20 minutes. What were you going to do?" with a countdown, then "I'm done, go Home"
   or "Keep going". The pause grows each time (5s at 20 minutes, 10s at 40, 20s at 60, then 30s), and
   the threshold and first pause are configurable. Off by default. (#123)
 
