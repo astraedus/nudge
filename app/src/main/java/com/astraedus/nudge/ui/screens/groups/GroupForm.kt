@@ -7,6 +7,7 @@ import com.astraedus.nudge.domain.lock.GroupWeakening
 import com.astraedus.nudge.domain.lock.RuleWeakening
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.domain.packages.AppCategory
+import com.astraedus.nudge.ui.components.rule.ScheduleKind
 
 /**
  * The editable half of a group's own rule: what the "Block these apps" switch, How and When show.
@@ -27,7 +28,12 @@ data class GroupRuleForm(
     val startMinute: Int = 9 * 60,
     val endMinute: Int = 17 * 60,
     val firstUnlock: Boolean = false,
-    val firstUnlockMinutes: Int = 30
+    val firstUnlockMinutes: Int = 30,
+    /**
+     * Whether the user (or the saved rule) has chosen days, so switching the kind must not quietly
+     * replace them. False on a new rule, true once a day chip is tapped or a saved rule is loaded.
+     */
+    val daysTouched: Boolean = false
 ) {
     /**
      * A schedule of any kind with no day picked would never be active; Save waits for a day.
@@ -36,8 +42,24 @@ data class GroupRuleForm(
     val isComplete: Boolean
         get() = (!scheduled && !firstUnlock) || scheduleDays.isNotEmpty()
 
+    /**
+     * The same form switched to another "When" kind. Switching to After first unlock on a rule whose
+     * days were never chosen selects every day, because Morning Lock is a daily thing; an existing
+     * rule, or one whose days the user edited, keeps them (decision 2026-11-05).
+     */
+    fun withKind(kind: ScheduleKind): GroupRuleForm = when (kind) {
+        ScheduleKind.ALL_TIME -> copy(scheduled = false, firstUnlock = false)
+        ScheduleKind.DAYS_TIMES -> copy(scheduled = true, firstUnlock = false)
+        ScheduleKind.FIRST_UNLOCK -> copy(
+            scheduled = false,
+            firstUnlock = true,
+            scheduleDays = if (daysTouched) scheduleDays else ALL_DAYS
+        )
+    }
+
     companion object {
         val WEEKDAYS: Set<Int> = setOf(1, 2, 3, 4, 5)
+        val ALL_DAYS: Set<Int> = setOf(1, 2, 3, 4, 5, 6, 7)
 
         /** The form for a saved rule, or the new-group defaults (blocking on, Delay 15s) for none. */
         fun from(rule: BlockRule?): GroupRuleForm {
@@ -65,7 +87,10 @@ data class GroupRuleForm(
                 startMinute = rule.scheduleStartMinute ?: defaults.startMinute,
                 endMinute = rule.scheduleEndMinute ?: defaults.endMinute,
                 firstUnlock = firstUnlock,
-                firstUnlockMinutes = rule.firstUnlockMinutes ?: defaults.firstUnlockMinutes
+                firstUnlockMinutes = rule.firstUnlockMinutes ?: defaults.firstUnlockMinutes,
+                // A saved rule already has days (or deliberately has none); either way the user's
+                // schedule is not replaced when they change the kind.
+                daysTouched = rule.scheduleDays != null
             )
         }
     }

@@ -17,6 +17,7 @@ import com.astraedus.nudge.domain.model.FeatureMode
 import com.astraedus.nudge.ui.components.DurationInput
 import com.astraedus.nudge.ui.components.UsageReminderInput
 import com.astraedus.nudge.ui.lock.StrictModeGate
+import com.astraedus.nudge.ui.screens.groups.GroupRuleForm
 import com.astraedus.nudge.data.repository.RuleArming
 import com.astraedus.nudge.domain.engine.FirstUnlockWindow
 import com.astraedus.nudge.domain.usecase.SetDayStartMinuteUseCase
@@ -312,6 +313,8 @@ class UnifiedAppConfigViewModel @Inject constructor(
                 firstUnlockMinutes = scheduledAppRule?.firstUnlockMinutes
                     ?: FirstUnlockWindow.DEFAULT_FIRST_UNLOCK_MINUTES,
                 scheduleDays = scheduleDays,
+                // A saved override's days are the user's; a new one starts from the shared default.
+                scheduleDaysTouched = scheduledAppRule != null,
                 scheduleStartHour = scheduleStartMinute / 60,
                 scheduleStartMinute = scheduleStartMinute % 60,
                 scheduleEndHour = scheduleEndMinute / 60,
@@ -771,7 +774,17 @@ class UnifiedAppConfigViewModel @Inject constructor(
     }
 
     fun setScheduledOverrideFirstUnlock(firstUnlock: Boolean) {
-        _uiState.value = _uiState.value.copy(scheduledOverrideFirstUnlock = firstUnlock)
+        _uiState.value = _uiState.value.let { state ->
+            // A new override switched to After first unlock starts on every day: Morning Lock is a
+            // daily thing. A saved override, or one whose days the user edited, keeps its days
+            // (decision 2026-11-05; the group and All apps editors do the same in `withKind`).
+            val days = if (firstUnlock && !state.scheduleDaysTouched) {
+                GroupRuleForm.ALL_DAYS
+            } else {
+                state.scheduleDays
+            }
+            state.copy(scheduledOverrideFirstUnlock = firstUnlock, scheduleDays = days)
+        }
         refreshFirstUnlockHints()
     }
 
@@ -800,7 +813,7 @@ class UnifiedAppConfigViewModel @Inject constructor(
     }
 
     fun setScheduleDays(days: Set<Int>) {
-        _uiState.value = _uiState.value.copy(scheduleDays = days)
+        _uiState.value = _uiState.value.copy(scheduleDays = days, scheduleDaysTouched = true)
     }
 
     fun setScheduleStartTime(hour: Int, minute: Int) {

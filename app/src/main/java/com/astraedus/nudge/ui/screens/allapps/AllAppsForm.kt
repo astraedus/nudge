@@ -4,6 +4,7 @@ import com.astraedus.nudge.data.db.entity.BlockRule
 import com.astraedus.nudge.domain.lock.RuleWeakening
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.domain.model.ExceptCsv
+import com.astraedus.nudge.ui.components.rule.ScheduleKind
 import com.astraedus.nudge.ui.components.rule.showsWaitTime
 import com.astraedus.nudge.ui.screens.groups.GroupRuleForm
 import com.astraedus.nudge.ui.screens.groups.toRule
@@ -26,7 +27,9 @@ data class AllAppsForm(
     val startMinute: Int = 9 * 60,
     val endMinute: Int = 17 * 60,
     val firstUnlock: Boolean = false,
-    val firstUnlockMinutes: Int = 30
+    val firstUnlockMinutes: Int = 30,
+    /** See [GroupRuleForm.daysTouched]: the kind switch must not replace chosen days. */
+    val daysTouched: Boolean = false
 ) {
     /**
      * A schedule of any kind with no day picked would never be active; Save waits for a day.
@@ -37,6 +40,20 @@ data class AllAppsForm(
 
     /** The wait time chips show for every mode with a length ([showsWaitTime]), as in the group editor. */
     val showsWaitTime: Boolean get() = showsWaitTime(mode)
+
+    /**
+     * The same form switched to another "When" kind, with the same day default as the group editor:
+     * After first unlock on a rule whose days were never chosen selects every day.
+     */
+    fun withKind(kind: ScheduleKind): AllAppsForm = when (kind) {
+        ScheduleKind.ALL_TIME -> copy(scheduled = false, firstUnlock = false)
+        ScheduleKind.DAYS_TIMES -> copy(scheduled = true, firstUnlock = false)
+        ScheduleKind.FIRST_UNLOCK -> copy(
+            scheduled = false,
+            firstUnlock = true,
+            scheduleDays = if (daysTouched) scheduleDays else GroupRuleForm.ALL_DAYS
+        )
+    }
 
     /**
      * "All the time" with Hard block, while on: the one combination that asks "Block N apps all the
@@ -64,7 +81,8 @@ data class AllAppsForm(
                 startMinute = parsed.startMinute,
                 endMinute = parsed.endMinute,
                 firstUnlock = parsed.firstUnlock,
-                firstUnlockMinutes = parsed.firstUnlockMinutes
+                firstUnlockMinutes = parsed.firstUnlockMinutes,
+                daysTouched = parsed.daysTouched
             )
         }
     }

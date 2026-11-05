@@ -75,6 +75,11 @@ data class UnifiedAppConfigState(
     /** Days and times vs. after first unlock. Wired by the ViewModel when reading the saved rule. */
     val scheduledOverrideFirstUnlock: Boolean = false,
     val scheduleDays: Set<Int> = setOf(1, 2, 3, 4, 5),
+    /**
+     * Whether these days were chosen (or loaded from a saved override). A new override switched to
+     * After first unlock selects every day when this is false; a saved one keeps its days.
+     */
+    val scheduleDaysTouched: Boolean = false,
     val scheduleStartHour: Int = 6,
     val scheduleStartMinute: Int = 0,
     val scheduleEndHour: Int = 9,

@@ -248,17 +248,9 @@ private fun HowAndWhen(
                 form.scheduled -> ScheduleKind.DAYS_TIMES
                 else -> ScheduleKind.ALL_TIME
             },
-            onKindChange = { kind ->
-                onFormChange {
-                    when (kind) {
-                        ScheduleKind.ALL_TIME -> it.copy(scheduled = false, firstUnlock = false)
-                        ScheduleKind.DAYS_TIMES -> it.copy(scheduled = true, firstUnlock = false)
-                        ScheduleKind.FIRST_UNLOCK -> it.copy(scheduled = false, firstUnlock = true)
-                    }
-                }
-            },
+            onKindChange = { kind -> onFormChange { it.withKind(kind) } },
             days = form.scheduleDays,
-            onDaysChange = { days -> onFormChange { it.copy(scheduleDays = days) } },
+            onDaysChange = { days -> onFormChange { it.copy(scheduleDays = days, daysTouched = true) } },
             startHour = form.startMinute / 60,
             startMinute = form.startMinute % 60,
             onStartTimeChange = { h, m -> onFormChange { it.copy(startMinute = h * 60 + m) } },

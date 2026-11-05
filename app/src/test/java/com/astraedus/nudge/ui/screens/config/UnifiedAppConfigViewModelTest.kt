@@ -488,7 +488,7 @@ class UnifiedAppConfigViewModelTest {
         assertEquals(45, scheduled.firstUnlockMinutes)
         assertNull("a first-unlock window has no clock times", scheduled.scheduleStartMinute)
         assertNull(scheduled.scheduleEndMinute)
-        assertEquals("the days still pick the logical day", "1,2,3,4,5", scheduled.scheduleDays)
+        assertEquals("the days still pick the logical day", "1,2,3,4,5,6,7", scheduled.scheduleDays)
         assertNull("the always-on default rule has no window", db.rules.first().firstUnlockMinutes)
     }
 
@@ -530,6 +530,30 @@ class UnifiedAppConfigViewModelTest {
             "switching the kind arms the new window after today's unlock",
             vm.uiState.value.startsAtNextUnlock
         )
+    }
+
+    @Test
+    fun `a new first-unlock override starts on every day, a saved one keeps its days`() = runTest {
+        // Decision 2026-11-05: Morning Lock is daily, so an untouched new override opens with all
+        // seven days selected. A saved days-and-times override keeps the days it had.
+        val fresh = viewModel()
+        fresh.setScheduledOverrideEnabled(true)
+        fresh.setScheduledOverrideFirstUnlock(true)
+        assertEquals(setOf(1, 2, 3, 4, 5, 6, 7), fresh.uiState.value.scheduleDays)
+
+        val saved = viewModel(
+            listOf(
+                aBlockRule(
+                    packageName = packageName,
+                    mode = "HARD_BLOCK",
+                    scheduleDays = "1,2,3",
+                    scheduleStartMinute = 540,
+                    scheduleEndMinute = 600
+                )
+            )
+        )
+        saved.setScheduledOverrideFirstUnlock(true)
+        assertEquals(setOf(1, 2, 3), saved.uiState.value.scheduleDays)
     }
 
     @Test

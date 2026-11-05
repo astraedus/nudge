@@ -250,6 +250,8 @@ logical day's weekday. Morning Lock is one such rule: all apps except Spotify an
 | The sentence | `startsAtNextUnlock` in each editor's state | "Starts at your next first unlock." appears when today's unlock is already recorded, because saving arms after it. |
 | Summary | `RuleSummary.scheduleText` | "Hard Block 30min after first unlock on Mon–Fri": duration first, days last, no clock times (the window starts at the user's own unlock). |
 
+Days default to every day the first time a new rule is switched to After first unlock (`withKind` in the group and All apps forms, and `setScheduledOverrideFirstUnlock` in App config), because Morning Lock is a daily thing; an existing rule keeps the days it had, and Days and times keeps its Mon–Fri default. The decision was made on the 2026-11-05 device run.
+
 Deliberate readings: a stamp in the future (the clock moved back) is discarded and replaced on the next unlock; a
 clock jump forward ends the window early; a time-zone change mid-window keeps the absolute end but can make the stamp
 stale in the new zone's logical day, which allows apps rather than blocks them; a window opened before the day start

@@ -3,9 +3,11 @@ package com.astraedus.nudge.ui.screens.allapps
 import com.astraedus.nudge.data.db.entity.BlockRule
 import com.astraedus.nudge.data.repository.target
 import com.astraedus.nudge.domain.model.BlockMode
+import com.astraedus.nudge.ui.screens.groups.GroupRuleForm
 import com.astraedus.nudge.domain.model.ExceptCsv
 import com.astraedus.nudge.domain.model.RuleTarget
 import com.astraedus.nudge.testing.aBlockRule
+import com.astraedus.nudge.ui.components.rule.ScheduleKind
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -82,6 +84,20 @@ class AllAppsFormTest {
                 }
             }
         }
+    }
+
+    @Test
+    fun `a new rule switched to first unlock selects every day`() {
+        assertEquals(
+            GroupRuleForm.ALL_DAYS,
+            AllAppsForm().withKind(ScheduleKind.FIRST_UNLOCK).scheduleDays
+        )
+        assertEquals(
+            setOf(6, 7),
+            AllAppsForm(daysTouched = true, scheduleDays = setOf(6, 7))
+                .withKind(ScheduleKind.FIRST_UNLOCK)
+                .scheduleDays
+        )
     }
 
     @Test

@@ -7,6 +7,7 @@ import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.domain.packages.AppCategory
 import com.astraedus.nudge.testing.aBlockRule
 import com.astraedus.nudge.testing.aGroupRule
+import com.astraedus.nudge.ui.components.rule.ScheduleKind
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -123,6 +124,37 @@ class GroupFormTest {
         assertEquals(480, rule.scheduleStartMinute)
         assertEquals(960, rule.scheduleEndMinute)
         assertNull(rule.firstUnlockMinutes)
+    }
+
+    @Test
+    fun `a new rule switched to first unlock selects every day, an edited one keeps its days`() {
+        // Morning Lock is daily, so an untouched new rule defaults to all seven (2026-11-05).
+        assertEquals(
+            GroupRuleForm.ALL_DAYS,
+            GroupRuleForm().withKind(ScheduleKind.FIRST_UNLOCK).scheduleDays
+        )
+        // The days-and-times default is unchanged.
+        assertEquals(
+            GroupRuleForm.WEEKDAYS,
+            GroupRuleForm().withKind(ScheduleKind.DAYS_TIMES).scheduleDays
+        )
+        // A user who chose days keeps them when switching kind.
+        assertEquals(
+            setOf(1, 2),
+            GroupRuleForm(daysTouched = true, scheduleDays = setOf(1, 2))
+                .withKind(ScheduleKind.FIRST_UNLOCK)
+                .scheduleDays
+        )
+    }
+
+    @Test
+    fun `a saved rule keeps its days when it switches to first unlock`() {
+        val saved = groupRule.copy(scheduleDays = "1,2,3,4,5", scheduleStartMinute = 540, scheduleEndMinute = 600)
+
+        val form = GroupRuleForm.from(saved).withKind(ScheduleKind.FIRST_UNLOCK)
+
+        assertTrue(form.firstUnlock)
+        assertEquals(setOf(1, 2, 3, 4, 5), form.scheduleDays)
     }
 
     @Test
