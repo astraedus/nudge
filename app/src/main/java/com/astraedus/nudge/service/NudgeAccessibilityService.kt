@@ -53,9 +53,12 @@ import com.astraedus.nudge.domain.web.WebDomainGate
 import com.astraedus.nudge.domain.web.WebSessionKey
 import com.astraedus.nudge.domain.usecase.EvaluateBlockUseCase
 import com.astraedus.nudge.domain.nuke.NukeEmergencyCode
+import com.astraedus.nudge.domain.nudge.PhoneNudge
+import com.astraedus.nudge.domain.nudge.PhoneNudgePolicy
 import com.astraedus.nudge.domain.nuke.NukePolicy
 import com.astraedus.nudge.ui.lock.StrictModeGuardActivity
 import com.astraedus.nudge.ui.overlay.BlockOverlayActivity
+import com.astraedus.nudge.ui.overlay.PhoneNudgeActivity
 import com.astraedus.nudge.ui.overlay.PipEscapeActivity
 import com.astraedus.nudge.domain.windows.FloatingCoverEffect
 import com.astraedus.nudge.domain.windows.FloatingVerdict
@@ -77,6 +80,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -570,6 +574,127 @@ class NudgeAccessibilityService : AccessibilityService() {
     )
 
     /**
+     * The whole-phone pause (issue #123). A Handler, not an alarm or WorkManager: the pause only
+     * matters while the screen is on, and a Handler dies with the process, which is the same
+     * failure direction the bounce check-in takes. [phoneNudge] is the pure state machine; this
+     * class owns the Android half (the timer, the receiver, the activity launch).
+     */
+    private val phoneNudgeHandler: Handler by lazy { Handler(Looper.getMainLooper()) }
+    private val phoneNudgeRunnable: Runnable by lazy {
+        Runnable {
+            log.d("phone nudge timer fired")
+            phoneNudge.onTimerFired(canInterrupt = canPhoneNudgeInterrupt())
+        }
+    }
+    private val phoneNudge: PhoneNudge by lazy {
+        PhoneNudge(
+            clock = { android.os.SystemClock.elapsedRealtime() },
+            onPause = ::showPhoneNudgePause,
+            schedule = { delayMs ->
+                log.d("phone nudge armed in ${delayMs}ms")
+                phoneNudgeHandler.removeCallbacks(phoneNudgeRunnable)
+                phoneNudgeHandler.postDelayed(phoneNudgeRunnable, delayMs)
+            },
+            cancelSchedule = { phoneNudgeHandler.removeCallbacks(phoneNudgeRunnable) }
+        )
+    }
+
+    @Volatile private var phoneNudgeEnabledCached = false
+    @Volatile private var cameraInUse = false
+    private val navigationCategoryCache = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+
+    /**
+     * The platform facts the pause policy needs (#136 review). Called only when the timer fires, so
+     * the binder reads (audio mode, keyguard, package category) stay off the event path.
+     */
+    private fun canPhoneNudgeInterrupt(): Boolean {
+        val audio =
+            getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager
+        val inCall = audio.mode == android.media.AudioManager.MODE_IN_CALL ||
+            audio.mode == android.media.AudioManager.MODE_IN_COMMUNICATION ||
+            audio.mode == android.media.AudioManager.MODE_RINGTONE
+        val uiMode =
+            getSystemService(android.content.Context.UI_MODE_SERVICE) as android.app.UiModeManager
+        val carMode = uiMode.currentModeType == android.content.res.Configuration.UI_MODE_TYPE_CAR
+        val power =
+            getSystemService(android.content.Context.POWER_SERVICE) as android.os.PowerManager
+        val foreground = entryPoint.blockLaunchGuard().foregroundPackage
+        val facts = PhoneNudgePolicy.Facts(
+            inCall = inCall,
+            // In front OR in PiP: driving with Maps over Spotify is the case that matters most.
+            navigationActive = (pipOnlyPackagesCached + listOfNotNull(foreground)).any { pkg ->
+                PhoneNudgePolicy.isNavigationPackage(pkg, isNavigationCategory(pkg))
+            },
+            carMode = carMode,
+            // The guard's sticky foreground plus the PiP explainer, which returns before the
+            // signal path and so never reaches it (#136 review).
+            ownUiInFront = foreground == packageName || PipEscapeActivity.isActive,
+            blockOverlayActive = isOverlayActive,
+            deviceLocked = isKeyguardLockedNow(),
+            screenInteractive = power.isInteractive,
+            cameraInUse = cameraInUse
+        )
+        val canInterrupt = PhoneNudgePolicy.canInterrupt(facts)
+        if (!canInterrupt) log.d("phone nudge deferred $facts")
+        return canInterrupt
+    }
+
+    private fun isNavigationCategory(packageName: String?): Boolean {
+        if (packageName == null) return false
+        navigationCategoryCache[packageName]?.let { return it }
+        val result = try {
+            packageManager.getApplicationInfo(packageName, 0).category ==
+                android.content.pm.ApplicationInfo.CATEGORY_MAPS
+        } catch (_: Exception) {
+            false
+        }
+        navigationCategoryCache[packageName] = result
+        return result
+    }
+
+    /** Camera availability for the pause policy. No CAMERA permission is needed for this callback. */
+    private val cameraAvailabilityCallback:
+        android.hardware.camera2.CameraManager.AvailabilityCallback by lazy {
+        object : android.hardware.camera2.CameraManager.AvailabilityCallback() {
+            private val unavailable =
+                java.util.Collections.synchronizedSet(mutableSetOf<String>())
+
+            override fun onCameraAvailable(cameraId: String) {
+                unavailable.remove(cameraId)
+                cameraInUse = unavailable.isNotEmpty()
+            }
+
+            override fun onCameraUnavailable(cameraId: String) {
+                unavailable.add(cameraId)
+                cameraInUse = true
+            }
+        }
+    }
+
+    /**
+     * Shows the pause. Not a block: no `UsageEvent`, no passthrough, no launch gate. The policy has
+     * already said it may interrupt; the overlay check is a belt-and-braces for a race.
+     */
+    private fun showPhoneNudgePause(pause: PhoneNudge.Pause) {
+        if (isOverlayActive) {
+            log.i("phone nudge skipped reason=overlay_active")
+            return
+        }
+        log.i("phone nudge pause minutes=${pause.minutes} seconds=${pause.seconds}")
+        try {
+            startActivity(
+                Intent(this, PhoneNudgeActivity::class.java).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                    putExtra(PhoneNudgeActivity.EXTRA_MINUTES, pause.minutes)
+                    putExtra(PhoneNudgeActivity.EXTRA_PAUSE_SECONDS, pause.seconds)
+                }
+            )
+        } catch (t: Throwable) {
+            log.e("phone nudge launch failed", t)
+        }
+    }
+
+    /**
      * Nuke Mode, cached for the synchronous hot path exactly like [strictModeEnabledCached]:
      * collected off-main in [onServiceConnected], so the event path answers "is this app nuked?"
      * with a set lookup and never blocks on DataStore or PackageManager.
@@ -779,6 +904,32 @@ class NudgeAccessibilityService : AccessibilityService() {
                 // What DOES belong here is only what is being drawn: the awareness overlays, the
                 // cover and the clocks behind them belong to a screen nobody is looking at.
                 hideAllOverlays()
+                // The whole-phone session banks its screen-on time and stops its clock (#123).
+                phoneNudge.onScreenOff()
+            }
+        }
+    }
+
+    /**
+     * The other half of the phone nudge's session (#123): unlock and screen-on. Both are runtime-only
+     * broadcasts on API 26+, so they live beside [screenOffReceiver] and not in the manifest.
+     */
+    private val screenOnReceiver by lazy {
+        object : android.content.BroadcastReceiver() {
+            override fun onReceive(context: android.content.Context?, intent: Intent?) {
+                when (intent?.action) {
+                    Intent.ACTION_SCREEN_ON -> {
+                        // Only an UNLOCKED screen starts or resumes a session. A locked screen is
+                        // not "using the phone", and resuming here was a real bug (#136 review).
+                        val locked = isKeyguardLockedNow()
+                        log.d("phone nudge screen on locked=$locked")
+                        if (!locked) phoneNudge.onUnlocked()
+                    }
+                    Intent.ACTION_USER_PRESENT -> {
+                        log.i("phone nudge unlock")
+                        phoneNudge.onUnlocked()
+                    }
+                }
             }
         }
     }
@@ -1362,6 +1513,26 @@ class NudgeAccessibilityService : AccessibilityService() {
             // never to a false revoke. Same failure direction as an unresolvable launcher set.
             log.w("failed to register screen-off receiver", e)
         }
+        try {
+            registerReceiver(
+                screenOnReceiver,
+                android.content.IntentFilter().apply {
+                    addAction(Intent.ACTION_SCREEN_ON)
+                    addAction(Intent.ACTION_USER_PRESENT)
+                }
+            )
+        } catch (e: Exception) {
+            log.w("failed to register screen-on receiver", e)
+        }
+        try {
+            (getSystemService(android.content.Context.CAMERA_SERVICE) as
+                android.hardware.camera2.CameraManager).registerAvailabilityCallback(
+                cameraAvailabilityCallback,
+                Handler(Looper.getMainLooper())
+            )
+        } catch (e: Exception) {
+            log.w("failed to register camera availability callback", e)
+        }
 
         // Keep Strict Mode state cached so the hot accessibility-event path can read it without
         // blocking on DataStore.
@@ -1394,6 +1565,31 @@ class NudgeAccessibilityService : AccessibilityService() {
             entryPoint.nudgePreferences().bounceCheckInEnabled.collect { enabled ->
                 bounceCheckIn.setEnabled(enabled)
                 log.i("bounce check-in enabled=$enabled")
+            }
+        }
+
+        // The phone nudge's settings, cached for the same reason. The session itself is in memory
+        // and starts at the next unlock.
+        serviceScope.launch {
+            combine(
+                entryPoint.nudgePreferences().isGlobalEnabled,
+                entryPoint.nudgePreferences().phoneNudgeEnabled,
+                entryPoint.nudgePreferences().phoneNudgeThresholdMinutes,
+                entryPoint.nudgePreferences().phoneNudgePauseSeconds
+            ) { global, enabled, threshold, pause ->
+                PhoneNudge.Config(
+                    // Nudge off means the whole feature is off, not just the block paths (#136).
+                    enabled = global && enabled,
+                    thresholdMinutes = threshold,
+                    firstPauseSeconds = pause
+                )
+            }.collect { config ->
+                phoneNudgeEnabledCached = config.enabled
+                phoneNudge.setConfig(config)
+                log.i(
+                    "phone nudge enabled=${config.enabled} threshold=${config.thresholdMinutes} " +
+                        "pause=${config.firstPauseSeconds}"
+                )
             }
         }
 
@@ -1822,7 +2018,24 @@ class NudgeAccessibilityService : AccessibilityService() {
         // same reason as the other three, so no early return below can starve it. A no-op unless
         // the feature is on AND a wall has armed a streak.
         bounceCheckIn.onForegroundSignal(signal)
+
+        // The phone nudge's session normally starts on unlock, but a device with no keyguard never
+        // sends ACTION_USER_PRESENT, and a dead process misses the broadcast. The first real app
+        // window is the same evidence one step later. Only when there is no session yet, so the
+        // keyguard binder call stays off the per-event path (#136 review).
+        if (phoneNudgeEnabledCached &&
+            signal is ForegroundSignal.AppWindow &&
+            !phoneNudge.isActive &&
+            !isKeyguardLockedNow()
+        ) {
+            phoneNudge.onUnlocked()
+        }
     }
+
+    /** True while the lock screen is up. A locked screen is not "using the phone" (#123). */
+    private fun isKeyguardLockedNow(): Boolean =
+        (getSystemService(android.content.Context.KEYGUARD_SERVICE) as android.app.KeyguardManager)
+            .isKeyguardLocked
 
     /**
      * The clock the sitting's return window is measured on.
@@ -2591,6 +2804,8 @@ class NudgeAccessibilityService : AccessibilityService() {
             entryPoint.blockLaunchGuard().reset()
             // A bounce streak observed under a Nudge that is now off is not one to finish later.
             bounceCheckIn.reset()
+            // Same for a phone session: no pause may arrive after the user switched Nudge off.
+            phoneNudge.reset()
             hideAllOverlays()
             // A disabled Nudge behaves as if uninstalled, so the steer's memory of what it did
             // inside the host app goes too. This is the ONE reset that is not a departure verdict.
@@ -3604,6 +3819,20 @@ class NudgeAccessibilityService : AccessibilityService() {
             contentResolver.unregisterContentObserver(imeSettingObserver)
         }
         teardown.step("unregister_screen_off_receiver") { unregisterReceiver(screenOffReceiver) }
+        teardown.step("unregister_screen_on_receiver") { unregisterReceiver(screenOnReceiver) }
+        teardown.step("phone_nudge_stop") {
+            phoneNudgeHandler.removeCallbacks(phoneNudgeRunnable)
+            phoneNudge.reset()
+        }
+        teardown.step("unregister_camera_callback") {
+            try {
+                (getSystemService(android.content.Context.CAMERA_SERVICE) as
+                    android.hardware.camera2.CameraManager).unregisterAvailabilityCallback(
+                    cameraAvailabilityCallback
+                )
+            } catch (_: Exception) {
+            }
+        }
         teardown.step("clear_sitting_reaction") { entryPoint.passthroughManager().setSittingReaction(null) }
         teardown.step("clear_hand_back_reaction") { entryPoint.passthroughManager().setHandBackReaction(null) }
         teardown.step("clear_counter_overlay") { entryPoint.counterOverlayManager().clearServiceContext() }

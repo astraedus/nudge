@@ -16,6 +16,7 @@ import com.astraedus.nudge.domain.ContentFilterBlocklist
 import com.astraedus.nudge.domain.ContentFilterUserList
 import com.astraedus.nudge.domain.nuke.NukeKeyKind
 import com.astraedus.nudge.domain.nuke.NukeState
+import com.astraedus.nudge.domain.nudge.PhoneNudge
 import com.astraedus.nudge.service.GlobalEnabledProvider
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
@@ -60,6 +61,9 @@ class NudgePreferences internal constructor(
         val EMERGENCY_PASS_ENABLED = booleanPreferencesKey("emergency_pass_enabled")
         val EMERGENCY_PASS_USAGE = stringPreferencesKey("emergency_pass_usage")
         val BOUNCE_CHECK_IN_ENABLED = booleanPreferencesKey("bounce_check_in_enabled")
+        val PHONE_NUDGE_ENABLED = booleanPreferencesKey("phone_nudge_enabled")
+        val PHONE_NUDGE_THRESHOLD_MINUTES = intPreferencesKey("phone_nudge_threshold_minutes")
+        val PHONE_NUDGE_PAUSE_SECONDS = intPreferencesKey("phone_nudge_pause_seconds")
         val PIP_ESCAPE_PROMPTED = stringPreferencesKey("pip_escape_prompted")
         val PROTECTION_DEGRADED = booleanPreferencesKey("protection_degraded")
         val PROTECTION_ALERT_SHOWN_AT = longPreferencesKey("protection_alert_shown_at")
@@ -309,6 +313,51 @@ class NudgePreferences internal constructor(
     }
 
     /**
+     * The whole-phone pause (issue #123): off by default, a threshold in minutes and the length of
+     * the first pause. Not a protection setting, so neither direction is gated by Strict Mode.
+     * Carried by a backup with the other settings.
+     */
+    val phoneNudgeEnabled: Flow<Boolean> = dataStore.data
+        .map { prefs -> prefs[Keys.PHONE_NUDGE_ENABLED] ?: false }
+        .distinctUntilChanged()
+
+    val phoneNudgeThresholdMinutes: Flow<Int> = dataStore.data
+        .map {
+            (it[Keys.PHONE_NUDGE_THRESHOLD_MINUTES] ?: PhoneNudge.DEFAULT_THRESHOLD_MINUTES)
+                .coerceIn(PhoneNudge.MIN_THRESHOLD_MINUTES, PhoneNudge.MAX_THRESHOLD_MINUTES)
+        }
+        .distinctUntilChanged()
+
+    val phoneNudgePauseSeconds: Flow<Int> = dataStore.data
+        .map {
+            (it[Keys.PHONE_NUDGE_PAUSE_SECONDS] ?: PhoneNudge.DEFAULT_FIRST_PAUSE_SECONDS)
+                .coerceIn(PhoneNudge.MIN_PAUSE_SECONDS, PhoneNudge.MAX_PAUSE_SECONDS)
+        }
+        .distinctUntilChanged()
+
+    suspend fun setPhoneNudgeEnabled(enabled: Boolean) {
+        dataStore.edit { prefs -> prefs[Keys.PHONE_NUDGE_ENABLED] = enabled }
+    }
+
+    suspend fun setPhoneNudgeThresholdMinutes(minutes: Int) {
+        dataStore.edit { prefs ->
+            prefs[Keys.PHONE_NUDGE_THRESHOLD_MINUTES] = minutes.coerceIn(
+                PhoneNudge.MIN_THRESHOLD_MINUTES,
+                PhoneNudge.MAX_THRESHOLD_MINUTES
+            )
+        }
+    }
+
+    suspend fun setPhoneNudgePauseSeconds(seconds: Int) {
+        dataStore.edit { prefs ->
+            prefs[Keys.PHONE_NUDGE_PAUSE_SECONDS] = seconds.coerceIn(
+                PhoneNudge.MIN_PAUSE_SECONDS,
+                PhoneNudge.MAX_PAUSE_SECONDS
+            )
+        }
+    }
+
+    /**
      * Serialized emergency-pass usage ledger (`pkg=epochMillis;…`), holding the pass's last use for
      * the rolling 24h GLOBAL lockout. Empty string = never used. A legacy per-app ledger migrates
      * transparently — [com.astraedus.nudge.domain.emergency.EmergencyPass.globalLastUsed] reads the
@@ -496,6 +545,9 @@ class NudgePreferences internal constructor(
         strictModeChallengeLength = strictModeChallengeLength.first(),
         emergencyPassEnabled = emergencyPassEnabled.first(),
         bounceCheckInEnabled = bounceCheckInEnabled.first(),
+        phoneNudgeEnabled = phoneNudgeEnabled.first(),
+        phoneNudgeThresholdMinutes = phoneNudgeThresholdMinutes.first(),
+        phoneNudgePauseSeconds = phoneNudgePauseSeconds.first(),
         customDelayTitles = customDelayTitles.first(),
         customDelaySubtitles = customDelaySubtitles.first(),
         customHardBlockMessages = customHardBlockMessages.first()
@@ -537,6 +589,11 @@ class NudgePreferences internal constructor(
             }
             settings.emergencyPassEnabled?.let { prefs[Keys.EMERGENCY_PASS_ENABLED] = it }
             settings.bounceCheckInEnabled?.let { prefs[Keys.BOUNCE_CHECK_IN_ENABLED] = it }
+            settings.phoneNudgeEnabled?.let { prefs[Keys.PHONE_NUDGE_ENABLED] = it }
+            settings.phoneNudgeThresholdMinutes?.let {
+                prefs[Keys.PHONE_NUDGE_THRESHOLD_MINUTES] = it
+            }
+            settings.phoneNudgePauseSeconds?.let { prefs[Keys.PHONE_NUDGE_PAUSE_SECONDS] = it }
             settings.customDelayTitles?.let { prefs[Keys.CUSTOM_DELAY_TITLES] = it }
             settings.customDelaySubtitles?.let { prefs[Keys.CUSTOM_DELAY_SUBTITLES] = it }
             settings.customHardBlockMessages?.let { prefs[Keys.CUSTOM_HARD_BLOCK_MESSAGES] = it }

@@ -4,6 +4,12 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+### Added
+- **Phone nudge.** An opt-in pause when you've been on your phone for a while in one sitting, across
+  every app: a full-screen "20 minutes. What were you going to do?" with a countdown, then "I'm done, go Home"
+  or "Keep going". The pause grows each time (5s at 20 minutes, 10s at 40, 20s at 60, then 30s), and
+  the threshold and first pause are configurable. Off by default. (#123)
+
 ## [1.26.1] - 2026-11-02
 
 ### Fixed
@@ -67,6 +73,7 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
 - Opening Google Camera when it was not already running, under a Delay rule, could skip the block screen entirely. Camera bounces through its permission check while it starts, which pushed the block screen behind it before it was ever drawn, and Nudge then refused to show it again as a duplicate. A block screen that its own app hides before it is drawn is now brought back, and the tap still counts once. This applies to any app that starts through another screen this way, not just Camera. (#143)
 - On Manage Apps, an app with more than one rule (a schedule, or a Reels block) showed its switch as whichever rule happened to be last. It now shows on when any of the app's rules is on.
 - The block mode picker on an app's settings showed "Hard Block" cut to "Hard" and off-centre. It now reads "Hard", centred with the others.
+
 
 ## [1.23.2] - 2026-11-01
 
