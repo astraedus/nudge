@@ -18,7 +18,7 @@ All of it lives in `domain/nudge/PhoneNudge.kt`, pure Kotlin.
 | Term | Meaning |
 |---|---|
 | **Session** | Starts at an unlock. Ends when the screen goes off for longer than the grace window, or when Nudge is switched off. |
-| **Grace** | `GRACE_MS` = 2 min, the same window `SittingTracker` uses. A quick blank resumes the session; a longer one starts a fresh one at the next unlock. `onScreenOff` always records the instant, even if no segment was running, so a sitting whose end was not observed can never be resumed. |
+| **Grace** | `GRACE_MS` = 2 min, the same window `SittingTracker` uses. A quick blank resumes the session; a longer one starts a fresh one at the next unlock. The gap runs from the first screen-off: a wake on the lock screen that goes dark again does not restart it. |
 | **Counted time** | Every unlocked screen-on minute, across every app. |
 | **Threshold** | `thresholdMinutes` (default 20, 5..180). One pause per threshold of counted time. |
 | **Anchor** | The next pause is due one threshold after the LAST pause, not on a fixed grid. Lowering the threshold therefore fires at most one catch-up pause, never a burst. |

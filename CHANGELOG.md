@@ -74,7 +74,6 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
 - On Manage Apps, an app with more than one rule (a schedule, or a Reels block) showed its switch as whichever rule happened to be last. It now shows on when any of the app's rules is on.
 - The block mode picker on an app's settings showed "Hard Block" cut to "Hard" and off-centre. It now reads "Hard", centred with the others.
 
-
 ## [1.23.2] - 2026-11-01
 
 ### Fixed

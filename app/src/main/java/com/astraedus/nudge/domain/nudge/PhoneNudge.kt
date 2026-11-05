@@ -83,15 +83,16 @@ class PhoneNudge(
     }
 
     /**
-     * The screen went off: bank the screen-on time and stop the clock. [offAtMs] is set even when no
-     * segment was running, so a later unlock always measures the real gap and can never resume a
-     * sitting whose end was not observed (#136 review).
+     * The screen went off: bank the screen-on time and stop the clock. With no segment running the
+     * screen was already off, so [offAtMs] stays where it is: the first screen-off is when the user
+     * stopped, and a locked wake that goes dark again must not restart the grace window.
      */
     @Synchronized
     fun onScreenOff() {
         cancelSchedule()
+        val segment = segmentStartMs ?: return
         val now = clock()
-        segmentStartMs?.let { segment -> accumulatedMs += now - segment }
+        accumulatedMs += now - segment
         segmentStartMs = null
         offAtMs = now
     }
