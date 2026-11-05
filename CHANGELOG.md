@@ -4,6 +4,8 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+## [1.27.0] - 2026-11-06
+
 ### Added
 - **Phone nudge.** An opt-in pause when you've been on your phone for a while in one sitting, across
   every app: a full-screen "20 minutes. What were you going to do?" with a countdown, then "I'm done, go Home"

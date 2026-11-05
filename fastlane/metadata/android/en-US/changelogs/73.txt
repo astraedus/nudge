@@ -1,0 +1,2 @@
+• New: phone nudge. An optional pause when you have been on your phone for a while in one go, across every app. You pick when it starts and how long the first pause is. It is off until you turn it on in Settings.
+• It waits if you are on a call, using navigation or the camera, and comes back once you are done.
