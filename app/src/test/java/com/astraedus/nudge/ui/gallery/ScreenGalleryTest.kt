@@ -1,9 +1,17 @@
 package com.astraedus.nudge.ui.gallery
 
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import app.cash.paparazzi.DeviceConfig
 import app.cash.paparazzi.Paparazzi
+import com.android.resources.Density
 import com.android.resources.NightMode
+import com.android.resources.ScreenOrientation
+import com.astraedus.nudge.ui.components.rule.ScheduleKind
+import com.astraedus.nudge.ui.components.rule.WhenSection
 import com.astraedus.nudge.ui.overlay.HardBlockContent
 import com.astraedus.nudge.ui.redirect.RedirectAppBubble
 import com.astraedus.nudge.ui.screens.apps.AppListContent
@@ -35,6 +43,17 @@ class ScreenGalleryTest {
      */
     @get:Rule
     val paparazzi = Paparazzi(deviceConfig = DeviceConfig.PIXEL_3, maxPercentDifference = 0.0)
+
+    /** A 360dp-wide phone at 1.3x font scale, where the reported folding first showed. */
+    private val phone360 = DeviceConfig.PIXEL_3.copy(
+        screenWidth = 1080,
+        screenHeight = 2400,
+        xdpi = 480,
+        ydpi = 480,
+        orientation = ScreenOrientation.PORTRAIT,
+        density = Density.XXHIGH,
+        fontScale = 1.3f
+    )
 
     @Test
     fun home_light() = snapshot(dark = false) { home() }
@@ -74,6 +93,32 @@ class ScreenGalleryTest {
         )
     }
 
+    @Test
+    fun whenSection_firstUnlock_360dp() = snapshot(
+        dark = false,
+        deviceConfig = phone360
+    ) {
+        Column(Modifier.padding(horizontal = 16.dp)) {
+            WhenSection(
+                kind = ScheduleKind.FIRST_UNLOCK,
+                onKindChange = {},
+                days = (1..7).toSet(),
+                onDaysChange = {},
+                startHour = 9,
+                startMinute = 0,
+                onStartTimeChange = { _, _ -> },
+                endHour = 17,
+                endMinute = 0,
+                onEndTimeChange = { _, _ -> },
+                firstUnlockMinutes = 30,
+                onFirstUnlockMinutesChange = {},
+                dayStartMinute = 4 * 60,
+                onDayStartClick = {},
+                startsAtNextUnlock = true
+            )
+        }
+    }
+
     @Composable
     private fun home() {
         HomeContent(
@@ -92,12 +137,18 @@ class ScreenGalleryTest {
         )
     }
 
-    private fun snapshot(dark: Boolean, content: @Composable () -> Unit) {
-        if (dark) {
-            paparazzi.unsafeUpdateConfig(
-                deviceConfig = DeviceConfig.PIXEL_3.copy(nightMode = NightMode.NIGHT)
-            )
-        }
+    private fun snapshot(
+        dark: Boolean,
+        deviceConfig: DeviceConfig = DeviceConfig.PIXEL_3,
+        content: @Composable () -> Unit
+    ) {
+        paparazzi.unsafeUpdateConfig(
+            deviceConfig = if (dark) {
+                deviceConfig.copy(nightMode = NightMode.NIGHT)
+            } else {
+                deviceConfig
+            }
+        )
         paparazzi.snapshot {
             NudgeTheme(darkTheme = dark, dynamicColor = false) { content() }
         }

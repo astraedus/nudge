@@ -1,18 +1,23 @@
 package com.astraedus.nudge.ui.components.rule
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -26,7 +31,10 @@ import androidx.compose.runtime.setValue
 import android.text.format.DateFormat
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import com.astraedus.nudge.ui.components.CustomTimeDialog
 import com.astraedus.nudge.ui.components.formatMinutesDisplay
@@ -116,7 +124,6 @@ fun WhenSection(
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun FirstUnlockFields(
     days: Set<Int>,
@@ -177,6 +184,10 @@ private fun LabeledChipsRow(
 /**
  * Minute presets for first-unlock rules (15 min / 30 min / 1 h) plus Custom.
  * Custom uses the existing [CustomTimeDialog] with minutes from 5 to 240.
+ *
+ * The chips use a compact Material-style toggle (filled when selected, outlined when not) laid out
+ * in a single FlowRow. That keeps "Custom" from being orphaned on its own line on a 360dp phone
+ * while preserving a 48dp minimum touch target.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -189,17 +200,17 @@ fun FirstUnlockMinuteChips(
     val isCustom = FIRST_UNLOCK_PRESETS.none { it.first == minutes }
 
     FlowRow(
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         FIRST_UNLOCK_PRESETS.forEach { (preset, label) ->
-            FilterChip(
+            CompactFilterChip(
                 selected = minutes == preset,
                 onClick = { onSelect(preset) },
                 label = { Text(label) }
             )
         }
-        FilterChip(
+        CompactFilterChip(
             selected = isCustom,
             onClick = { showDialog = true },
             label = { Text(if (isCustom) formatMinutesDisplay(minutes) else "Custom") }
@@ -219,6 +230,55 @@ fun FirstUnlockMinuteChips(
             },
             onDismiss = { showDialog = false }
         )
+    }
+}
+
+/**
+ * A compact toggle chip that keeps the Material [FilterChip] selected/unselected affordance
+ * (filled + on-container colour when selected, outlined when not) while using less horizontal
+ * padding so the first-unlock duration row fits on one narrow-phone line.
+ */
+@Composable
+private fun CompactFilterChip(
+    selected: Boolean,
+    onClick: () -> Unit,
+    label: @Composable () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val shape = MaterialTheme.shapes.small
+    val containerColor = if (selected) {
+        MaterialTheme.colorScheme.primaryContainer
+    } else {
+        Color.Transparent
+    }
+    val contentColor = if (selected) {
+        MaterialTheme.colorScheme.onPrimaryContainer
+    } else {
+        MaterialTheme.colorScheme.onSurface
+    }
+    val borderColor = if (selected) {
+        MaterialTheme.colorScheme.primaryContainer
+    } else {
+        MaterialTheme.colorScheme.outline
+    }
+
+    Box(
+        modifier = modifier
+            .heightIn(min = 48.dp)
+            .widthIn(min = 48.dp)
+            .clip(shape)
+            .border(1.dp, borderColor, shape)
+            .background(containerColor, shape)
+            .toggleable(
+                value = selected,
+                onValueChange = { onClick() },
+                role = Role.Checkbox
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        Box(Modifier.padding(horizontal = 4.dp, vertical = 6.dp)) {
+            label()
+        }
     }
 }
 

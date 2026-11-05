@@ -1,49 +1,125 @@
 package com.astraedus.nudge.ui.components.rule
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.material3.FilterChip
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.astraedus.nudge.domain.model.BlockMode
 
 private val DAY_LABELS = listOf(
-    1 to "Mon", 2 to "Tue", 3 to "Wed", 4 to "Thu",
-    5 to "Fri", 6 to "Sat", 7 to "Sun"
+    1 to "M" to "Monday",
+    2 to "T" to "Tuesday",
+    3 to "W" to "Wednesday",
+    4 to "T" to "Thursday",
+    5 to "F" to "Friday",
+    6 to "S" to "Saturday",
+    7 to "S" to "Sunday"
 )
 
 /**
  * The seven day-of-week chips, shared by every schedule kind so a day is picked the same way
  * everywhere. Days are ISO day numbers (1 = Monday ... 7 = Sunday).
+ *
+ * The visible labels are single letters to keep all seven days on one narrow-phone row. Each chip
+ * still announces the full day name ("Monday") and its selected state to accessibility services.
  */
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun DayOfWeekChips(
     days: Set<Int>,
     onDaysChange: (Set<Int>) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    FlowRow(
-        modifier = modifier,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp)
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .selectableGroup(),
+        horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        DAY_LABELS.forEach { (day, label) ->
-            FilterChip(
-                selected = day in days,
-                onClick = { onDaysChange(if (day in days) days - day else days + day) },
-                label = { Text(label) }
+        DAY_LABELS.forEach { (pair, fullName) ->
+            val (day, label) = pair
+            val selected = day in days
+            CompactDayChip(
+                label = label,
+                fullName = fullName,
+                selected = selected,
+                onClick = { onDaysChange(if (selected) days - day else days + day) },
+                modifier = Modifier.weight(1f)
             )
         }
+    }
+}
+
+/**
+ * A compact toggle chip for a single day of the week. The visual chip is sized so seven of them fit
+ * on one row on a 360dp phone with a 1.3x font scale. The height is kept at the 48dp minimum touch
+ * target; the width is the largest that fits in the remaining space after the "Days" label and is
+ * therefore slightly below 48dp on a 360dp screen.
+ */
+@Composable
+private fun CompactDayChip(
+    label: String,
+    fullName: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val shape = MaterialTheme.shapes.small
+    val containerColor = if (selected) {
+        MaterialTheme.colorScheme.primaryContainer
+    } else {
+        MaterialTheme.colorScheme.surface
+    }
+    val contentColor = if (selected) {
+        MaterialTheme.colorScheme.onPrimaryContainer
+    } else {
+        MaterialTheme.colorScheme.onSurface
+    }
+    val borderColor = if (selected) {
+        MaterialTheme.colorScheme.primaryContainer
+    } else {
+        MaterialTheme.colorScheme.outline
+    }
+
+    Box(
+        modifier = modifier
+            .heightIn(min = 48.dp)
+            .widthIn(min = 40.dp)
+            .clip(shape)
+            .border(1.dp, borderColor, shape)
+            .background(containerColor, shape)
+            .toggleable(
+                value = selected,
+                onValueChange = { onClick() },
+                role = Role.Checkbox
+            )
+            .semantics {
+                contentDescription = fullName
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelLarge,
+            color = contentColor
+        )
     }
 }
 
@@ -56,7 +132,6 @@ fun DayOfWeekChips(
  * after the wait time, for anything the owner screen adds below (App config puts its per-feature
  * overrides there).
  */
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ScheduleSection(
     days: Set<Int>,
@@ -100,7 +175,6 @@ fun ScheduleSection(
  * App config's scheduled override (inside [ScheduleSection]) and the group editor's "When", so the
  * two read the same (spec 3.3). Days are ISO day numbers (1 = Monday ... 7 = Sunday).
  */
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun DaysAndTimesFields(
     days: Set<Int>,
