@@ -6,7 +6,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * [PhoneNudge]: session boundaries, idle, the threshold schedule, deferral and the escalation.
+ * [PhoneNudge]: session boundaries, the threshold schedule, deferral and the escalation.
  *
  * Every rule is about TIME and SEQUENCE, so time is a number the test moves and the scheduled delay
  * is captured instead of posted.
@@ -134,10 +134,7 @@ class PhoneNudgeTest {
         assertEquals(20, pauses.single().minutes)
     }
 
-    /**
-     * The case the old `onScreenOff` early return missed: a long blank must never resume a sitting
-     * whose end was not observed (#136 review).
-     */
+    /** A long blank must never resume a sitting, however the session reached it (#136 review). */
     @Test
     fun `a sitting ends after the grace however it got there`() {
         ready()
@@ -148,6 +145,24 @@ class PhoneNudgeTest {
         minutes(1)
         fire()
         assertTrue("the old 19 minutes must not carry over", pauses.isEmpty())
+    }
+
+    /**
+     * An alarm or a notification wakes the lock screen and it goes dark again, with no unlock. The
+     * gap runs from the first screen-off, so the wake must not restart the grace window.
+     */
+    @Test
+    fun `a locked glance does not extend the grace`() {
+        ready()
+        minutes(19)
+        phoneNudge.onScreenOff()
+        minutes(60)
+        phoneNudge.onScreenOff()
+        minutes(1)
+        phoneNudge.onUnlocked()
+        minutes(1)
+        fire()
+        assertTrue("yesterday's sitting must not resume", pauses.isEmpty())
     }
 
     @Test
