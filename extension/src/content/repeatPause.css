@@ -36,5 +36,5 @@
 
 /* Clicks pass through either way, but you cannot see what you are clicking under the pill. */
 .nudge-repeat-pill--fullscreen {
-  bottom: 72px;
+  bottom: 124px;
 }
