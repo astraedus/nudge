@@ -321,6 +321,25 @@ site pause again every N minutes while the user stays on it. The worker answers
   you come back the pause is due straight away. A due tab holds media at once whether or not it
   is visible, but mounts the overlay only when visible, and going hidden tears the overlay down
   and restarts the countdown on return: a pause cannot be served out in a background tab.
+- **One owner per expiry: on YouTube the page gate stands down.** `enforcePageGate` also watches
+  the grant, and on a page reached by an SPA hop `decidePageGate` answers `hand-to-network` when
+  it runs out: `location.replace`, which DNR redirects, and the video restarts at 0:00. That beat
+  the overlay on every normal path, and only a video opened directly (a cold load, `canary`) came
+  up in place. So `SiteConfig.repeatPauseInForce` carries `repeatInForce(...) !== null` for the URL
+  the config was fetched for, and with it `decidePageGate` answers `none` on a refused hop. A stale
+  config still waits, because the field is about the page it was fetched for.
+  - **Nothing is left with neither gate acting.** Any storage change reloads the config, so turning
+    the repeat off, a settings change or a usage write that spends the budget flips the field and
+    the page gate takes over. A limit crossing does not need it: the tracker pushes tabs out itself
+    (`redirectOpenTabs`).
+  - **Known gaps.** A schedule edge writes nothing, so a page standing down when its rule flips to
+    Hard Block stays open until the next usage write, about a minute while the tab is in use. If the
+    registered script failed to inject, a refused hop has no gate until the next full load. On a hop
+    to a refused page the media hold lets go before the overlay's next tick, so a video can run for
+    up to a second.
+  - **Testing it.** The page gate reads the grant's end from the config it fetched, and only a hop
+    or a storage write fetches. An e2e that shortens the grant after the hop never reaches it, which
+    is how this got past the fixture: shorten it first, then hop.
 - **`repeatInForce` is inactive for anything a pause never governed.** Off when: master toggle
   off, no rule, no repeat set, the rule does not apply now, the mode is not a pause, the rule's
   budget is spent, or a gate is in force on the URL (`completePause` evaluates the gate first,
