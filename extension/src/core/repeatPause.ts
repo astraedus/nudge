@@ -85,3 +85,23 @@ export function nextPauseLabel(ms: number): string {
 export function repeatPauseSentence(minutes: number): string {
   return minutes === 1 ? 'Pauses again every minute' : `Pauses again every ${minutes} minutes`;
 }
+
+/**
+ * What the block page's chooser lists, current value included, in the order shown. `null` is
+ * Off. A custom value is kept in the list so opening the chooser cannot appear to change it.
+ *
+ * Under Strict Mode only what `isRepeatPauseWeakening` calls free is offered, so the worker's
+ * lock never has to refuse the chooser and no challenge is needed mid-pause. One entry left
+ * means there is nothing to choose.
+ */
+export function repeatPauseChoices(
+  current: number | null,
+  strict: boolean,
+  tempAllowMinutes: number,
+): (number | null)[] {
+  const minutes = new Set<number>(REPEAT_PAUSE_PRESETS);
+  if (current !== null) minutes.add(current);
+  const all: (number | null)[] = [null, ...[...minutes].sort((a, b) => a - b)];
+  if (!strict) return all;
+  return all.filter((choice) => !isRepeatPauseWeakening(current, choice, tempAllowMinutes));
+}

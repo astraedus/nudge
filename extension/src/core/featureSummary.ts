@@ -14,7 +14,7 @@
  * looking card for a rule with no effect.
  */
 
-import { MODE_LABELS } from './types';
+import { isPauseMode, MODE_LABELS } from './types';
 import { platformById, type HideId } from './platforms';
 import type { SiteRule } from './settingsSchema';
 
@@ -31,6 +31,10 @@ function gateModeLabel(mode: 'OFF' | keyof typeof MODE_LABELS, delaySeconds: num
     : `${MODE_LABELS[mode]} ${delaySeconds}s`;
 }
 
+function canPause(rule: SiteRule): boolean {
+  return isPauseMode(rule.mode) || (rule.schedule?.enabled === true && isPauseMode(rule.schedule.mode));
+}
+
 /**
  * The parts of a rule that are doing something, in the order a user thinks about them.
  * Empty when the rule has no effect at all.
@@ -39,6 +43,10 @@ export function featureSummaryParts(rule: SiteRule): string[] {
   const parts: string[] = [];
 
   if (rule.dailyLimitMinutes !== null) parts.push(`${rule.dailyLimitMinutes}m/day`);
+  // Stored but inert under Allow or Hard Block, where it would describe a pause that never comes.
+  if (rule.repeatPauseMinutes !== null && canPause(rule)) {
+    parts.push(`Pauses every ${rule.repeatPauseMinutes}m`);
+  }
   if (rule.grayscale) parts.push('Grayscale');
 
   const features = rule.features;

@@ -18,6 +18,7 @@ import { BreathingView } from './BreathingView';
 import { DelayView } from './DelayView';
 import { EscapeHatch } from './EscapeHatch';
 import { HardBlockView } from './HardBlockView';
+import { repeatPauseSaveSettled } from './repeatPauseSave';
 
 /**
  * Open-redirect / XSS guard. Every navigation this feature performs — Delay/Breathing
@@ -286,7 +287,9 @@ export function useCompleteOnZero(remainingMs: number, target: string, enabled =
 
   const attempt = useCallback(() => {
     setStatus('pending');
-    send({ type: 'COMPLETE_PAUSE', target })
+    // A choice made in the pause's last second sets the length of the grant this asks for.
+    repeatPauseSaveSettled()
+      .then(() => send({ type: 'COMPLETE_PAUSE', target }))
       .then((result) => {
         if (result.ok && isNavigableTarget(target)) {
           window.location.replace(target);

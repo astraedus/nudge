@@ -5,6 +5,7 @@ import { defaultFeatures, newSiteRule } from '../../src/core/settingsSchema';
 import type { SiteRule } from '../../src/core/settingsSchema';
 import { platformById } from '../../src/core/platforms';
 import { RuleEditor } from '../../src/entrypoints/dashboard/RuleEditor';
+import { scheduleOverride } from '../helpers/rules';
 
 const noop = () => {};
 
@@ -327,5 +328,85 @@ describe('RuleEditor — the daily ITEM-COUNT control (v0.3, "20 Shorts a day")'
     fireEvent.change(input, { target: { value: '0' } });
 
     expect(input.value).toBe('1');
+  });
+});
+
+describe('RuleEditor: pause again every', () => {
+  afterEach(cleanup);
+
+  const LABEL = 'Pause again every, in minutes';
+
+  function field(): HTMLInputElement {
+    return screen.getByLabelText(LABEL) as HTMLInputElement;
+  }
+
+  function renderAndCaptureSave(rule: Partial<SiteRule>) {
+    const onSave = vi.fn();
+    render(<RuleEditor rule={makeRule(rule)} onSave={onSave} onCancel={noop} />);
+    return onSave;
+  }
+
+  function save(onSave: ReturnType<typeof vi.fn>): SiteRule {
+    fireEvent.click(screen.getByRole('button', { name: 'Save rule' }));
+    expect(onSave).toHaveBeenCalledTimes(1);
+    return onSave.mock.calls[0]![0] as SiteRule;
+  }
+
+  it.each(['DELAY', 'BREATHING'] as const)('is offered for %s, off by default', (mode) => {
+    renderEditor({ mode });
+    expect(field().value).toBe('');
+    expect(field().placeholder).toBe('Off');
+  });
+
+  it.each(['ALLOW', 'HARD_BLOCK'] as const)('is not offered for %s', (mode) => {
+    renderEditor({ mode });
+    expect(screen.queryByLabelText(LABEL)).toBeNull();
+  });
+
+  it('saves what was typed', () => {
+    const onSave = renderAndCaptureSave({ mode: 'DELAY' });
+    fireEvent.change(field(), { target: { value: '12' } });
+    expect(save(onSave).repeatPauseMinutes).toBe(12);
+  });
+
+  it('clearing the field turns it off', () => {
+    const onSave = renderAndCaptureSave({ mode: 'DELAY', repeatPauseMinutes: 10 });
+    expect(field().value).toBe('10');
+    fireEvent.change(field(), { target: { value: '' } });
+    expect(save(onSave).repeatPauseMinutes).toBeNull();
+  });
+
+  it.each([
+    ['0', '1'],
+    ['500', '120'],
+  ])('clamps %s to %s', (typed, shown) => {
+    renderEditor({ mode: 'DELAY' });
+    fireEvent.change(field(), { target: { value: typed } });
+    expect(field().value).toBe(shown);
+  });
+
+  it('keeps the stored value through a mode with no pause', () => {
+    // Inert, not erased: trying Hard Block for a moment must not lose the setting.
+    const onSave = renderAndCaptureSave({ mode: 'HARD_BLOCK', repeatPauseMinutes: 10 });
+    expect(save(onSave).repeatPauseMinutes).toBe(10);
+  });
+
+  it('is offered under the schedule when only the schedule pauses', () => {
+    renderEditor({
+      mode: 'ALLOW',
+      schedule: scheduleOverride({ enabled: true, mode: 'BREATHING' }),
+      repeatPauseMinutes: 15,
+    });
+    expect(field().value).toBe('15');
+  });
+
+  it('appears once when both the default and the schedule pause', () => {
+    renderEditor({ mode: 'DELAY', schedule: scheduleOverride({ enabled: true, mode: 'BREATHING' }) });
+    expect(screen.getAllByLabelText(LABEL)).toHaveLength(1);
+  });
+
+  it('is not offered under a schedule that does not pause', () => {
+    renderEditor({ mode: 'ALLOW', schedule: scheduleOverride({ enabled: true, mode: 'HARD_BLOCK' }) });
+    expect(screen.queryByLabelText(LABEL)).toBeNull();
   });
 });

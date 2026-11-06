@@ -80,6 +80,7 @@ import { surfaceKey } from '../core/surfaceKeys';
 import { handleItemViewed } from './itemCounter';
 import { recordVideoChannel } from './videoChannels';
 import type { ActiveRule, BlockDecision, SiteMode } from '../core/types';
+import { isPauseMode } from '../core/types';
 import { ensureScheduleAlarm } from './alarmsHub';
 import { applyRules } from './dnr';
 import {
@@ -328,7 +329,7 @@ async function repeatInForce(
   const usageMs = await todayUsageMs(usageKey, now);
   const verdict = siteRuleAppliesNow(rule, usageMs, now);
   if (!verdict.applies || isOverBudget(rule.dailyLimitMinutes, usageMs)) return null;
-  if (verdict.mode !== 'DELAY' && verdict.mode !== 'BREATHING') return null;
+  if (!isPauseMode(verdict.mode)) return null;
 
   const gate = gateForPage(rule, url);
   if (gate !== null) {

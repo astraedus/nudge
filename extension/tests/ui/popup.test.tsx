@@ -215,3 +215,59 @@ describe('Popup, the status line is graded by severity', () => {
     expect(await statusColorFor('BREATHING')).toContain('nudge-mode-breathing-accent');
   });
 });
+
+describe('Popup: next pause line', () => {
+  const NOW = 1_700_000_000_000;
+  const rule = newSiteRule({ domain: 'youtube.com', mode: 'DELAY', createdAt: 0 });
+
+  beforeEach(() => {
+    vi.useFakeTimers({ now: NOW });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function renderWith(currentNextPauseAt: number | null) {
+    sendMessageMock.mockResolvedValue(
+      makeState({
+        currentRule: rule,
+        currentMode: 'DELAY',
+        currentApplies: true,
+        currentRepeatEveryMinutes: currentNextPauseAt === null ? null : 10,
+        currentNextPauseAt,
+      }),
+    );
+    render(<Popup />);
+    await flush();
+  }
+
+  async function advance(ms: number) {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(ms);
+    });
+  }
+
+  it('shows the time left when the repeat is in force', async () => {
+    await renderWith(NOW + 572_000);
+    expect(screen.getByText('Next pause in 9:32')).toBeDefined();
+  });
+
+  it('ticks while the popup is open', async () => {
+    await renderWith(NOW + 572_000);
+    await advance(3000);
+    expect(screen.getByText('Next pause in 9:29')).toBeDefined();
+  });
+
+  it('shows nothing when the repeat is not in force', async () => {
+    await renderWith(null);
+    expect(screen.queryByText(/Next pause/)).toBeNull();
+  });
+
+  it('stops showing a time once the pause is due', async () => {
+    await renderWith(NOW + 2000);
+    expect(screen.getByText('Next pause in 0:02')).toBeDefined();
+    await advance(2000);
+    expect(screen.queryByText(/Next pause/)).toBeNull();
+  });
+});

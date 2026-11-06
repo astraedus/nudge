@@ -8,6 +8,7 @@ import {
   isRepeatPauseWeakening,
   nextPauseLabel,
   pauseGrantMinutes,
+  repeatPauseChoices,
   repeatPauseSentence,
 } from '../../src/core/repeatPause';
 
@@ -85,5 +86,45 @@ describe('repeatPauseSentence', () => {
   it('says it plainly, with a correct singular', () => {
     expect(repeatPauseSentence(10)).toBe('Pauses again every 10 minutes');
     expect(repeatPauseSentence(1)).toBe('Pauses again every minute');
+  });
+});
+
+describe('repeatPauseChoices', () => {
+  const TEMP_ALLOW = 10;
+
+  it('offers Off and the presets, in order', () => {
+    expect(repeatPauseChoices(null, false, TEMP_ALLOW)).toEqual([null, 5, 10, 15, 30, 60]);
+  });
+
+  it('keeps a custom value in its place, so opening the chooser cannot change it', () => {
+    expect(repeatPauseChoices(7, false, TEMP_ALLOW)).toEqual([null, 5, 7, 10, 15, 30, 60]);
+  });
+
+  it.each<[number | null, (number | null)[]]>([
+    // Off: only what does not lengthen the grant.
+    [null, [null, 5, 10]],
+    // On: only lower, and never Off.
+    [30, [5, 10, 15, 30]],
+    [7, [5, 7]],
+    // Nothing lower exists, so one entry: nothing to choose.
+    [5, [5]],
+    [1, [1]],
+  ])('under Strict Mode from %s offers only what is free', (current, expected) => {
+    expect(repeatPauseChoices(current, true, TEMP_ALLOW)).toEqual(expected);
+  });
+
+  it('under Strict Mode offers nothing beyond Off when every preset outlasts the grant', () => {
+    expect(repeatPauseChoices(null, true, 2)).toEqual([null]);
+  });
+
+  it('every choice it offers under Strict Mode is one the lock accepts', () => {
+    // The chooser cannot answer a challenge mid-pause, so disagreeing with the lock is a dead end.
+    for (const current of [null, 1, 5, 7, 10, 30, 60, 120]) {
+      for (const tempAllow of [1, 5, 10, 60]) {
+        for (const choice of repeatPauseChoices(current, true, tempAllow)) {
+          expect(isRepeatPauseWeakening(current, choice, tempAllow)).toBe(false);
+        }
+      }
+    }
   });
 });

@@ -14,7 +14,12 @@ import {
   DELAY_PRESETS,
 } from '../../core/settingsSchema';
 import type { BlockMode, SiteMode } from '../../core/types';
-import { isBlockMode, MODE_LABELS, SITE_MODE_LABELS } from '../../core/types';
+import { isBlockMode, isPauseMode, MODE_LABELS, SITE_MODE_LABELS } from '../../core/types';
+import {
+  coerceRepeatPauseMinutes,
+  REPEAT_PAUSE_MAX_MINUTES,
+  REPEAT_PAUSE_MIN_MINUTES,
+} from '../../core/repeatPause';
 import { formatMinuteOfDay } from '../../ui/format';
 import { Button, Card, Chip, Toggle } from '../../ui/components';
 import { ChannelListEditor } from './ChannelListEditor';
@@ -177,6 +182,50 @@ function LimitPicker({
         />
       </label>
     </div>
+  );
+}
+
+/** "Pause again every [10] minutes". Empty is off. */
+function RepeatPausePicker({
+  value,
+  onChange,
+}: {
+  value: number | null;
+  onChange: (minutes: number | null) => void;
+}) {
+  return (
+    <label
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
+        marginTop: 12,
+        fontSize: 13,
+        color: 'var(--nudge-on-surface-variant)',
+      }}
+    >
+      Pause again every
+      <input
+        type="number"
+        aria-label="Pause again every, in minutes"
+        min={REPEAT_PAUSE_MIN_MINUTES}
+        max={REPEAT_PAUSE_MAX_MINUTES}
+        value={value ?? ''}
+        placeholder="Off"
+        onChange={(e) =>
+          onChange(e.target.value === '' ? null : coerceRepeatPauseMinutes(Number(e.target.value)))
+        }
+        style={{
+          width: 64,
+          padding: '6px 8px',
+          borderRadius: 8,
+          border: '1px solid var(--nudge-outline)',
+          background: 'var(--nudge-background)',
+          color: 'var(--nudge-on-surface)',
+        }}
+      />
+      minutes
+    </label>
   );
 }
 
@@ -475,7 +524,13 @@ export function RuleEditor({
 
         <Card title="Pause length">
           {isBlockMode(draft.mode) && draft.mode !== 'HARD_BLOCK' ? (
-            delayPicker(draft.delaySeconds, (delaySeconds) => setDraft((d) => ({ ...d, delaySeconds })), 'default')
+            <>
+              {delayPicker(draft.delaySeconds, (delaySeconds) => setDraft((d) => ({ ...d, delaySeconds })), 'default')}
+              <RepeatPausePicker
+                value={draft.repeatPauseMinutes}
+                onChange={(repeatPauseMinutes) => setDraft((d) => ({ ...d, repeatPauseMinutes }))}
+              />
+            </>
           ) : (
             <p style={{ margin: 0, fontSize: 13, color: 'var(--nudge-on-surface-variant)' }}>
               {draft.mode === 'HARD_BLOCK'
@@ -609,6 +664,13 @@ export function RuleEditor({
                     schedule.mode !== 'HARD_BLOCK' &&
                     delayPicker(schedule.delaySeconds, (delaySeconds) => setSchedule({ delaySeconds }), 'scheduled')}
                 </div>
+                {/* One setting per rule: it shows here only when the default mode has no pause to sit under. */}
+                {isPauseMode(schedule.mode) && !isPauseMode(draft.mode) && (
+                  <RepeatPausePicker
+                    value={draft.repeatPauseMinutes}
+                    onChange={(repeatPauseMinutes) => setDraft((d) => ({ ...d, repeatPauseMinutes }))}
+                  />
+                )}
               </div>
             </div>
           )}

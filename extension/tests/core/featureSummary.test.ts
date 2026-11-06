@@ -279,3 +279,29 @@ describe('isNothingActive', () => {
     expect(NOTHING_ACTIVE).toBe('Nothing active');
   });
 });
+
+describe('featureSummary: repeating pause', () => {
+  it.each(['DELAY', 'BREATHING'] as const)('reports it on a %s rule', (mode) => {
+    expect(featureSummary(siteRule({ mode, repeatPauseMinutes: 10 }))).toBe('Pauses every 10m');
+  });
+
+  it('reports it when only the schedule pauses', () => {
+    const schedule = scheduleOverride({ enabled: true, mode: 'DELAY' });
+    expect(featureSummary(siteRule({ mode: 'ALLOW', schedule, repeatPauseMinutes: 10 }))).toBe(
+      'Pauses every 10m',
+    );
+  });
+
+  it.each(['ALLOW', 'HARD_BLOCK'] as const)('says nothing on a %s rule, where it is inert', (mode) => {
+    expect(featureSummary(siteRule({ mode, repeatPauseMinutes: 10 }))).toBeNull();
+  });
+
+  it('says nothing when the schedule that pauses is switched off', () => {
+    const schedule = scheduleOverride({ enabled: false, mode: 'DELAY' });
+    expect(featureSummary(siteRule({ mode: 'ALLOW', schedule, repeatPauseMinutes: 10 }))).toBeNull();
+  });
+
+  it('an inert value does not make a do-nothing rule look active', () => {
+    expect(isNothingActive(siteRule({ mode: 'ALLOW', repeatPauseMinutes: 10 }))).toBe(true);
+  });
+});

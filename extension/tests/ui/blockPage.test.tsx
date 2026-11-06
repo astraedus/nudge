@@ -1177,3 +1177,199 @@ describe('the allowed-channel link hover state', () => {
     expect(link.style.borderColor).toBe('');
   });
 });
+
+describe('Pause again every', () => {
+  function pauseDecision(mode: 'DELAY' | 'BREATHING') {
+    return hardBlockDecision({ mode, delaySeconds: 15 });
+  }
+
+  async function renderPause(overrides: Partial<BlockContext> = {}, mode: 'DELAY' | 'BREATHING' = 'DELAY') {
+    setTarget(TARGET);
+    sendMessageMock.mockResolvedValueOnce(
+      makeContext({ decision: pauseDecision(mode), repeatPauseOffered: true, ...overrides }),
+    );
+    render(<BlockPage />);
+    await flush();
+  }
+
+  function chooser(): HTMLSelectElement {
+    return screen.getByLabelText('Pause again every') as HTMLSelectElement;
+  }
+
+  function optionTexts(): string[] {
+    return Array.from(chooser().options).map((option) => option.text);
+  }
+
+  function sentRepeats(): unknown[] {
+    return sendMessageMock.mock.calls
+      .map(([request]) => request as { type: string })
+      .filter((request) => request.type === 'SET_REPEAT_PAUSE');
+  }
+
+  function completeCalls(): unknown[] {
+    return sendMessageMock.mock.calls
+      .map(([request]) => request as { type: string })
+      .filter((request) => request.type === 'COMPLETE_PAUSE');
+  }
+
+  async function advance(ms: number) {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(ms);
+    });
+    await flush();
+  }
+
+  it.each(['DELAY', 'BREATHING'] as const)('is on the %s view, with Off and the presets', async (mode) => {
+    await renderPause({}, mode);
+    expect(optionTexts()).toEqual(['Off', '5 min', '10 min', '15 min', '30 min', '60 min']);
+    expect(chooser().value).toBe('off');
+  });
+
+  it('shows a custom value it did not offer itself', async () => {
+    await renderPause({ repeatPauseMinutes: 7 });
+    expect(optionTexts()).toContain('7 min');
+    expect(chooser().value).toBe('7');
+  });
+
+  it('is not on a gate block page', async () => {
+    await renderPause({ repeatPauseOffered: false, gateId: 'shorts', gateLabel: 'Shorts' });
+    expect(screen.queryByLabelText('Pause again every')).toBeNull();
+    expect(screen.queryByText(/Pauses again/)).toBeNull();
+  });
+
+  it('saves on change, for this target', async () => {
+    await renderPause();
+    sendMessageMock.mockResolvedValueOnce({ ok: true });
+    fireEvent.change(chooser(), { target: { value: '10' } });
+    await flush();
+    expect(sentRepeats()).toEqual([{ type: 'SET_REPEAT_PAUSE', target: TARGET, minutes: 10 }]);
+    expect(chooser().value).toBe('10');
+  });
+
+  it('turning it off sends null', async () => {
+    await renderPause({ repeatPauseMinutes: 10 });
+    sendMessageMock.mockResolvedValueOnce({ ok: true });
+    fireEvent.change(chooser(), { target: { value: 'off' } });
+    await flush();
+    expect(sentRepeats()).toEqual([{ type: 'SET_REPEAT_PAUSE', target: TARGET, minutes: null }]);
+  });
+
+  describe('under Strict Mode', () => {
+    it('offers only what is free', async () => {
+      await renderPause({ strictModeEnabled: true, tempAllowMinutes: 10, repeatPauseMinutes: 30 });
+      expect(optionTexts()).toEqual(['5 min', '10 min', '15 min', '30 min']);
+    });
+
+    it('from Off, offers nothing that outlasts the ordinary grant', async () => {
+      await renderPause({ strictModeEnabled: true, tempAllowMinutes: 10 });
+      expect(optionTexts()).toEqual(['Off', '5 min', '10 min']);
+    });
+
+    it('narrows after a save, because the saved value is the new floor', async () => {
+      await renderPause({ strictModeEnabled: true, tempAllowMinutes: 10, repeatPauseMinutes: 30 });
+      sendMessageMock.mockResolvedValueOnce({ ok: true });
+      fireEvent.change(chooser(), { target: { value: '10' } });
+      await flush();
+      expect(optionTexts()).toEqual(['5 min', '10 min']);
+    });
+
+    it('with nothing free, says what is set instead of offering a choice', async () => {
+      await renderPause({ strictModeEnabled: true, tempAllowMinutes: 10, repeatPauseMinutes: 5 });
+      expect(screen.queryByLabelText('Pause again every')).toBeNull();
+      expect(screen.getByText('Pauses again every 5 minutes')).toBeTruthy();
+    });
+
+    it('off, with nothing free, shows nothing at all', async () => {
+      await renderPause({ strictModeEnabled: true, tempAllowMinutes: 2 });
+      expect(screen.queryByLabelText('Pause again every')).toBeNull();
+      expect(screen.queryByText(/Pauses again/)).toBeNull();
+    });
+  });
+
+  describe('a save that goes wrong', () => {
+    it.each([
+      ['refused', () => Promise.resolve({ ok: false, challenge: 'abc' })],
+      ['thrown', () => Promise.reject(new Error('worker asleep'))],
+    ])('%s: goes back to what is stored and says so', async (_name, answer) => {
+      await renderPause({ repeatPauseMinutes: 10 });
+      sendMessageMock.mockImplementationOnce(answer);
+      fireEvent.change(chooser(), { target: { value: '30' } });
+      await flush();
+      expect(chooser().value).toBe('10');
+      expect(screen.getByText("Couldn't save.")).toBeTruthy();
+    });
+
+    it('does not stop the pause from completing', async () => {
+      await renderPause();
+      sendMessageMock.mockRejectedValueOnce(new Error('worker asleep'));
+      fireEvent.change(chooser(), { target: { value: '30' } });
+      await flush();
+
+      sendMessageMock.mockResolvedValueOnce({ ok: true, until: 1 });
+      await advance(15_000);
+
+      expect(completeCalls()).toEqual([{ type: 'COMPLETE_PAUSE', target: TARGET }]);
+      expect(replaceMock).toHaveBeenCalledWith(TARGET);
+    });
+
+    it('does not restart or stall the countdown', async () => {
+      await renderPause();
+      await advance(10_000);
+      sendMessageMock.mockRejectedValueOnce(new Error('worker asleep'));
+      fireEvent.change(chooser(), { target: { value: '30' } });
+      await flush();
+
+      sendMessageMock.mockResolvedValueOnce({ ok: true, until: 1 });
+      await advance(5000);
+
+      expect(completeCalls()).toHaveLength(1);
+    });
+  });
+
+  describe('a save still out when the countdown ends', () => {
+    function deferred() {
+      let resolve!: (value: unknown) => void;
+      const promise = new Promise((res) => {
+        resolve = res;
+      });
+      return { promise, resolve };
+    }
+
+    it('reaches the worker before the grant is asked for', async () => {
+      await renderPause();
+      const save = deferred();
+      sendMessageMock.mockReturnValueOnce(save.promise);
+      await advance(14_500);
+      fireEvent.change(chooser(), { target: { value: '30' } });
+      await advance(500);
+
+      expect(completeCalls()).toHaveLength(0);
+
+      sendMessageMock.mockResolvedValueOnce({ ok: true, until: 1 });
+      save.resolve({ ok: true });
+      await flush();
+
+      expect(completeCalls()).toHaveLength(1);
+      expect(replaceMock).toHaveBeenCalledWith(TARGET);
+    });
+
+    it('cannot hold the pause hostage: the grant goes ahead at the ceiling', async () => {
+      await renderPause();
+      const save = deferred();
+      sendMessageMock.mockReturnValueOnce(save.promise);
+      fireEvent.change(chooser(), { target: { value: '30' } });
+
+      sendMessageMock.mockResolvedValueOnce({ ok: true, until: 1 });
+      await advance(15_000);
+      expect(completeCalls()).toHaveLength(0);
+
+      await advance(1500);
+      expect(completeCalls()).toHaveLength(1);
+      expect(replaceMock).toHaveBeenCalledWith(TARGET);
+
+      // So the next test does not find this save still out.
+      save.resolve({ ok: true });
+      await flush();
+    });
+  });
+});

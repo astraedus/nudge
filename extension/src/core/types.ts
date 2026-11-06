@@ -37,6 +37,11 @@ export function isBlockMode(mode: SiteMode): mode is BlockMode {
   return mode !== 'ALLOW';
 }
 
+/** The two modes that open the site after a pause, which is what a pause length or repeat needs. */
+export function isPauseMode(mode: SiteMode): mode is 'DELAY' | 'BREATHING' {
+  return mode === 'DELAY' || mode === 'BREATHING';
+}
+
 /**
  * A rule resolved for "right now" — schedule already applied — and handed to the
  * BlockEngine. Mirrors Android's `ActiveRule`.
