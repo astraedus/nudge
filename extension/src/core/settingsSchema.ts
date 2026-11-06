@@ -18,6 +18,7 @@ import {
   type HideId,
   type Platform,
 } from './platforms';
+import { coerceRepeatPauseMinutes } from './repeatPause';
 import type { BlockMode, SiteMode } from './types';
 
 /**
@@ -62,8 +63,13 @@ import type { BlockMode, SiteMode } from './types';
  * browser from that browser's own YouTube session). `background/storage.ts` fills it in on
  * every load and empties it on every save; see `withSubscribedChannels`. Same total-migration
  * pattern: `coerceYoutubeFeatures` reading a missing `allowSubscriptions` as false IS the step.
+ *
+ * 6 -> 7 (v0.6): REPEATING PAUSE. `SiteRule` gains `repeatPauseMinutes` ("pause again every N
+ * minutes"), defaulting to null (off), so nothing changes on upgrade. Same total-migration
+ * pattern: `coerceRule` reading a missing value as null IS the step. It stays stored but inert
+ * under Allow or Hard Block, so a schedule that swaps the mode does not lose it.
  */
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 
 /** Delay presets, seconds (Android parity). Custom range 1–300. */
 export const DELAY_PRESETS = [5, 15, 30, 60] as const;
@@ -210,6 +216,11 @@ export interface SiteRule {
   schedule: ScheduleOverride | null;
   /** Grayscale every page of this site, flash-free. */
   grayscale: boolean;
+  /**
+   * "Pause again every N minutes", or null when off. Only means anything while the site's
+   * resolved mode is Delay or Breathing, see `core/repeatPause.ts`.
+   */
+  repeatPauseMinutes: number | null;
   /** Platform feature settings, or null when this domain is not a known platform. */
   features: SiteFeatures | null;
 }
@@ -402,6 +413,7 @@ export function newSiteRule(params: {
     showTimeRemaining: false,
     schedule: null,
     grayscale: false,
+    repeatPauseMinutes: null,
     features: platform === null ? null : defaultFeatures(platform.id),
   };
 }
@@ -751,6 +763,7 @@ export function coerceRule(value: unknown): SiteRule | null {
     showTimeRemaining: raw.showTimeRemaining === true,
     schedule: coerceSchedule(raw.schedule),
     grayscale: raw.grayscale === true,
+    repeatPauseMinutes: coerceRepeatPauseMinutes(raw.repeatPauseMinutes),
     features: coerceFeatures(domain, raw.features),
   };
 }
