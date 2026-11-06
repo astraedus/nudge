@@ -295,6 +295,11 @@ test.describe('Repeating pause', () => {
         .evaluate((host) => host.matches(':popover-open'));
     await expect.poll(inTopLayer).toBe(true);
 
+    // Clear of a player's control bar, while it is fullscreen.
+    const pillBottom = () =>
+      page.locator(PILL).evaluate((pill) => parseFloat(getComputedStyle(pill).bottom));
+    await expect.poll(pillBottom).toBeGreaterThanOrEqual(64);
+
     await grantEndsIn(serviceWorker, page, 500);
 
     await expect(page.locator(OVERLAY)).toBeVisible();
@@ -663,5 +668,187 @@ test.describe('Repeating pause on YouTube under a channel list', () => {
     expect((await seen(page)).stacked).toBe(false);
     // A blacklist never needed a clock of its own.
     expect(await anchorMsLeft(serviceWorker, VIDEO)).toBeNull();
+  });
+
+  test.describe('after an in-page hop, where YouTube is really used', () => {
+    const SEEK_TO = 20;
+    const HOME = 'https://www.youtube.com/';
+
+    /** YouTube's own navigation: the URL moves and the document stays. */
+    async function spaHop(page: Page, target: string): Promise<void> {
+      await page.evaluate((to) => {
+        window.history.pushState({}, '', to);
+        document.dispatchEvent(new CustomEvent('yt-navigate-finish'));
+      }, target);
+    }
+
+    async function markDocument(page: Page): Promise<void> {
+      await page.evaluate(() => {
+        (window as unknown as { sameDocument: string }).sameDocument = 'yes';
+      });
+    }
+
+    function isSameDocument(page: Page): Promise<boolean> {
+      return page.evaluate(
+        () => (window as unknown as { sameDocument?: string }).sameDocument === 'yes',
+      );
+    }
+
+    /** Every address the tab has been to, so a trip to the block page cannot pass unseen. */
+    function addressesOf(page: Page): string[] {
+      const addresses: string[] = [];
+      page.on('framenavigated', (frame) => {
+        if (frame === page.mainFrame()) addresses.push(frame.url());
+      });
+      return addresses;
+    }
+
+    async function playing(page: Page) {
+      const player = page.locator('#player');
+      await player.evaluate(async (el: HTMLVideoElement, seekTo) => {
+        el.src = '/tone.wav';
+        await el.play();
+        el.currentTime = seekTo;
+      }, SEEK_TO);
+      await expect.poll(() => player.evaluate((el: HTMLVideoElement) => el.currentTime)).toBeGreaterThan(SEEK_TO);
+      return {
+        paused: () => player.evaluate((el: HTMLVideoElement) => el.paused),
+        at: () => player.evaluate((el: HTMLVideoElement) => el.currentTime),
+      };
+    }
+
+    test('a clicked-to video keeps its place when the grant runs out', async ({
+      context,
+      extensionId,
+      serviceWorker,
+      setSettings,
+    }) => {
+      await setSettings(
+        baseSettings({ rules: [platformRule(YOUTUBE, {}, { mode: 'DELAY', delaySeconds: 2 })] }),
+      );
+      await setRepeat({ context, extensionId, serviceWorker }, 10, YOUTUBE);
+
+      const page = await context.newPage();
+      await page.goto(HOME);
+      await expect(page).toHaveURL(/blocked\.html\?target=/);
+      await expect(page.locator('#host')).toHaveText('www.youtube.com', { timeout: 20_000 });
+      await expect(page.locator(PILL)).toHaveText(TEN_MINUTES);
+
+      const video = await playing(page);
+      await markDocument(page);
+      const addresses = addressesOf(page);
+
+      // In this order. The page gate reads the grant's end from the config it fetched, and only
+      // a hop fetches, so a grant shortened after the hop would never reach it. Nothing but the
+      // real order, end close then hop, reproduces what a user gets near the end of a grant.
+      await grantEndsIn(serviceWorker, page, 2_500, YOUTUBE);
+      await spaHop(page, `/watch?v=${VIDEO}`);
+
+      const overlay = page.locator(OVERLAY);
+      await expect(overlay).toBeVisible({ timeout: 10_000 });
+      await expect.poll(video.paused).toBe(true);
+
+      expect(await video.at()).toBeGreaterThan(SEEK_TO);
+
+      // Finishing takes seconds, so the page gate has had its pass over the expired grant by now.
+      await expect(overlay).toHaveCount(0, { timeout: 15_000 });
+      await expect.poll(video.paused).toBe(false);
+      expect(await video.at()).toBeGreaterThan(SEEK_TO);
+      expect(await isSameDocument(page)).toBe(true);
+      expect(addresses.filter((address) => address.includes('blocked.html'))).toEqual([]);
+      expect(page.url()).toContain(`/watch?v=${VIDEO}`);
+      await expect(page.locator(GATE)).toHaveCount(0);
+      await expect(page.locator(PILL)).toHaveText(TEN_MINUTES);
+    });
+
+    for (const [name, target] of [
+      ['search', '/results?search_query=cats'],
+      ['the home feed', '/'],
+    ] as const) {
+      test(`a hop to ${name} with no grant brings the pause up on it, and finishing it opens the site`, async ({
+        context,
+        extensionId,
+        serviceWorker,
+        setSettings,
+      }) => {
+        await setSettings(channelList('WHITELIST', LISTED));
+        await setRepeat({ context, extensionId, serviceWorker }, 10, YOUTUBE);
+
+        const page = await context.newPage();
+        await page.goto(watch(VIDEO, LISTED));
+        await expect(page.locator('#host')).toHaveText('www.youtube.com');
+        await expect(page.locator(PILL)).toHaveCount(0);
+        expect(await grantsAtTheNetworkLayer(serviceWorker)).toEqual(NO_GRANT);
+        await markDocument(page);
+        const addresses = addressesOf(page);
+
+        await spaHop(page, target);
+
+        const overlay = page.locator(OVERLAY);
+        await expect(overlay).toBeVisible({ timeout: 10_000 });
+        await expect(page.locator(GATE)).toHaveCount(0);
+
+        await expect(overlay).toHaveCount(0, { timeout: 15_000 });
+        await expect(page.locator(PILL)).toHaveText(TEN_MINUTES);
+        expect(await isSameDocument(page)).toBe(true);
+        expect(addresses.filter((address) => address.includes('blocked.html'))).toEqual([]);
+        expect(await grantsAtTheNetworkLayer(serviceWorker)).toMatchObject({
+          grant: expect.any(Number),
+          sessionRules: 1,
+        });
+
+        // That is the site's grant, the same one the block page gives.
+        const home = await context.newPage();
+        await home.goto(HOME);
+        await expect(home.locator('#host')).toHaveText('www.youtube.com');
+      });
+    }
+
+    test('turning the repeat off on an open tab gives the page back to the page gate', async ({
+      context,
+      extensionId,
+      serviceWorker,
+      setSettings,
+    }) => {
+      await setSettings(channelList('WHITELIST', LISTED));
+      await setRepeat({ context, extensionId, serviceWorker }, 10, YOUTUBE);
+
+      const page = await context.newPage();
+      await page.goto(watch(VIDEO, LISTED));
+      await expect(page.locator('#host')).toHaveText('www.youtube.com');
+      await spaHop(page, '/results?search_query=cats');
+      await expect(page.locator(OVERLAY)).toBeVisible({ timeout: 10_000 });
+
+      await setRepeat({ context, extensionId, serviceWorker }, null, YOUTUBE);
+
+      await expect(page).toHaveURL(/blocked\.html\?target=/, { timeout: 10_000 });
+    });
+
+    test('the budget running out on an open tab gives the page back to the page gate', async ({
+      context,
+      extensionId,
+      serviceWorker,
+      setSettings,
+      seedUsage,
+    }) => {
+      const listed = channelList('WHITELIST', LISTED);
+      await setSettings({
+        ...listed,
+        rules: listed.rules?.map((each) => ({ ...each, dailyLimitMinutes: 10 })),
+      });
+      await setRepeat({ context, extensionId, serviceWorker }, 10, YOUTUBE);
+
+      const page = await context.newPage();
+      await page.goto(watch(VIDEO, LISTED));
+      await expect(page.locator('#host')).toHaveText('www.youtube.com');
+      await spaHop(page, '/results?search_query=cats');
+      await expect(page.locator(OVERLAY)).toBeVisible({ timeout: 10_000 });
+
+      // A usage write is what the page hears. The tracker's own crossing pushes the tab out
+      // without the page gate at all, which `budget.spec` covers.
+      await seedUsage(YOUTUBE, 11 * 60);
+
+      await expect(page).toHaveURL(/blocked\.html\?target=/, { timeout: 10_000 });
+    });
   });
 });
