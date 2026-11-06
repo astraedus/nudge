@@ -9,6 +9,9 @@ import java.time.ZoneId
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -21,10 +24,11 @@ import kotlinx.coroutines.sync.withLock
  *
  * 1. **Cost.** `ScheduleEvaluator` runs on every foreground-app event. A DataStore read there would
  *    be a suspension point on the hottest path this app has, for a value that changes twice a day.
- * 2. **Ordering.** The unlock broadcast calls [stampIfStale]. The app window that follows may
- *    arrive before DataStore has emitted the write, and the first app opened after an unlock is
- *    exactly the one the window is for. Writing the volatile FIRST and persisting afterwards makes
- *    the in-memory answer right immediately, with DataStore as the durable copy.
+ * 2. **Ordering.** The unlock broadcast calls [stampIfStale], which decides and writes in one
+ *    DataStore edit. The app window that follows can still be evaluated before that write returns,
+ *    and the app opened straight after an unlock is exactly the one the window is for. So the stamp
+ *    is a [StateFlow]: the service watches it and looks at the app in front again when it moves
+ *    (review, 2026-11-05). The in-memory copy follows the write; it does not run ahead of it.
  *
  * The day start arrives from the preferences Flow, so the editor's "New day starts at" row is
  * reflected without a restart. [zoneId] is read per call rather than cached: a traveller's zone can
@@ -43,7 +47,14 @@ class FirstUnlockStateCache @Inject constructor(
         logger = { log }
     )
 
-    @Volatile private var stamp: Long = FirstUnlockWindow.NO_STAMP
+    private val currentStamp = MutableStateFlow(FirstUnlockWindow.NO_STAMP)
+
+    /**
+     * The stamp the evaluator reads, exposed so the service can look at the app in front again when
+     * it moves. A change here means a decision already taken used the old anchor.
+     */
+    val stamp: StateFlow<Long> = currentStamp.asStateFlow()
+
     @Volatile private var dayStartMinute: Int = FirstUnlockWindow.DEFAULT_DAY_START_MINUTE
 
     /** Serialises [stampIfStale]: two events in the same instant must not both decide to write. */
@@ -51,14 +62,14 @@ class FirstUnlockStateCache @Inject constructor(
 
     init {
         scope.launch {
-            preferences.firstUnlockAt.collect { value -> stamp = value }
+            preferences.firstUnlockAt.collect { value -> currentStamp.value = value }
         }
         scope.launch {
             preferences.dayStartMinute.collect { value -> dayStartMinute = value }
         }
     }
 
-    override fun firstUnlockAt(): Long = stamp
+    override fun firstUnlockAt(): Long = currentStamp.value
 
     override fun dayStartMinute(): Int = dayStartMinute
 
@@ -87,7 +98,7 @@ class FirstUnlockStateCache @Inject constructor(
                 log.w("failed to record the first-unlock stamp", error)
                 return@withLock FirstUnlockWindow.NO_STAMP
             }
-        stamp = result.stampMs
+        currentStamp.value = result.stampMs
         dayStartMinute = result.dayStartMinute
         if (result.written) nowMs else FirstUnlockWindow.NO_STAMP
     }

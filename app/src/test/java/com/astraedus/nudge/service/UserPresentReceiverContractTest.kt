@@ -1,17 +1,19 @@
 package com.astraedus.nudge.service
 
-import java.io.File
+import com.astraedus.nudge.testing.SourceScan
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * L5, source-level: the PR 5a spike's wiring contract (spec 5.3).
+ * L5, source-level: the ONE unlock receiver and the two app-window fallbacks (spec 5.3).
  *
- * `NudgeAccessibilityService` cannot be constructed on the JVM (`AccessibilityService`, a real
- * `Context`, Hilt), so the register/unregister pair is pinned where the rest of this codebase pins
- * service wiring: over the source text. The behaviour the receiver is supposed to have — nothing —
- * is pinned by asserting its body logs and touches no preference.
+ * `NudgeAccessibilityService` cannot be constructed on the JVM, so the register/unregister pair and
+ * the order inside the receiver are pinned over the source text, the way this codebase pins service
+ * wiring. #136 and #155 each added a receiver for the same broadcasts; the merge folded them into
+ * one, and this file now pins that shape: `SCREEN_ON` keeps #136's behaviour, the first-unlock stamp
+ * moves on `USER_PRESENT` only, and both AppWindow fallbacks ask the same keyguard predicate.
  *
  * The failure this catches is the one #57 established as the worst in this app: a receiver
  * registered and never unregistered keeps a dead service alive, and a receiver never registered
@@ -19,144 +21,147 @@ import org.junit.Test
  */
 class UserPresentReceiverContractTest {
 
-    private val srcDir: File by lazy {
-        listOf(File("app/src"), File("src")).firstOrNull { File(it, "main").isDirectory }
-            ?: error("app/src not found from ${File("").absolutePath}")
-    }
-
     private val serviceSource: String by lazy {
-        File(srcDir, "main/java/com/astraedus/nudge/service/NudgeAccessibilityService.kt").readText()
+        SourceScan.code(SourceScan.kotlinFile("com/astraedus/nudge/service/NudgeAccessibilityService.kt"))
     }
 
     /**
-     * The receiver's own text, from its declaration to the end of its lazy block. A non-greedy
-     * match is safe here: every nested closing brace is indented deeper than the four spaces that
-     * end the block, so this stops at the receiver and does not spill into the fallback below.
+     * The receiver's own text, from its declaration to the end of its lazy block. A non-greedy match
+     * is safe here: every nested closing brace is indented deeper than the four spaces that end the
+     * block, so this stops at the receiver.
      */
     private val receiverBody: String by lazy {
-        Regex("private val userPresentReceiver by lazy \\{[\\s\\S]*?\\n    \\}")
+        Regex("private val unlockReceiver by lazy \\{[\\s\\S]*?\\n    \\}")
             .find(serviceSource)?.value.orEmpty()
     }
 
-    /** The fallback's body, same extraction rule as [receiverBody]. */
+    /** The USER_PRESENT branch, so a stamp in the SCREEN_ON branch cannot hide in the whole body. */
+    private val userPresentBranch: String by lazy {
+        val start = receiverBody.indexOf("Intent.ACTION_USER_PRESENT ->")
+        if (start < 0) "" else receiverBody.substring(start)
+    }
+
+    /** The SCREEN_ON branch, from its label to the USER_PRESENT label. */
+    private val screenOnBranch: String by lazy {
+        val start = receiverBody.indexOf("Intent.ACTION_SCREEN_ON ->")
+        val end = receiverBody.indexOf("Intent.ACTION_USER_PRESENT ->")
+        if (start < 0 || end <= start) "" else receiverBody.substring(start, end)
+    }
+
+    /** The first-unlock fallback's body, same extraction rule as [receiverBody]. */
     private val fallbackBody: String by lazy {
         Regex("private fun logFirstUnlockFallback\\(packageName: String\\) \\{[\\s\\S]*?\\n    \\}")
             .find(serviceSource)?.value.orEmpty()
     }
 
     @Test
-    fun `the receiver is declared, filtered on USER_PRESENT, and registered next to screen-off`() {
+    fun `one receiver, registered for screen-on and unlock, beside the screen-off receiver`() {
+        assertTrue("the unlock receiver must be declared", receiverBody.isNotEmpty())
         assertTrue(
-            "the USER_PRESENT receiver must be declared",
-            serviceSource.contains("private val userPresentReceiver by lazy {")
+            "a second receiver for the same broadcasts must not come back",
+            !serviceSource.contains("userPresentReceiver")
         )
         assertTrue(
-            "the receiver must ignore every other action",
-            serviceSource.contains("if (intent?.action != Intent.ACTION_USER_PRESENT) return")
+            "screen-on must keep its branch",
+            receiverBody.contains("Intent.ACTION_SCREEN_ON ->")
         )
         assertTrue(
-            "the receiver must be registered with ACTION_USER_PRESENT",
-            serviceSource.contains("android.content.IntentFilter(Intent.ACTION_USER_PRESENT)")
+            "unlock must keep its branch",
+            receiverBody.contains("Intent.ACTION_USER_PRESENT ->")
         )
 
-        val registration = serviceSource.indexOf("registerReceiver(\n                userPresentReceiver")
+        val registration = serviceSource.indexOf("registerReceiver(\n                unlockReceiver")
         assertTrue("the receiver must be registered", registration >= 0)
         val screenOffRegistration = serviceSource.indexOf(
             "registerReceiver(screenOffReceiver, android.content.IntentFilter(Intent.ACTION_SCREEN_OFF))"
         )
         assertTrue(
-            "the spike registers beside screen-off, in onServiceConnected",
+            "it registers beside screen-off, in onServiceConnected",
             screenOffRegistration in 0 until registration
         )
-    }
-
-    @Test
-    fun `the receiver is unregistered in teardown`() {
         assertTrue(
-            "teardown must unregister the receiver (#57: a dead service must not be kept alive)",
-            serviceSource.contains(
-                "teardown.step(\"unregister_user_present_receiver\") " +
-                    "{ unregisterReceiver(userPresentReceiver) }"
-            )
+            "the filter must carry both actions",
+            serviceSource.contains("addAction(Intent.ACTION_SCREEN_ON)") &&
+                serviceSource.contains("addAction(Intent.ACTION_USER_PRESENT)")
         )
     }
 
     @Test
     fun `exactly one registration and one unregistration`() {
         assertEquals(
-            "one registration: a second one would double-log every unlock",
+            "one registration: a second one would double-handle every unlock",
             1,
-            Regex("(?<!un)registerReceiver\\(\\s*userPresentReceiver").findAll(serviceSource).count()
+            Regex("(?<!un)registerReceiver\\(\\s*unlockReceiver").findAll(serviceSource).count()
+        )
+        assertTrue(
+            "teardown must unregister it (#57: a dead service must not be kept alive)",
+            serviceSource.contains(
+                "teardown.step(\"unregister_unlock_receiver\") { unregisterReceiver(unlockReceiver) }"
+            )
         )
         assertEquals(
             "one unregistration",
             1,
-            Regex("unregisterReceiver\\(userPresentReceiver\\)").findAll(serviceSource).count()
+            Regex("unregisterReceiver\\(unlockReceiver\\)").findAll(serviceSource).count()
         )
     }
 
     @Test
-    fun `the receiver logs its evidence before deciding`() {
-        // PR 5a's spike assertion (log only, change nothing) is deliberately gone: PR 5b made this
-        // receiver the anchor. What survives is the ordering that kept the spike readable — the
-        // evidence line describes the delivery whether or not it stamps.
-        val evidence = receiverBody.indexOf("logFirstUnlockEvidence(source = \"user_present\")")
-        val decision = receiverBody.indexOf("stampIfStale(")
-
-        assertTrue("the delivery must still be logged", evidence >= 0)
-        assertTrue("the evidence must be logged before the stamp decision", evidence < decision)
+    fun `unlock serves the phone nudge and the first-unlock anchor, and only unlock stamps`() {
         assertTrue(
-            "the receiver must not evaluate a block",
-            !receiverBody.contains("evaluateBlockUseCase")
+            "the phone nudge must still learn about the unlock",
+            userPresentBranch.contains("phoneNudge.onUnlocked()")
+        )
+        assertTrue(
+            "the evidence line describes the delivery",
+            userPresentBranch.contains("logFirstUnlockEvidence(source = \"user_present\")")
+        )
+        assertEquals(
+            "one stamp decision on USER_PRESENT",
+            1,
+            Regex("\\.stampIfStale\\(").findAll(userPresentBranch).count()
+        )
+        assertFalse(
+            "a screen-on is not an unlock, so it must not move the stamp",
+            screenOnBranch.contains("stampIfStale(")
+        )
+        assertTrue(
+            "the evidence is logged before the decision",
+            userPresentBranch.indexOf("logFirstUnlockEvidence") <
+                userPresentBranch.indexOf("stampIfStale(")
         )
     }
 
     @Test
-    fun `both sites stamp through the cache's persisted-anchor decision`() {
-        listOf("receiver" to receiverBody, "fallback" to fallbackBody).forEach { (label, body) ->
-            assertTrue("the $label body must be findable", body.isNotEmpty())
-            assertTrue(
-                "the $label must ask the cache to decide (spec 5.3)",
-                body.contains(".stampIfStale(")
-            )
-            assertEquals(
-                "one stampIfStale call in the $label: a second could double-stamp",
-                1,
-                Regex("\\.stampIfStale\\(").findAll(body).count()
-            )
-            assertTrue(
-                "the $label must not write the anchor itself: the decision needs the persisted value",
-                !body.contains("record(")
-            )
-        }
-    }
-
-    @Test
-    fun `the fallback returns unless the device is past the keyguard`() {
-        // Blocker 1: the first version used `locked && interactive` as the exit, which stamped
-        // while the screen was OFF (an alarm over the lock screen anchored the day in bed). The
-        // truth table is in FirstUnlockWindowTest; this pins that the service USES it.
+    fun `both app-window fallbacks ask the one keyguard predicate`() {
+        // Review: #136's fallback and 5b's must not answer "past the keyguard" two different ways.
+        val uses = Regex("isPastKeyguardNow\\(\\)").findAll(serviceSource).count()
         assertTrue(
-            "the fallback must ask the shared predicate",
-            fallbackBody.contains("FirstUnlockWindow.isPastKeyguard(")
+            "each fallback calls the shared helper, at least twice plus its definition: $uses",
+            uses >= 2
         )
         assertTrue(
-            "the inverted form must not come back",
+            "the first-unlock fallback must ask it",
+            fallbackBody.contains("isPastKeyguardNow()")
+        )
+        assertTrue(
+            "the inverted exit must not come back",
             !fallbackBody.contains("isKeyguardLocked && power?.isInteractive == true")
+        )
+        assertTrue(
+            "the helper must use the pure predicate",
+            serviceSource.contains("FirstUnlockWindow.isPastKeyguard(")
         )
     }
 
     @Test
     fun `the fallback keeps its cheap exit before the keyguard call`() {
-        // Device QA found the cold-cache bug this guards: the in-memory stamp reads 0 for the first
-        // moments of a process. The cheap check must stay (it keeps the binder call off app
-        // switches), and the cache must be what writes, against the persisted value.
         val decision = fallbackBody.indexOf("FirstUnlockWindow.shouldStamp")
-        val keyguard = fallbackBody.indexOf("KeyguardManager::class.java")
+        val keyguard = fallbackBody.indexOf("isPastKeyguardNow()")
         val stamp = fallbackBody.indexOf("stampIfStale(")
 
         assertTrue("the fallback must keep the in-memory fast path", decision >= 0)
-        assertTrue("the binding decision must come after the fast path", decision < stamp)
-        assertTrue("the keyguard check stays out of the hot path's way", keyguard in 0 until stamp)
+        assertTrue("the keyguard question comes after the fast path", decision < keyguard)
+        assertTrue("and before the write", keyguard < stamp)
     }
 }

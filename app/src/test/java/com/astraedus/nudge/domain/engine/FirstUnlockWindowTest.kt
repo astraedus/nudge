@@ -315,6 +315,16 @@ class FirstUnlockWindowTest {
     }
 
     @Test
+    fun `the evaluator is told to look again only when the stamp actually moved`() {
+        // L1. The service re-evaluates the app in front when this is true: an app opened straight
+        // after an unlock can be decided before the write lands (review, 2026-11-05).
+        assertFalse(FirstUnlockWindow.stampChanged(0L, 0L))
+        assertFalse(FirstUnlockWindow.stampChanged(1_000L, 1_000L))
+        assertTrue(FirstUnlockWindow.stampChanged(0L, 1_000L))
+        assertTrue(FirstUnlockWindow.stampChanged(1_000L, 2_000L))
+    }
+
+    @Test
     fun `past the keyguard needs an unlocked, interactive screen`() {
         // The four rows review asked for, plus a null PowerManager. An earlier version of the
         // service's fallback used `locked && interactive` as its exit, which stamped while the

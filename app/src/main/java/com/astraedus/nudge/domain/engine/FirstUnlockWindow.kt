@@ -31,9 +31,9 @@ import java.time.ZoneId
  * - **Stale**: `stamp < logical day start`. Yesterday's (or this morning's previous-day) unlock.
  * - **Future**: `stamp > now`. The clock moved backwards; the stamp describes a moment that has not
  *   happened yet, so it is discarded and the next unlock replaces it.
- * - **Before arming**: `stamp < armedAt`. The rule was saved or switched on after the unlock, so it
- *   starts at the NEXT first unlock (owner decision 2, section 8) rather than locking the phone
- *   mid-setup. `armedAt = 0` means "always armed".
+ * - **Before arming**: `stamp < armedAt`. The rule was created, switched on, or newly made a
+ *   first-unlock rule after the unlock, so it starts at the NEXT first unlock (owner decision 2,
+ *   section 8) rather than locking the phone mid-setup. `armedAt = 0` means "never armed".
  *
  * Clock jump forward needs no rule of its own: `now < stamp + minutes` simply fails sooner.
  *
@@ -84,7 +84,7 @@ object FirstUnlockWindow {
      * True when [nowMs] is inside the window opened by [stampMs]. [days] is the rule's ISO weekday
      * list; null or empty means every day, the same reading [ScheduleEvaluator] uses.
      *
-     * [armedAt] is the wall-clock ms the rule was last saved or switched on, 0 for none.
+     * [armedAt] is the wall-clock ms of the last write that armed the rule, 0 for none.
      */
     fun isActive(
         nowMs: Long,
@@ -144,6 +144,13 @@ object FirstUnlockWindow {
         if (stampMs > nowMs) return true
         return stampMs < logicalDayStart(nowMs, dayStartMinute, zone)
     }
+
+    /**
+     * True when the stamp the evaluator reads moved, so an app already decided against the old
+     * anchor must be looked at again. A first stamp (from [NO_STAMP]) counts too: the app opened
+     * straight after an unlock can be evaluated before the write lands (review, 2026-11-05).
+     */
+    fun stampChanged(previous: Long, next: Long): Boolean = previous != next
 
     /**
      * The AppWindow fallback's gate: is the device actually past the keyguard?

@@ -914,10 +914,17 @@ class NudgeAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * The other half of the phone nudge's session (#123): unlock and screen-on. Both are runtime-only
-     * broadcasts on API 26+, so they live beside [screenOffReceiver] and not in the manifest.
+     * Unlock and screen-on, for the phone nudge (#123/#136) AND the first-unlock anchor (spec 5.3).
+     * Both are runtime-only broadcasts on API 26+, so they live beside [screenOffReceiver] and not in
+     * the manifest.
+     *
+     * ONE receiver, not two. #136 and #155 each added one; they watch the same broadcast and the
+     * second would only duplicate the first's work (review, 2026-11-05). The split is by action:
+     * `SCREEN_ON` keeps #136's behaviour exactly (a locked screen does not start or resume a
+     * session), and the first-unlock stamp moves on `USER_PRESENT` only, because a screen-on is not
+     * an unlock. The stamp's evidence line is still logged for the bench runs.
      */
-    private val screenOnReceiver by lazy {
+    private val unlockReceiver by lazy {
         object : android.content.BroadcastReceiver() {
             override fun onReceive(context: android.content.Context?, intent: Intent?) {
                 when (intent?.action) {
@@ -931,6 +938,15 @@ class NudgeAccessibilityService : AccessibilityService() {
                     Intent.ACTION_USER_PRESENT -> {
                         log.i("phone nudge unlock")
                         phoneNudge.onUnlocked()
+                        logFirstUnlockEvidence(source = "user_present")
+                        val now = System.currentTimeMillis()
+                        // The decision that writes is the cache's, against the PERSISTED anchor:
+                        // the in-memory one is empty for the first milliseconds of a process, and
+                        // a re-stamp there would move the window's end later (device QA).
+                        serviceScope.launch {
+                            val stamped = firstUnlockState.stampIfStale(now)
+                            log.i("first-unlock stamp source=user_present stamped=$stamped")
+                        }
                     }
                 }
             }
@@ -938,53 +954,12 @@ class NudgeAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * The first-unlock anchor (spec 5.3, from #109).
-     *
-     * `ACTION_USER_PRESENT` is the platform's "the user is past the keyguard and looking at the
-     * phone" broadcast. It is runtime-registered for the same reason as [screenOffReceiver]: the
-     * system only delivers these to registered receivers, never to a manifest entry.
-     *
-     * This receiver writes the anchor. The first unlock of the logical day is the instant a
-     * `firstUnlockMinutes` rule counts from, and nothing else in the pipeline observes that instant.
-     * Whether the write happens is [FirstUnlockWindow.shouldStamp], not "has this receiver fired
-     * before": an absent, stale, or future stamp is replaced, while a fresh one is left alone so the
-     * SECOND unlock of the day cannot restart the window. That is the single rule this site shares
-     * with the app-window fallback below; the once-per-day gate there is diagnostic only.
-     *
-     * The write is unconditional with respect to rules and the master toggle: a rule switched on
-     * mid-morning then has a real anchor to count from instead of waiting for tomorrow.
-     *
-     * The evidence fields name what the delivery depends on:
-     * - `screenOn` — `isInteractive`, because a delivery while the screen is off would be suspicious;
-     * - `keyguardShowing` — `isKeyguardLocked`, which must be false by the time USER_PRESENT arrives;
-     * - `secureLock` — `isKeyguardSecure`, "swipe only" vs "PIN/pattern/biometric";
-     * - `sinceBootMs` — `elapsedRealtime`, monotonic and jump-proof, so a reboot is obvious in the log
-     *   (a small value) and a wall-clock change cannot fake one.
-     *
-     * `stamped=<ms>` on the line after the evidence says whether this delivery wrote the anchor
-     * (`0` means a fresh stamp already existed and was kept). The decision is the cache's
-     * [com.astraedus.nudge.data.repository.FirstUnlockStateCache.stampIfStale], taken against the
-     * PERSISTED anchor: the in-memory copy is empty for the first moments of a process, and device
-     * QA found that a re-stamp there moved the window's end later.
+     * The first-unlock anchor's state, for the unlock receiver above and the app-window fallback
+     * below. The receiver's evidence fields are what the bench runs read: `screenOn`,
+     * `keyguardShowing`, `secureLock` and `sinceBootMs`, plus the `stamped=` line that says whether
+     * a delivery wrote the anchor or kept a fresh one.
      */
     private val firstUnlockState by lazy { entryPoint.firstUnlockStateCache() }
-
-    private val userPresentReceiver by lazy {
-        object : android.content.BroadcastReceiver() {
-            override fun onReceive(context: android.content.Context?, intent: Intent?) {
-                if (intent?.action != Intent.ACTION_USER_PRESENT) return
-                logFirstUnlockEvidence(source = "user_present")
-                val now = System.currentTimeMillis()
-                // The decision that writes is the cache's, against the PERSISTED anchor: the
-                // in-memory one is empty for the first few milliseconds of a process, and a
-                // re-stamp there would move the window's end later (found on the bench phone).
-                serviceScope.launch {
-                    val stamped = firstUnlockState.stampIfStale(now)
-                    log.i("first-unlock stamp source=user_present stamped=$stamped")
-                }
-            }
-        }
-    }
 
     /**
      * The fallback anchor (spec 5.3, #109): an app window in front while the device is past the
@@ -1015,14 +990,9 @@ class NudgeAccessibilityService : AccessibilityService() {
         ) {
             return
         }
-        val keyguard = getSystemService(android.app.KeyguardManager::class.java) ?: return
-        // Return unless the device is actually PAST the keyguard (review, spec 5.3). An earlier
-        // version returned only when the keyguard was locked AND the screen was on, which stamped
-        // while the screen was off: an alarm or an incoming call over the lock screen anchored the
-        // day before the user woke up. `isKeyguardLocked`, not `isDeviceLocked`, is the right fact
-        // on swipe-only and no-PIN phones.
-        val power = getSystemService(android.os.PowerManager::class.java)
-        if (!FirstUnlockWindow.isPastKeyguard(keyguard.isKeyguardLocked, power?.isInteractive)) return
+        // Return unless the device is actually PAST the keyguard. The shared predicate is also what
+        // #136's phone-nudge fallback asks, so the two cannot disagree.
+        if (!isPastKeyguardNow()) return
         serviceScope.launch {
             // Log only a stamp that was actually written: a kept anchor needs no second line, so
             // the log is naturally at most one per logical day without a throttle of its own.
@@ -1626,14 +1596,14 @@ class NudgeAccessibilityService : AccessibilityService() {
         }
         try {
             registerReceiver(
-                screenOnReceiver,
+                unlockReceiver,
                 android.content.IntentFilter().apply {
                     addAction(Intent.ACTION_SCREEN_ON)
                     addAction(Intent.ACTION_USER_PRESENT)
                 }
             )
         } catch (e: Exception) {
-            log.w("failed to register screen-on receiver", e)
+            log.w("failed to register unlock receiver", e)
         }
         try {
             (getSystemService(android.content.Context.CAMERA_SERVICE) as
@@ -1645,15 +1615,19 @@ class NudgeAccessibilityService : AccessibilityService() {
             log.w("failed to register camera availability callback", e)
         }
 
-        // The first-unlock anchor (spec 5.3), registered beside screen-off for the same reason
-        // (a protected broadcast the system delivers only to registered receivers).
-        try {
-            registerReceiver(
-                userPresentReceiver,
-                android.content.IntentFilter(Intent.ACTION_USER_PRESENT)
-            )
-        } catch (e: Exception) {
-            log.w("failed to register user-present receiver", e)
+        // The first-unlock stamp can move AFTER the app in front was already decided: the app opened
+        // straight after an unlock can be evaluated before the DataStore write returns, and after a
+        // reboot the fallback writes on the same event that evaluates. When the stamp the evaluator
+        // reads changes, look at the front again (review, 2026-11-05). About once a day, so the hot
+        // path is untouched.
+        serviceScope.launch {
+            var previous = firstUnlockState.firstUnlockAt()
+            firstUnlockState.stamp.collect { stamp ->
+                if (FirstUnlockWindow.stampChanged(previous, stamp)) {
+                    previous = stamp
+                    withContext(Dispatchers.Main) { reevaluateForegroundForFirstUnlock() }
+                }
+            }
         }
 
         // Keep Strict Mode state cached so the hot accessibility-event path can read it without
@@ -1811,6 +1785,20 @@ class NudgeAccessibilityService : AccessibilityService() {
      * like any other arrival -- the launch gate, the arrival invariant and the row are all the
      * ordinary ones.
      */
+    /**
+     * The first-unlock stamp moved after the app in front was decided, so that decision used the old
+     * anchor. Same shape as [reevaluateForegroundForNuke]: the active window, the debounce spent, and
+     * the ordinary evaluation on Main so the launch gate and the row are the usual ones.
+     */
+    private fun reevaluateForegroundForFirstUnlock() {
+        if (!globalEnabledCached) return
+        val front = activeWindowPackageOrNull() ?: return
+        if (front == packageName) return
+        log.i("first-unlock stamp moved, re-evaluating package=$front")
+        lastEvalTime = 0L
+        evaluateForegroundPackage(front)
+    }
+
     private fun reevaluateForegroundForNuke(newlyNuked: Set<String>) {
         if (!globalEnabledCached) return
         val front = activeWindowPackageOrNull() ?: return
@@ -2152,7 +2140,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         if (phoneNudgeEnabledCached &&
             signal is ForegroundSignal.AppWindow &&
             !phoneNudge.isActive &&
-            !isKeyguardLockedNow()
+            isPastKeyguardNow()
         ) {
             phoneNudge.onUnlocked()
         }
@@ -2162,6 +2150,19 @@ class NudgeAccessibilityService : AccessibilityService() {
     private fun isKeyguardLockedNow(): Boolean =
         (getSystemService(android.content.Context.KEYGUARD_SERVICE) as android.app.KeyguardManager)
             .isKeyguardLocked
+
+    /**
+     * The ONE "past the keyguard" question for the app-window fallbacks (review, 2026-11-05):
+     * #136's phone-nudge fallback and 5b's first-unlock fallback now ask the same predicate.
+     * `isKeyguardLocked` rather than `isDeviceLocked`, which is false on swipe-only phones while the
+     * lock screen is up, and the screen must be interactive. `SCREEN_ON` keeps its own check, since
+     * a screen-on with the keyguard up is not an unlock either way.
+     */
+    private fun isPastKeyguardNow(): Boolean {
+        val keyguard = getSystemService(android.app.KeyguardManager::class.java) ?: return false
+        val power = getSystemService(android.os.PowerManager::class.java)
+        return FirstUnlockWindow.isPastKeyguard(keyguard.isKeyguardLocked, power?.isInteractive)
+    }
 
     /**
      * The clock the sitting's return window is measured on.
@@ -3945,8 +3946,7 @@ class NudgeAccessibilityService : AccessibilityService() {
             contentResolver.unregisterContentObserver(imeSettingObserver)
         }
         teardown.step("unregister_screen_off_receiver") { unregisterReceiver(screenOffReceiver) }
-        teardown.step("unregister_screen_on_receiver") { unregisterReceiver(screenOnReceiver) }
-        teardown.step("unregister_user_present_receiver") { unregisterReceiver(userPresentReceiver) }
+        teardown.step("unregister_unlock_receiver") { unregisterReceiver(unlockReceiver) }
         teardown.step("phone_nudge_stop") {
             phoneNudgeHandler.removeCallbacks(phoneNudgeRunnable)
             phoneNudge.reset()

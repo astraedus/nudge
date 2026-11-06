@@ -68,6 +68,23 @@ class FirstUnlockStateCacheTest {
     }
 
     @Test
+    fun `the stamp flow moves when this call writes, and stays when it keeps`() = runTest {
+        // The service watches this flow to re-evaluate the app in front, so it must carry the value
+        // the evaluator will read, not the value before the write (review, 2026-11-05).
+        val empty = cache(persistedStamp = FirstUnlockWindow.NO_STAMP)
+        val cold = FirstUnlockStateCache(empty, mockk<NudgeLog>(relaxed = true))
+        assertEquals(FirstUnlockWindow.NO_STAMP, cold.stamp.value)
+
+        cold.stampIfStale(now)
+        assertEquals(now, cold.stamp.value)
+
+        val fresh = cache(persistedStamp = at(today, 8, 0))
+        val warm = FirstUnlockStateCache(fresh, mockk<NudgeLog>(relaxed = true))
+        warm.stampIfStale(now)
+        assertEquals(at(today, 8, 0), warm.stamp.value)
+    }
+
+    @Test
     fun `no anchor yet stamps this unlock`() = runTest {
         val preferences = cache(persistedStamp = FirstUnlockWindow.NO_STAMP)
         val state = FirstUnlockStateCache(preferences, mockk<NudgeLog>(relaxed = true))
