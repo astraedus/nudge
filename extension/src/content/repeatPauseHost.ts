@@ -7,10 +7,11 @@
  *
  *  - **The site's CSS cannot bleed in.** Hence the shadow root, and the host's own box set
  *    inline with `!important`, which beats anything a site aims at it (`* { display: none }`).
- *  - **A strict page CSP cannot strip our styles.** `style-src` without `unsafe-inline` blocks an
- *    injected `<style>`. A constructable sheet in `adoptedStyleSheets` is not subject to it, and
- *    inline values written through CSSOM are not either, where a `style` attribute would be. The
- *    `<style>` fallback is for an environment with no constructable sheets.
+ *  - **A strict page CSP cannot strip our styles.** A constructable sheet in `adoptedStyleSheets`
+ *    is not subject to `style-src`, and inline values written through CSSOM are not either. The
+ *    `<style>` fallback is for an environment with no constructable sheets. It is not unsafe
+ *    today, because Chromium lets an isolated-world script's `<style>` past the page's CSP (seen
+ *    with the sheet disabled under the CSP e2e), but that exemption is the browser's, not ours.
  *  - **Fullscreen cannot hide the pill.** A `manual` popover sits in the top layer, above the
  *    fullscreen element, as long as it is re-shown after that element went fullscreen.
  *    `showPopover` failing costs only that: the inline `display: block` keeps the host painted.

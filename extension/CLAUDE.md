@@ -73,12 +73,14 @@ src/
     featureSummary.ts   (the one "what is switched on for this site" line)
     budgets.ts, messages.ts, ruleResolver.ts, channelFreshness.ts
     seenItems.ts        (the day-scoped "already counted this item" set)
+    repeatPause.ts      (the repeating pause: range, grant length, weakening, time-left text)
   background/   The service worker: dnr, tracker, itemCounter, tempAllow, alarmsHub,
-                badge, messagesRouter, storage, grayscale.
+                badge, messagesRouter, storage, grayscale, repeatPauseScript.
   content/      spaNav.ts   (the generic SPA-navigation layer), overlay.ts (the shared
                              in-page gate overlay + the media hold + the bail helper) —
                              BOTH shared by all seven platform scripts, YouTube included
                 itemCounter.ts (reports "we are on one item of a gate's stream")
+                repeatPause.ts + repeatPauseHost.ts (the repeating pause, on ANY site)
                 YouTube: selectors.ts (ALL selectors), youtube.ts, youtube.css,
                 channelDetection.ts (3-tier channel identification), channelFilter.ts
                 (feed filtering + watch gate + colour flip), channelObserver.ts (reports a
@@ -297,6 +299,73 @@ unit-testable, exactly as the Android domain layer is.
    filtered (see Known gaps): they have no per-item URL. Only whole-surface item streams
    carry `itemPaths`, and a gate without them never offers a count control — a limit that
    can never increment is indistinguishable from a broken blocker.
+
+### The repeating pause
+
+`SiteRule.repeatPauseMinutes` (schema v7, null = off, 1 to 120) makes a Delay or Breathing
+site pause again every N minutes while the user stays on it. The worker answers
+(`GET_REPEAT_PAUSE`), `content/repeatPause.ts` keeps the page in step with the answer.
+
+- **In place, not a redirect, because that is the feature.** The grant's normal expiry never
+  yanks an open page (step 3 above), so a repeat has to come to the page. Sending it through
+  the block page would throw away the half-typed comment and the video position, and a pause
+  that punishes staying gets switched off. So the overlay mounts over the SAME document and,
+  once served, the page carries on (the e2e asserts the typed value and a window marker survive).
+- **The grant IS the interval.** While the repeat is in force, `completePause` grants
+  `repeatPauseMinutes` rather than `tempAllowMinutes` (`pauseGrantMinutes`, the one place). A
+  separate timer would disagree with DNR: "Next pause in 9:32" while a full navigation hits
+  the block page, or the reverse. With one `until`, the pill cannot lie.
+- **Wall clock, deliberately.** The pill compares `Date.now()` to the grant's `until`, not a
+  countdown of time spent in the tab. A grant is per domain and runs out whether or not this
+  tab is looking at it, so the timer keeps running when you leave, and if it has passed when
+  you come back the pause is due straight away. A due tab holds media at once whether or not it
+  is visible, but mounts the overlay only when visible, and going hidden tears the overlay down
+  and restarts the countdown on return: a pause cannot be served out in a background tab.
+- **`repeatInForce` is inactive for anything a pause never governed.** Off when: master toggle
+  off, no rule, no repeat set, the rule does not apply now, the mode is not a pause, the rule's
+  budget is spent, or a gate is in force on the URL (`completePause` evaluates the gate first,
+  so an in-page overlay there would get the wrong grant, and two overlays would stack).
+  **YouTube carve-outs are inactive too**: `youtubePageAccess` with `tempAllowed: false` must
+  say `'blocked'`, so an allowed channel's video and Studio never see it. Repeating a pause on
+  what the user allowed is the same "punished for watching what they said they wanted" failure
+  described under the channel lists below, and it is the worst thing this feature could do.
+- **Budget is asked directly (`isOverBudget`), not through `reason`.** See Lessons.
+- **Registered only where a rule needs it.** `background/repeatPauseScript.ts` follows
+  `grayscale.ts`: one dynamic registration whose `matches` derive from rules with a repeat set,
+  diffed on every wake and save, unregistered at zero, called wherever grayscale's sync is. It
+  also injects into already-open tabs of newly added domains, and of every listed domain on an
+  extension update. A host Chrome would reject is filtered out, or one hand-edited domain would
+  fail the whole registration. The entrypoint is `registration: 'runtime'` with NO `matches`,
+  so WXT adds nothing to `content_scripts` or `host_permissions`. Re-injection replaces the old
+  controller: WXT invalidates the older same-named context, and `removeStaleHosts` clears its
+  element, so there is no window flag to go stale.
+- **Rendering on pages nobody here has seen** (`content/repeatPauseHost.ts`). One shadow host
+  holds the pill and the overlay, with its own box set inline `!important`. The overlay is
+  `createGateOverlay` and `platformOverlay.css`, so there is no second overlay to drift; the
+  host passes every click through (`pointer-events: none`) and the overlay turns that back on
+  for itself, because a click-blocking pill on someone's "Send" button would be a bug report.
+  Styles go in through `adoptedStyleSheets`. A `manual` popover keeps the pill above fullscreen;
+  an overlay coming due exits fullscreen first.
+- **A pause never ends in nothing.** The overlay comes down only on a successful grant.
+  Refused twice, it `location.replace`s the URL so DNR decides, overlay still up. A failed fetch
+  keeps the last known state, and a failed confirm while locally due counts as due: "could not
+  ask" must not let a sleeping worker switch the pause off. Another tab renewing the shared
+  per-domain grant ends this tab's pause, which is why due is confirmed with the worker before
+  anything is shown. Bail is WALKED_AWAY then `LEAVE_TO_DASHBOARD` (tab id from the SENDER only,
+  like `CLOSE_TAB`). bfcache `pageshow` resets the controller so Back from the dashboard does
+  not leave a frozen overlay.
+- **Strict Mode** (`isRepeatPauseWeakening`, in `isRuleWeakened`, gate in the worker): on to off
+  and raising N are weakenings; off to on is one ONLY if N > `tempAllowMinutes`, because it then
+  lengthens the grant; lowering N and off to on at or under it are free. The block page's
+  chooser offers only the free options (`repeatPauseChoices`). It waits for its save before
+  `COMPLETE_PAUSE` (`repeatPauseSaveSettled`, capped at 1.5s), so a save made during the countdown
+  reaches the grant it was made for, and a failed or slow save cannot break the pause.
+
+Known limits: a site's modal `<dialog>` makes outside content inert, so the bail button cannot
+be pressed while one is open (the countdown still finishes). Media inside a shadow root is not
+held, as with `holdMediaPaused` everywhere. Lowering N leaves a live longer grant as it is, and
+the pill reads the real grant. An Emergency Pass grant also ends in a repeat pause. Adding a
+repeat on an open tab with no live grant makes the pause due at once.
 
 ### Channel lists, gray-screen and the hide toggles (v1.1)
 
@@ -695,6 +764,15 @@ xvfb), scoped with `paths: ['extension/**']`. The Android workflow carries the m
 - **A "page cannot smuggle X in" test must assert on what is ENFORCED, not what is stored.**
   The first smuggle test checked storage and passed with the guard deleted, because
   `saveSettings` strips the list anyway; it now reads `getDynamicRules()`. Plant the defect.
+- **`reason === 'limit-exhausted'` does not mean "the budget is spent".** `siteRuleAppliesNow`
+  checks the block mode first, so a Delay rule with a spent limit answers `'mode-blocks'`, while
+  the engine escalates it to a Hard Block. The repeat's first check read the reason and would
+  have offered a Delay overlay the worker then refuses. To ask about the budget, ask the budget.
+- **A page's CSP does not bind an isolated-world `<style>` in Chromium.** The positive control
+  on the strict-CSP fixture shows the page's own `<style>` refused; with `adoptedStyleSheets`
+  disabled, ours still rendered. So that e2e guards "the overlay is styled and covers the
+  viewport", not "the constructable sheet is what got it there", and the first planted defect
+  passed it. A plant that passes is a finding: work out which claim was false before moving on.
 - The React Compiler advisory lint rules (`set-state-in-effect`,
   `preserve-manual-memoization`, `use-memo`) are deliberately **off**; `rules-of-hooks` is
   deliberately **on** and has already earned its keep.
