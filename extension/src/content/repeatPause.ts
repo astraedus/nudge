@@ -179,7 +179,7 @@ export function initRepeatPause(options: RepeatPauseOptions): RepeatPauseControl
       await send({ type: 'WALKED_AWAY', target: href });
       left = (await send({ type: 'LEAVE_TO_DASHBOARD' })).ok;
     } catch {
-      left = false;
+      // Falls through to `navigate`, so the user is not left stuck behind the overlay.
     }
     if (!left && !stopped) navigate(href);
   }
