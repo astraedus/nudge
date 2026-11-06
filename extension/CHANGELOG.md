@@ -27,11 +27,6 @@ namespaces were already split for exactly that reason.
   feed or search. A video from a channel you allowed never repeats, and adding a channel to your
   list while you watch ends the repeat straight away.
 
-### Fixed
-
-- A video paused by two Nudge pauses at once could stay muted after both had finished. It now
-  gets its sound back when the last one lets go, and stays muted if you had muted it yourself.
-
 ## 0.5.1 — 2026-11-02
 
 ### Changed
