@@ -18,9 +18,19 @@ namespaces were already split for exactly that reason.
   and "I changed my mind" still takes you out. Finish it and the page carries on where it was.
   The timer keeps running when you leave the tab; if it has run out by the time you come back,
   the pause is due straight away, and a pause does not count down in a background tab. Off by
-  default. It covers the whole-site pause only, not Shorts, Reels and other feature gates, and
-  never appears on a YouTube channel you allowed. Under Strict Mode, turning it off, raising N,
-  or adding one longer than your normal access time needs the challenge. No new permissions.
+  default. It covers the whole-site pause only, not Shorts, Reels and other feature gates. Under
+  Strict Mode, turning it off, raising N, or adding one longer than your normal access time
+  needs the challenge. No new permissions.
+- **On YouTube with a channel list, the repeat works per video.** A video from a channel you did
+  not allow gets the channel pause first, then repeats every N minutes for as long as you stay on
+  that video. Finishing a pause on one video does not buy the next, and it does not open the home
+  feed or search. A video from a channel you allowed never repeats, and adding a channel to your
+  list while you watch ends the repeat straight away.
+
+### Fixed
+
+- A video paused by two Nudge pauses at once could stay muted after both had finished. It now
+  gets its sound back when the last one lets go, and stays muted if you had muted it yourself.
 
 ## 0.5.1 — 2026-11-02
 

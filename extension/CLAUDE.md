@@ -329,6 +329,47 @@ site pause again every N minutes while the user stays on it. The worker answers
   say `'blocked'`, so an allowed channel's video and Studio never see it. Repeating a pause on
   what the user allowed is the same "punished for watching what they said they wanted" failure
   described under the channel lists below, and it is the worst thing this feature could do.
+  The one exception is next.
+- **A video from a channel the user did not allow repeats per video; an allowed channel's never
+  does.** Under a whitelist, `/watch` and `/live/<id>` are carved wholesale and each video is
+  gated in-page, with no grant. Inactive there would mean one pause, then free for as long as the
+  user stays, which is the rabbit hole this feature exists for. So
+  `background/repeatAnchors.ts` keeps a per-video clock in `storage.session`, `{videoId: until}`.
+  The channel gate's `onComplete` sends `CHANNEL_PAUSE_DONE {url}`; the page reports and the
+  worker decides, setting the clock only when the rule has a repeat, the verdict is a pause, the
+  budget is not spent and the URL is a carved watch page with a video id.
+  - **Never a `grantTempAllow` here.** A site grant would open the home feed and search for N
+    minutes, and finishing a pause on one video must not buy the next. `completePause` on a
+    clocked video renews the clock and returns `{ok, until}` without touching `nudge:tempAllow`
+    or DNR.
+  - **A clock is the proof the gate blocked this video**, so no reported channel is required. No
+    clock means inactive, exactly as for any other carve-out: never a pause on something not
+    established as unlisted, never a second pause straight after the first. A channel added to
+    the list mid-watch ends it at once (`isWhitelistedVideoUrl`).
+  - **`nextPauseAt` is the one answer to `until`**, for `GET_REPEAT_PAUSE` and the popup's
+    `currentNextPauseAt`: the clock on a clocked video, the site grant everywhere else.
+  - **Clocks are not pruned by age.** One past its `until` IS the pause being due, so pruning it
+    on write would free-pass a tab left open while another video played. They are bounded by
+    oldest-first eviction at `MAX_REPEAT_ANCHORS` and go with the browser session.
+- **Never two overlays.** The repeat overlay can come due over another Nudge gate: under a
+  blacklist with a live grant (the gate check above only covers `gateForPage`, not the channel
+  gate), and on a reload of a clocked video, where `channelGateSatisfiedFor` is lost and the gate
+  fires again with the clock running. While `#nudge-gate` or a `.nudge-overlay` is in the document
+  the controller holds media if due but does not mount, and hides the pill. Our own overlay lives
+  in a shadow root, so that selector can never match it. A MutationObserver on `body`'s children
+  catches a gate arriving over our overlay at once; a gate anchored inside the Shorts player is
+  the one it misses, and the next tick catches that.
+  - **`AFTER_GATE_MS` closes the race with the report.** `CHANNEL_PAUSE_DONE` is sent as the gate
+    comes down, so a `GET_REPEAT_PAUSE` can overtake it and answer from the old clock. When a gate
+    leaves, `confirmedDue` drops, and for 3 seconds the controller refetches every tick and no
+    "due" answer counts. A due answer that outlasts the window is real (a blacklist's expired
+    grant, a lost report) and pauses as normal. Content scripts get no `storage.session`
+    `onChanged`, which is why this is a refetch and not a listener.
+  - **Nested holds share one mute record** (`claimMute`/`releaseMute` in `content/overlay.ts`,
+    keyed on the element by `Symbol.for`, so it crosses WXT's per-entrypoint bundles). Each hold
+    used to snapshot `muted` for itself: gate first, repeat second, released in that order, and
+    the second hold's snapshot of "already muted" left the video muted for good. The first holder
+    records the user's state, the last one restores it.
 - **Budget is asked directly (`isOverBudget`), not through `reason`.** See Lessons.
 - **Registered only where a rule needs it.** `background/repeatPauseScript.ts` follows
   `grayscale.ts`: one dynamic registration whose `matches` derive from rules with a repeat set,
@@ -365,7 +406,11 @@ Known limits: a site's modal `<dialog>` makes outside content inert, so the bail
 be pressed while one is open (the countdown still finishes). Media inside a shadow root is not
 held, as with `holdMediaPaused` everywhere. Lowering N leaves a live longer grant as it is, and
 the pill reads the real grant. An Emergency Pass grant also ends in a repeat pause. Adding a
-repeat on an open tab with no live grant makes the pause due at once.
+repeat on an open tab with no live grant makes the pause due at once. Going back to a clocked
+video whose clock has run out can mount our overlay first, then give way when the channel gate
+arrives (its settle runs up to 6s): only the gate is served, and it renews the clock, but with a
+very short Delay the user can finish ours before the gate arrives and then sit the gate too. Two
+tabs writing clocks at once can lose one, as with `videoChannels`, and a lost clock means inactive.
 
 ### Channel lists, gray-screen and the hide toggles (v1.1)
 

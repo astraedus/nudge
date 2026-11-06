@@ -619,6 +619,11 @@ test.describe('Repeating pause on YouTube under a channel list', () => {
     await expect(gate).toHaveCount(0, { timeout: 15_000 });
     await expect(page.locator(PILL)).toHaveText(TEN_MINUTES);
     expect(await seen(page)).toEqual({ stacked: false, repeat: false });
+    // Two holds on one video, one from each content script: the gate's let go first. Unit tests
+    // cannot see this, since they run both holds from one bundle.
+    await expect
+      .poll(() => page.locator('#player').evaluate((el: HTMLVideoElement) => el.muted))
+      .toBe(false);
 
     // Run out before the reload, so the pause can get there first: it gives way to the gate.
     await anchorEndsIn(serviceWorker, page, VIDEO, -1000);
