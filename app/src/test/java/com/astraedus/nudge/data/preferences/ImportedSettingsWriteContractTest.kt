@@ -47,8 +47,8 @@ class ImportedSettingsWriteContractTest {
     }
 
     /**
-     * The fifteen settings a backup carries. Each must be written through a null-guard, so a file that
-     * does not carry it leaves this device's value alone.
+     * The sixteen settings a backup carries. Each must be written through a null-guard, so a file
+     * that does not carry it leaves this device's value alone.
      */
     @Test
     fun `every carried setting is written only when the file actually carries it`() {
@@ -65,6 +65,7 @@ class ImportedSettingsWriteContractTest {
             "phoneNudgeEnabled" to "PHONE_NUDGE_ENABLED",
             "phoneNudgeThresholdMinutes" to "PHONE_NUDGE_THRESHOLD_MINUTES",
             "phoneNudgePauseSeconds" to "PHONE_NUDGE_PAUSE_SECONDS",
+            "dayStartMinute" to "DAY_START_MINUTE",
             "customDelayTitles" to "CUSTOM_DELAY_TITLES",
             "customDelaySubtitles" to "CUSTOM_DELAY_SUBTITLES",
             "customHardBlockMessages" to "CUSTOM_HARD_BLOCK_MESSAGES"
@@ -135,6 +136,7 @@ class ImportedSettingsWriteContractTest {
             "phoneNudgeEnabled",
             "phoneNudgeThresholdMinutes",
             "phoneNudgePauseSeconds",
+            "dayStartMinute",
             "customDelayTitles",
             "customDelaySubtitles",
             "customHardBlockMessages"

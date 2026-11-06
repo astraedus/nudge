@@ -43,8 +43,9 @@ data class BlockRuleData(
      */
     val firstUnlockMinutes: Int? = null,
     /**
-     * Wall-clock ms the rule was last saved or switched on (arming, spec 5.1). Only read by the
-     * first-unlock branch of [com.astraedus.nudge.domain.engine.ScheduleEvaluator]; 0 = always armed.
+     * Wall-clock ms of the last write that armed the rule (spec 5.1). `RuleArming` moves it only on a
+     * create, an off-to-on switch, or a newly first-unlock rule. Only read by the first-unlock branch
+     * of [com.astraedus.nudge.domain.engine.ScheduleEvaluator]; 0 = never armed.
      */
     val armedAt: Long = 0L
 )

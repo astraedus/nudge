@@ -120,9 +120,11 @@ data class BlockRule(
      */
     val firstUnlockMinutes: Int? = null,
     /**
-     * Wall-clock ms this rule was last saved or switched on (spec 5.1, arming). A first-unlock
-     * window only counts if its stamp is at or after this, so a rule made at 08:05 after an 08:00
-     * unlock starts tomorrow instead of locking the phone mid-setup (owner decision 2).
+     * Wall-clock ms of the last write that ARMED this rule (spec 5.1). It moves only when the rule
+     * is created, switched from off to on, or newly made a first-unlock rule; an ordinary save keeps
+     * the stored value, so a stronger edit cannot end a running window (`RuleArming` owns that
+     * decision). A first-unlock window only counts if its stamp is at or after this, so a rule made
+     * at 08:05 after an 08:00 unlock starts tomorrow instead of locking the phone mid-setup.
      *
      * 0 for every pre-migration rule, which means "never armed": those rules did not have this
      * behaviour to wait for. `RuleArming` moves it only when a write creates the rule, switches it

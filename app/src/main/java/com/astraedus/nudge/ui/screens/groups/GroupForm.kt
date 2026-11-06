@@ -83,7 +83,10 @@ data class GroupRuleForm(
                     ?.filter { it in 1..7 }
                     ?.toSet()
                     ?.takeIf { it.isNotEmpty() }
-                    ?: defaults.scheduleDays,
+                    // No days on a first-unlock rule means every day to the engine, so the editor
+                    // must open that way rather than showing Mon-Fri and narrowing it on save
+                    // (review nit; a hand-edited import can produce one).
+                    ?: if (firstUnlock) ALL_DAYS else defaults.scheduleDays,
                 startMinute = rule.scheduleStartMinute ?: defaults.startMinute,
                 endMinute = rule.scheduleEndMinute ?: defaults.endMinute,
                 firstUnlock = firstUnlock,

@@ -28,6 +28,6 @@ data class ActiveRule(
      * of days-and-times or first-unlock, never both.
      */
     val firstUnlockMinutes: Int? = null,
-    /** Wall-clock ms the rule was last saved or switched on (arming). 0 = always armed. */
+    /** Wall-clock ms of the last write that armed the rule (`RuleArming`). 0 = never armed. */
     val armedAt: Long = 0L
 )

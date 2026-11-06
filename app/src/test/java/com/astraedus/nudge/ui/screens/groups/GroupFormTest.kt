@@ -158,6 +158,24 @@ class GroupFormTest {
     }
 
     @Test
+    fun `a first-unlock rule with no days opens showing every day`() {
+        // A hand-edited import can carry a window and no days; the engine reads that as every day,
+        // so the editor must not show Mon-Fri and narrow it on save (review nit).
+        val saved = groupRule.copy(
+            scheduleDays = null,
+            scheduleStartMinute = null,
+            scheduleEndMinute = null,
+            firstUnlockMinutes = 30
+        )
+
+        val form = GroupRuleForm.from(saved)
+
+        assertTrue(form.firstUnlock)
+        assertEquals(GroupRuleForm.ALL_DAYS, form.scheduleDays)
+        assertFalse(form.daysTouched)
+    }
+
+    @Test
     fun `from round-trips both days and times and first unlock`() {
         val daysTimes = groupRule.copy(
             mode = "HARD_BLOCK",
