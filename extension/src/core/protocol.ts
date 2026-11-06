@@ -74,6 +74,13 @@ export interface BlockContext {
    * allowed channels and nothing about the Studio they turned creator mode on to reach.
    */
   creator: CreatorLinks | null;
+  /** The rule's "pause again every N minutes", or null when off or there is no rule. */
+  repeatPauseMinutes: number | null;
+  /**
+   * Whether this page may offer that setting: a SITE-level Delay or Breathing pause. A feature
+   * gate's pause is not one, the repeat does not reach gates, and the page must not imply it.
+   */
+  repeatPauseOffered: boolean;
 }
 
 /** Where creator mode lets the user go from the block page. */
@@ -104,6 +111,10 @@ export interface PopupState {
   currentGrayscale: boolean;
   /** One line summarising the site's active features, or null when there are none. */
   currentFeatureSummary: string | null;
+  /** The repeating pause in force on this page, in minutes, or null when none is. */
+  currentRepeatEveryMinutes: number | null;
+  /** When the next repeat is due (epoch ms), or null when none is in force or no grant is live. */
+  currentNextPauseAt: number | null;
 }
 
 /** A per-domain daily rollup. Stored in storage.local, never transmitted anywhere. */
@@ -229,6 +240,12 @@ export type Request =
    */
   | { type: 'VIDEO_CHANNEL'; url: string; channelId: string | null; handle: string | null }
   /**
+   * The channel gate on this watch page was served. A report, not a claim: the worker decides from
+   * the current settings whether it starts the video's repeat clock, and it grants nothing at the
+   * network layer either way.
+   */
+  | { type: 'CHANNEL_PAUSE_DONE'; url: string }
+  /**
    * Close the tab the message came from.
    *
    * The one thing a content script cannot do for itself: `window.close()` only works on a
@@ -255,7 +272,48 @@ export type Request =
    * does nothing at all unless "Also allow channels I'm subscribed to" is on, which IS
    * gated (`core/strictMode.ts`).
    */
-  | { type: 'SYNC_YT_SUBSCRIPTIONS' };
+  | { type: 'SYNC_YT_SUBSCRIPTIONS' }
+  /**
+   * Is a repeating pause in force on this page, and when is it next due? The in-page
+   * controller asks; it never resolves a rule itself, so it cannot disagree with the grant.
+   */
+  | { type: 'GET_REPEAT_PAUSE'; url: string }
+  /**
+   * The block page's "Pause again every" chooser. A settings mutation like `SET_GRAYSCALE`,
+   * so it goes through `handleSave` and inherits the Commitment Lock. `target` is the blocked
+   * URL, the worker resolves the rule; `minutes` null means off.
+   */
+  | {
+      type: 'SET_REPEAT_PAUSE';
+      target: string;
+      minutes: number | null;
+      challengeResponse?: string;
+    }
+  /** The in-page pause came up. Like the block page rendering, that IS a block event. */
+  | { type: 'PAUSE_SHOWN'; url: string }
+  /**
+   * "I changed my mind" on the in-page pause: send this tab to the dashboard, the same
+   * destination the block page's walk-away uses. A content script cannot navigate to an
+   * extension page that is not web-accessible, so the worker does it, and as with `CLOSE_TAB`
+   * the tab id comes from the SENDER.
+   */
+  | { type: 'LEAVE_TO_DASHBOARD' };
+
+/** What `GET_REPEAT_PAUSE` answers. */
+export type RepeatPauseState =
+  | { active: false }
+  | {
+      active: true;
+      mode: 'DELAY' | 'BREATHING';
+      delaySeconds: number;
+      everyMinutes: number;
+      /**
+       * When the next pause is due (epoch ms): the site's grant, or on a video from a channel the
+       * user did not allow, that video's own clock. Null or past means it is due now.
+       */
+      until: number | null;
+      domain: string;
+    };
 
 /** What the dashboard shows under "Also allow channels I'm subscribed to". */
 export interface SubscriptionSyncStatus {
@@ -332,6 +390,12 @@ export interface SiteConfig {
    * the GATES never do, see the note in `buildSiteConfig`.
    */
   tempAllowedUntil: number | null;
+  /**
+   * A repeating pause is in force on this page, so a grant running out is its business: the
+   * YouTube page gate stands down rather than reload the page and lose the video's position.
+   * The worker's `repeatInForce` for this URL, the same answer `GET_REPEAT_PAUSE` gives.
+   */
+  repeatPauseInForce: boolean;
   grayscale: boolean;
   gates: ResolvedGate[];
   hides: Partial<Record<HideId, boolean>>;
@@ -372,11 +436,18 @@ export interface ResponseMap {
   CHANNEL_OBSERVED: ChannelObservedResult;
   /** `stored` is false for a URL that is not a watch page, or a report with no identifier. */
   VIDEO_CHANNEL: { ok: boolean; stored: boolean };
+  /** `anchored` is false wherever the report changed nothing. */
+  CHANNEL_PAUSE_DONE: { ok: boolean; anchored: boolean };
   /** `ok: false` when the sender had no tab id (a non-tab context) or the close failed. */
   CLOSE_TAB: { ok: boolean };
   GET_YT_SUBSCRIPTIONS: SubscriptionSyncStatus;
   /** The status after the sync finished (or was refused because the option is off). */
   SYNC_YT_SUBSCRIPTIONS: SubscriptionSyncStatus;
+  GET_REPEAT_PAUSE: RepeatPauseState;
+  SET_REPEAT_PAUSE: SaveResult;
+  PAUSE_SHOWN: { ok: boolean };
+  /** `ok: false` when the sender had no tab id (a non-tab context) or the update failed. */
+  LEAVE_TO_DASHBOARD: { ok: boolean };
 }
 
 export type ResponseFor<T extends Request['type']> = ResponseMap[T];

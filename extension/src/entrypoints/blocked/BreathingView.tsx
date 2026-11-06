@@ -17,6 +17,7 @@ import type { BlockContext } from '../../core/protocol';
 import { startBreathingClock } from '../../ui/breathingClock';
 import { Button } from '../../ui/components';
 import { send } from '../../ui/rpc';
+import { RepeatPauseChooser } from './RepeatPauseChooser';
 import { resolveDashboardUrl, useCompleteOnZero } from './BlockPage';
 
 const STAGE_SIZE = 168;
@@ -177,6 +178,8 @@ export function BreathingView({ context, target }: { context: BlockContext; targ
           </Button>
         </div>
       )}
+
+      <RepeatPauseChooser context={context} target={target} />
 
       <Button variant="muted" onClick={handleWalkAway}>
         I changed my mind

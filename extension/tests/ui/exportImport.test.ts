@@ -20,6 +20,7 @@ function makeRule(overrides: Partial<SiteRule> = {}): SiteRule {
     showTimeRemaining: true,
     schedule: null,
     grayscale: false,
+    repeatPauseMinutes: null,
     features: null,
     ...overrides,
   };
@@ -94,6 +95,15 @@ describe('parseImport round trip', () => {
 });
 
 describe('parseImport validation', () => {
+  it('round-trips the repeating pause', () => {
+    const settings = structuredCloneSettings(DEFAULT_SETTINGS);
+    settings.rules = [makeRule({ repeatPauseMinutes: 10 })];
+
+    const parsed = parseImport(JSON.stringify(buildExport(settings)));
+
+    expect(parsed.rules?.[0]?.repeatPauseMinutes).toBe(10);
+  });
+
   it('rejects malformed JSON without throwing', () => {
     expect(() => parseImport('{not valid json')).not.toThrow();
     const result = parseImport('{not valid json');

@@ -8,6 +8,7 @@
 import type { BlockContext } from '../../core/protocol';
 import { Button } from '../../ui/components';
 import { send } from '../../ui/rpc';
+import { RepeatPauseChooser } from './RepeatPauseChooser';
 import { resolveDashboardUrl, useCompleteOnZero, useCountdownMs } from './BlockPage';
 
 const RING_SIZE = 160;
@@ -92,6 +93,8 @@ export function DelayView({ context, target }: { context: BlockContext; target: 
           </Button>
         </div>
       )}
+
+      <RepeatPauseChooser context={context} target={target} />
 
       <Button variant="muted" onClick={handleWalkAway}>
         I changed my mind

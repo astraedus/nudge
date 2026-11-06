@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { PopupState } from '../../core/protocol';
+import { nextPauseLabel } from '../../core/repeatPause';
 import { DEFAULT_DELAY_SECONDS } from '../../core/settingsSchema';
 import type { BlockMode } from '../../core/types';
 import { MODE_LABELS, SITE_MODE_LABELS } from '../../core/types';
@@ -58,6 +59,23 @@ function statusLine(state: PopupState): { text: string; color: string } {
 function openDashboard() {
   chrome.tabs.create({ url: chrome.runtime.getURL('dashboard.html') });
   window.close();
+}
+
+/** Ticks only while the popup is open. Past `until` the pause is due, so there is no time to show. */
+function NextPauseLine({ until }: { until: number }) {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  if (until <= now) return null;
+  return (
+    <p style={{ margin: '2px 0 0', fontSize: 12, color: 'var(--nudge-on-surface-variant)' }}>
+      {nextPauseLabel(until - now)}
+    </p>
+  );
 }
 
 export function Popup() {
@@ -255,6 +273,8 @@ export function Popup() {
                     {state.currentFeatureSummary}
                   </p>
                 )}
+
+                {state.currentNextPauseAt !== null && <NextPauseLine until={state.currentNextPauseAt} />}
 
                 <div
                   style={{

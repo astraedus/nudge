@@ -32,6 +32,7 @@ export function siteRule(overrides: Partial<SiteRule> = {}): SiteRule {
     showTimeRemaining: false,
     schedule: null,
     grayscale: false,
+    repeatPauseMinutes: null,
     features: null,
     ...overrides,
   };

@@ -16,6 +16,7 @@
  */
 
 import { gateModeStrength, type GateId, type HideId } from './platforms';
+import { isRepeatPauseWeakening } from './repeatPause';
 import type {
   ChannelEntry,
   ChannelListMode,
@@ -333,7 +334,7 @@ function isDailyLimitWeakened(oldLimit: number | null, newLimit: number | null):
 }
 
 /** Per-rule weakening check — the SiteRule analog of RuleWeakening.kt's `isWeakening(old, new)`. */
-function isRuleWeakened(oldRule: SiteRule, newRule: SiteRule): boolean {
+function isRuleWeakened(oldRule: SiteRule, newRule: SiteRule, tempAllowMinutes: number): boolean {
   // Disabling an active rule.
   if (oldRule.enabled && !newRule.enabled) return true;
   // Softening the block mode.
@@ -345,6 +346,17 @@ function isRuleWeakened(oldRule: SiteRule, newRule: SiteRule): boolean {
   // Grayscale off is a weakening; grayscale on never is. (The popup exposes this as a
   // one-tap toggle, so it is the single easiest weakening in the product to reach for.)
   if (oldRule.grayscale && !newRule.grayscale) return true;
+  // Repeating pause: less often is weaker, and so is a first setting that outlasts the grant
+  // it replaces. The rule is `core/repeatPause.ts`'s, and it needs the grant being replaced.
+  if (
+    isRepeatPauseWeakening(
+      oldRule.repeatPauseMinutes,
+      newRule.repeatPauseMinutes,
+      tempAllowMinutes,
+    )
+  ) {
+    return true;
+  }
   // The schedule window's own mode is a second, independent mode axis — softening what
   // happens INSIDE the window is a weakening even when the default behaviour is untouched.
   if (isScheduleWeakened(oldRule, newRule)) return true;
@@ -390,6 +402,7 @@ function isScheduleWeakened(oldRule: SiteRule, newRule: SiteRule): boolean {
  *  - strictMode.enabled true -> false
  *  - a rule removed (matched by `id`)
  *  - a rule disabled, mode softened, delay shortened, or daily limit raised/removed
+ *  - a repeating pause removed, made less frequent, or first set longer than the temp allow
  *  - emergencyPass.enabled false -> true (adding an escape hatch IS weakening)
  *  - tempAllowMinutes increased
  *  - youtube.shortsMode softened (HARD_BLOCK > DELAY > BREATHING > INHERIT)
@@ -411,7 +424,7 @@ export function isWeakening(oldSettings: NudgeSettings, newSettings: NudgeSettin
   for (const oldRule of oldSettings.rules) {
     const newRule = newRulesById.get(oldRule.id);
     if (!newRule) return true; // rule removed
-    if (isRuleWeakened(oldRule, newRule)) return true;
+    if (isRuleWeakened(oldRule, newRule, newSettings.tempAllowMinutes)) return true;
   }
 
   // Axis: the emergency pass is an escape hatch — turning it ON (false -> true) is weakening

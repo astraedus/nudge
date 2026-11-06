@@ -266,6 +266,37 @@ export interface MediaReleaseOptions {
 }
 
 /**
+ * What an element's muted state was before ANY hold, kept on the element so that two holds share
+ * it. The YouTube gate and the repeating pause are separate scripts that can hold one video at
+ * once, and each reading `muted` for itself means the second one records the first one's mute: if
+ * the first lets go first, the video comes back muted for good. A symbol, so the page cannot see it.
+ */
+const MUTE_RECORD = Symbol.for('nudge.mediaHold.mute');
+
+interface MuteRecord {
+  before: boolean;
+  holders: number;
+}
+
+type WithMuteRecord = HTMLMediaElement & { [MUTE_RECORD]?: MuteRecord };
+
+function claimMute(media: WithMuteRecord): void {
+  const record = media[MUTE_RECORD];
+  if (record === undefined) media[MUTE_RECORD] = { before: media.muted === true, holders: 1 };
+  else record.holders += 1;
+}
+
+/** The state to restore when this was the last hold, or null while another still stands. */
+function releaseMute(media: WithMuteRecord): boolean | null {
+  const record = media[MUTE_RECORD];
+  if (record === undefined) return null;
+  record.holders -= 1;
+  if (record.holders > 0) return null;
+  delete media[MUTE_RECORD];
+  return record.before;
+}
+
+/**
  * Keep media paused for as long as a gate overlay is up.
  *
  * A single `pause()` at mount time is not enough, and live QA caught exactly that (run 51,
@@ -291,7 +322,7 @@ export function holdMediaPaused(doc: Document): MediaHold {
    * the pause is a beat late. The previous muted state is restored on release, because
    * silently un-muting a video the user had muted themselves would be its own small bug.
    */
-  const previouslyMuted = new WeakMap<HTMLMediaElement, boolean>();
+  const muted = new WeakSet<HTMLMediaElement>();
   /** Media the hold kept from playing, so a release that clears the page can resume it. */
   const stopped = new Set<HTMLMediaElement>();
 
@@ -311,12 +342,19 @@ export function holdMediaPaused(doc: Document): MediaHold {
     }
   };
 
+  const mute = (media: HTMLMediaElement): void => {
+    if (!muted.has(media)) {
+      muted.add(media);
+      claimMute(media);
+    }
+    media.muted = true;
+  };
+
   const muteAll = (): void => {
     for (const element of Array.from(doc.querySelectorAll('video, audio'))) {
       const media = element as HTMLMediaElement;
       try {
-        if (!previouslyMuted.has(media)) previouslyMuted.set(media, media.muted === true);
-        media.muted = true;
+        mute(media);
       } catch {
         // Same tolerance as pausing: a player that refuses must not throw into the gate.
       }
@@ -335,8 +373,7 @@ export function holdMediaPaused(doc: Document): MediaHold {
     try {
       const media = target as HTMLMediaElement;
       stopped.add(media);
-      if (!previouslyMuted.has(media)) previouslyMuted.set(media, media.muted === true);
-      media.muted = true;
+      mute(media);
       target.pause();
     } catch {
       // Same tolerance as pauseMedia: a player that refuses to pause must not throw into
@@ -357,10 +394,10 @@ export function holdMediaPaused(doc: Document): MediaHold {
       // un-mute: a video the user had muted themselves must stay muted.
       for (const element of Array.from(doc.querySelectorAll('video, audio'))) {
         const media = element as HTMLMediaElement;
-        const before = previouslyMuted.get(media);
-        if (before === undefined) continue;
+        if (!muted.delete(media)) continue;
         try {
-          media.muted = before;
+          const before = releaseMute(media);
+          if (before !== null) media.muted = before;
         } catch {
           // Nothing to do; the page is already usable again.
         }

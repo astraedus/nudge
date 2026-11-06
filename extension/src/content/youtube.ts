@@ -388,7 +388,10 @@ export function channelGateCopy(
  *                      a limit may have been crossed)
  *  - `hand-to-network` an in-SPA arrival on a page DNR redirects: reload it, so the network
  *                      layer makes the call and the user gets the real block page (with its
- *                      pause, if the site is on Delay) rather than a second, in-page copy
+ *                      pause, if the site is on Delay) rather than a second, in-page copy.
+ *                      Not when a repeating pause is in force: it comes up over this page,
+ *                      and a reload would lose the video's position. The config says so, for
+ *                      this URL, so with a stale config this is still `wait`
  *  - `refuse`          a legacy channel URL whose page is not on the list: straight to the
  *                      block page, because DNR deliberately lets those URLs through
  *  - `canary`          a FULL load DNR should have redirected and did not; reloading could
@@ -408,6 +411,8 @@ export interface PageGateInput {
    * the enforced list. Null when it was not asked (any other case).
    */
   legacyListed: boolean | null;
+  /** `SiteConfig.repeatPauseInForce`: the repeat controller owns this page's expiry. */
+  repeatPauseInForce: boolean;
 }
 
 export function decidePageGate(input: PageGateInput): PageGateAction {
@@ -418,7 +423,8 @@ export function decidePageGate(input: PageGateInput): PageGateAction {
       return 'none';
     case 'blocked':
       if (input.coldLoad) return 'canary';
-      return input.configIsCurrent ? 'hand-to-network' : 'wait';
+      if (!input.configIsCurrent) return 'wait';
+      return input.repeatPauseInForce ? 'none' : 'hand-to-network';
     case 'verify':
       if (!input.configIsCurrent) return 'wait';
       // After an SPA hop the inline channel metadata still describes the page that was
@@ -603,6 +609,7 @@ export function initYoutubeContentScript(
       configIsCurrent: configUrl === url,
       coldLoad,
       legacyListed: access === 'verify' && coldLoad ? legacyChannelListed(url) : null,
+      repeatPauseInForce: config.repeatPauseInForce,
     });
 
     switch (action) {
@@ -745,6 +752,7 @@ export function initYoutubeContentScript(
         {
           onComplete: () => {
             channelGateSatisfiedFor = gatedUrl;
+            void send({ type: 'CHANNEL_PAUSE_DONE', url: gatedUrl }).catch(() => undefined);
             teardownOverlay(true);
           },
           onBail: bailFromChannelGate,

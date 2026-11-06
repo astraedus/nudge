@@ -64,13 +64,13 @@ function youtubeOf(s: NudgeSettings) {
 
 describe('schema v6', () => {
   it('is version 6', () => {
-    expect(SCHEMA_VERSION).toBe(6);
+    expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(6);
   });
 
   it('upgrades a v5 install with the option OFF and no subscriptions, keeping its whitelist', () => {
     const migrated = migrateSettings(v5Blob());
     const yt = youtubeOf(migrated);
-    expect(migrated.schemaVersion).toBe(6);
+    expect(migrated.schemaVersion).toBe(SCHEMA_VERSION);
     expect(yt.allowSubscriptions).toBe(false);
     expect(yt.subscribedChannels).toEqual([]);
     expect(yt.channelMode).toBe('WHITELIST');

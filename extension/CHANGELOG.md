@@ -6,6 +6,27 @@ independently-numbered products in one file invites the reader to match a `v1.17
 release against a `0.2.0` extension release and conclude something about both; the tag
 namespaces were already split for exactly that reason.
 
+## 0.6.0 — 2026-11-06
+
+### Added
+
+- **Repeating pause.** A Delay or Breathing rule can now pause you again every N minutes while
+  you stay on the site. Set it per site with "Pause again every" in the rule editor, or pick
+  from the list on the pause screen itself. While it is on, a small "Next pause in 9:32" sits
+  in the corner of the page, and the popup shows the same line. When the time is up, the pause
+  comes up over the page you are on, video paused, with whatever you were typing still there,
+  and "I changed my mind" still takes you out. Finish it and the page carries on where it was.
+  The timer keeps running when you leave the tab; if it has run out by the time you come back,
+  the pause is due straight away, and a pause does not count down in a background tab. Off by
+  default. It covers the whole-site pause only, not Shorts, Reels and other feature gates. Under
+  Strict Mode, turning it off, raising N, or adding one longer than your normal access time
+  needs the challenge. No new permissions.
+- **On YouTube with a channel list, the repeat works per video.** A video from a channel you did
+  not allow gets the channel pause first, then repeats every N minutes for as long as you stay on
+  that video. Finishing a pause on one video does not buy the next, and it does not open the home
+  feed or search. A video from a channel you allowed never repeats, and adding a channel to your
+  list while you watch ends the repeat straight away.
+
 ## 0.5.1 — 2026-11-02
 
 ### Changed

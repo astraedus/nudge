@@ -93,6 +93,7 @@ function whitelistConfig(overrides: { grayscale?: boolean } = {}): SiteConfig {
     siteApplies: false,
     siteLimitReached: false,
     tempAllowedUntil: null,
+    repeatPauseInForce: false,
     grayscale: overrides.grayscale === true,
     gates: [],
     hides: {},
@@ -342,6 +343,71 @@ describe('"I changed my mind" on the channel interstitial', () => {
     // The interstitial comes down with it — no lid left over a page we have navigated off.
     expect(isInterrupted()).toBe(false);
 
+    back.mockRestore();
+  });
+});
+
+describe('a served channel pause tells the worker', () => {
+  function delayConfig(): SiteConfig {
+    const config = whitelistConfig();
+    return {
+      ...config,
+      youtube: {
+        ...(config.youtube as NonNullable<SiteConfig['youtube']>),
+        channelBlockMode: 'DELAY',
+        channelDelaySeconds: 5,
+      },
+    };
+  }
+
+  function reports(sendMessage: ReturnType<typeof vi.fn>): unknown[] {
+    return sendMessage.mock.calls
+      .map(([message]) => message as { type: string })
+      .filter(({ type }) => type === 'CHANNEL_PAUSE_DONE');
+  }
+
+  function stubSendMessage(impl: () => Promise<unknown>): ReturnType<typeof vi.fn> {
+    const sendMessage = vi.fn(impl);
+    vi.stubGlobal('chrome', { runtime: { sendMessage } });
+    return sendMessage;
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('reports the exact video once, when the pause is done and not before', async () => {
+    const sendMessage = stubSendMessage(async () => ({ ok: true, anchored: true }));
+    await startOn(BLOCKED_CHANNEL, delayConfig());
+    expect(isInterrupted()).toBe(true);
+    expect(reports(sendMessage)).toEqual([]);
+
+    vi.advanceTimersByTime(3_000);
+
+    expect(isInterrupted()).toBe(false);
+    expect(reports(sendMessage)).toEqual([
+      {
+        type: 'CHANNEL_PAUSE_DONE',
+        url: window.location.href,
+      },
+    ]);
+  });
+
+  it('comes down the same when the report cannot be sent', async () => {
+    stubSendMessage(async () => {
+      throw new Error('Extension context invalidated');
+    });
+    await startOn(BLOCKED_CHANNEL, delayConfig());
+    vi.advanceTimersByTime(3_000);
+    expect(isInterrupted()).toBe(false);
+  });
+
+  it('reports nothing when the user changed their mind', async () => {
+    const sendMessage = stubSendMessage(async () => ({ ok: true }));
+    const back = vi.spyOn(window.history, 'back').mockImplementation(() => {});
+    await startOn(BLOCKED_CHANNEL, delayConfig());
+    (overlayEl()?.querySelector('button') as HTMLButtonElement).click();
+    expect(reports(sendMessage)).toEqual([]);
     back.mockRestore();
   });
 });

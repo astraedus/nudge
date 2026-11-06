@@ -225,6 +225,7 @@ export const IDLE_SITE_CONFIG: SiteConfig = {
   siteApplies: false,
   siteLimitReached: false,
   tempAllowedUntil: null,
+  repeatPauseInForce: false,
   grayscale: false,
   gates: [],
   hides: {},

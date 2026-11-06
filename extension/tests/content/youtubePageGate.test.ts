@@ -56,6 +56,7 @@ function blockedSiteConfig(overrides: Partial<SiteConfig> = {}, youtube: Partial
     siteApplies: true,
     siteLimitReached: false,
     tempAllowedUntil: null,
+    repeatPauseInForce: false,
     grayscale: false,
     gates: [],
     hides: {},
@@ -429,6 +430,138 @@ describe('in-SPA navigation is held to what a full load would allow (F4, F6, A13
     expect(leftFor).toEqual([]);
     expect(warn).toHaveBeenCalledTimes(1);
     warn.mockRestore();
+  });
+
+  describe('with a repeating pause in force, which owns what happens next', () => {
+    const repeating = (overrides: Partial<SiteConfig> = {}): SiteConfig =>
+      blockedSiteConfig({ repeatPauseInForce: true, ...overrides });
+    /** "Pause YouTube", with no channel list: every page is refused once the grant runs out. */
+    const wholeSite = (overrides: Partial<SiteConfig>): SiteConfig =>
+      blockedSiteConfig({ siteMode: 'DELAY', youtube: null, ...overrides });
+    const STILL_GRANTED_MS = 2_000;
+
+    /** The bug QA found: open the feed, click a video, and let the grant run out on it. */
+    async function watchingUntilTheGrantEnds(repeatPauseInForce: boolean): Promise<FakeVideo> {
+      const config = wholeSite({
+        repeatPauseInForce,
+        tempAllowedUntil: Date.now() + STILL_GRANTED_MS,
+      });
+      await startOn('/', channelPageHtml(LISTED_HANDLE), config);
+      spaHop(`/watch?v=${VIDEO}`);
+      const video = addPlayingVideo(addEmptyWatchPlayer());
+      await settleConfig();
+      expect(leftFor).toEqual([]);
+      vi.advanceTimersByTime(STILL_GRANTED_MS + 1_000);
+      return video;
+    }
+
+    it('leaves a clicked-to video where it is when the grant runs out', async () => {
+      const video = await watchingUntilTheGrantEnds(true);
+
+      expect(leftFor).toEqual([]);
+      expect(video.el.paused).toBe(false);
+      expect(isInterrupted()).toBe(false);
+    });
+
+    it('with no repeat, the same expiry still goes to the network layer', async () => {
+      await watchingUntilTheGrantEnds(false);
+
+      expect(leftFor).toEqual([`${ORIGIN}/watch?v=${VIDEO}`]);
+    });
+
+    it.each([
+      ['the home feed', '/'],
+      ['search', '/results?search_query=cats'],
+      ['another channel', '/@MrBeast'],
+    ])('does not leave for %s: the pause comes up on it instead', async (_name, path) => {
+      const video = await fromAllowedVideo(repeating());
+
+      spaHop(path);
+      await settleConfig();
+      vi.advanceTimersByTime(5_000);
+
+      expect(leftFor).toEqual([]);
+      expect(isInterrupted()).toBe(false);
+      // The gate lets go of the video, so the pause is not left to resume someone else's hold.
+      expect(video.el.paused).toBe(false);
+    });
+
+    it('holds and does not leave while the config in hand is for another page', async () => {
+      let resolveNext: ((config: SiteConfig) => void) | null = null;
+      let deferring = false;
+      const fetchConfig = (): Promise<SiteConfig> => {
+        if (!deferring) return Promise.resolve(repeating());
+        return new Promise((resolve) => {
+          resolveNext = resolve;
+        });
+      };
+      await startOn('/@veritasium/videos', channelPageHtml(LISTED_HANDLE), fetchConfig);
+      const video = addPlayingVideo(addEmptyWatchPlayer());
+
+      deferring = true;
+      spaHop('/');
+      await settleConfig();
+      // What the page has says "repeat", but it says so about the page it came from.
+      expect(leftFor).toEqual([]);
+      expect(video.el.paused).toBe(true);
+
+      // The worker's answer for the feed is no repeat: now, and only now, it leaves.
+      resolveNext!(blockedSiteConfig());
+      await settleConfig();
+      expect(leftFor).toEqual([`${ORIGIN}/`]);
+    });
+
+    it.each([
+      ['the repeat is turned off', blockedSiteConfig()],
+      ['the daily limit is spent', blockedSiteConfig({ siteMode: 'ALLOW', siteLimitReached: true })],
+    ])('the page gate takes over when %s on an open tab', async (_name, next) => {
+      let current = repeating();
+      await startOn('/@veritasium/videos', channelPageHtml(LISTED_HANDLE), () => Promise.resolve(current));
+      spaHop('/');
+      await settleConfig();
+      expect(leftFor).toEqual([]);
+
+      current = next;
+      await controller!.reload();
+      vi.advanceTimersByTime(3_000);
+
+      expect(leftFor).toEqual([`${ORIGIN}/`]);
+    });
+
+    it('takes a legacy channel page reached by a hop to the network layer, as without a repeat', async () => {
+      await fromAllowedVideo(repeating());
+
+      spaHop('/c/MrBeast');
+      await settleConfig();
+
+      expect(leftFor).toEqual([`${ORIGIN}/c/MrBeast`]);
+    });
+
+    it('still raises a Shorts gate: that page has its own answer', async () => {
+      const config = wholeSite({
+        repeatPauseInForce: true,
+        tempAllowedUntil: Date.now() + 60_000,
+        gates: [
+          {
+            id: 'shorts',
+            mode: 'DELAY',
+            delaySeconds: 5,
+            limitReached: false,
+            countReached: false,
+            itemsToday: 0,
+            countLimit: null,
+          },
+        ],
+      });
+      await startOn('/', channelPageHtml(LISTED_HANDLE), config);
+
+      spaHop('/shorts/abc123');
+      await settleConfig();
+      vi.advanceTimersByTime(1_000);
+
+      expect(leftFor).toEqual([]);
+      expect(isInterrupted()).toBe(true);
+    });
   });
 });
 

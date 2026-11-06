@@ -167,6 +167,40 @@ describe('muting while the overlay is up', () => {
     expect(el.muted).toBe(false);
   });
 
+  describe('two holds on one video (the YouTube gate and the repeating pause)', () => {
+    it.each([
+      ['first in, first out', [0, 1]],
+      ['last in, first out', [1, 0]],
+    ])('gives the sound back when both have let go, %s', (_name, order) => {
+      const { el } = addVideoWithMute();
+      const pair = [holdMediaPaused(document), holdMediaPaused(document)];
+
+      pair[order[0] as number]?.release({ resume: false });
+      expect(el.muted).toBe(true);
+
+      pair[order[1] as number]?.release({ resume: false });
+      expect(el.muted).toBe(false);
+    });
+
+    it('still leaves a video the USER had muted muted', () => {
+      const { el } = addVideoWithMute(true);
+      const first = holdMediaPaused(document);
+      const second = holdMediaPaused(document);
+      first.release({ resume: false });
+      second.release({ resume: false });
+      expect(el.muted).toBe(true);
+    });
+
+    it('releasing one hold twice does not let the other go', () => {
+      const { el } = addVideoWithMute();
+      const first = holdMediaPaused(document);
+      holdMediaPaused(document);
+      first.release({ resume: false });
+      first.release({ resume: false });
+      expect(el.muted).toBe(true);
+    });
+  });
+
   it('leaves a video the USER had muted still muted', () => {
     // Restoring blindly to un-muted would be its own small bug: the user chose silence.
     const { el } = addVideoWithMute(true);

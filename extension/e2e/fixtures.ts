@@ -126,11 +126,63 @@ function generateSelfSignedCert(): { key: Buffer; cert: Buffer } {
   return { key: readFileSync(`${dir}/key.pem`), cert: readFileSync(`${dir}/cert.pem`) };
 }
 
+/** A page with state worth losing: a field, media, and a button in the corner the pill sits in. */
+export const RICH_PAGE = '/rich';
+/** The same page under a CSP that refuses any `<style>` or `style` attribute we might inject. */
+export const STRICT_CSP_PAGE = '/rich-strict-csp';
+
+function richPage(host: string, pathname: string): string {
+  return (
+    `<!doctype html><html><head><title>${host}</title></head><body>` +
+    `<h1 id="host">${host}</h1><p id="path">${pathname}</p>` +
+    '<input id="note" />' +
+    '<audio id="media" src="/tone.wav" preload="auto"></audio>' +
+    '<button id="corner" onclick="this.dataset.clicked = \'yes\'" ' +
+    'style="position:fixed;right:0;bottom:0;width:240px;height:120px">corner</button>' +
+    '</body></html>'
+  );
+}
+
+/** Silence, as 8 kHz 8-bit mono PCM: real media to play, with no decoder or network involved. */
+function silentWav(seconds: number): Buffer {
+  const dataSize = 8000 * seconds;
+  const header = Buffer.alloc(44);
+  header.write('RIFF', 0, 'ascii');
+  header.writeUInt32LE(36 + dataSize, 4);
+  header.write('WAVEfmt ', 8, 'ascii');
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(1, 22);
+  header.writeUInt32LE(8000, 24);
+  header.writeUInt32LE(8000, 28);
+  header.writeUInt16LE(1, 32);
+  header.writeUInt16LE(8, 34);
+  header.write('data', 36, 'ascii');
+  header.writeUInt32LE(dataSize, 40);
+  return Buffer.concat([header, Buffer.alloc(dataSize, 0x80)]);
+}
+
 export function startTestServer(): Promise<Server> {
   const { key, cert } = generateSelfSignedCert();
   const server = createHttpsServer({ key, cert }, (req, res) => {
     const host = (req.headers.host ?? 'unknown').split(':')[0]!;
     const url = new URL(req.url ?? '/', `http://${host}`);
+
+    if (url.pathname === '/tone.wav') {
+      res.writeHead(200, { 'content-type': 'audio/wav' });
+      res.end(silentWav(60));
+      return;
+    }
+
+    if (url.pathname === RICH_PAGE || url.pathname === STRICT_CSP_PAGE) {
+      res.writeHead(200, {
+        'content-type': 'text/html; charset=utf-8',
+        ...(url.pathname === STRICT_CSP_PAGE ? { 'content-security-policy': "style-src 'self'" } : {}),
+      });
+      res.end(richPage(host, url.pathname));
+      return;
+    }
+
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
 
     if (host.endsWith('youtube.com')) {
