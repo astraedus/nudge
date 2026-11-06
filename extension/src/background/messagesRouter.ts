@@ -33,7 +33,12 @@ import * as pass from '../core/emergencyPass';
 // so a second string builder here would eventually describe the same rule two ways.
 import { featureSummary } from '../core/featureSummary';
 import { coerceRepeatPauseMinutes, pauseGrantMinutes } from '../core/repeatPause';
-import { STUDIO_HOST_PREFIX, watchPageVideoId, youtubePageAccess } from '../core/youtubeAccess';
+import {
+  STUDIO_HOST_PREFIX,
+  isWhitelistedVideoUrl,
+  watchPageVideoId,
+  youtubePageAccess,
+} from '../core/youtubeAccess';
 import {
   DEFAULT_DELAY_SUBTITLES,
   DEFAULT_DELAY_TITLES,
@@ -78,7 +83,8 @@ import { allTimeTotals, lastNDayKeys, totalActiveSeconds } from '../core/stats';
 import * as strict from '../core/strictMode';
 import { surfaceKey } from '../core/surfaceKeys';
 import { handleItemViewed } from './itemCounter';
-import { recordVideoChannel } from './videoChannels';
+import { renewRepeatAnchor, repeatAnchorFor } from './repeatAnchors';
+import { recordVideoChannel, videoChannelLookup } from './videoChannels';
 import type { ActiveRule, BlockDecision, SiteMode } from '../core/types';
 import { isPauseMode } from '../core/types';
 import { ensureScheduleAlarm } from './alarmsHub';
@@ -292,34 +298,47 @@ async function buildBlockContext(target: string, now: Date): Promise<BlockContex
   };
 }
 
-/** A repeating pause in force on one URL. */
-interface RepeatInForce {
+/** What a site's repeat is, before asking which clock this page runs on. */
+interface RepeatSetting {
   mode: 'DELAY' | 'BREATHING';
   delaySeconds: number;
   everyMinutes: number;
   domain: string;
 }
 
+interface RepeatOnPage extends RepeatSetting {
+  /** The video, when this is a whitelist's carved watch page and not a redirected one. */
+  carvedVideoId: string | null;
+}
+
+/** A repeating pause in force on one URL. */
+interface RepeatInForce extends RepeatSetting {
+  /** The video's own clock (`repeatAnchors.ts`). Null means the site's grant is the clock. */
+  anchor: { videoId: string; until: number } | null;
+}
+
 /**
- * Is a repeating pause in force on this URL? THE question, asked by the in-page controller,
- * by the grant length and by the popup, so the timer, the DNR allow rule and the readout
- * cannot disagree.
+ * Could a repeating pause be in force on this URL? `repeatInForce` is THE question, asked by the
+ * in-page controller, by the grant length and by the popup, so the timer, the DNR allow rule and
+ * the readout cannot disagree. This is its first half, which `CHANNEL_PAUSE_DONE` shares.
  *
  * Off when a surface has its own answer or none is owed:
  *  - an exhausted budget: the engine has made it a Hard Block, there is no pause to repeat;
  *  - a gate in force on this page: the gate's own mode stands there, the setting is the
  *    SITE's, and `buildBlockContext` resolves such a page to the gate, so a grant asked for
  *    from here would be the gate's and could not agree with the timer;
- *  - a YouTube carve-out. An allowed channel's video or Studio never needed a pause, and
+ *  - a YouTube carve-out. An allowed channel's page or Studio never needed a pause, and
  *    repeating one on it punishes someone for watching what they allowed, which is the worst
  *    thing this product can do. Asked with `tempAllowed: false`, because the grant is exactly
- *    what is running out: only what DNR would redirect WITHOUT one stays in force.
+ *    what is running out: only what DNR would redirect WITHOUT one stays in force. The one
+ *    carve-out that goes on is a watch page, which is every video and not only allowed ones:
+ *    `carvedVideoId` hands that to `repeatInForce` to settle per video.
  */
-async function repeatInForce(
+async function repeatOnPage(
   settings: NudgeSettings,
   url: string,
   now: Date,
-): Promise<RepeatInForce | null> {
+): Promise<RepeatOnPage | null> {
   if (!settings.globalEnabled) return null;
   const { rule, domain, usageKey } = resolveTarget(settings, url);
   if (rule === null || rule.repeatPauseMinutes === null) return null;
@@ -342,6 +361,7 @@ async function repeatInForce(
     if (appliedBlockMode(gateVerdict) !== null) return null;
   }
 
+  let carvedVideoId: string | null = null;
   const youtube = rule.features?.youtube;
   if (youtube !== undefined) {
     const access = youtubePageAccess({
@@ -352,7 +372,8 @@ async function repeatInForce(
       siteApplies: verdict.applies,
       limitReached: false,
     });
-    if (access !== 'blocked') return null;
+    carvedVideoId = access === 'carved' ? watchPageVideoId(url) : null;
+    if (access !== 'blocked' && carvedVideoId === null) return null;
   }
 
   return {
@@ -360,7 +381,39 @@ async function repeatInForce(
     delaySeconds: verdict.delaySeconds,
     everyMinutes: rule.repeatPauseMinutes,
     domain,
+    carvedVideoId,
   };
+}
+
+/**
+ * The repeat on this page right now, if any. `repeatOnPage` says the site's rule allows one here;
+ * a carved watch page also has to have earned it. Without an anchor nothing has established this
+ * video is unlisted, and the channel gate has not had its say, so there is no pause and no pill.
+ * A channel added to the list mid-watch ends it at once.
+ */
+async function repeatInForce(
+  settings: NudgeSettings,
+  url: string,
+  now: Date,
+): Promise<RepeatInForce | null> {
+  const repeat = await repeatOnPage(settings, url, now);
+  if (repeat === null) return null;
+  const { carvedVideoId, ...fields } = repeat;
+  if (carvedVideoId === null) return { ...fields, anchor: null };
+
+  const until = await repeatAnchorFor(carvedVideoId);
+  if (until === null) return null;
+  if (isWhitelistedVideoUrl(settings.rules, url, await videoChannelLookup())) return null;
+  return { ...fields, anchor: { videoId: carvedVideoId, until } };
+}
+
+/**
+ * When the next pause is due: the one answer for the pill and the popup, so they cannot disagree.
+ * Null or past means due. Normalised to null on both clocks, as `tempAllowedUntil` already does.
+ */
+async function nextPauseAt(repeat: RepeatInForce, now: number): Promise<number | null> {
+  if (repeat.anchor === null) return tempAllowedUntil(repeat.domain, now);
+  return repeat.anchor.until > now ? repeat.anchor.until : null;
 }
 
 async function buildRepeatPauseState(url: string, now: Date): Promise<RepeatPauseState> {
@@ -368,9 +421,27 @@ async function buildRepeatPauseState(url: string, now: Date): Promise<RepeatPaus
   if (repeat === null) return { active: false };
   return {
     active: true,
-    ...repeat,
-    until: await tempAllowedUntil(repeat.domain, now.getTime()),
+    mode: repeat.mode,
+    delaySeconds: repeat.delaySeconds,
+    everyMinutes: repeat.everyMinutes,
+    domain: repeat.domain,
+    until: await nextPauseAt(repeat, now.getTime()),
   };
+}
+
+/**
+ * The channel gate on a watch page was served. The page reports, the worker decides: only a carved
+ * watch page whose rule has a repeat in force starts a clock, so anything else this message says
+ * changes nothing, and a forged one could only ever cost its sender another pause.
+ */
+async function handleChannelPauseDone(
+  url: string,
+  now: Date,
+): Promise<{ ok: boolean; anchored: boolean }> {
+  const repeat = await repeatOnPage(await loadSettings(), url, now);
+  if (repeat === null || repeat.carvedVideoId === null) return { ok: true, anchored: false };
+  await renewRepeatAnchor(repeat.carvedVideoId, repeat.everyMinutes, now.getTime());
+  return { ok: true, anchored: true };
 }
 
 /**
@@ -444,6 +515,16 @@ async function completePause(target: string, now: Date): Promise<GrantResult> {
   // A gate's own pause keeps the ordinary grant: `repeatInForce` already answers null on a
   // surface where a gate is in force, which is exactly when `context` resolved to the gate.
   const repeat = await repeatInForce(await loadSettings(), target, now);
+  // A video on its own clock renews that clock and nothing else: a grant here would open the home
+  // feed and search, and completing a pause on one video must not buy the next.
+  if (repeat !== null && repeat.anchor !== null) {
+    const until = await renewRepeatAnchor(
+      repeat.anchor.videoId,
+      repeat.everyMinutes,
+      now.getTime(),
+    );
+    return { ok: true, until };
+  }
   const until = await grantTempAllow(
     context.domain,
     pauseGrantMinutes(repeat?.everyMinutes ?? null, context.tempAllowMinutes),
@@ -515,8 +596,7 @@ async function buildPopupState(now: Date): Promise<PopupState> {
     currentGrayscale: currentRule?.grayscale ?? false,
     currentFeatureSummary: currentRule === null ? null : featureSummary(currentRule),
     currentRepeatEveryMinutes: repeat?.everyMinutes ?? null,
-    currentNextPauseAt:
-      repeat === null ? null : await tempAllowedUntil(repeat.domain, now.getTime()),
+    currentNextPauseAt: repeat === null ? null : await nextPauseAt(repeat, now.getTime()),
   };
 }
 
@@ -962,6 +1042,8 @@ export async function handleRequest(
       return subscriptionStatus();
     case 'GET_REPEAT_PAUSE':
       return buildRepeatPauseState(request.url, now);
+    case 'CHANNEL_PAUSE_DONE':
+      return handleChannelPauseDone(request.url, now);
     case 'SET_REPEAT_PAUSE':
       return setRepeatPause(request.target, request.minutes, request.challengeResponse, now);
     case 'PAUSE_SHOWN': {

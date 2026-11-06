@@ -745,6 +745,7 @@ export function initYoutubeContentScript(
         {
           onComplete: () => {
             channelGateSatisfiedFor = gatedUrl;
+            void send({ type: 'CHANNEL_PAUSE_DONE', url: gatedUrl }).catch(() => undefined);
             teardownOverlay(true);
           },
           onBail: bailFromChannelGate,

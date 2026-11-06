@@ -240,6 +240,12 @@ export type Request =
    */
   | { type: 'VIDEO_CHANNEL'; url: string; channelId: string | null; handle: string | null }
   /**
+   * The channel gate on this watch page was served. A report, not a claim: the worker decides from
+   * the current settings whether it starts the video's repeat clock, and it grants nothing at the
+   * network layer either way.
+   */
+  | { type: 'CHANNEL_PAUSE_DONE'; url: string }
+  /**
    * Close the tab the message came from.
    *
    * The one thing a content script cannot do for itself: `window.close()` only works on a
@@ -301,7 +307,10 @@ export type RepeatPauseState =
       mode: 'DELAY' | 'BREATHING';
       delaySeconds: number;
       everyMinutes: number;
-      /** The site's live grant expiry (epoch ms). Null or past means the pause is due. */
+      /**
+       * When the next pause is due (epoch ms): the site's grant, or on a video from a channel the
+       * user did not allow, that video's own clock. Null or past means it is due now.
+       */
       until: number | null;
       domain: string;
     };
@@ -421,6 +430,8 @@ export interface ResponseMap {
   CHANNEL_OBSERVED: ChannelObservedResult;
   /** `stored` is false for a URL that is not a watch page, or a report with no identifier. */
   VIDEO_CHANNEL: { ok: boolean; stored: boolean };
+  /** `anchored` is false wherever the report changed nothing. */
+  CHANNEL_PAUSE_DONE: { ok: boolean; anchored: boolean };
   /** `ok: false` when the sender had no tab id (a non-tab context) or the close failed. */
   CLOSE_TAB: { ok: boolean };
   GET_YT_SUBSCRIPTIONS: SubscriptionSyncStatus;

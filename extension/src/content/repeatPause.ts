@@ -9,7 +9,8 @@
  * The clock is the WALL clock against the grant's `until`, not a countdown of time spent here. A
  * grant is per domain and runs out whether or not this tab is looking at it, so the pill reads
  * the same as DNR does, and a pause that came due while the user was away is due the moment they
- * return.
+ * return. On a video from a channel the user did not allow, `until` is that video's own clock
+ * rather than a grant (`background/repeatAnchors.ts`); nothing in this file has to know.
  *
  * The worker decides whether a repeat applies (`GET_REPEAT_PAUSE`); this file only keeps the page
  * in step with the answer. It holds no opinion on rules, so it cannot disagree with the engine.
@@ -21,6 +22,7 @@ import type { GrantResult, Request, RepeatPauseState, ResponseFor } from '../cor
 import { nextPauseLabel } from '../core/repeatPause';
 import { createGateOverlay, holdMediaPaused, type MediaHold, type OverlayHandle } from './overlay';
 import { createRepeatPauseHost, removeStaleHosts, type RepeatPauseHost } from './repeatPauseHost';
+import { NUDGE_OVERLAY_ID } from './selectors';
 
 /**
  * The overlay's element id. Has a backdrop rule in `platformOverlay.css`, pinned by
@@ -33,6 +35,21 @@ const REFETCH_MS = 30_000;
 /** While due, or after a failed fetch: another tab's renewal should end this one's pause soon. */
 const REFETCH_DUE_MS = 5000;
 const GRANT_RETRY_MS = 1000;
+
+/**
+ * Another Nudge gate on this page, in the light DOM. Ours is in a shadow root, so it never matches.
+ * A gate on screen owns the page: two pauses at once would be one too many to sit through.
+ */
+const FOREIGN_GATE_SELECTOR = `#${NUDGE_OVERLAY_ID}, .nudge-overlay`;
+/**
+ * After a gate leaves, how long the worker gets to take in what it just reported.
+ *
+ * The YouTube gate reports as it comes down, on its own message, so a question asked now can be
+ * answered from before the report landed. Acting on that would flash a pause over a clock that was
+ * just renewed, or leave the pill out for a whole refetch interval. So for this long the page asks
+ * every tick and a "due" does not count.
+ */
+const AFTER_GATE_MS = 3000;
 
 type Send = <T extends Request>(request: T) => Promise<ResponseFor<T['type']>>;
 
@@ -68,6 +85,8 @@ export function initRepeatPause(options: RepeatPauseOptions): RepeatPauseControl
   let pauseShownThisCycle = false;
   /** The pause was served and the grant is on its way. Nothing may take the overlay down. */
   let completing = false;
+  let foreignGateUp = false;
+  let foreignGateLeftAt: number | null = null;
   /** The user bailed and the tab is navigating. Nothing may bring the pause back. */
   let leaving = false;
   let stopped = false;
@@ -81,6 +100,20 @@ export function initRepeatPause(options: RepeatPauseOptions): RepeatPauseControl
 
   function isDue(current: RepeatPauseState & { active: true }): boolean {
     return current.until === null || current.until <= now();
+  }
+
+  function justAfterGate(): boolean {
+    return foreignGateLeftAt !== null && now() - foreignGateLeftAt < AFTER_GATE_MS;
+  }
+
+  function noticeForeignGate(): void {
+    const up = doc.querySelector(FOREIGN_GATE_SELECTOR) !== null;
+    if (foreignGateUp && !up) {
+      foreignGateLeftAt = now();
+      // Whatever it said before the gate came down is out of date: that gate may have renewed it.
+      confirmedDue = false;
+    }
+    foreignGateUp = up;
   }
 
   function ensureHost(): RepeatPauseHost {
@@ -204,6 +237,7 @@ export function initRepeatPause(options: RepeatPauseOptions): RepeatPauseControl
 
   function render(): void {
     if (stopped || leaving || state === null) return;
+    noticeForeignGate();
 
     if (!state.active) {
       clearCycle();
@@ -215,24 +249,26 @@ export function initRepeatPause(options: RepeatPauseOptions): RepeatPauseControl
 
     if (!isDue(state)) {
       clearCycle();
-      showPill(state.until as number);
+      if (foreignGateUp) clearPill();
+      else showPill(state.until as number);
       return;
     }
 
     clearPill();
-    // Served out in a background tab is not served. It starts again on return.
-    if (doc.hidden && !completing) clearOverlay();
+    // Served out in a background tab is not served, nor under another gate. It starts again after.
+    if ((doc.hidden || foreignGateUp) && !completing) clearOverlay();
 
     if (!confirmedDue) {
-      // Another tab may have renewed the shared grant, which only the worker knows.
-      if (fetchesInFlight === 0) void fetchState();
+      // Another tab may have renewed the shared grant, which only the worker knows. `tick` does
+      // the asking just after a gate, or this would ask again on every answer.
+      if (fetchesInFlight === 0 && !justAfterGate()) void fetchState();
       return;
     }
 
     if (hold === null) hold = holdMediaPaused(doc);
     else hold.repause();
 
-    if (!doc.hidden && overlay === null && !completing) mountOverlay(state);
+    if (!doc.hidden && !foreignGateUp && overlay === null && !completing) mountOverlay(state);
   }
 
   async function fetchState(): Promise<void> {
@@ -254,19 +290,20 @@ export function initRepeatPause(options: RepeatPauseOptions): RepeatPauseControl
     if (fresh !== null) state = fresh;
     // A failed fetch stays in the last known state. If that state says due, it is due: treating
     // "could not ask" as "not due" would let a sleeping worker switch the pause off.
-    confirmedDue = state !== null && state.active && isDue(state);
+    confirmedDue = state !== null && state.active && isDue(state) && !justAfterGate();
     render();
   }
 
   function tick(): void {
     host?.ensureAttached();
+    noticeForeignGate();
     const href = doc.location.href;
     const due = state !== null && state.active && isDue(state);
     const interval = due || lastFetchFailed ? REFETCH_DUE_MS : REFETCH_MS;
     if (href !== lastHref) {
       lastHref = href;
       void fetchState();
-    } else if (now() - lastFetchAt >= interval) {
+    } else if (justAfterGate() || now() - lastFetchAt >= interval) {
       void fetchState();
     }
     render();
@@ -295,6 +332,17 @@ export function initRepeatPause(options: RepeatPauseOptions): RepeatPauseControl
     void fetchState();
   };
 
+  // Between ticks too, so the two pauses are never on screen together. Gates are appended straight
+  // to the body, which keeps this cheap on a page as busy as YouTube; a gate inside a fullscreen
+  // element is the one this misses, and the next tick catches it.
+  const gateWatch =
+    view === null
+      ? null
+      : new view.MutationObserver(() => {
+          if ((doc.querySelector(FOREIGN_GATE_SELECTOR) !== null) !== foreignGateUp) render();
+        });
+  if (doc.body !== null) gateWatch?.observe(doc.body, { childList: true });
+
   removeStaleHosts(doc);
   doc.addEventListener('visibilitychange', onVisibility);
   doc.addEventListener('fullscreenchange', onFullscreen);
@@ -307,6 +355,7 @@ export function initRepeatPause(options: RepeatPauseOptions): RepeatPauseControl
     stop: () => {
       stopped = true;
       if (interval !== undefined) view?.clearInterval(interval);
+      gateWatch?.disconnect();
       doc.removeEventListener('visibilitychange', onVisibility);
       doc.removeEventListener('fullscreenchange', onFullscreen);
       view?.removeEventListener('pageshow', onPageShow);
