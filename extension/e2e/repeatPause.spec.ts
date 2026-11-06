@@ -4,6 +4,7 @@ import {
   STRICT_CSP_PAGE,
   baseSettings,
   expect,
+  platformRule,
   rule,
   sendFromExtensionPage,
   test,
@@ -24,7 +25,12 @@ const FIVE_MINUTES = /^Next pause in (5:00|4:\d\d)$/;
  * Bring the grant's end close instead of waiting out real minutes. The page only re-reads the
  * grant every 30 seconds, so a visibility event makes it ask now.
  */
-async function grantEndsIn(worker: Worker, page: Page, ms: number): Promise<void> {
+async function grantEndsIn(
+  worker: Worker,
+  page: Page,
+  ms: number,
+  domain = DOMAIN,
+): Promise<void> {
   await worker.evaluate(
     async ([key, domain, until]) => {
       const stored = await chrome.storage.session.get(key);
@@ -32,7 +38,7 @@ async function grantEndsIn(worker: Worker, page: Page, ms: number): Promise<void
       map[domain] = until;
       await chrome.storage.session.set({ [key]: map });
     },
-    [TEMP_ALLOW_KEY, DOMAIN, Date.now() + ms] as const,
+    [TEMP_ALLOW_KEY, domain, Date.now() + ms] as const,
   );
   await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
 }
@@ -66,16 +72,17 @@ async function setRepeat(
     serviceWorker: Worker;
   },
   minutes: number | null,
+  domain = DOMAIN,
 ): Promise<void> {
   const result = await sendFromExtensionPage<{ ok: boolean }>(fixtures.context, fixtures.extensionId, {
     type: 'SET_REPEAT_PAUSE',
-    target: `https://${DOMAIN}/`,
+    target: `https://${domain}/`,
     minutes,
   });
   expect(result.ok).toBe(true);
   await expect
     .poll(() => registeredMatches(fixtures.serviceWorker))
-    .toEqual(minutes === null ? [] : [`*://*.${DOMAIN}/*`, `*://${DOMAIN}/*`]);
+    .toEqual(minutes === null ? [] : [`*://*.${domain}/*`, `*://${domain}/*`]);
 }
 
 async function throughThePause(page: Page, url: string): Promise<void> {
@@ -391,5 +398,265 @@ test.describe('Repeating pause', () => {
     await expect(page.locator(OVERLAY)).toHaveCount(1);
     await expect(page.locator(OVERLAY)).toHaveCount(0, { timeout: 15_000 });
     await expect(page.locator(PILL)).toHaveCount(1);
+  });
+});
+
+test.describe('Repeating pause on YouTube under a channel list', () => {
+  const YOUTUBE = 'youtube.com';
+  const LISTED = 'UCallowedchannel0000001';
+  const UNLISTED = 'UCotherchannel000000002';
+  const GATE = '#nudge-gate';
+  const VIDEO = 'def456';
+  const SEEN = 'nudgeRepeatSeen';
+
+  type Seen = { stacked: boolean; repeat: boolean };
+
+  function watch(video: string, channelId: string): string {
+    return `https://www.youtube.com/watch?v=${video}&channel=${channelId}&name=A%20Channel`;
+  }
+
+  function channelList(channelMode: 'WHITELIST' | 'BLACKLIST', channelId: string) {
+    return baseSettings({
+      rules: [
+        platformRule(
+          YOUTUBE,
+          {
+            youtube: {
+              channelMode,
+              channels: [{ channelId, handle: null, displayName: 'A Channel', addedAt: 0 }],
+              channelBlockMode: 'DELAY',
+              channelDelaySeconds: 2,
+            },
+          },
+          { mode: 'DELAY', delaySeconds: 2 },
+        ),
+      ],
+    });
+  }
+
+  /** Whether the page ever showed the repeat overlay, and ever with a gate at the same time. */
+  async function sample(page: Page): Promise<void> {
+    await page.addInitScript(
+      ([key, hostTag, overlayId]) => {
+        const seen = { stacked: false, repeat: false };
+        (window as unknown as Record<string, Seen>)[key] = seen;
+        setInterval(() => {
+          const own = document.querySelector(hostTag)?.shadowRoot?.querySelector(overlayId);
+          if (own === null || own === undefined) return;
+          seen.repeat = true;
+          if (document.querySelector('#nudge-gate') !== null) seen.stacked = true;
+        }, 20);
+      },
+      [SEEN, REPEAT_PAUSE_HOST_TAG, OVERLAY] as const,
+    );
+  }
+
+  function seen(page: Page): Promise<Seen> {
+    return page.evaluate((key) => (window as unknown as Record<string, Seen>)[key] as Seen, SEEN);
+  }
+
+  async function anchorMsLeft(worker: Worker, video: string): Promise<number | null> {
+    const until = await worker.evaluate(async (id) => {
+      const stored = await chrome.storage.session.get('repeatAnchors');
+      return ((stored.repeatAnchors ?? {}) as Record<string, number>)[id] ?? null;
+    }, video);
+    return until === null ? null : until - Date.now();
+  }
+
+  /** The same shortcut as `grantEndsIn`, for the video's own clock. */
+  async function anchorEndsIn(worker: Worker, page: Page, video: string, ms: number): Promise<void> {
+    await worker.evaluate(
+      async ([id, until]) => {
+        const stored = await chrome.storage.session.get('repeatAnchors');
+        const map = (stored.repeatAnchors ?? {}) as Record<string, number>;
+        map[id as string] = until as number;
+        await chrome.storage.session.set({ repeatAnchors: map });
+      },
+      [video, Date.now() + ms] as const,
+    );
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+  }
+
+  /** What a grant would have left behind, at both layers. */
+  function grantsAtTheNetworkLayer(worker: Worker): Promise<unknown> {
+    return worker.evaluate(
+      async ([key, domain]) => {
+        const stored = await chrome.storage.session.get(key);
+        return {
+          grant: ((stored[key] ?? {}) as Record<string, number>)[domain] ?? null,
+          sessionRules: (await chrome.declarativeNetRequest.getSessionRules()).length,
+        };
+      },
+      [TEMP_ALLOW_KEY, YOUTUBE] as const,
+    );
+  }
+
+  const NO_GRANT = { grant: null, sessionRules: 0 };
+
+  test('an unlisted video repeats on its own clock, and the home feed stays blocked', async ({
+    context,
+    extensionId,
+    serviceWorker,
+    setSettings,
+  }) => {
+    await setSettings(channelList('WHITELIST', LISTED));
+    await setRepeat({ context, extensionId, serviceWorker }, 10, YOUTUBE);
+
+    const page = await context.newPage();
+    await sample(page);
+    await page.goto(watch(VIDEO, UNLISTED));
+
+    // The channel gate takes the first pause, and that pause is the whole of it.
+    const gate = page.locator(GATE);
+    await expect(gate).toBeVisible({ timeout: 15_000 });
+    await expect(gate).toHaveCount(0, { timeout: 15_000 });
+    await expect(page.locator(PILL)).toHaveText(TEN_MINUTES);
+    expect(await seen(page)).toEqual({ stacked: false, repeat: false });
+    expect(await grantsAtTheNetworkLayer(serviceWorker)).toEqual(NO_GRANT);
+
+    const player = page.locator('#player');
+    const paused = () => player.evaluate((el: HTMLVideoElement) => el.paused);
+    await player.evaluate((el: HTMLVideoElement) => {
+      el.src = '/tone.wav';
+      el.loop = true;
+      return el.play();
+    });
+    await expect.poll(paused).toBe(false);
+    await page.evaluate(() => {
+      (window as unknown as { sameDocument: string }).sameDocument = 'yes';
+    });
+
+    await anchorEndsIn(serviceWorker, page, VIDEO, 300);
+
+    const overlay = page.locator(OVERLAY);
+    await expect(overlay).toBeVisible();
+    await expect(page.locator(PILL)).toHaveCount(0);
+    await expect.poll(paused).toBe(true);
+
+    await expect(overlay).toHaveCount(0, { timeout: 15_000 });
+    await expect.poll(paused).toBe(false);
+    expect(await player.evaluate((el: HTMLVideoElement) => el.muted)).toBe(false);
+    await expect(page.locator(PILL)).toHaveText(TEN_MINUTES);
+    expect(await anchorMsLeft(serviceWorker, VIDEO)).toBeGreaterThan(9 * 60_000);
+    expect(
+      await page.evaluate(() => (window as unknown as { sameDocument: string }).sameDocument),
+    ).toBe('yes');
+
+    // Nothing was granted, so nothing else opened.
+    expect(await grantsAtTheNetworkLayer(serviceWorker)).toEqual(NO_GRANT);
+    const home = await context.newPage();
+    await home.goto('https://www.youtube.com/');
+    await expect(home).toHaveURL(/blocked\.html\?target=/);
+
+    // And it bought nothing on the next video either.
+    await page.goto(watch('ghi789', UNLISTED));
+    await expect(page.locator(GATE)).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator(PILL)).toHaveCount(0);
+  });
+
+  test('a listed channel\'s video never shows a pill, even with a clock on it', async ({
+    context,
+    extensionId,
+    serviceWorker,
+    setSettings,
+  }) => {
+    await setSettings(channelList('WHITELIST', LISTED));
+    await setRepeat({ context, extensionId, serviceWorker }, 10, YOUTUBE);
+
+    const page = await context.newPage();
+    await page.goto(watch(VIDEO, LISTED));
+
+    await expect
+      .poll(() =>
+        serviceWorker.evaluate(
+          async (id) =>
+            ((await chrome.storage.session.get('videoChannels')).videoChannels as
+              | Record<string, unknown>
+              | undefined)?.[id] !== undefined,
+          VIDEO,
+        ),
+      )
+      .toBe(true);
+
+    await anchorEndsIn(serviceWorker, page, VIDEO, 10 * 60_000);
+    // Long enough to have answered the visibility event, had it been going to draw anything.
+    await page.waitForTimeout(1_500);
+    await expect(page.locator(PILL)).toHaveCount(0);
+
+    await anchorEndsIn(serviceWorker, page, VIDEO, -1000);
+    await page.waitForTimeout(1_500);
+    await expect(page.locator(OVERLAY)).toHaveCount(0);
+    await expect(page.locator(GATE)).toHaveCount(0);
+  });
+
+  test('reloading a video on a clock never stacks a pause on the gate', async ({
+    context,
+    extensionId,
+    serviceWorker,
+    setSettings,
+  }) => {
+    await setSettings(channelList('WHITELIST', LISTED));
+    await setRepeat({ context, extensionId, serviceWorker }, 10, YOUTUBE);
+
+    const page = await context.newPage();
+    await sample(page);
+    await page.goto(watch(VIDEO, UNLISTED));
+    await expect(page.locator(PILL)).toHaveText(TEN_MINUTES, { timeout: 20_000 });
+
+    // The clock still running: the gate fires again, because a reload forgets it was served.
+    await page.reload();
+    const gate = page.locator(GATE);
+    await expect(gate).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator(PILL)).toHaveCount(0);
+    await expect(gate).toHaveCount(0, { timeout: 15_000 });
+    await expect(page.locator(PILL)).toHaveText(TEN_MINUTES);
+    expect(await seen(page)).toEqual({ stacked: false, repeat: false });
+
+    // Run out while the gate is up: it waits, and the gate's own pause renews the clock.
+    await page.reload();
+    await expect(gate).toBeVisible({ timeout: 15_000 });
+    await anchorEndsIn(serviceWorker, page, VIDEO, -1000);
+    await expect(gate).toHaveCount(0, { timeout: 15_000 });
+    await expect(page.locator(PILL)).toHaveText(TEN_MINUTES);
+    expect(await seen(page)).toEqual({ stacked: false, repeat: false });
+
+    // Run out before the reload, so the pause can get there first: it gives way to the gate.
+    await anchorEndsIn(serviceWorker, page, VIDEO, -1000);
+    await expect(page.locator(OVERLAY)).toBeVisible();
+    await page.reload();
+    await expect(gate).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator(OVERLAY)).toHaveCount(0);
+    await expect(gate).toHaveCount(0, { timeout: 15_000 });
+    await expect(page.locator(PILL)).toHaveText(TEN_MINUTES);
+    expect((await seen(page)).stacked).toBe(false);
+  });
+
+  test('under a blacklist the pause waits for the channel gate, then takes its turn', async ({
+    context,
+    extensionId,
+    serviceWorker,
+    setSettings,
+  }) => {
+    await setSettings(channelList('BLACKLIST', UNLISTED));
+    await setRepeat({ context, extensionId, serviceWorker }, 10, YOUTUBE);
+
+    const page = await context.newPage();
+    await sample(page);
+    await page.goto(watch(VIDEO, UNLISTED));
+    await expect(page).toHaveURL(/blocked\.html\?target=/);
+    const gate = page.locator(GATE);
+    await expect(gate).toBeVisible({ timeout: 20_000 });
+
+    await grantEndsIn(serviceWorker, page, -1000, YOUTUBE);
+    await expect(gate).toHaveCount(0, { timeout: 15_000 });
+
+    // The site's grant really has run out, so the pause is owed: after the gate, not with it.
+    const overlay = page.locator(OVERLAY);
+    await expect(overlay).toBeVisible({ timeout: 10_000 });
+    await expect(overlay).toHaveCount(0, { timeout: 15_000 });
+    await expect(page.locator(PILL)).toHaveText(TEN_MINUTES);
+    expect((await seen(page)).stacked).toBe(false);
+    // A blacklist never needed a clock of its own.
+    expect(await anchorMsLeft(serviceWorker, VIDEO)).toBeNull();
   });
 });

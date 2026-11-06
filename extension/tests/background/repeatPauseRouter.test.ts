@@ -14,7 +14,13 @@ import {
 import type { BlockContext, PopupState, RepeatPauseState } from '../../src/core/protocol';
 import type { NudgeSettings } from '../../src/core/settingsSchema';
 import { featuresWith, scheduleOverride, settings, siteRule } from '../helpers/rules';
-import { installAttention, installDnr, resetBrowser, type AttentionState } from './fakeApis';
+import {
+  installAttention,
+  installDnr,
+  resetBrowser,
+  type AttentionState,
+  type DnrState,
+} from './fakeApis';
 
 /**
  * The router is where the repeat's three readers meet: the in-page timer, the DNR grant length
@@ -26,6 +32,7 @@ const URL_ON_SITE = 'https://news.test/article';
 const ALLOWED_CHANNEL = { channelId: null, handle: 'allowed', displayName: 'Allowed', addedAt: 0 };
 
 let attention: AttentionState;
+let dnr: DnrState;
 
 async function seed(config: NudgeSettings): Promise<void> {
   await saveSettings(config);
@@ -52,7 +59,7 @@ function state(url = URL_ON_SITE): Promise<RepeatPauseState> {
 
 beforeEach(() => {
   resetBrowser();
-  installDnr();
+  dnr = installDnr();
   attention = installAttention();
 });
 
@@ -163,7 +170,7 @@ describe('GET_REPEAT_PAUSE', () => {
       expect(await state('https://www.youtube.com/@allowed')).toEqual({ active: false });
     });
 
-    it('a watch page never gets a repeat: the channel check answers there, not the site pause', async () => {
+    it('a watch page with no clock gets no repeat: the channel check answers there, not the site pause', async () => {
       await seed(settings({ rules: [youtubeRule()] }));
       expect(await state('https://www.youtube.com/watch?v=abc')).toEqual({ active: false });
     });
@@ -281,6 +288,210 @@ describe('COMPLETE_PAUSE grant length', () => {
       target: 'https://www.youtube.com/@allowed',
     });
     expect(grant.until).toBe(NOW.getTime() + 10 * 60_000);
+  });
+});
+
+describe('a video from a channel the user did not allow', () => {
+  const WATCH = 'https://www.youtube.com/watch?v=abc';
+  const EVERY = 10;
+  const AT_ANCHOR = NOW.getTime() + EVERY * 60_000;
+
+  function youtubeRule(overrides: Parameters<typeof siteRule>[0] = {}, channels = [ALLOWED_CHANNEL]) {
+    return siteRule({
+      id: 'yt',
+      domain: 'youtube.com',
+      mode: 'DELAY',
+      repeatPauseMinutes: EVERY,
+      features: featuresWith('youtube', { youtube: { channelMode: 'WHITELIST', channels } }),
+      ...overrides,
+    });
+  }
+
+  function gatePassed(url = WATCH): Promise<{ ok: boolean; anchored: boolean }> {
+    return ask({ type: 'CHANNEL_PAUSE_DONE', url });
+  }
+
+  function askAt<T>(at: number, request: unknown): Promise<T> {
+    return handleRequest(request as never, new Date(at)) as Promise<T>;
+  }
+
+  it('has its own clock once the gate has been served, with no pause straight after it', async () => {
+    await seed(settings({ rules: [youtubeRule()] }));
+    expect(await gatePassed()).toEqual({ ok: true, anchored: true });
+    expect(await state(WATCH)).toEqual({
+      active: true,
+      mode: 'DELAY',
+      delaySeconds: 15,
+      everyMinutes: EVERY,
+      domain: 'youtube.com',
+      until: AT_ANCHOR,
+    });
+  });
+
+  it('is due once the clock has run out', async () => {
+    await seed(settings({ rules: [youtubeRule()] }));
+    await gatePassed();
+    const later = await askAt<RepeatPauseState>(AT_ANCHOR + 1, {
+      type: 'GET_REPEAT_PAUSE',
+      url: WATCH,
+    });
+    expect(later).toMatchObject({ active: true, until: null });
+  });
+
+  it('applies to a live stream the same way', async () => {
+    await seed(settings({ rules: [youtubeRule()] }));
+    const live = 'https://www.youtube.com/live/abc';
+    expect(await gatePassed(live)).toMatchObject({ anchored: true });
+    expect(await state(live)).toMatchObject({ active: true, until: AT_ANCHOR });
+  });
+
+  it('does not buy the next video: passing one gate leaves another with no repeat', async () => {
+    await seed(settings({ rules: [youtubeRule()] }));
+    await gatePassed();
+    expect(await state('https://www.youtube.com/watch?v=other')).toEqual({ active: false });
+  });
+
+  it('stays out of a video from a channel on the list', async () => {
+    await seed(settings({ rules: [youtubeRule()] }));
+    await gatePassed();
+    await ask({ type: 'VIDEO_CHANNEL', url: WATCH, channelId: null, handle: 'allowed' });
+    expect(await state(WATCH)).toEqual({ active: false });
+  });
+
+  it('ends at once when the channel is added to the list mid-watch', async () => {
+    const someone = { channelId: null, handle: 'someone', displayName: 'Someone', addedAt: 0 };
+    await seed(settings({ rules: [youtubeRule()] }));
+    await ask({ type: 'VIDEO_CHANNEL', url: WATCH, channelId: null, handle: 'someone' });
+    await gatePassed();
+    expect(await state(WATCH)).toMatchObject({ active: true });
+
+    await seed(settings({ rules: [youtubeRule({}, [ALLOWED_CHANNEL, someone])] }));
+    expect(await state(WATCH)).toEqual({ active: false });
+  });
+
+  it('ends when the budget is spent, because the engine has made that a Hard Block', async () => {
+    await seed(settings({ rules: [youtubeRule({ dailyLimitMinutes: 10 })] }));
+    await gatePassed();
+    await saveDay(localDayKey(NOW), { 'youtube.com': { ...emptyDayUsage(), activeSec: 11 * 60 } });
+    expect(await state(WATCH)).toEqual({ active: false });
+  });
+
+  it('runs on the clock, not on a live grant from elsewhere on the site', async () => {
+    await seed(settings({ rules: [youtubeRule()] }));
+    await gatePassed();
+    await saveTempAllow({ 'youtube.com': NOW.getTime() + 3 * 60_000 });
+    expect(await state(WATCH)).toMatchObject({ active: true, until: AT_ANCHOR });
+  });
+
+  describe('completing the pause', () => {
+    const LATER = AT_ANCHOR + 5_000;
+
+    async function pauseServed(): Promise<{ ok: boolean; until: number }> {
+      await seed(settings({ rules: [youtubeRule()] }));
+      await gatePassed();
+      return askAt(LATER, { type: 'COMPLETE_PAUSE', target: WATCH });
+    }
+
+    it('renews the clock N minutes on from now', async () => {
+      expect(await pauseServed()).toEqual({ ok: true, until: LATER + EVERY * 60_000 });
+      expect(
+        await askAt(LATER, { type: 'GET_REPEAT_PAUSE', url: WATCH }),
+      ).toMatchObject({ active: true, until: LATER + EVERY * 60_000 });
+    });
+
+    it('grants nothing: not in storage, and no rule at the network layer', async () => {
+      await pauseServed();
+      expect(await loadTempAllow()).toEqual({});
+      expect(dnr.session).toEqual([]);
+    });
+
+    it('leaves the home feed exactly as blocked as it was', async () => {
+      await pauseServed();
+      const home = await askAt<RepeatPauseState>(LATER, {
+        type: 'GET_REPEAT_PAUSE',
+        url: 'https://www.youtube.com/',
+      });
+      expect(home).toMatchObject({ active: true, until: null });
+      const context = await askAt<BlockContext>(LATER, {
+        type: 'GET_BLOCK_CONTEXT',
+        target: 'https://www.youtube.com/',
+      });
+      expect(context.decision.type).toBe('BLOCK');
+    });
+
+    it('a video with no clock keeps today\'s path, and takes the ordinary grant', async () => {
+      await seed(settings({ tempAllowMinutes: 7, rules: [youtubeRule()] }));
+      const grant = await ask<{ until: number }>({ type: 'COMPLETE_PAUSE', target: WATCH });
+      expect(grant.until).toBe(NOW.getTime() + 7 * 60_000);
+    });
+  });
+
+  describe('the popup', () => {
+    it('reads the same clock as the pill', async () => {
+      await seed(settings({ rules: [youtubeRule()] }));
+      await gatePassed();
+      attention.tabs = [{ id: 1, url: WATCH }];
+      const popup = await ask<PopupState>({ type: 'GET_POPUP_STATE' });
+      expect(popup.currentRepeatEveryMinutes).toBe(EVERY);
+      expect(popup.currentNextPauseAt).toBe(AT_ANCHOR);
+    });
+
+    it('agrees that a run-out clock is due, not a time in the past', async () => {
+      await seed(settings({ rules: [youtubeRule()] }));
+      await gatePassed();
+      attention.tabs = [{ id: 1, url: WATCH }];
+      const popup = await askAt<PopupState>(AT_ANCHOR + 1, { type: 'GET_POPUP_STATE' });
+      expect(popup.currentRepeatEveryMinutes).toBe(EVERY);
+      expect(popup.currentNextPauseAt).toBeNull();
+    });
+
+    it('shows nothing on a video with no clock', async () => {
+      await seed(settings({ rules: [youtubeRule()] }));
+      attention.tabs = [{ id: 1, url: WATCH }];
+      const popup = await ask<PopupState>({ type: 'GET_POPUP_STATE' });
+      expect(popup.currentRepeatEveryMinutes).toBeNull();
+      expect(popup.currentNextPauseAt).toBeNull();
+    });
+  });
+
+  describe('the report starts no clock, and no repeat follows', () => {
+    it.each<[string, () => NudgeSettings]>([
+      ['Nudge is off', () => settings({ globalEnabled: false, rules: [youtubeRule()] })],
+      ['the rule has no repeat', () => settings({ rules: [youtubeRule({ repeatPauseMinutes: null })] })],
+      ['the site is Allowed', () => settings({ rules: [youtubeRule({ mode: 'ALLOW' })] })],
+      ['the site is Hard Blocked', () => settings({ rules: [youtubeRule({ mode: 'HARD_BLOCK' })] })],
+    ])('when %s', async (_name, config) => {
+      await seed(config());
+      expect(await gatePassed()).toEqual({ ok: true, anchored: false });
+      expect(await state(WATCH)).toEqual({ active: false });
+    });
+
+    it('when the budget is spent', async () => {
+      await seed(settings({ rules: [youtubeRule({ dailyLimitMinutes: 10 })] }));
+      await saveDay(localDayKey(NOW), { 'youtube.com': { ...emptyDayUsage(), activeSec: 11 * 60 } });
+      expect(await gatePassed()).toEqual({ ok: true, anchored: false });
+    });
+
+    it.each([
+      ['a listed channel page', 'https://www.youtube.com/@allowed'],
+      ['a playlist', 'https://www.youtube.com/playlist?list=abc'],
+      ['a legacy channel page', 'https://www.youtube.com/c/allowed'],
+      ['a watch page with no video', 'https://www.youtube.com/watch'],
+      ['a site with no rule', 'https://news.test/watch?v=abc'],
+    ])('on %s', async (_name, url) => {
+      await seed(settings({ rules: [youtubeRule()] }));
+      expect(await gatePassed(url)).toEqual({ ok: true, anchored: false });
+      expect(await state(url)).toEqual({ active: false });
+    });
+
+    it('under a BLACKLIST, where the watch page is not carved and the site grant is the clock', async () => {
+      const features = featuresWith('youtube', {
+        youtube: { channelMode: 'BLACKLIST', channels: [ALLOWED_CHANNEL] },
+      });
+      await seed(settings({ rules: [youtubeRule({ features })] }));
+      expect(await gatePassed()).toEqual({ ok: true, anchored: false });
+      expect(await state(WATCH)).toMatchObject({ active: true, until: null });
+    });
   });
 });
 

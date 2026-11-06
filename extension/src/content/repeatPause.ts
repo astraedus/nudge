@@ -332,9 +332,9 @@ export function initRepeatPause(options: RepeatPauseOptions): RepeatPauseControl
     void fetchState();
   };
 
-  // Between ticks too, so the two pauses are never on screen together. Gates are appended straight
-  // to the body, which keeps this cheap on a page as busy as YouTube; a gate inside a fullscreen
-  // element is the one this misses, and the next tick catches it.
+  // Between ticks too, so the two pauses are never on screen together. Gates go straight on the
+  // body, and watching only its children keeps this cheap on a page as busy as YouTube. A gate
+  // anchored inside the Shorts player is the one this misses, and the next tick catches it.
   const gateWatch =
     view === null
       ? null

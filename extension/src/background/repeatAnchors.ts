@@ -19,7 +19,7 @@
 
 export const REPEAT_ANCHORS_KEY = 'repeatAnchors';
 
-/** The most videos on a clock at once. Past it the one that ran out longest ago is dropped. */
+/** The most videos on a clock at once. Past it the earliest clock goes, never the one just set. */
 export const MAX_REPEAT_ANCHORS = 300;
 
 /** Video id to the epoch ms its next pause is due. */
@@ -33,10 +33,11 @@ export function withRepeatAnchor(
   cap: number = MAX_REPEAT_ANCHORS,
 ): RepeatAnchorMap {
   const next: RepeatAnchorMap = { ...map, [videoId]: until };
-  const entries = Object.entries(next);
-  if (entries.length <= cap) return next;
-  entries.sort(([, a], [, b]) => a - b);
-  for (const [id] of entries.slice(0, entries.length - cap)) delete next[id];
+  const excess = Object.keys(next).length - cap;
+  if (excess <= 0) return next;
+  const others = Object.entries(next).filter(([id]) => id !== videoId);
+  others.sort(([, a], [, b]) => a - b);
+  for (const [id] of others.slice(0, excess)) delete next[id];
   return next;
 }
 

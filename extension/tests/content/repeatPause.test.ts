@@ -668,3 +668,124 @@ describe('living on a page we did not write', () => {
     expect(navigated).toEqual([]);
 });
 });
+
+describe('another Nudge gate on the page', () => {
+  function addGate(attrs: { id?: string; className?: string } = { id: 'nudge-gate' }): HTMLElement {
+    const gate = document.createElement('div');
+    if (attrs.id !== undefined) gate.id = attrs.id;
+    if (attrs.className !== undefined) gate.className = attrs.className;
+    document.body.append(gate);
+    return gate;
+  }
+
+  const DUE = () => active({ until: START - 1000 });
+
+  it.each([
+    ['the channel gate', { id: 'nudge-gate' }],
+    ['any other gate overlay', { id: 'nudge-reddit-gate', className: 'nudge-overlay' }],
+  ])('does not mount over %s, and still holds the media', async (_name, attrs) => {
+    const { pause } = addVideo();
+    addGate(attrs);
+    worker.state = DUE();
+    start();
+    await advance(2000);
+    expect(overlay()).toBeNull();
+    expect(pause).toHaveBeenCalled();
+    expect(sentOf('PAUSE_SHOWN')).toEqual([]);
+  });
+
+  it('gives way the moment a gate arrives over its own overlay, with no tick in between', async () => {
+    await reachPause();
+    expect(overlay()).not.toBeNull();
+    addGate();
+    await advance(0);
+    expect(overlay()).toBeNull();
+  });
+
+  it('does not count a second pause for one it gave way on', async () => {
+    await reachPause();
+    const gate = addGate();
+    await advance(0);
+    gate.remove();
+    worker.state = DUE();
+    await advance(5000);
+    expect(overlay()).not.toBeNull();
+    expect(sentOf('PAUSE_SHOWN')).toHaveLength(1);
+  });
+
+  it('hides the pill while a gate is up, and brings it back after', async () => {
+    worker.state = active();
+    start();
+    await advance(0);
+    expect(pillText()).not.toBeNull();
+    const gate = addGate();
+    await advance(0);
+    expect(pillText()).toBeNull();
+    gate.remove();
+    await advance(1000);
+    expect(pillText()).not.toBeNull();
+  });
+
+  describe('when it comes down', () => {
+    it('never flashes a pause over a clock the gate just renewed', async () => {
+      const { play } = addVideo();
+      const gate = addGate();
+      worker.state = DUE();
+      start();
+      await advance(2000);
+
+      // The gate reports and comes down, and the first answers still predate the report.
+      gate.remove();
+      for (let beat = 0; beat < 2; beat += 1) {
+        await advance(1000);
+        expect(overlay()).toBeNull();
+      }
+      worker.state = active({ until: Date.now() + 10 * MIN });
+      await advance(1000);
+
+      expect(overlay()).toBeNull();
+      expect(pillText()).not.toBeNull();
+      expect(play).toHaveBeenCalled();
+      expect(sentOf('PAUSE_SHOWN')).toEqual([]);
+    });
+
+    it('asks again at once, so a clock that did not exist yet shows without a long wait', async () => {
+      const gate = addGate();
+      worker.state = { active: false };
+      start();
+      await advance(1000);
+      expect(pillText()).toBeNull();
+
+      // The first answer after the gate came down beat the report to the worker.
+      gate.remove();
+      await advance(1000);
+      expect(pillText()).toBeNull();
+
+      worker.state = active({ until: Date.now() + 10 * MIN });
+      await advance(1000);
+      expect(pillText()).not.toBeNull();
+    });
+
+    it('still pauses if it really is due, since a gate is not a way out of one', async () => {
+      const gate = addGate();
+      worker.state = DUE();
+      start();
+      await advance(1000);
+      gate.remove();
+      await advance(5000);
+      expect(overlay()).not.toBeNull();
+    });
+
+    it('asks once a tick while it waits, not once per answer', async () => {
+      const gate = addGate();
+      worker.state = DUE();
+      start();
+      await advance(1000);
+      gate.remove();
+      await advance(0);
+      const before = sentOf('GET_REPEAT_PAUSE').length;
+      await advance(2000);
+      expect(sentOf('GET_REPEAT_PAUSE').length - before).toBeLessThanOrEqual(3);
+    });
+  });
+});
