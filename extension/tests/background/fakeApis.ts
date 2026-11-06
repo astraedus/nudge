@@ -57,15 +57,34 @@ export interface ScriptingState {
   calls: string[];
   /** When set, `getRegisteredContentScripts` throws — the real API does on some builds. */
   throwOnQuery: boolean;
+  /** Every `executeScript`, in order: which tab got which files. */
+  injected: { tabId: number; files: string[] }[];
+  /** Tabs that refuse injection, as a chrome error page or a closing tab does. */
+  refuseInjectionInto: number[];
 }
 
 /** Replace `chrome.scripting` with an in-memory content-script registry. */
 export function installScripting(): ScriptingState {
-  const state: ScriptingState = { scripts: [], calls: [], throwOnQuery: false };
+  const state: ScriptingState = {
+    scripts: [],
+    calls: [],
+    throwOnQuery: false,
+    injected: [],
+    refuseInjectionInto: [],
+  };
   Object.defineProperty(chrome, 'scripting', {
     configurable: true,
     writable: true,
     value: {
+      executeScript: async (injection: { target: { tabId: number }; files?: string[] }) => {
+        state.calls.push('execute');
+        const { tabId } = injection.target;
+        if (state.refuseInjectionInto.includes(tabId)) {
+          throw new Error('Cannot access contents of the page.');
+        }
+        state.injected.push({ tabId, files: injection.files ?? [] });
+        return [];
+      },
       getRegisteredContentScripts: async (filter?: { ids?: string[] }) => {
         state.calls.push('get');
         if (state.throwOnQuery) throw new Error('not supported');

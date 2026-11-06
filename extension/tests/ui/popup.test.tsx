@@ -19,6 +19,8 @@ function makeState(overrides: Partial<PopupState> = {}): PopupState {
     currentApplies: false,
     currentGrayscale: false,
     currentFeatureSummary: null,
+    currentRepeatEveryMinutes: null,
+    currentNextPauseAt: null,
     ...overrides,
   };
 }

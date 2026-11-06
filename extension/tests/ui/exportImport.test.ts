@@ -20,6 +20,7 @@ function makeRule(overrides: Partial<SiteRule> = {}): SiteRule {
     showTimeRemaining: true,
     schedule: null,
     grayscale: false,
+    repeatPauseMinutes: null,
     features: null,
     ...overrides,
   };

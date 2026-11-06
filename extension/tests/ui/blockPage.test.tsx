@@ -48,6 +48,8 @@ function makeContext(overrides: Partial<BlockContext> = {}): BlockContext {
     gateItemNoun: null,
     allowedChannels: [],
     creator: null,
+    repeatPauseMinutes: null,
+    repeatPauseOffered: false,
     ...overrides,
   };
 }

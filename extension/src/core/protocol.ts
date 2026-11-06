@@ -74,6 +74,13 @@ export interface BlockContext {
    * allowed channels and nothing about the Studio they turned creator mode on to reach.
    */
   creator: CreatorLinks | null;
+  /** The rule's "pause again every N minutes", or null when off or there is no rule. */
+  repeatPauseMinutes: number | null;
+  /**
+   * Whether this page may offer that setting: a SITE-level Delay or Breathing pause. A feature
+   * gate's pause is not one, the repeat does not reach gates, and the page must not imply it.
+   */
+  repeatPauseOffered: boolean;
 }
 
 /** Where creator mode lets the user go from the block page. */
@@ -104,6 +111,10 @@ export interface PopupState {
   currentGrayscale: boolean;
   /** One line summarising the site's active features, or null when there are none. */
   currentFeatureSummary: string | null;
+  /** The repeating pause in force on this page, in minutes, or null when none is. */
+  currentRepeatEveryMinutes: number | null;
+  /** When the next repeat is due (epoch ms), or null when none is in force or no grant is live. */
+  currentNextPauseAt: number | null;
 }
 
 /** A per-domain daily rollup. Stored in storage.local, never transmitted anywhere. */
@@ -255,7 +266,45 @@ export type Request =
    * does nothing at all unless "Also allow channels I'm subscribed to" is on, which IS
    * gated (`core/strictMode.ts`).
    */
-  | { type: 'SYNC_YT_SUBSCRIPTIONS' };
+  | { type: 'SYNC_YT_SUBSCRIPTIONS' }
+  /**
+   * Is a repeating pause in force on this page, and when is it next due? The in-page
+   * controller asks; it never resolves a rule itself, so it cannot disagree with the grant.
+   */
+  | { type: 'GET_REPEAT_PAUSE'; url: string }
+  /**
+   * The block page's "Pause again every" chooser. A settings mutation like `SET_GRAYSCALE`,
+   * so it goes through `handleSave` and inherits the Commitment Lock. `target` is the blocked
+   * URL, the worker resolves the rule; `minutes` null means off.
+   */
+  | {
+      type: 'SET_REPEAT_PAUSE';
+      target: string;
+      minutes: number | null;
+      challengeResponse?: string;
+    }
+  /** The in-page pause came up. Like the block page rendering, that IS a block event. */
+  | { type: 'PAUSE_SHOWN'; url: string }
+  /**
+   * "I changed my mind" on the in-page pause: send this tab to the dashboard, the same
+   * destination the block page's walk-away uses. A content script cannot navigate to an
+   * extension page that is not web-accessible, so the worker does it, and as with `CLOSE_TAB`
+   * the tab id comes from the SENDER.
+   */
+  | { type: 'LEAVE_TO_DASHBOARD' };
+
+/** What `GET_REPEAT_PAUSE` answers. */
+export type RepeatPauseState =
+  | { active: false }
+  | {
+      active: true;
+      mode: 'DELAY' | 'BREATHING';
+      delaySeconds: number;
+      everyMinutes: number;
+      /** The site's live grant expiry (epoch ms). Null or past means the pause is due. */
+      until: number | null;
+      domain: string;
+    };
 
 /** What the dashboard shows under "Also allow channels I'm subscribed to". */
 export interface SubscriptionSyncStatus {
@@ -377,6 +426,11 @@ export interface ResponseMap {
   GET_YT_SUBSCRIPTIONS: SubscriptionSyncStatus;
   /** The status after the sync finished (or was refused because the option is off). */
   SYNC_YT_SUBSCRIPTIONS: SubscriptionSyncStatus;
+  GET_REPEAT_PAUSE: RepeatPauseState;
+  SET_REPEAT_PAUSE: SaveResult;
+  PAUSE_SHOWN: { ok: boolean };
+  /** `ok: false` when the sender had no tab id (a non-tab context) or the update failed. */
+  LEAVE_TO_DASHBOARD: { ok: boolean };
 }
 
 export type ResponseFor<T extends Request['type']> = ResponseMap[T];

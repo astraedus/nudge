@@ -2,6 +2,11 @@ import { ensureAlarms, ensureScheduleAlarm, handleAlarm } from '../background/al
 import { applyRules } from '../background/dnr';
 import { applyGrayscale } from '../background/grayscale';
 import { registerMessageRouter } from '../background/messagesRouter';
+import {
+  applyRepeatPauseScript,
+  injectIntoOpenTabs,
+  repeatPauseMatches,
+} from '../background/repeatPauseScript';
 import { loadSettings, YT_SUBSCRIPTIONS_KEY } from '../background/storage';
 import { IDLE_DETECTION_SECONDS, onActivityEvent } from '../background/tracker';
 
@@ -28,6 +33,7 @@ export default defineBackground(() => {
       // re-derived from settings here rather than only on change, otherwise a stale
       // registration could outlive the setting that asked for it.
       await applyGrayscale(settings);
+      await applyRepeatPauseScript(settings);
       // Takes settings because one of the alarms it arms is the next Scheduled Override
       // edge, which is a function of them.
       await ensureAlarms(settings);
@@ -41,6 +47,11 @@ export default defineBackground(() => {
     void bootstrap();
     if (details.reason === 'install') {
       void chrome.tabs.create({ url: chrome.runtime.getURL('onboarding.html') });
+    }
+    // An update invalidates the running copy of every content script, and the registration
+    // has not changed, so nothing else would restart the repeat in tabs that are already open.
+    if (details.reason === 'update') {
+      void loadSettings().then((settings) => injectIntoOpenTabs(repeatPauseMatches(settings)));
     }
   });
 
@@ -69,6 +80,7 @@ export default defineBackground(() => {
       void loadSettings().then(async (settings) => {
         await applyRules(settings);
         await applyGrayscale(settings);
+        await applyRepeatPauseScript(settings);
         // A saved schedule change moves the next edge, and this listener also fires for a
         // save that arrived from ANOTHER synced device — which never went through this
         // worker's message router, so this is the only place that re-arms it.

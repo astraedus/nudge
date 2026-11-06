@@ -25,14 +25,15 @@ import {
   keepLearnedChannelIdentifiers,
   type ChannelObservation,
 } from '../core/channels';
-import { remainingMs, tightestLimit } from '../core/budgets';
+import { isOverBudget, remainingMs, tightestLimit } from '../core/budgets';
 import { extractDomain, normalizeToBaseDomain, normalizeUserInput } from '../core/domainMatcher';
 import * as pass from '../core/emergencyPass';
 // Shared with the dashboard's rule card and the rule editor. One implementation on purpose:
 // the worker resolves the popup's copy while the dashboard renders its own from settings,
 // so a second string builder here would eventually describe the same rule two ways.
 import { featureSummary } from '../core/featureSummary';
-import { STUDIO_HOST_PREFIX, watchPageVideoId } from '../core/youtubeAccess';
+import { coerceRepeatPauseMinutes, pauseGrantMinutes } from '../core/repeatPause';
+import { STUDIO_HOST_PREFIX, watchPageVideoId, youtubePageAccess } from '../core/youtubeAccess';
 import {
   DEFAULT_DELAY_SUBTITLES,
   DEFAULT_DELAY_TITLES,
@@ -55,6 +56,7 @@ import type {
   DashboardState,
   GrantResult,
   PopupState,
+  RepeatPauseState,
   Request,
   ResolvedGate,
   SaveResult,
@@ -280,6 +282,93 @@ async function buildBlockContext(target: string, now: Date): Promise<BlockContex
     gateItemNoun,
     allowedChannels: allowedChannelsFor(rule),
     creator: creatorLinksFor(rule),
+    repeatPauseMinutes: rule?.repeatPauseMinutes ?? null,
+    repeatPauseOffered:
+      rule !== null &&
+      gateId === null &&
+      decision.type === 'BLOCK' &&
+      decision.mode !== 'HARD_BLOCK',
+  };
+}
+
+/** A repeating pause in force on one URL. */
+interface RepeatInForce {
+  mode: 'DELAY' | 'BREATHING';
+  delaySeconds: number;
+  everyMinutes: number;
+  domain: string;
+}
+
+/**
+ * Is a repeating pause in force on this URL? THE question, asked by the in-page controller,
+ * by the grant length and by the popup, so the timer, the DNR allow rule and the readout
+ * cannot disagree.
+ *
+ * Off when a surface has its own answer or none is owed:
+ *  - an exhausted budget: the engine has made it a Hard Block, there is no pause to repeat;
+ *  - a gate in force on this page: the gate's own mode stands there, the setting is the
+ *    SITE's, and `buildBlockContext` resolves such a page to the gate, so a grant asked for
+ *    from here would be the gate's and could not agree with the timer;
+ *  - a YouTube carve-out. An allowed channel's video or Studio never needed a pause, and
+ *    repeating one on it punishes someone for watching what they allowed, which is the worst
+ *    thing this product can do. Asked with `tempAllowed: false`, because the grant is exactly
+ *    what is running out: only what DNR would redirect WITHOUT one stays in force.
+ */
+async function repeatInForce(
+  settings: NudgeSettings,
+  url: string,
+  now: Date,
+): Promise<RepeatInForce | null> {
+  if (!settings.globalEnabled) return null;
+  const { rule, domain, usageKey } = resolveTarget(settings, url);
+  if (rule === null || rule.repeatPauseMinutes === null) return null;
+
+  // Asked of the budget, not of `verdict.reason`: the predicate reports 'mode-blocks' for a
+  // Delay rule whose limit is spent, and the engine still makes that a Hard Block.
+  const usageMs = await todayUsageMs(usageKey, now);
+  const verdict = siteRuleAppliesNow(rule, usageMs, now);
+  if (!verdict.applies || isOverBudget(rule.dailyLimitMinutes, usageMs)) return null;
+  if (verdict.mode !== 'DELAY' && verdict.mode !== 'BREATHING') return null;
+
+  const gate = gateForPage(rule, url);
+  if (gate !== null) {
+    const key = surfaceKey(domain, gate.definition.id);
+    const gateVerdict = gateAppliesNow(
+      gate.setting,
+      await todayUsageMs(key, now),
+      await todayItemCount(key, now),
+    );
+    if (appliedBlockMode(gateVerdict) !== null) return null;
+  }
+
+  const youtube = rule.features?.youtube;
+  if (youtube !== undefined) {
+    const access = youtubePageAccess({
+      url,
+      domain,
+      youtube,
+      tempAllowed: false,
+      siteApplies: verdict.applies,
+      limitReached: false,
+    });
+    if (access !== 'blocked') return null;
+  }
+
+  return {
+    mode: verdict.mode,
+    delaySeconds: verdict.delaySeconds,
+    everyMinutes: rule.repeatPauseMinutes,
+    domain,
+  };
+}
+
+async function buildRepeatPauseState(url: string, now: Date): Promise<RepeatPauseState> {
+  const repeat = await repeatInForce(await loadSettings(), url, now);
+  if (repeat === null) return { active: false };
+  return {
+    active: true,
+    ...repeat,
+    until: await tempAllowedUntil(repeat.domain, now.getTime()),
   };
 }
 
@@ -351,9 +440,12 @@ async function completePause(target: string, now: Date): Promise<GrantResult> {
     return { ok: false, until: 0, reason: 'hard-block' };
   }
 
+  // A gate's own pause keeps the ordinary grant: `repeatInForce` already answers null on a
+  // surface where a gate is in force, which is exactly when `context` resolved to the gate.
+  const repeat = await repeatInForce(await loadSettings(), target, now);
   const until = await grantTempAllow(
     context.domain,
-    context.tempAllowMinutes,
+    pauseGrantMinutes(repeat?.everyMinutes ?? null, context.tempAllowMinutes),
     now.getTime(),
   );
   return { ok: true, until };
@@ -406,6 +498,7 @@ async function buildPopupState(now: Date): Promise<PopupState> {
   const currentRule = rules[0] ?? null;
   const verdict =
     currentRule === null ? null : siteRuleAppliesNow(currentRule, usedMs, now);
+  const repeat = tab?.url === undefined ? null : await repeatInForce(settings, tab.url, now);
 
   return {
     globalEnabled: settings.globalEnabled,
@@ -420,6 +513,9 @@ async function buildPopupState(now: Date): Promise<PopupState> {
     currentApplies: settings.globalEnabled && (verdict?.applies ?? false),
     currentGrayscale: currentRule?.grayscale ?? false,
     currentFeatureSummary: currentRule === null ? null : featureSummary(currentRule),
+    currentRepeatEveryMinutes: repeat?.everyMinutes ?? null,
+    currentNextPauseAt:
+      repeat === null ? null : await tempAllowedUntil(repeat.domain, now.getTime()),
   };
 }
 
@@ -741,6 +837,45 @@ async function closeSenderTab(sender: chrome.runtime.MessageSender | undefined):
   }
 }
 
+/**
+ * The block page's repeat chooser. Same shape as `setGrayscale`, and routed through
+ * `handleSave` so the Commitment Lock judges it exactly like a save from the rule editor.
+ */
+async function setRepeatPause(
+  target: string,
+  minutes: number | null,
+  challengeResponse: string | undefined,
+  now: Date,
+): Promise<SaveResult> {
+  const settings = await loadSettings();
+  const { rule } = resolveTarget(settings, target);
+  if (rule === null) return { ok: false, reason: 'no-rule' };
+  const next = coerceRepeatPauseMinutes(minutes);
+  if (rule.repeatPauseMinutes === next) return { ok: true };
+  const rules = settings.rules.map((candidate) =>
+    candidate.id === rule.id ? { ...candidate, repeatPauseMinutes: next } : candidate,
+  );
+  return handleSave({ ...settings, rules }, challengeResponse, now);
+}
+
+/**
+ * Send the SENDER's tab to the dashboard. As with `closeSenderTab`, a page can only ever move
+ * itself, and a message from a non-tab context is a refusal rather than an error.
+ */
+async function leaveToDashboard(sender: chrome.runtime.MessageSender | undefined): Promise<{
+  ok: boolean;
+}> {
+  const tabId = sender?.tab?.id;
+  if (tabId === undefined) return { ok: false };
+  try {
+    await chrome.tabs.update(tabId, { url: chrome.runtime.getURL('dashboard.html') });
+    return { ok: true };
+  } catch {
+    // The tab can already be gone. The caller has its own fallback.
+    return { ok: false };
+  }
+}
+
 /** Dispatch one request. Throwing here would hang the caller, so it never throws. */
 export async function handleRequest(
   request: Request,
@@ -824,6 +959,17 @@ export async function handleRequest(
     case 'SYNC_YT_SUBSCRIPTIONS':
       await syncSubscriptions();
       return subscriptionStatus();
+    case 'GET_REPEAT_PAUSE':
+      return buildRepeatPauseState(request.url, now);
+    case 'SET_REPEAT_PAUSE':
+      return setRepeatPause(request.target, request.minutes, request.challengeResponse, now);
+    case 'PAUSE_SHOWN': {
+      const { usageKey } = resolveTarget(await loadSettings(), request.url);
+      if (usageKey !== '') await logBlocked(usageKey, now);
+      return { ok: true };
+    }
+    case 'LEAVE_TO_DASHBOARD':
+      return leaveToDashboard(sender);
     default:
       return { ok: false, reason: 'unknown-request' };
   }
