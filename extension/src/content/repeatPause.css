@@ -1,0 +1,35 @@
+/*
+ * The repeating pause's own rules, added to `platformOverlay.css` inside its shadow root.
+ * Everything else about the overlay's look comes from that file, so it matches every other gate.
+ *
+ * Teal tokens only (ext-07 Brand): dark primary #8BD6C1 on the overlay card's #12201D.
+ */
+
+:host {
+  all: initial;
+}
+
+/* The host passes every click through to the site; the overlay is what takes them back. */
+#nudge-repeat-pause.nudge-overlay {
+  pointer-events: auto;
+}
+
+.nudge-repeat-pill {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  box-sizing: border-box;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(139, 214, 193, 0.24);
+  background: #12201d;
+  color: #8bd6c1;
+  font-family:
+    'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  font-size: 13px;
+  line-height: 1.4;
+  /* The digits change every second; equal widths stop the pill from jittering. */
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: none;
+}

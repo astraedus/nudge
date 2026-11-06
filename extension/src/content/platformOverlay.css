@@ -28,13 +28,16 @@
  * added to `core/platforms.ts` without a matching line added here, which is exactly what
  * `tests/content/overlayStyling.test.ts` exists to catch: it walks the platform registry
  * and asserts every non-YouTube id has a matching `#<id>.nudge-overlay` rule in this file.
+ * `#nudge-repeat-pause` is the seventh: the repeating pause, on any site, imports this file
+ * as a string into its shadow root (`entrypoints/repeatPause.content.ts`).
  */
 #nudge-gate-instagram.nudge-overlay,
 #nudge-gate-tiktok.nudge-overlay,
 #nudge-gate-x.nudge-overlay,
 #nudge-gate-facebook.nudge-overlay,
 #nudge-gate-reddit.nudge-overlay,
-#nudge-gate-linkedin.nudge-overlay {
+#nudge-gate-linkedin.nudge-overlay,
+#nudge-repeat-pause.nudge-overlay {
   position: fixed;
   inset: 0;
   z-index: 2147483647; /* above the platform's own full-screen layers (video players, modals) */

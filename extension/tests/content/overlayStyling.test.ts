@@ -20,10 +20,16 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { PLATFORMS } from '../../src/core/platforms';
 import { overlayIdFor } from '../../src/content/overlay';
+import { REPEAT_PAUSE_OVERLAY_ID } from '../../src/content/repeatPause';
 import { NUDGE_OVERLAY_ID } from '../../src/content/selectors';
 
 const PLATFORM_OVERLAY_CSS = readFileSync(
   fileURLToPath(new URL('../../src/content/platformOverlay.css', import.meta.url)),
+  'utf-8',
+);
+
+const REPEAT_PAUSE_CSS = readFileSync(
+  fileURLToPath(new URL('../../src/content/repeatPause.css', import.meta.url)),
   'utf-8',
 );
 
@@ -59,6 +65,17 @@ describe("every platform's interstitial gets a full-screen backdrop rule that ac
 
   it("YouTube's NUDGE_OVERLAY_ID has a matching root rule in youtube.css", () => {
     expect(hasOverlayRootRule(YOUTUBE_CSS, NUDGE_OVERLAY_ID)).toBe(true);
+  });
+
+  it("the repeating pause's overlay id has a matching root rule in platformOverlay.css", () => {
+    expect(hasOverlayRootRule(PLATFORM_OVERLAY_CSS, REPEAT_PAUSE_OVERLAY_ID)).toBe(true);
+  });
+
+  it('the repeating pause turns clicks back on for its overlay, under a host that passes them through', () => {
+    // Without this the pause is visible and "I changed my mind" cannot be pressed.
+    expect(REPEAT_PAUSE_CSS).toMatch(
+      new RegExp(`#${REPEAT_PAUSE_OVERLAY_ID}\\.nudge-overlay\\s*\\{\\s*pointer-events:\\s*auto`),
+    );
   });
 
   it('does NOT match a bogus id (proves the matcher can actually fail)', () => {
