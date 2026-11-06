@@ -390,6 +390,12 @@ export interface SiteConfig {
    * the GATES never do, see the note in `buildSiteConfig`.
    */
   tempAllowedUntil: number | null;
+  /**
+   * A repeating pause is in force on this page, so a grant running out is its business: the
+   * YouTube page gate stands down rather than reload the page and lose the video's position.
+   * The worker's `repeatInForce` for this URL, the same answer `GET_REPEAT_PAUSE` gives.
+   */
+  repeatPauseInForce: boolean;
   grayscale: boolean;
   gates: ResolvedGate[];
   hides: Partial<Record<HideId, boolean>>;

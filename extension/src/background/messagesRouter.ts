@@ -637,6 +637,7 @@ async function buildSiteConfig(url: string, now: Date): Promise<SiteConfig> {
       siteApplies: false,
       siteLimitReached: false,
       tempAllowedUntil: null,
+      repeatPauseInForce: false,
       grayscale: false,
       gates: [],
       hides: {},
@@ -687,6 +688,7 @@ async function buildSiteConfig(url: string, now: Date): Promise<SiteConfig> {
     // Read by the YouTube page gate ONLY (in-SPA navigation off a carve-out), never by a
     // gate: see the note above `gates`.
     tempAllowedUntil: await tempAllowedUntil(domain, now.getTime()),
+    repeatPauseInForce: (await repeatInForce(settings, url, now)) !== null,
     grayscale: rule.grayscale,
     gates,
     hides: features?.hides ?? {},

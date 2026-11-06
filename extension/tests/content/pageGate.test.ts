@@ -8,7 +8,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { decidePageGate, type PageGateAction } from '../../src/content/youtube';
+import { decidePageGate, type PageGateAction, type PageGateInput } from '../../src/content/youtube';
 import type { YoutubePageAccess } from '../../src/core/youtubeAccess';
 
 const ACCESSES: readonly YoutubePageAccess[] = ['open', 'creator', 'carved', 'verify', 'blocked'];
@@ -21,7 +21,7 @@ describe('the page gate', () => {
       for (const configIsCurrent of BOOLS) {
         for (const coldLoad of BOOLS) {
           for (const legacyListed of LISTED) {
-            expect(decidePageGate({ access, configIsCurrent, coldLoad, legacyListed })).toBe('none');
+            expect(decidePageGate({ access, configIsCurrent, coldLoad, legacyListed, repeatPauseInForce: false })).toBe('none');
           }
         }
       }
@@ -32,7 +32,7 @@ describe('the page gate', () => {
     for (const configIsCurrent of BOOLS) {
       for (const legacyListed of LISTED) {
         expect(
-          decidePageGate({ access: 'blocked', configIsCurrent, coldLoad: true, legacyListed }),
+          decidePageGate({ access: 'blocked', configIsCurrent, coldLoad: true, legacyListed, repeatPauseInForce: false }),
         ).toBe('canary');
       }
     }
@@ -41,7 +41,7 @@ describe('the page gate', () => {
   it('hands a refused page reached by an in-page hop to the network layer, once the config is current', () => {
     for (const legacyListed of LISTED) {
       expect(
-        decidePageGate({ access: 'blocked', configIsCurrent: true, coldLoad: false, legacyListed }),
+        decidePageGate({ access: 'blocked', configIsCurrent: true, coldLoad: false, legacyListed, repeatPauseInForce: false }),
       ).toBe('hand-to-network');
     }
   });
@@ -49,7 +49,7 @@ describe('the page gate', () => {
   it('waits on a refused in-page hop while the config in hand is for another page', () => {
     for (const legacyListed of LISTED) {
       expect(
-        decidePageGate({ access: 'blocked', configIsCurrent: false, coldLoad: false, legacyListed }),
+        decidePageGate({ access: 'blocked', configIsCurrent: false, coldLoad: false, legacyListed, repeatPauseInForce: false }),
       ).toBe('wait');
     }
   });
@@ -59,7 +59,7 @@ describe('the page gate', () => {
       for (const coldLoad of BOOLS) {
         for (const legacyListed of LISTED) {
           expect(
-            decidePageGate({ access: 'verify', configIsCurrent: false, coldLoad, legacyListed }),
+            decidePageGate({ access: 'verify', configIsCurrent: false, coldLoad, legacyListed, repeatPauseInForce: false }),
           ).toBe('wait');
         }
       }
@@ -68,22 +68,59 @@ describe('the page gate', () => {
     it('reloads after an in-page hop, because the inline metadata is the previous page\'s', () => {
       for (const legacyListed of LISTED) {
         expect(
-          decidePageGate({ access: 'verify', configIsCurrent: true, coldLoad: false, legacyListed }),
+          decidePageGate({ access: 'verify', configIsCurrent: true, coldLoad: false, legacyListed, repeatPauseInForce: false }),
         ).toBe('hand-to-network');
       }
     });
 
     it('lets a full load through when its own metadata names a listed channel', () => {
       expect(
-        decidePageGate({ access: 'verify', configIsCurrent: true, coldLoad: true, legacyListed: true }),
+        decidePageGate({ access: 'verify', configIsCurrent: true, coldLoad: true, legacyListed: true, repeatPauseInForce: false }),
       ).toBe('none');
     });
 
     it('refuses a full load whose channel is not listed, or cannot be told', () => {
       for (const legacyListed of [false, null] as const) {
         expect(
-          decidePageGate({ access: 'verify', configIsCurrent: true, coldLoad: true, legacyListed }),
+          decidePageGate({ access: 'verify', configIsCurrent: true, coldLoad: true, legacyListed, repeatPauseInForce: false }),
         ).toBe('refuse');
+      }
+    });
+  });
+
+  describe('with a repeating pause in force', () => {
+    function everyCircumstance(): Omit<PageGateInput, 'repeatPauseInForce'>[] {
+      return ACCESSES.flatMap((access) =>
+        BOOLS.flatMap((configIsCurrent) =>
+          BOOLS.flatMap((coldLoad) =>
+            LISTED.map((legacyListed) => ({ access, configIsCurrent, coldLoad, legacyListed })),
+          ),
+        ),
+      );
+    }
+
+    it('stands down on a refused page reached by a hop: the pause comes up in place, with the video where it was', () => {
+      for (const legacyListed of LISTED) {
+        expect(
+          decidePageGate({
+            access: 'blocked',
+            configIsCurrent: true,
+            coldLoad: false,
+            legacyListed,
+            repeatPauseInForce: true,
+          }),
+        ).toBe('none');
+      }
+    });
+
+    it('changes no other answer: a stale config still waits, a full load only logs, and verify keeps its own', () => {
+      for (const input of everyCircumstance()) {
+        const standsDown =
+          input.access === 'blocked' && input.configIsCurrent && !input.coldLoad;
+        const without = decidePageGate({ ...input, repeatPauseInForce: false });
+        expect(decidePageGate({ ...input, repeatPauseInForce: true })).toBe(
+          standsDown ? 'none' : without,
+        );
       }
     });
   });
@@ -94,9 +131,11 @@ describe('the page gate', () => {
       for (const configIsCurrent of BOOLS) {
         for (const coldLoad of BOOLS) {
           for (const legacyListed of LISTED) {
-            expect(known).toContain(
-              decidePageGate({ access, configIsCurrent, coldLoad, legacyListed }),
-            );
+            for (const repeatPauseInForce of BOOLS) {
+              expect(known).toContain(
+                decidePageGate({ access, configIsCurrent, coldLoad, legacyListed, repeatPauseInForce }),
+              );
+            }
           }
         }
       }

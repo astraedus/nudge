@@ -36,6 +36,7 @@ function configWith(overrides: Partial<SiteConfig>): SiteConfig {
     siteApplies: false,
     siteLimitReached: false,
     tempAllowedUntil: null,
+    repeatPauseInForce: false,
     grayscale: false,
     gates: [],
     hides: {},

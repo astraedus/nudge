@@ -11,7 +11,7 @@ import {
   saveSettings,
   saveTempAllow,
 } from '../../src/background/storage';
-import type { BlockContext, PopupState, RepeatPauseState } from '../../src/core/protocol';
+import type { BlockContext, PopupState, RepeatPauseState, SiteConfig } from '../../src/core/protocol';
 import type { NudgeSettings } from '../../src/core/settingsSchema';
 import { featuresWith, scheduleOverride, settings, siteRule } from '../helpers/rules';
 import {
@@ -662,5 +662,132 @@ describe('BlockContext and PopupState', () => {
     await seed(settings({ rules: [repeatRule()] }));
     await saveTempAllow({ 'news.test': NOW.getTime() - 1 });
     expect(await state()).toMatchObject({ active: true, until: null });
+  });
+});
+
+describe('GET_SITE_CONFIG tells the page a repeat is in force', () => {
+  const YOUTUBE_HOME = 'https://www.youtube.com/';
+  const WATCH = 'https://www.youtube.com/watch?v=abc';
+
+  function channelList() {
+    return siteRule({
+      id: 'yt',
+      domain: 'youtube.com',
+      mode: 'DELAY',
+      repeatPauseMinutes: 10,
+      features: featuresWith('youtube', {
+        youtube: { channelMode: 'WHITELIST', channels: [ALLOWED_CHANNEL] },
+      }),
+    });
+  }
+
+  function shortsGate() {
+    return siteRule({
+      id: 'yt',
+      domain: 'youtube.com',
+      mode: 'DELAY',
+      repeatPauseMinutes: 10,
+      features: featuresWith('youtube', {
+        gates: { shorts: { mode: 'DELAY', delaySeconds: 5 } },
+      }),
+    });
+  }
+
+  const CASES: readonly {
+    name: string;
+    url: string;
+    inForce: boolean;
+    given: () => Promise<unknown>;
+  }[] = [
+    {
+      name: 'a refused page on a rule with a repeat',
+      url: URL_ON_SITE,
+      inForce: true,
+      given: () => seed(settings({ rules: [repeatRule()] })),
+    },
+    {
+      name: 'the same page during a grant, so the answer does not move when it ends',
+      url: URL_ON_SITE,
+      inForce: true,
+      given: async () => {
+        await seed(settings({ rules: [repeatRule()] }));
+        await saveTempAllow({ 'news.test': NOW.getTime() + 60_000 });
+      },
+    },
+    {
+      name: 'the home feed under a channel list',
+      url: YOUTUBE_HOME,
+      inForce: true,
+      given: () => seed(settings({ rules: [channelList()] })),
+    },
+    {
+      name: 'a video the channel gate has served',
+      url: WATCH,
+      inForce: true,
+      given: async () => {
+        await seed(settings({ rules: [channelList()] }));
+        await ask({ type: 'CHANNEL_PAUSE_DONE', url: WATCH });
+      },
+    },
+    {
+      name: 'a rule with no repeat set',
+      url: URL_ON_SITE,
+      inForce: false,
+      given: () => seed(settings({ rules: [repeatRule({ repeatPauseMinutes: null })] })),
+    },
+    {
+      name: 'Nudge turned off',
+      url: URL_ON_SITE,
+      inForce: false,
+      given: () => seed(settings({ globalEnabled: false, rules: [repeatRule()] })),
+    },
+    {
+      name: 'a spent budget',
+      url: URL_ON_SITE,
+      inForce: false,
+      given: async () => {
+        await seed(settings({ rules: [repeatRule({ dailyLimitMinutes: 10 })] }));
+        await saveDay(localDayKey(NOW), {
+          'news.test': { ...emptyDayUsage(), activeSec: 11 * 60 },
+        });
+      },
+    },
+    {
+      name: 'a Hard Block',
+      url: URL_ON_SITE,
+      inForce: false,
+      given: () => seed(settings({ rules: [repeatRule({ mode: 'HARD_BLOCK' })] })),
+    },
+    {
+      name: 'an Allow rule',
+      url: URL_ON_SITE,
+      inForce: false,
+      given: () => seed(settings({ rules: [repeatRule({ mode: 'ALLOW' })] })),
+    },
+    {
+      name: 'a page with a gate in force',
+      url: 'https://www.youtube.com/shorts/abc',
+      inForce: false,
+      given: () => seed(settings({ rules: [shortsGate()] })),
+    },
+    {
+      name: 'an allowed channel',
+      url: 'https://www.youtube.com/@allowed',
+      inForce: false,
+      given: () => seed(settings({ rules: [channelList()] })),
+    },
+    {
+      name: 'a video with no clock, which the channel check answers',
+      url: WATCH,
+      inForce: false,
+      given: () => seed(settings({ rules: [channelList()] })),
+    },
+  ];
+
+  it.each(CASES)('$inForce on $name, the same answer the timer gets', async ({ url, inForce, given }) => {
+    await given();
+    const config = await ask<SiteConfig>({ type: 'GET_SITE_CONFIG', url });
+    expect(config.repeatPauseInForce).toBe(inForce);
+    expect((await state(url)).active).toBe(inForce);
   });
 });

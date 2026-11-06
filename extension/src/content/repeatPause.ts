@@ -50,6 +50,8 @@ const FOREIGN_GATE_SELECTOR = `#${NUDGE_OVERLAY_ID}, .nudge-overlay`;
  * every tick and a "due" does not count.
  */
 const AFTER_GATE_MS = 3000;
+/** Lifts the pill clear of a video player's control bar. Rule in `repeatPause.css`. */
+export const PILL_FULLSCREEN_CLASS = 'nudge-repeat-pill--fullscreen';
 
 type Send = <T extends Request>(request: T) => Promise<ResponseFor<T['type']>>;
 
@@ -152,6 +154,11 @@ export function initRepeatPause(options: RepeatPauseOptions): RepeatPauseControl
     // Deliberately not an aria-live region: it would announce every second.
     const text = nextPauseLabel(until - now());
     if (pill.textContent !== text) pill.textContent = text;
+    placePill();
+  }
+
+  function placePill(): void {
+    pill?.classList.toggle(PILL_FULLSCREEN_CLASS, Boolean(doc.fullscreenElement));
   }
 
   function exitFullscreen(): void {
@@ -318,6 +325,7 @@ export function initRepeatPause(options: RepeatPauseOptions): RepeatPauseControl
 
   const onFullscreen = (): void => {
     host?.raise();
+    placePill();
     if (overlay !== null) exitFullscreen();
   };
 

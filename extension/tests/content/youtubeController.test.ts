@@ -93,6 +93,7 @@ function whitelistConfig(overrides: { grayscale?: boolean } = {}): SiteConfig {
     siteApplies: false,
     siteLimitReached: false,
     tempAllowedUntil: null,
+    repeatPauseInForce: false,
     grayscale: overrides.grayscale === true,
     gates: [],
     hides: {},

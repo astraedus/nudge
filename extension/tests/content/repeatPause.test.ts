@@ -2,7 +2,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { GrantResult, RepeatPauseState, Request } from '../../src/core/protocol';
-import { initRepeatPause, REPEAT_PAUSE_OVERLAY_ID } from '../../src/content/repeatPause';
+import {
+  initRepeatPause,
+  PILL_FULLSCREEN_CLASS,
+  REPEAT_PAUSE_OVERLAY_ID,
+} from '../../src/content/repeatPause';
 import type { RepeatPauseController } from '../../src/content/repeatPause';
 import { REPEAT_PAUSE_HOST_TAG } from '../../src/content/repeatPauseHost';
 
@@ -521,6 +525,46 @@ describe('fullscreen', () => {
     start();
     await advance(0);
     expect(pillText()).not.toBeNull();
+  });
+
+  describe('the pill clears a player\'s controls', () => {
+    function setFullscreen(element: Element | null): void {
+      Object.defineProperty(document, 'fullscreenElement', {
+        configurable: true,
+        get: () => element,
+      });
+    }
+    function pillIsLifted(): boolean {
+      const pill = root()?.querySelector('.nudge-repeat-pill');
+      if (!pill) throw new Error('no pill');
+      return pill.classList.contains(PILL_FULLSCREEN_CLASS);
+    }
+
+    beforeEach(() => setFullscreen(null));
+    afterEach(() => {
+      delete (document as unknown as Record<string, unknown>).fullscreenElement;
+    });
+
+    it('while fullscreen, and back again on the way out', async () => {
+      start();
+      await advance(0);
+      expect(pillIsLifted()).toBe(false);
+
+      setFullscreen(document.body);
+      document.dispatchEvent(new Event('fullscreenchange'));
+      expect(pillIsLifted()).toBe(true);
+
+      setFullscreen(null);
+      document.dispatchEvent(new Event('fullscreenchange'));
+      expect(pillIsLifted()).toBe(false);
+    });
+
+    it('when the pill first appears inside fullscreen', async () => {
+      setFullscreen(document.body);
+      start();
+      await advance(0);
+      expect(pillIsLifted()).toBe(true);
+    });
   });
 });
 

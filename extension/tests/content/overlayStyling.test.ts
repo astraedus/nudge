@@ -20,7 +20,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { PLATFORMS } from '../../src/core/platforms';
 import { overlayIdFor } from '../../src/content/overlay';
-import { REPEAT_PAUSE_OVERLAY_ID } from '../../src/content/repeatPause';
+import { PILL_FULLSCREEN_CLASS, REPEAT_PAUSE_OVERLAY_ID } from '../../src/content/repeatPause';
 import { NUDGE_OVERLAY_ID } from '../../src/content/selectors';
 
 const PLATFORM_OVERLAY_CSS = readFileSync(
@@ -76,6 +76,14 @@ describe("every platform's interstitial gets a full-screen backdrop rule that ac
     expect(REPEAT_PAUSE_CSS).toMatch(
       new RegExp(`#${REPEAT_PAUSE_OVERLAY_ID}\\.nudge-overlay\\s*\\{\\s*pointer-events:\\s*auto`),
     );
+  });
+
+  it('lifts the repeat pill clear of a player control bar while fullscreen', () => {
+    // The class is set from TypeScript and means nothing without this rule.
+    const lifted = new RegExp(`\\.${PILL_FULLSCREEN_CLASS}\\s*\\{\\s*bottom:\\s*(\\d+)px`).exec(
+      REPEAT_PAUSE_CSS,
+    );
+    expect(Number(lifted?.[1])).toBeGreaterThanOrEqual(64);
   });
 
   it('does NOT match a bogus id (proves the matcher can actually fail)', () => {
