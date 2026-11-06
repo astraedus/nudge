@@ -251,6 +251,24 @@ class NudgeDatabaseMigrationTest {
     }
 
     @Test
+    fun `MIGRATION_15_16 adds the first-unlock window and the arming stamp, inert for every existing rule`() {
+        val db = RecordingDatabase()
+
+        NudgeDatabase.MIGRATION_15_16.migrate(db.proxy)
+
+        // NULL means "not a first-unlock rule": an upgraded rule keeps its days-and-times schedule
+        // exactly. A default of 0 minutes would make every rule's window already over, and a
+        // non-zero default would silently turn rules into morning blocks.
+        assertEquals(
+            listOf(
+                "ALTER TABLE block_rules ADD COLUMN firstUnlockMinutes INTEGER DEFAULT NULL",
+                "ALTER TABLE block_rules ADD COLUMN armedAt INTEGER NOT NULL DEFAULT 0"
+            ),
+            db.sql
+        )
+    }
+
+    @Test
     fun `every migration NudgeDatabase declares is registered in DatabaseModule`() {
         // The list in the test below is hand-kept, so it cannot see DatabaseModule. This reads both
         // sources: a migration declared but not passed to addMigrations() is a crash on upgrade
@@ -285,7 +303,8 @@ class NudgeDatabaseMigrationTest {
             NudgeDatabase.MIGRATION_11_12,
             NudgeDatabase.MIGRATION_12_13,
             NudgeDatabase.MIGRATION_13_14,
-            NudgeDatabase.MIGRATION_14_15
+            NudgeDatabase.MIGRATION_14_15,
+            NudgeDatabase.MIGRATION_15_16
         )
 
         // Read from production, not hand-typed: a hand-kept constant here is exactly the

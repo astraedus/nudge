@@ -3,9 +3,11 @@ package com.astraedus.nudge.ui.screens.allapps
 import com.astraedus.nudge.data.db.entity.BlockRule
 import com.astraedus.nudge.data.repository.target
 import com.astraedus.nudge.domain.model.BlockMode
+import com.astraedus.nudge.ui.screens.groups.GroupRuleForm
 import com.astraedus.nudge.domain.model.ExceptCsv
 import com.astraedus.nudge.domain.model.RuleTarget
 import com.astraedus.nudge.testing.aBlockRule
+import com.astraedus.nudge.ui.components.rule.ScheduleKind
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -60,11 +62,42 @@ class AllAppsFormTest {
 
     @Test
     fun `only all the time with Hard block, while on, asks before saving`() {
-        for (mode in BlockMode.entries) for (scheduled in listOf(false, true)) for (enabled in listOf(false, true)) {
-            val form = AllAppsForm(enabled = enabled, mode = mode, scheduled = scheduled)
-            val expected = enabled && !scheduled && mode == BlockMode.HARD_BLOCK
-            assertEquals("$mode scheduled=$scheduled enabled=$enabled", expected, form.confirmsOnSave)
+        for (mode in BlockMode.entries) {
+            for (scheduled in listOf(false, true)) {
+                for (firstUnlock in listOf(false, true)) {
+                    for (enabled in listOf(false, true)) {
+                        val form = AllAppsForm(
+                            enabled = enabled,
+                            mode = mode,
+                            scheduled = scheduled,
+                            firstUnlock = firstUnlock
+                        )
+                        // A first-unlock rule is not "all the time", so that question would be a lie.
+                        val expected = enabled && !scheduled && !firstUnlock &&
+                            mode == BlockMode.HARD_BLOCK
+                        assertEquals(
+                            "$mode scheduled=$scheduled firstUnlock=$firstUnlock enabled=$enabled",
+                            expected,
+                            form.confirmsOnSave
+                        )
+                    }
+                }
+            }
         }
+    }
+
+    @Test
+    fun `a new rule switched to first unlock selects every day`() {
+        assertEquals(
+            GroupRuleForm.ALL_DAYS,
+            AllAppsForm().withKind(ScheduleKind.FIRST_UNLOCK).scheduleDays
+        )
+        assertEquals(
+            setOf(6, 7),
+            AllAppsForm(daysTouched = true, scheduleDays = setOf(6, 7))
+                .withKind(ScheduleKind.FIRST_UNLOCK)
+                .scheduleDays
+        )
     }
 
     @Test
@@ -156,6 +189,53 @@ class AllAppsFormTest {
         assertNull(always.scheduleDays)
         assertNull(always.scheduleStartMinute)
         assertNull(always.scheduleEndMinute)
+    }
+
+    @Test
+    fun `after first unlock writes firstUnlockMinutes and clears the time window`() {
+        val rule = AllAppsForm(
+            firstUnlock = true,
+            firstUnlockMinutes = 30,
+            scheduleDays = setOf(1, 2, 3, 4, 5),
+            startMinute = 540,
+            endMinute = 1020
+        ).toRule(null, emptyList(), emptyList())
+        assertEquals(30, rule.firstUnlockMinutes)
+        assertNull(rule.scheduleStartMinute)
+        assertNull(rule.scheduleEndMinute)
+    }
+
+    @Test
+    fun `days and times writes the window and clears firstUnlockMinutes`() {
+        val rule = AllAppsForm(
+            scheduled = true,
+            scheduleDays = setOf(5, 1),
+            startMinute = 480,
+            endMinute = 960,
+            firstUnlockMinutes = 45
+        ).toRule(null, emptyList(), emptyList())
+        assertEquals("1,5", rule.scheduleDays)
+        assertEquals(480, rule.scheduleStartMinute)
+        assertEquals(960, rule.scheduleEndMinute)
+        assertNull(rule.firstUnlockMinutes)
+    }
+
+    @Test
+    fun `from round-trips both days and times and first unlock`() {
+        val daysTimes = saved(
+            mode = BlockMode.HARD_BLOCK,
+            scheduleDays = "1,3,5",
+            start = 540,
+            end = 1020
+        )
+        val firstUnlock = saved(mode = BlockMode.HARD_BLOCK)
+            .copy(firstUnlockMinutes = 60, scheduleDays = "2,4")
+
+        assertFalse(AllAppsForm.from(daysTimes).firstUnlock)
+        assertEquals(daysTimes, daysTimes.edited())
+
+        assertTrue(AllAppsForm.from(firstUnlock).firstUnlock)
+        assertEquals(firstUnlock, firstUnlock.edited())
     }
 
     // --- Strict Mode ---

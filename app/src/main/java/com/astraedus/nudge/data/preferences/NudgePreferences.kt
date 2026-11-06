@@ -11,6 +11,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.astraedus.nudge.data.export.ExportedSettings
+import com.astraedus.nudge.domain.engine.FirstUnlockWindow
 import com.astraedus.nudge.domain.ContentFilterAllowlist
 import com.astraedus.nudge.domain.ContentFilterBlocklist
 import com.astraedus.nudge.domain.ContentFilterUserList
@@ -67,6 +68,11 @@ class NudgePreferences internal constructor(
         val PIP_ESCAPE_PROMPTED = stringPreferencesKey("pip_escape_prompted")
         val PROTECTION_DEGRADED = booleanPreferencesKey("protection_degraded")
         val PROTECTION_ALERT_SHOWN_AT = longPreferencesKey("protection_alert_shown_at")
+
+        // First-unlock schedules (spec 5.1). DAY_START_MINUTE is a user setting a backup carries;
+        // FIRST_UNLOCK_AT is a fact about this phone's day, never exported.
+        val DAY_START_MINUTE = intPreferencesKey("day_start_minute")
+        val FIRST_UNLOCK_AT = longPreferencesKey("first_unlock_at")
 
         // Nuke Mode (docs/architecture/nuke-mode.md). DEVICE-LOCAL, like the emergency-pass
         // ledger: never exported, never importable (pinned by ImportedSettingsWriteContractTest).
@@ -524,6 +530,80 @@ class NudgePreferences internal constructor(
         dataStore.edit { prefs -> RedirectAppPref.write(prefs, packageName) }
     }
 
+    // --- First-unlock schedules (spec 5.1, PR 5b) ------------------------------------------
+
+    /**
+     * The hour the logical day starts, in minutes from midnight. Default 240 = 4:00 AM, so a 2:00 AM
+     * unlock still belongs to the evening before (spec 3.5).
+     *
+     * ONE setting for the whole app, because there is only one "first unlock of the day". It is
+     * edited where first-unlock rules are made (the "New day starts at" row), not in Settings.
+     *
+     * `distinctUntilChanged` for the same reason as [isGlobalEnabled]: the service collects this and
+     * DataStore re-emits on every write to any key.
+     */
+    val dayStartMinute: Flow<Int> = dataStore.data
+        .map { prefs -> prefs[Keys.DAY_START_MINUTE] ?: FirstUnlockWindow.DEFAULT_DAY_START_MINUTE }
+        .distinctUntilChanged()
+
+    suspend fun setDayStartMinute(minute: Int) {
+        dataStore.edit { prefs -> prefs[Keys.DAY_START_MINUTE] = minute }
+    }
+
+    /**
+     * Wall-clock ms of the first unlock of the current logical day, or 0 for "none yet".
+     *
+     * Written by the accessibility service on `ACTION_USER_PRESENT` (or the app-window fallback) and
+     * read only through `FirstUnlockStateCache`, which keeps it in memory for the event path. Device
+     * local on purpose: it describes this phone's morning, so an export neither carries it nor
+     * restores it (spec 5.8). Including it would let a backup from another timezone claim a window
+     * the user never unlocked into.
+     */
+    val firstUnlockAt: Flow<Long> = dataStore.data
+        .map { prefs -> prefs[Keys.FIRST_UNLOCK_AT] ?: FirstUnlockWindow.NO_STAMP }
+        .distinctUntilChanged()
+
+    suspend fun setFirstUnlockAt(stampMs: Long) {
+        dataStore.edit { prefs -> prefs[Keys.FIRST_UNLOCK_AT] = stampMs }
+    }
+
+    /**
+     * Keep or set the day's first-unlock stamp, as ONE atomic read-compare-write (spec 5.3).
+     *
+     * Read-then-write was the first shape and review caught what it costs: `FirstUnlockStateCache`
+     * starts at [FirstUnlockWindow.NO_STAMP] and only learns the stored value once DataStore emits,
+     * so the first unlock after a process restart (a Play update, a crash, the system killing the
+     * service) compared against `0`, wrote `now`, and opened a surprise mid-afternoon window. Two
+     * recorders in the same moment could also both decide to write. Doing the comparison inside
+     * `edit` means the decision sees the stored stamp always, and DataStore's serialised writes make
+     * it a single step.
+     *
+     * Returns what is now stored plus which of the two happened, so the caller can log it and heal
+     * its in-memory copy without a second read.
+     */
+    suspend fun recordFirstUnlock(
+        nowMs: Long,
+        zone: java.time.ZoneId = java.time.ZoneId.systemDefault()
+    ): FirstUnlockStamp {
+        var result = FirstUnlockStamp(
+            stampMs = FirstUnlockWindow.NO_STAMP,
+            dayStartMinute = FirstUnlockWindow.DEFAULT_DAY_START_MINUTE,
+            written = false
+        )
+        dataStore.edit { prefs ->
+            val dayStart = prefs[Keys.DAY_START_MINUTE]
+                ?: FirstUnlockWindow.DEFAULT_DAY_START_MINUTE
+            val current = prefs[Keys.FIRST_UNLOCK_AT] ?: FirstUnlockWindow.NO_STAMP
+            result = if (FirstUnlockWindow.shouldStamp(nowMs, current, dayStart, zone)) {
+                prefs[Keys.FIRST_UNLOCK_AT] = nowMs
+                FirstUnlockStamp(stampMs = nowMs, dayStartMinute = dayStart, written = true)
+            } else {
+                FirstUnlockStamp(stampMs = current, dayStartMinute = dayStart, written = false)
+            }
+        }
+        return result
+    }
+
     // --- Backup: the settings an export file carries (see [ExportedSettings]) ---------------
 
     /**
@@ -550,7 +630,8 @@ class NudgePreferences internal constructor(
         phoneNudgePauseSeconds = phoneNudgePauseSeconds.first(),
         customDelayTitles = customDelayTitles.first(),
         customDelaySubtitles = customDelaySubtitles.first(),
-        customHardBlockMessages = customHardBlockMessages.first()
+        customHardBlockMessages = customHardBlockMessages.first(),
+        dayStartMinute = dayStartMinute.first()
     )
 
     /**
@@ -597,6 +678,19 @@ class NudgePreferences internal constructor(
             settings.customDelayTitles?.let { prefs[Keys.CUSTOM_DELAY_TITLES] = it }
             settings.customDelaySubtitles?.let { prefs[Keys.CUSTOM_DELAY_SUBTITLES] = it }
             settings.customHardBlockMessages?.let { prefs[Keys.CUSTOM_HARD_BLOCK_MESSAGES] = it }
+            // A backup restores the day the user had, not this phone's. Import is gated when an
+            // enabled first-unlock rule exists (ImportedSettingsWeakening).
+            settings.dayStartMinute?.let { prefs[Keys.DAY_START_MINUTE] = it }
         }
     }
 }
+
+/**
+ * The outcome of [NudgePreferences.recordFirstUnlock]: the stamp now stored, the day start it was
+ * judged against, and whether this call wrote it.
+ */
+data class FirstUnlockStamp(
+    val stampMs: Long,
+    val dayStartMinute: Int,
+    val written: Boolean
+)

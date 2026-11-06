@@ -31,6 +31,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -41,8 +44,10 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -61,7 +66,9 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import com.astraedus.nudge.ui.components.TonalIcon
 import com.astraedus.nudge.ui.components.rule.AllAppsIcon
 import com.astraedus.nudge.ui.components.rule.BlockModeSegmentedRow
+import com.astraedus.nudge.ui.components.rule.FirstUnlockFields
 import com.astraedus.nudge.ui.components.rule.DailyLimitChips
+import com.astraedus.nudge.ui.components.rule.DayStartDialog
 import com.astraedus.nudge.ui.components.rule.InfoButton
 import com.astraedus.nudge.ui.components.rule.ScheduleSection
 import com.astraedus.nudge.ui.components.rule.WaitTimeChips
@@ -85,6 +92,7 @@ fun UnifiedAppConfigScreen(
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+    var showDayStartDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(state.isSaved) {
         if (state.isSaved) onNavigateBack()
@@ -724,38 +732,83 @@ fun UnifiedAppConfigScreen(
             }
 
             if (state.scheduledOverrideEnabled) {
-                ScheduleSection(
-                    days = state.scheduleDays,
-                    onDaysChange = viewModel::setScheduleDays,
-                    startHour = state.scheduleStartHour,
-                    startMinute = state.scheduleStartMinute,
-                    onStartTimeChange = viewModel::setScheduleStartTime,
-                    endHour = state.scheduleEndHour,
-                    endMinute = state.scheduleEndMinute,
-                    onEndTimeChange = viewModel::setScheduleEndTime,
-                    mode = state.scheduledMode,
-                    onModeChange = viewModel::setScheduledMode,
-                    waitSeconds = state.scheduledDelaySeconds,
-                    onWaitSecondsChange = viewModel::setScheduledDelaySeconds
-                ) {
-                    // Scheduled feature overrides
-                    if (state.supportsFeatures) {
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            "Feature overrides during schedule",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Medium
-                        )
-                        state.availableFeatures.forEach { feature ->
-                            FeatureOverrideCard(
-                                featureName = feature.displayName,
-                                override = state.scheduledFeatureOverrides[feature.key]
-                                    ?: FeatureOverride(),
-                                onUpdate = { viewModel.setScheduledFeatureOverride(feature.key, it) }
+                val scheduleKinds = listOf(
+                    "Days and times" to false,
+                    "After first unlock" to true
+                )
+                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                    scheduleKinds.forEachIndexed { index, (label, isFirstUnlock) ->
+                        SegmentedButton(
+                            selected = state.scheduledOverrideFirstUnlock == isFirstUnlock,
+                            onClick = { viewModel.setScheduledOverrideFirstUnlock(isFirstUnlock) },
+                            shape = SegmentedButtonDefaults.itemShape(
+                                index = index,
+                                count = scheduleKinds.size
                             )
+                        ) {
+                            Text(label)
                         }
                     }
                 }
+
+                if (!state.scheduledOverrideFirstUnlock) {
+                    ScheduleSection(
+                        days = state.scheduleDays,
+                        onDaysChange = viewModel::setScheduleDays,
+                        startHour = state.scheduleStartHour,
+                        startMinute = state.scheduleStartMinute,
+                        onStartTimeChange = viewModel::setScheduleStartTime,
+                        endHour = state.scheduleEndHour,
+                        endMinute = state.scheduleEndMinute,
+                        onEndTimeChange = viewModel::setScheduleEndTime,
+                        mode = state.scheduledMode,
+                        onModeChange = viewModel::setScheduledMode,
+                        waitSeconds = state.scheduledDelaySeconds,
+                        onWaitSecondsChange = viewModel::setScheduledDelaySeconds
+                    ) {
+                        ScheduledFeatureOverridesSection(
+                            state = state,
+                            onUpdate = viewModel::setScheduledFeatureOverride
+                        )
+                    }
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                        BlockModeSegmentedRow(
+                            selected = state.scheduledMode,
+                            onSelect = viewModel::setScheduledMode
+                        )
+                        if (state.scheduledMode != BlockMode.HARD_BLOCK) {
+                            WaitTimeChips(
+                                seconds = state.scheduledDelaySeconds,
+                                onSelect = viewModel::setScheduledDelaySeconds,
+                                customDialogTitle = "Custom ${state.delayDurationLabel}"
+                            )
+                        }
+                        // The same layout the group and All apps editors use, labels to the
+                        // left: one first-unlock row for all three editors (review should-fix 3).
+                        FirstUnlockFields(
+                            days = state.scheduleDays,
+                            onDaysChange = viewModel::setScheduleDays,
+                            firstUnlockMinutes = state.firstUnlockMinutes,
+                            onFirstUnlockMinutesChange = viewModel::setFirstUnlockMinutes,
+                            dayStartMinute = state.dayStartMinute,
+                            onDayStartClick = { showDayStartDialog = true },
+                            startsAtNextUnlock = state.startsAtNextUnlock
+                        )
+                        ScheduledFeatureOverridesSection(
+                            state = state,
+                            onUpdate = viewModel::setScheduledFeatureOverride
+                        )
+                    }
+                }
+            }
+
+            if (showDayStartDialog) {
+                DayStartDialog(
+                    minute = state.dayStartMinute,
+                    onPick = viewModel::setDayStartMinute,
+                    onDismiss = { showDayStartDialog = false }
+                )
             }
 
             // ═══ DANGER ZONE ═══
@@ -802,6 +855,31 @@ fun UnifiedAppConfigScreen(
                     Text("Cancel")
                 }
             }
+        )
+    }
+}
+
+/**
+ * Feature overrides inside a scheduled override, shared by the days-and-times branch and the
+ * first-unlock branch.
+ */
+@Composable
+private fun ScheduledFeatureOverridesSection(
+    state: UnifiedAppConfigState,
+    onUpdate: (String, FeatureOverride) -> Unit
+) {
+    if (!state.supportsFeatures) return
+    Spacer(Modifier.height(8.dp))
+    Text(
+        "Feature overrides during schedule",
+        style = MaterialTheme.typography.titleSmall,
+        fontWeight = FontWeight.Medium
+    )
+    state.availableFeatures.forEach { feature ->
+        FeatureOverrideCard(
+            featureName = feature.displayName,
+            override = state.scheduledFeatureOverrides[feature.key] ?: FeatureOverride(),
+            onUpdate = { onUpdate(feature.key, it) }
         )
     }
 }

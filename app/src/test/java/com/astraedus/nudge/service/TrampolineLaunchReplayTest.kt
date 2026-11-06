@@ -1,5 +1,6 @@
 package com.astraedus.nudge.service
 
+import com.astraedus.nudge.domain.engine.FirstUnlockState
 import com.astraedus.nudge.domain.block.BlockLaunchGate
 import com.astraedus.nudge.domain.engine.BlockEngine
 import com.astraedus.nudge.domain.engine.ScheduleEvaluator
@@ -52,7 +53,7 @@ class TrampolineLaunchReplayTest {
         anActiveRule(mode = BlockMode.DELAY, delaySeconds = 15, dailyLimitMinutes = null, enabled = true)
     )
 
-    private val engine = BlockEngine(ScheduleEvaluator())
+    private val engine = BlockEngine(ScheduleEvaluator(FirstUnlockState.NONE))
 
     private val classifier = EventClassifier(
         ownPackageName = nudge,

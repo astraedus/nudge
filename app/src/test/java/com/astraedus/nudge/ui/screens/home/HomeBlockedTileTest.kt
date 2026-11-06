@@ -107,6 +107,7 @@ class HomeBlockedTileTest {
         installedAppsRepository = installedAppsRepository,
         insightsCalculator = InsightsCalculator(),
         essentialApps = mockk(relaxed = true),
+        scheduleEvaluator = com.astraedus.nudge.domain.engine.ScheduleEvaluator(com.astraedus.nudge.domain.engine.FirstUnlockState.NONE),
         ioDispatcher = dispatcher
     )
 

@@ -34,8 +34,19 @@ object ImportedSettingsWeakening {
      *
      * The custom block-message pools are deliberately not an axis. They change what the overlay
      * SAYS, never whether or how long it blocks.
+     *
+     * [hasEnabledFirstUnlockRule] is this PHONE's fact, supplied by the caller from its live rules
+     * (the policy stays pure). A `dayStartMinute` change is only weakening while a first-unlock
+     * rule is on: moving the day start moves today's unlock in or out of that rule's logical day,
+     * so it can shorten or skip a window (spec 5.6). With no such rule the setting changes nothing
+     * about protection and stays free. Either direction counts, because a shift one way is as
+     * likely to postpone a window as to drop it.
      */
-    fun isWeakening(current: ExportedSettings, incoming: ExportedSettings?): Boolean {
+    fun isWeakening(
+        current: ExportedSettings,
+        incoming: ExportedSettings?,
+        hasEnabledFirstUnlockRule: Boolean = false
+    ): Boolean {
         if (incoming == null) return false
 
         // The commitment lock itself: turning it off is the largest weakening available anywhere.
@@ -81,6 +92,15 @@ object ImportedSettingsWeakening {
                 current.contentFilterBlocklist.orEmpty(),
                 incoming.contentFilterBlocklist
             )
+        ) {
+            return true
+        }
+
+        // The logical day's start. Only meaningful to a first-unlock rule, so it is only an axis
+        // while one is enabled here; absent in the file -> unchanged, and an equal value is free.
+        if (hasEnabledFirstUnlockRule &&
+            incoming.dayStartMinute != null &&
+            incoming.dayStartMinute != current.dayStartMinute
         ) {
             return true
         }

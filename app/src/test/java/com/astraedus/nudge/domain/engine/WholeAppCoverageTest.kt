@@ -1,5 +1,6 @@
 package com.astraedus.nudge.domain.engine
 
+import com.astraedus.nudge.domain.engine.FirstUnlockState
 import com.astraedus.nudge.domain.groups.GroupMembershipResolver
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.domain.model.BlockRuleData
@@ -94,7 +95,7 @@ class WholeAppCoverageTest {
      */
     @Test
     fun `the schedule is the engine's schedule`() {
-        val schedule = ScheduleEvaluator()
+        val schedule = ScheduleEvaluator(FirstUnlockState.NONE)
         val rule = socialRule.copy(scheduleDays = listOf(1, 2, 3, 4, 5), scheduleStartMinute = 9 * 60, scheduleEndMinute = 17 * 60)
         val mondayNoon = calendar(Calendar.MONDAY, 12)
         val mondayEvening = calendar(Calendar.MONDAY, 20)

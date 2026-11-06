@@ -1,5 +1,6 @@
 package com.astraedus.nudge.domain.usecase
 
+import com.astraedus.nudge.domain.engine.FirstUnlockState
 import com.astraedus.nudge.data.db.entity.BlockRule
 import com.astraedus.nudge.data.repository.ContentFilter
 import com.astraedus.nudge.domain.engine.BlockEngine
@@ -49,9 +50,9 @@ class FollowingSteerEnabledTest {
         useCase = EvaluateBlockUseCase(
             blockRuleRepository = db.repository,
             usageRepository = FakeUsageRepository(),
-            blockEngine = BlockEngine(ScheduleEvaluator()),
+            blockEngine = BlockEngine(ScheduleEvaluator(FirstUnlockState.NONE)),
             ruleEvaluator = RuleEvaluator(),
-            scheduleEvaluator = ScheduleEvaluator(),
+            scheduleEvaluator = ScheduleEvaluator(FirstUnlockState.NONE),
             preferences = FakeNudgePreferences(),
             contentFilter = mockk<ContentFilter>(),
             nukeEnforcement = NukeEnforcement.NEVER,

@@ -72,7 +72,14 @@ data class UnifiedAppConfigState(
 
     // Scheduled override
     val scheduledOverrideEnabled: Boolean = false,
+    /** Days and times vs. after first unlock. Wired by the ViewModel when reading the saved rule. */
+    val scheduledOverrideFirstUnlock: Boolean = false,
     val scheduleDays: Set<Int> = setOf(1, 2, 3, 4, 5),
+    /**
+     * Whether these days were chosen (or loaded from a saved override). A new override switched to
+     * After first unlock selects every day when this is false; a saved one keeps its days.
+     */
+    val scheduleDaysTouched: Boolean = false,
     val scheduleStartHour: Int = 6,
     val scheduleStartMinute: Int = 0,
     val scheduleEndHour: Int = 9,
@@ -80,6 +87,18 @@ data class UnifiedAppConfigState(
     val scheduledMode: BlockMode = BlockMode.HARD_BLOCK,
     val scheduledDelaySeconds: Int = 15,
     val scheduledFeatureOverrides: Map<String, FeatureOverride> = emptyMap(),
+    /** Minutes the first-unlock window lasts. Wired by the ViewModel when reading the saved rule. */
+    val firstUnlockMinutes: Int = 30,
+    /**
+     * Minutes from midnight when the logical day starts. One global setting, shown while editing
+     * first-unlock rules. Wired by the ViewModel from preferences.
+     */
+    val dayStartMinute: Int = 4 * 60,
+    /**
+     * Whether the scheduled override will not take effect until the next first unlock.
+     * Wired by the ViewModel from the rule's arming state.
+     */
+    val startsAtNextUnlock: Boolean = false,
 
     // Platform surface capabilities (Tab Vanish / Following steer)
     /**

@@ -69,6 +69,12 @@ object RuleWeakening {
      *    covered, so it is weakening whichever way it moves. A row that named no target covered
      *    nothing, so giving it one is never weakening.
      *
+     *  - the first-unlock schedule (spec 5.6): when either version is a first-unlock rule, a change
+     *    of schedule KIND (first-unlock / days-and-times / all the time) is weakening whichever way
+     *    it moves, and within the first-unlock kind a shorter window is weakening. A longer window
+     *    (`30 -> 60`) only blocks for longer. Edits where neither side is a first-unlock rule are
+     *    untouched by this axis, so a pure days-and-times edit stays free (follow-up F6).
+     *
      *  - All apps rules only (spec 5.6 + the PR 4 decision on windows):
      *    - an app added to the except list ([BlockRule.exceptPackages] grew): one more app opens;
      *    - a group added to the except list ([BlockRule.exceptGroupIds] grew): its members open;
@@ -131,10 +137,70 @@ object RuleWeakening {
         // The rule now covers something else: whatever it covered before may be uncovered.
         if (isTargetChanged(old, new)) return true
 
+        // The first-unlock window is a schedule of its own (spec 5.6): shortening it, or changing
+        // WHICH kind of schedule the rule is on, opens minutes that were blocked before.
+        if (isFirstUnlockScheduleWeakened(old, new)) return true
+
         // An All apps rule: its except lists and its window are protection too.
         if (isAllAppsWeakened(old, new)) return true
 
         return false
+    }
+
+    /**
+     * True when [new] is a weaker first-unlock schedule than [old].
+     *
+     * Only applies when a first-unlock schedule is on at least one side. That is deliberate: a
+     * window, days or times edit on an ordinary days-and-times rule stays free (follow-up F6), so
+     * this axis must not start judging those.
+     *
+     * A change of [ScheduleKind] is weakening in EITHER direction, the simple, safe reading of spec
+     * 5.6 ("any change of schedule kind counts as weakening"). That includes `15 -> null`
+     * (first-unlock -> all the time): all the time actually blocks MORE minutes, but it is still a
+     * kind change, and the literal rule is what this implements. The reverse, `null -> 15`, is the
+     * obvious one: the rule now covers only a window, so the rest of the day opens again.
+     *
+     * With the kind unchanged (both first-unlock), only a shorter window is weakening. `30 -> 60`
+     * blocks for longer, so it is free; `60 -> 30` is not.
+     */
+    private fun isFirstUnlockScheduleWeakened(old: BlockRule, new: BlockRule): Boolean {
+        if (old.firstUnlockMinutes == null && new.firstUnlockMinutes == null) return false
+        if (scheduleKind(old) != scheduleKind(new)) return true
+        val oldMinutes = old.firstUnlockMinutes ?: return false
+        val newMinutes = new.firstUnlockMinutes ?: return false
+        if (newMinutes < oldMinutes) return true
+        // A first-unlock rule's days pick which logical days the window opens on, so dropping one
+        // un-covers that day: taking today off during a window ends it with no challenge. Cheap to
+        // judge here, where the axis already lives.
+        return (daysOf(old.scheduleDays) - daysOf(new.scheduleDays)).isNotEmpty()
+    }
+
+    /** The days a rule is on, as a set: null or empty means every day, as the engine reads it. */
+    private fun daysOf(csv: String?): Set<Int> {
+        val picked = csv
+            ?.split(",")
+            ?.mapNotNull { it.trim().toIntOrNull() }
+            ?.filter { it in 1..7 }
+            ?.toSet()
+            .orEmpty()
+        return if (picked.isEmpty()) ALL_DAYS else picked
+    }
+
+    /**
+     * The three ways a rule can say WHEN it is on (spec 5.6), read the same way
+     * [com.astraedus.nudge.domain.engine.ScheduleEvaluator] does: a first-unlock window wins over
+     * `scheduleStartMinute` / `scheduleEndMinute`, which are ignored while it is set; otherwise both
+     * ends set means a days-and-times window; anything else is all the time (null or empty days do
+     * not narrow the window, they only pick days).
+     */
+    private enum class ScheduleKind { FIRST_UNLOCK, DAYS_TIMES, ALL_TIME }
+
+    private val ALL_DAYS: Set<Int> = setOf(1, 2, 3, 4, 5, 6, 7)
+
+    private fun scheduleKind(rule: BlockRule): ScheduleKind = when {
+        rule.firstUnlockMinutes != null -> ScheduleKind.FIRST_UNLOCK
+        rule.scheduleStartMinute != null && rule.scheduleEndMinute != null -> ScheduleKind.DAYS_TIMES
+        else -> ScheduleKind.ALL_TIME
     }
 
     /**

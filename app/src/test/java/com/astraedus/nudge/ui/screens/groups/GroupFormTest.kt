@@ -7,6 +7,7 @@ import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.domain.packages.AppCategory
 import com.astraedus.nudge.testing.aBlockRule
 import com.astraedus.nudge.testing.aGroupRule
+import com.astraedus.nudge.ui.components.rule.ScheduleKind
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -94,6 +95,105 @@ class GroupFormTest {
         assertEquals("1,3,5", rule.scheduleDays)
         assertEquals(540, rule.scheduleStartMinute)
         assertEquals(1020, rule.scheduleEndMinute)
+    }
+
+    @Test
+    fun `after first unlock writes firstUnlockMinutes and clears the time window`() {
+        val rule = GroupRuleForm(
+            firstUnlock = true,
+            firstUnlockMinutes = 30,
+            scheduleDays = setOf(1, 2, 3, 4, 5),
+            startMinute = 540,
+            endMinute = 1020
+        ).toRule(null)
+        assertEquals(30, rule.firstUnlockMinutes)
+        assertNull(rule.scheduleStartMinute)
+        assertNull(rule.scheduleEndMinute)
+    }
+
+    @Test
+    fun `days and times writes the window and clears firstUnlockMinutes`() {
+        val rule = GroupRuleForm(
+            scheduled = true,
+            scheduleDays = setOf(5, 1),
+            startMinute = 480,
+            endMinute = 960,
+            firstUnlockMinutes = 45
+        ).toRule(null)
+        assertEquals("1,5", rule.scheduleDays)
+        assertEquals(480, rule.scheduleStartMinute)
+        assertEquals(960, rule.scheduleEndMinute)
+        assertNull(rule.firstUnlockMinutes)
+    }
+
+    @Test
+    fun `a new rule switched to first unlock selects every day, an edited one keeps its days`() {
+        // Morning Lock is daily, so an untouched new rule defaults to all seven (2026-11-05).
+        assertEquals(
+            GroupRuleForm.ALL_DAYS,
+            GroupRuleForm().withKind(ScheduleKind.FIRST_UNLOCK).scheduleDays
+        )
+        // The days-and-times default is unchanged.
+        assertEquals(
+            GroupRuleForm.WEEKDAYS,
+            GroupRuleForm().withKind(ScheduleKind.DAYS_TIMES).scheduleDays
+        )
+        // A user who chose days keeps them when switching kind.
+        assertEquals(
+            setOf(1, 2),
+            GroupRuleForm(daysTouched = true, scheduleDays = setOf(1, 2))
+                .withKind(ScheduleKind.FIRST_UNLOCK)
+                .scheduleDays
+        )
+    }
+
+    @Test
+    fun `a saved rule keeps its days when it switches to first unlock`() {
+        val saved = groupRule.copy(scheduleDays = "1,2,3,4,5", scheduleStartMinute = 540, scheduleEndMinute = 600)
+
+        val form = GroupRuleForm.from(saved).withKind(ScheduleKind.FIRST_UNLOCK)
+
+        assertTrue(form.firstUnlock)
+        assertEquals(setOf(1, 2, 3, 4, 5), form.scheduleDays)
+    }
+
+    @Test
+    fun `a first-unlock rule with no days opens showing every day`() {
+        // A hand-edited import can carry a window and no days; the engine reads that as every day,
+        // so the editor must not show Mon-Fri and narrow it on save (review nit).
+        val saved = groupRule.copy(
+            scheduleDays = null,
+            scheduleStartMinute = null,
+            scheduleEndMinute = null,
+            firstUnlockMinutes = 30
+        )
+
+        val form = GroupRuleForm.from(saved)
+
+        assertTrue(form.firstUnlock)
+        assertEquals(GroupRuleForm.ALL_DAYS, form.scheduleDays)
+        assertFalse(form.daysTouched)
+    }
+
+    @Test
+    fun `from round-trips both days and times and first unlock`() {
+        val daysTimes = groupRule.copy(
+            mode = "HARD_BLOCK",
+            scheduleDays = "1,3,5",
+            scheduleStartMinute = 540,
+            scheduleEndMinute = 1020
+        )
+        val firstUnlock = groupRule.copy(
+            mode = "HARD_BLOCK",
+            firstUnlockMinutes = 60,
+            scheduleDays = "2,4"
+        )
+
+        assertFalse(GroupRuleForm.from(daysTimes).firstUnlock)
+        assertEquals(daysTimes, GroupRuleForm.from(daysTimes).toRule(daysTimes))
+
+        assertTrue(GroupRuleForm.from(firstUnlock).firstUnlock)
+        assertEquals(firstUnlock, GroupRuleForm.from(firstUnlock).toRule(firstUnlock))
     }
 
     @Test

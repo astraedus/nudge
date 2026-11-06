@@ -68,7 +68,7 @@ fun lockCardFor(
     rules: List<BlockRuleData>,
     now: Calendar,
     appLabels: Map<String, String>,
-    scheduler: ScheduleEvaluator = ScheduleEvaluator()
+    scheduler: ScheduleEvaluator
 ): LockCard? {
     val endOf = HashMap<Long, Long?>()
     val winner = rules
@@ -91,7 +91,10 @@ fun lockCardFor(
  */
 fun lockCardNeedsClock(rules: List<BlockRuleData>): Boolean = rules.any {
     it.enabled && RuleTarget.of(it) is RuleTarget.AllApps &&
-        (it.scheduleDays != null || it.scheduleStartMinute != null || it.scheduleEndMinute != null)
+        (
+            it.scheduleDays != null || it.scheduleStartMinute != null ||
+                it.scheduleEndMinute != null || it.firstUnlockMinutes != null
+            )
 }
 
 /** Milliseconds from [nowMs] to the next whole minute: the schedule's own resolution. */

@@ -4,6 +4,7 @@ import com.astraedus.nudge.data.db.entity.BlockRule
 import com.astraedus.nudge.domain.lock.RuleWeakening
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.domain.model.ExceptCsv
+import com.astraedus.nudge.ui.components.rule.ScheduleKind
 import com.astraedus.nudge.ui.components.rule.showsWaitTime
 import com.astraedus.nudge.ui.screens.groups.GroupRuleForm
 import com.astraedus.nudge.ui.screens.groups.toRule
@@ -24,20 +25,44 @@ data class AllAppsForm(
     val scheduled: Boolean = false,
     val scheduleDays: Set<Int> = GroupRuleForm.WEEKDAYS,
     val startMinute: Int = 9 * 60,
-    val endMinute: Int = 17 * 60
+    val endMinute: Int = 17 * 60,
+    val firstUnlock: Boolean = false,
+    val firstUnlockMinutes: Int = 30,
+    /** See [GroupRuleForm.daysTouched]: the kind switch must not replace chosen days. */
+    val daysTouched: Boolean = false
 ) {
-    /** A days-and-times window with no day picked would never be active; Save waits for a day. */
-    val isComplete: Boolean get() = !scheduled || scheduleDays.isNotEmpty()
+    /**
+     * A schedule of any kind with no day picked would never be active; Save waits for a day.
+     * "All the time" is always complete.
+     */
+    val isComplete: Boolean
+        get() = (!scheduled && !firstUnlock) || scheduleDays.isNotEmpty()
 
     /** The wait time chips show for every mode with a length ([showsWaitTime]), as in the group editor. */
     val showsWaitTime: Boolean get() = showsWaitTime(mode)
 
     /**
+     * The same form switched to another "When" kind, with the same day default as the group editor:
+     * After first unlock on a rule whose days were never chosen selects every day.
+     */
+    fun withKind(kind: ScheduleKind): AllAppsForm = when (kind) {
+        ScheduleKind.ALL_TIME -> copy(scheduled = false, firstUnlock = false)
+        ScheduleKind.DAYS_TIMES -> copy(scheduled = true, firstUnlock = false)
+        ScheduleKind.FIRST_UNLOCK -> copy(
+            scheduled = false,
+            firstUnlock = true,
+            scheduleDays = if (daysTouched) scheduleDays else GroupRuleForm.ALL_DAYS
+        )
+    }
+
+    /**
      * "All the time" with Hard block, while on: the one combination that asks "Block N apps all the
-     * time?" before it saves (spec 3.4). A rule that is off blocks nothing, so it asks nothing.
+     * time?" before it saves (spec 3.4). A rule that is off blocks nothing, so it asks nothing, and
+     * neither does a first-unlock rule: its window is not "all the time", so that sentence would be
+     * a lie about what is being saved.
      */
     val confirmsOnSave: Boolean
-        get() = enabled && !scheduled && mode == BlockMode.HARD_BLOCK
+        get() = enabled && !scheduled && !firstUnlock && mode == BlockMode.HARD_BLOCK
 
     companion object {
         /**
@@ -54,7 +79,10 @@ data class AllAppsForm(
                 scheduled = parsed.scheduled,
                 scheduleDays = parsed.scheduleDays,
                 startMinute = parsed.startMinute,
-                endMinute = parsed.endMinute
+                endMinute = parsed.endMinute,
+                firstUnlock = parsed.firstUnlock,
+                firstUnlockMinutes = parsed.firstUnlockMinutes,
+                daysTouched = parsed.daysTouched
             )
         }
     }
@@ -93,7 +121,9 @@ fun AllAppsForm.toRule(
         scheduled = scheduled,
         scheduleDays = scheduleDays,
         startMinute = startMinute,
-        endMinute = endMinute
+        endMinute = endMinute,
+        firstUnlock = firstUnlock,
+        firstUnlockMinutes = firstUnlockMinutes
     ).toRule(existing)
     return schedule.copy(
         packageName = null,

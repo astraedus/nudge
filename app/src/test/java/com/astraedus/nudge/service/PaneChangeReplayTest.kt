@@ -1,5 +1,6 @@
 package com.astraedus.nudge.service
 
+import com.astraedus.nudge.domain.engine.FirstUnlockState
 import android.view.accessibility.AccessibilityEvent
 import com.astraedus.nudge.NudgeIdentity
 import com.astraedus.nudge.domain.block.BlockLaunchGate
@@ -58,7 +59,7 @@ class PaneChangeReplayTest {
         anActiveRule(mode = BlockMode.DELAY, delaySeconds = 5, dailyLimitMinutes = null, enabled = true)
     )
 
-    private val engine = BlockEngine(ScheduleEvaluator())
+    private val engine = BlockEngine(ScheduleEvaluator(FirstUnlockState.NONE))
 
     private val classifier = EventClassifier(
         ownPackageName = nudge,

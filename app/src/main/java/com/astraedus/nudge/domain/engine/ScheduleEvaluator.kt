@@ -12,7 +12,9 @@ import javax.inject.Inject
  * Time is expressed as minutes from midnight (0..1439).
  * Overnight schedules (end < start) are supported -- e.g. 23:00-06:00.
  */
-class ScheduleEvaluator @Inject constructor() {
+class ScheduleEvaluator @Inject constructor(
+    private val firstUnlock: FirstUnlockState,
+) {
 
     /**
      * Returns true if the rule should be active right now.
@@ -24,9 +26,18 @@ class ScheduleEvaluator @Inject constructor() {
 
     /**
      * Testable overload that accepts an explicit [Calendar] for the current moment.
+     *
+     * A rule with [ActiveRule.firstUnlockMinutes] is delegated to [FirstUnlockWindow] and its
+     * days-and-times fields are ignored: "When" is one choice, not two. Every other rule keeps the
+     * exact schedule semantics it had.
      */
-    fun isActiveAt(rule: ActiveRule, now: Calendar): Boolean =
-        isScheduledAt(rule.scheduleDays, rule.scheduleStartMinute, rule.scheduleEndMinute, now)
+    fun isActiveAt(rule: ActiveRule, now: Calendar): Boolean {
+        val minutes = rule.firstUnlockMinutes
+        if (minutes != null) {
+            return firstUnlockActive(minutes, rule.scheduleDays, rule.armedAt, now)
+        }
+        return isScheduledAt(rule.scheduleDays, rule.scheduleStartMinute, rule.scheduleEndMinute, now)
+    }
 
     /**
      * The same question for a rule that has not been resolved for a package yet. Used by
@@ -35,9 +46,14 @@ class ScheduleEvaluator @Inject constructor() {
      */
     fun isActiveNow(rule: BlockRuleData): Boolean = isActiveAt(rule, Calendar.getInstance())
 
-    /** Testable overload of [isActiveNow] for a [BlockRuleData]. */
-    fun isActiveAt(rule: BlockRuleData, now: Calendar): Boolean =
-        isScheduledAt(rule.scheduleDays, rule.scheduleStartMinute, rule.scheduleEndMinute, now)
+    /** Testable overload of [isActiveNow] for a [BlockRuleData]. Same first-unlock branch. */
+    fun isActiveAt(rule: BlockRuleData, now: Calendar): Boolean {
+        val minutes = rule.firstUnlockMinutes
+        if (minutes != null) {
+            return firstUnlockActive(minutes, rule.scheduleDays, rule.armedAt, now)
+        }
+        return isScheduledAt(rule.scheduleDays, rule.scheduleStartMinute, rule.scheduleEndMinute, now)
+    }
 
     /**
      * When the window [rule] is in right now ends, as epoch ms: the block screen's "Until 8:42 AM"
@@ -49,12 +65,57 @@ class ScheduleEvaluator @Inject constructor() {
      * day" on a Tuesday ends Saturday 00:00) and a days-only rule all fall out of it. At most one
      * week of minutes, pure integer arithmetic, and only asked once a rule has decided a block.
      */
-    fun windowEndAt(rule: ActiveRule, now: Calendar): Long? =
-        windowEndAt(rule.scheduleDays, rule.scheduleStartMinute, rule.scheduleEndMinute, now)
+    fun windowEndAt(rule: ActiveRule, now: Calendar): Long? {
+        val minutes = rule.firstUnlockMinutes
+        if (minutes != null) return firstUnlockEnd(minutes, rule.scheduleDays, rule.armedAt, now)
+        return windowEndAt(rule.scheduleDays, rule.scheduleStartMinute, rule.scheduleEndMinute, now)
+    }
 
     /** [windowEndAt] for a rule not yet resolved for a package (the Home lock card). */
-    fun windowEndAt(rule: BlockRuleData, now: Calendar): Long? =
-        windowEndAt(rule.scheduleDays, rule.scheduleStartMinute, rule.scheduleEndMinute, now)
+    fun windowEndAt(rule: BlockRuleData, now: Calendar): Long? {
+        val minutes = rule.firstUnlockMinutes
+        if (minutes != null) return firstUnlockEnd(minutes, rule.scheduleDays, rule.armedAt, now)
+        return windowEndAt(rule.scheduleDays, rule.scheduleStartMinute, rule.scheduleEndMinute, now)
+    }
+
+    /**
+     * The first-unlock branch, in one place: the anchor is the evaluator's, the window the rule's.
+     * [ActiveRule] and [BlockRuleData] carry the same three fields, and duplicating the call twice
+     * (then twice again for the end) was four chances to pass one of them wrong.
+     */
+    private fun firstUnlockActive(
+        minutes: Int,
+        days: List<Int>?,
+        armedAt: Long,
+        now: Calendar
+    ): Boolean = FirstUnlockWindow.isActive(
+        nowMs = now.timeInMillis,
+        stampMs = firstUnlock.firstUnlockAt(),
+        dayStartMinute = firstUnlock.dayStartMinute(),
+        minutes = minutes,
+        days = days,
+        armedAt = armedAt,
+        zone = firstUnlock.zoneId()
+    )
+
+    /**
+     * The first-unlock window's end for the block screen's "Until 8:42 AM". The day boundary can end
+     * it before the rule's own minutes do, and [FirstUnlockWindow.endsAt] returns whichever is first.
+     */
+    private fun firstUnlockEnd(
+        minutes: Int,
+        days: List<Int>?,
+        armedAt: Long,
+        now: Calendar
+    ): Long? = FirstUnlockWindow.endsAt(
+        nowMs = now.timeInMillis,
+        stampMs = firstUnlock.firstUnlockAt(),
+        dayStartMinute = firstUnlock.dayStartMinute(),
+        minutes = minutes,
+        days = days,
+        armedAt = armedAt,
+        zone = firstUnlock.zoneId()
+    )
 
     private fun windowEndAt(days: List<Int>?, startMinute: Int?, endMinute: Int?, now: Calendar): Long? {
         if (days == null && startMinute == null && endMinute == null) return null

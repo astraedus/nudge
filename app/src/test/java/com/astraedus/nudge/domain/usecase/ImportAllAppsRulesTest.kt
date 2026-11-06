@@ -122,9 +122,17 @@ class ImportAllAppsRulesTest {
         val imported = target.rules.single { it.allApps }
         // The stale id 999 had no group to name, so it is gone; Work is remapped to its new id.
         assertEquals(
-            normalizedAllAppsRule(sourceRule).copy(id = imported.id, createdAt = imported.createdAt, exceptGroupIds = "$targetWork"),
+            normalizedAllAppsRule(sourceRule).copy(
+                id = imported.id,
+                createdAt = imported.createdAt,
+                exceptGroupIds = "$targetWork",
+                // Import arms the rule (spec 5.8): a Morning Lock restored at 09:00 starts at the
+                // next first unlock, not on the unlock this phone already had.
+                armedAt = imported.armedAt
+            ),
             imported
         )
+        assertTrue("imported rules are armed now", imported.armedAt > 0)
         assertTrue(targetWork != source.groupId("Work"))
         assertEquals(target.groupId("Social"), target.rules.single { it.groupId != null }.groupId)
         assertEquals("com.yt", target.rules.single { it.packageName != null }.packageName)

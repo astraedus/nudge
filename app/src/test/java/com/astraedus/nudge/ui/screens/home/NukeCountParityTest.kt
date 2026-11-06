@@ -72,6 +72,7 @@ class NukeCountParityTest {
             installedAppsRepository = FakeInstalledAppsRepository(),
             insightsCalculator = InsightsCalculator(),
             essentialApps = essentials,
+            scheduleEvaluator = com.astraedus.nudge.domain.engine.ScheduleEvaluator(com.astraedus.nudge.domain.engine.FirstUnlockState.NONE),
             ioDispatcher = dispatcher
         )
     }

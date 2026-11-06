@@ -46,7 +46,9 @@ class GroupEditorDiscardTest {
             if (groupId == null) emptyMap() else mapOf(GroupEditorViewModel.ARG_GROUP_ID to groupId)
         )
         return GroupEditorViewModel(
-            handle, db.repository, installed, essentials, FakeNudgePreferences(), UnconfinedTestDispatcher()
+            handle, db.repository, installed, essentials, FakeNudgePreferences(),
+            mockk<com.astraedus.nudge.domain.usecase.SetDayStartMinuteUseCase>(relaxed = true),
+            UnconfinedTestDispatcher()
         )
     }
 

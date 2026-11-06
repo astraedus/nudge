@@ -41,6 +41,25 @@ object SettingsWeakening {
     fun requiresUnlock(toggle: LockedToggle, enable: Boolean, strictModeEnabled: Boolean): Boolean =
         strictModeEnabled && isWeakening(toggle, enable)
 
+    /**
+     * True when moving the logical day start from [currentMinute] to [newMinute] must pass the
+     * unlock challenge first (spec 5.6).
+     *
+     * ANY change is weakening, in either direction, and only when this phone actually has an enabled
+     * first-unlock rule for the change to affect. The day start is the anchor every first-unlock
+     * window is measured from: moving it can reshuffle which unlocks count for which day and which
+     * minutes each rule covers, so there is no direction that is unambiguously "more protection".
+     *
+     * Not a [LockedToggle]: the condition is a value change on a row, not a switch being turned on,
+     * so it cannot be expressed through [requiresUnlock]'s enable/disable shape.
+     */
+    fun requiresDayStartUnlock(
+        currentMinute: Int,
+        newMinute: Int,
+        hasEnabledFirstUnlockRule: Boolean,
+        strictModeEnabled: Boolean
+    ): Boolean = strictModeEnabled && hasEnabledFirstUnlockRule && currentMinute != newMinute
+
     private fun isWeakening(toggle: LockedToggle, enable: Boolean): Boolean = when (toggle) {
         LockedToggle.STRICT_MODE,
         LockedToggle.CONTENT_FILTER,

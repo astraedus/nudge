@@ -1,5 +1,6 @@
 package com.astraedus.nudge.domain.lock
 
+import com.astraedus.nudge.domain.engine.FirstUnlockState
 import com.astraedus.nudge.domain.engine.ScheduleEvaluator
 import com.astraedus.nudge.domain.model.BlockMode
 import org.junit.Assert.assertEquals
@@ -39,7 +40,7 @@ class ScheduleWeekTest {
 
     @Test
     fun `active minutes match the engine's ScheduleEvaluator for every schedule shape`() {
-        val evaluator = ScheduleEvaluator()
+        val evaluator = ScheduleEvaluator(FirstUnlockState.NONE)
         for ((days, start, end) in schedules) {
             val week = ScheduleWeek.activeMinutes(days, start, end)
             val rule = aBlockRuleData(

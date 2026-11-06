@@ -83,7 +83,9 @@ fun aBlockRule(
     keepPassOnShortTrips: Boolean = SHIPPED_ROW.keepPassOnShortTrips,
     allApps: Boolean = SHIPPED_ROW.allApps,
     exceptPackages: String? = SHIPPED_ROW.exceptPackages,
-    exceptGroupIds: String? = SHIPPED_ROW.exceptGroupIds
+    exceptGroupIds: String? = SHIPPED_ROW.exceptGroupIds,
+    firstUnlockMinutes: Int? = SHIPPED_ROW.firstUnlockMinutes,
+    armedAt: Long = SHIPPED_ROW.armedAt
 ): BlockRule = SHIPPED_ROW.copy(
     id = id,
     packageName = packageName,
@@ -111,7 +113,9 @@ fun aBlockRule(
     keepPassOnShortTrips = keepPassOnShortTrips,
     allApps = allApps,
     exceptPackages = exceptPackages,
-    exceptGroupIds = exceptGroupIds
+    exceptGroupIds = exceptGroupIds,
+    firstUnlockMinutes = firstUnlockMinutes,
+    armedAt = armedAt
 )
 
 /** A group-target rule row: [aBlockRule] aimed at [groupId]. */

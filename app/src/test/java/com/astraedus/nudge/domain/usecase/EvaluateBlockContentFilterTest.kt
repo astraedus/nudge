@@ -1,5 +1,6 @@
 package com.astraedus.nudge.domain.usecase
 
+import com.astraedus.nudge.domain.engine.FirstUnlockState
 import com.astraedus.nudge.data.repository.ContentFilter
 import com.astraedus.nudge.domain.ContentFilterAllowlist
 import com.astraedus.nudge.domain.ContentFilterBlocklist
@@ -46,9 +47,9 @@ class EvaluateBlockContentFilterTest {
         useCase = EvaluateBlockUseCase(
             blockRuleRepository = FakeRuleDatabase().repository,
             usageRepository = FakeUsageRepository(),
-            blockEngine = BlockEngine(ScheduleEvaluator()),
+            blockEngine = BlockEngine(ScheduleEvaluator(FirstUnlockState.NONE)),
             ruleEvaluator = RuleEvaluator(),
-            scheduleEvaluator = ScheduleEvaluator(),
+            scheduleEvaluator = ScheduleEvaluator(FirstUnlockState.NONE),
             preferences = preferences,
             contentFilter = contentFilter,
             nukeEnforcement = NukeEnforcement.NEVER,

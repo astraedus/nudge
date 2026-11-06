@@ -50,7 +50,7 @@ facts are logged on the deferral line, so a stuck fact is visible in a user's de
 | Feed | Site | Why there |
 |---|---|---|
 | Screen off | `screenOffReceiver` (existing) | Runtime-registered; also banks the session clock. |
-| Unlock / screen on | `screenOnReceiver` (new) | `ACTION_USER_PRESENT`, and `ACTION_SCREEN_ON` only when the keyguard is not up. A locked screen never starts or resumes a session. |
+| Unlock / screen on | `unlockReceiver` (new) | `ACTION_USER_PRESENT`, and `ACTION_SCREEN_ON` only when the keyguard is not up. A locked screen never starts or resumes a session. Shared with the first-unlock anchor (spec 5.3): the stamp moves on `USER_PRESENT` only, and both app-window fallbacks ask `FirstUnlockWindow.isPastKeyguard`. |
 | First app window | `applyForegroundSignal` | Falls back for a dead process or a phone with no keyguard. Gated by the feature switch and only asks the keyguard when there is no session. |
 | Timer | `phoneNudgeHandler` | Re-armed by the state machine, cancelled on screen off and in teardown. |
 | Launch | `showPhoneNudgePause` | The one place an Activity is started from a timer. Proven on Android 16; the Android 14 check is in `docs/BACKLOG.md`. |

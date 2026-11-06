@@ -12,6 +12,16 @@ data class AllAppsEditorState(
     val ruleId: Long? = null,
     val form: AllAppsForm = AllAppsForm(),
     /**
+     * Minutes from midnight when the logical day starts. One global setting, shown while editing
+     * first-unlock rules. Wired by the ViewModel from preferences.
+     */
+    val dayStartMinute: Int = 4 * 60,
+    /**
+     * Whether a first-unlock rule edited here will not take effect until the next first unlock.
+     * Wired by the ViewModel from the rule's arming state.
+     */
+    val startsAtNextUnlock: Boolean = false,
+    /**
      * The allowed apps, in the order they were added, including any that are no longer installed:
      * those are hidden from the list but kept, so a reinstalled app is allowed again.
      */

@@ -27,7 +27,9 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -36,12 +38,13 @@ import com.astraedus.nudge.ui.components.AppPicker
 import com.astraedus.nudge.ui.components.StrictModeChallengeHost
 import com.astraedus.nudge.ui.components.blockModeDescription
 import com.astraedus.nudge.ui.components.rule.BlockModeSegmentedRow
-import com.astraedus.nudge.ui.components.rule.DaysAndTimesFields
+import com.astraedus.nudge.ui.components.rule.DayStartDialog
 import com.astraedus.nudge.ui.components.rule.EditorAddRow
 import com.astraedus.nudge.ui.components.rule.EditorSectionTitle
 import com.astraedus.nudge.ui.components.rule.EditorSubsectionTitle
-import com.astraedus.nudge.ui.components.rule.EditorWhenOption
+import com.astraedus.nudge.ui.components.rule.ScheduleKind
 import com.astraedus.nudge.ui.components.rule.WaitTimeChips
+import com.astraedus.nudge.ui.components.rule.WhenSection
 
 /**
  * The All apps editor (spec 3.4), top to bottom: is it on and how big it is, what it leaves alone
@@ -177,7 +180,13 @@ fun AllAppsEditorScreen(
             EditorAddRow(text = "Add apps or groups", onClick = viewModel::openPicker)
             AlwaysAllowedItem(text = alwaysAllowed, onClick = viewModel::openAlwaysAllowed)
 
-            HowAndWhen(form = state.form, onFormChange = viewModel::updateForm)
+            HowAndWhen(
+                form = state.form,
+                onFormChange = viewModel::updateForm,
+                dayStartMinute = state.dayStartMinute,
+                startsAtNextUnlock = state.startsAtNextUnlock,
+                onDayStartMinuteChange = viewModel::setDayStartMinute
+            )
 
             if (state.ruleId != null) {
                 Spacer(Modifier.height(32.dp))
@@ -194,12 +203,17 @@ fun AllAppsEditorScreen(
     }
 }
 
-/** How (the mode, and its wait when it has one) and When (all the time, or days and times). */
+/** How (the mode, and its wait when it has one) and When (all the time, days/times, first unlock). */
 @Composable
 private fun HowAndWhen(
     form: AllAppsForm,
-    onFormChange: ((AllAppsForm) -> AllAppsForm) -> Unit
+    onFormChange: ((AllAppsForm) -> AllAppsForm) -> Unit,
+    dayStartMinute: Int,
+    startsAtNextUnlock: Boolean,
+    onDayStartMinuteChange: (Int) -> Unit
 ) {
+    var showDayStartDialog by remember { mutableStateOf(false) }
+
     Column(
         modifier = Modifier.padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -228,30 +242,37 @@ private fun HowAndWhen(
 
         Spacer(Modifier.height(0.dp))
         EditorSubsectionTitle("When")
-        Column(Modifier.selectableGroup()) {
-            EditorWhenOption(
-                label = "All the time",
-                selected = !form.scheduled,
-                onSelect = { onFormChange { it.copy(scheduled = false) } }
-            )
-            EditorWhenOption(
-                label = "Days and times",
-                selected = form.scheduled,
-                onSelect = { onFormChange { it.copy(scheduled = true) } }
-            )
-        }
-        if (form.scheduled) {
-            DaysAndTimesFields(
-                days = form.scheduleDays,
-                onDaysChange = { days -> onFormChange { it.copy(scheduleDays = days) } },
-                startHour = form.startMinute / 60,
-                startMinute = form.startMinute % 60,
-                onStartTimeChange = { h, m -> onFormChange { it.copy(startMinute = h * 60 + m) } },
-                endHour = form.endMinute / 60,
-                endMinute = form.endMinute % 60,
-                onEndTimeChange = { h, m -> onFormChange { it.copy(endMinute = h * 60 + m) } }
-            )
-        }
+        WhenSection(
+            kind = when {
+                form.firstUnlock -> ScheduleKind.FIRST_UNLOCK
+                form.scheduled -> ScheduleKind.DAYS_TIMES
+                else -> ScheduleKind.ALL_TIME
+            },
+            onKindChange = { kind -> onFormChange { it.withKind(kind) } },
+            days = form.scheduleDays,
+            onDaysChange = { days -> onFormChange { it.copy(scheduleDays = days, daysTouched = true) } },
+            startHour = form.startMinute / 60,
+            startMinute = form.startMinute % 60,
+            onStartTimeChange = { h, m -> onFormChange { it.copy(startMinute = h * 60 + m) } },
+            endHour = form.endMinute / 60,
+            endMinute = form.endMinute % 60,
+            onEndTimeChange = { h, m -> onFormChange { it.copy(endMinute = h * 60 + m) } },
+            firstUnlockMinutes = form.firstUnlockMinutes,
+            onFirstUnlockMinutesChange = { minutes ->
+                onFormChange { it.copy(firstUnlockMinutes = minutes) }
+            },
+            dayStartMinute = dayStartMinute,
+            onDayStartClick = { showDayStartDialog = true },
+            startsAtNextUnlock = startsAtNextUnlock
+        )
+    }
+
+    if (showDayStartDialog) {
+        DayStartDialog(
+            minute = dayStartMinute,
+            onPick = onDayStartMinuteChange,
+            onDismiss = { showDayStartDialog = false }
+        )
     }
 }
 

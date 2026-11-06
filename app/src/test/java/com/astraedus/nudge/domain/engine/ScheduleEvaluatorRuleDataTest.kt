@@ -1,5 +1,6 @@
 package com.astraedus.nudge.domain.engine
 
+import com.astraedus.nudge.domain.engine.FirstUnlockState
 import com.astraedus.nudge.domain.model.ActiveRule
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.domain.model.BlockRuleData
@@ -15,7 +16,7 @@ import java.util.Calendar
  */
 class ScheduleEvaluatorRuleDataTest {
 
-    private val evaluator = ScheduleEvaluator()
+    private val evaluator = ScheduleEvaluator(FirstUnlockState.NONE)
 
     private data class Shape(val days: List<Int>?, val start: Int?, val end: Int?)
 

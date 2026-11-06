@@ -95,8 +95,21 @@ class ImportRulesUseCase @Inject constructor(
     suspend fun weakensProtection(result: ImportResult): Boolean {
         if (groupMergeWeakens(result.groups)) return true
         val incoming = result.settings ?: return false
-        return ImportedSettingsWeakening.isWeakening(preferences.exportableSettings(), incoming)
+        return ImportedSettingsWeakening.isWeakening(
+            preferences.exportableSettings(),
+            incoming,
+            hasEnabledFirstUnlockRule = hasEnabledFirstUnlockRule()
+        )
     }
+
+    /**
+     * Whether this phone has an ENABLED rule on the first-unlock schedule. That rule is the only
+     * thing `dayStartMinute` means anything to (spec 5.6), so it is the fact the settings gate needs
+     * before it may treat a day-start change as weakening. Read live, like the rest of the gate.
+     */
+    private suspend fun hasEnabledFirstUnlockRule(): Boolean =
+        repository.getAllRules().firstOrNull()
+            ?.any { it.enabled && it.firstUnlockMinutes != null } == true
 
     /**
      * The group half of [weakensProtection]: merging the file's groups into a group here that an
@@ -330,14 +343,21 @@ class ImportRulesUseCase @Inject constructor(
             webBlockMode = exported.webBlockMode,
             tabVanish = exported.tabVanish,
             followingSteer = exported.followingSteer,
-            keepPassOnShortTrips = exported.keepPassOnShortTrips
+            keepPassOnShortTrips = exported.keepPassOnShortTrips,
+            // The window survives the move, but not `armedAt`: the file never carries it, and the
+            // repository stamps this phone's clock on write (spec 5.8), so a restored rule starts at
+            // the NEXT first unlock here.
+            firstUnlockMinutes = exported.firstUnlockMinutes
         )
     }
 
     /**
-     * A rule is a duplicate if an existing rule has the same target, mode and schedule. The target
-     * is compared as the engine reads it ([RuleTarget.of]): an All apps rule matches only an All
-     * apps rule with the same allowed apps and the same allowed groups, in any order.
+     * A rule is a duplicate if an existing rule has the same target, mode, schedule and
+     * first-unlock window (spec 5.8). The target is compared as the engine reads it
+     * ([RuleTarget.of]): an All apps rule matches only an All apps rule with the same allowed apps
+     * and the same allowed groups, in any order. The window is part of the identity because two
+     * rules for the same app and mode but different first-unlock lengths are different rules -- one
+     * of them is a shorter lockout, not a repeat of the other.
      */
     private fun isDuplicate(candidate: BlockRule, existingRules: List<BlockRule>): Boolean {
         val target = targetOf(candidate)
@@ -346,7 +366,8 @@ class ImportRulesUseCase @Inject constructor(
                 existing.mode == candidate.mode &&
                 existing.scheduleDays == candidate.scheduleDays &&
                 existing.scheduleStartMinute == candidate.scheduleStartMinute &&
-                existing.scheduleEndMinute == candidate.scheduleEndMinute
+                existing.scheduleEndMinute == candidate.scheduleEndMinute &&
+                existing.firstUnlockMinutes == candidate.firstUnlockMinutes
         }
     }
 

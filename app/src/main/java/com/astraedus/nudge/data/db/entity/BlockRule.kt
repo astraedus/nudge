@@ -110,5 +110,26 @@ data class BlockRule(
      * id resolves to no members, which only makes the rule stricter. Deleting a group removes its id
      * from every rule in the same transaction.
      */
-    val exceptGroupIds: String? = null
+    val exceptGroupIds: String? = null,
+    /**
+     * Non-null = active for this many minutes after the first unlock of the logical day (spec 5.3).
+     * Null = not a first-unlock rule, and every rule written before DB 15->16 carries null, so its
+     * schedule keeps its old meaning exactly. Read through
+     * [com.astraedus.nudge.domain.engine.FirstUnlockWindow]; check it before [scheduleStartMinute]
+     * and [scheduleEndMinute], which are ignored when this is set.
+     */
+    val firstUnlockMinutes: Int? = null,
+    /**
+     * Wall-clock ms of the last write that ARMED this rule (spec 5.1). It moves only when the rule
+     * is created, switched from off to on, or newly made a first-unlock rule; an ordinary save keeps
+     * the stored value, so a stronger edit cannot end a running window (`RuleArming` owns that
+     * decision). A first-unlock window only counts if its stamp is at or after this, so a rule made
+     * at 08:05 after an 08:00 unlock starts tomorrow instead of locking the phone mid-setup.
+     *
+     * 0 for every pre-migration rule, which means "never armed": those rules did not have this
+     * behaviour to wait for. `RuleArming` moves it only when a write creates the rule, switches it
+     * from off to on, or newly makes it a first-unlock rule; every other save keeps the stored
+     * value, so a stronger edit cannot end a window that is running.
+     */
+    val armedAt: Long = 0L
 )

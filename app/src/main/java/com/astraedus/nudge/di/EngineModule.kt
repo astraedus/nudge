@@ -1,7 +1,9 @@
 package com.astraedus.nudge.di
 
+import com.astraedus.nudge.data.repository.FirstUnlockStateCache
 import com.astraedus.nudge.data.repository.RuleSnapshotSource
 import com.astraedus.nudge.data.repository.RuleSnapshots
+import com.astraedus.nudge.domain.engine.FirstUnlockState
 import com.astraedus.nudge.domain.packages.EssentialPackages
 import com.astraedus.nudge.domain.packages.PackageFacts
 import com.astraedus.nudge.service.AndroidPackageFacts
@@ -27,4 +29,12 @@ abstract class EngineModule {
 
     @Binds
     abstract fun bindEssentialPackages(impl: EssentialApps): EssentialPackages
+
+    /**
+     * The first-unlock anchor (spec 5.3). Bound as a port so `domain/engine` never sees the
+     * preferences class: [com.astraedus.nudge.domain.engine.ScheduleEvaluator] asks this for the
+     * stamp, the day start and the zone, and the cache answers from memory.
+     */
+    @Binds
+    abstract fun bindFirstUnlockState(impl: FirstUnlockStateCache): FirstUnlockState
 }

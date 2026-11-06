@@ -17,7 +17,12 @@ import com.astraedus.nudge.domain.model.FeatureMode
 import com.astraedus.nudge.ui.components.DurationInput
 import com.astraedus.nudge.ui.components.UsageReminderInput
 import com.astraedus.nudge.ui.lock.StrictModeGate
+import com.astraedus.nudge.ui.screens.groups.GroupRuleForm
+import com.astraedus.nudge.data.repository.RuleArming
+import com.astraedus.nudge.domain.engine.FirstUnlockWindow
+import com.astraedus.nudge.domain.usecase.SetDayStartMinuteUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
+import java.time.ZoneId
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -27,6 +32,7 @@ import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -37,7 +43,8 @@ class UnifiedAppConfigViewModel @Inject constructor(
     private val installedAppsRepository: InstalledAppsRepository,
     private val essentialPackages: EssentialPackages,
     private val packageFacts: PackageFacts,
-    nudgePreferences: NudgePreferences
+    private val nudgePreferences: NudgePreferences,
+    private val setDayStartMinuteUseCase: SetDayStartMinuteUseCase
 ) : ViewModel() {
 
     private val packageName: String = savedStateHandle.get<String>("packageName") ?: ""
@@ -107,8 +114,65 @@ class UnifiedAppConfigViewModel @Inject constructor(
      */
     private var existingDefaultRule: BlockRule? = null
 
+    /**
+     * The scheduled override at load time, for the SAME reason as [existingDefaultRule]: a save that
+     * shortens its first-unlock window, changes its kind or turns it off must take the challenge
+     * (spec 5.6). Null = no override loaded, so writing one is creation, never weakening.
+     */
+    private var existingScheduledRule: BlockRule? = null
+
+    /**
+     * The feature-override rules at load time, by feature key, for the same reason as the two above:
+     * `performSave` deletes and re-adds them, so the arming stamp has to be carried by the caller or
+     * a free save ends a running scheduled window (review blocker 2).
+     */
+    private var existingDefaultFeatureRules: Map<String, BlockRule> = emptyMap()
+    private var existingScheduledFeatureRules: Map<String, BlockRule> = emptyMap()
+
+    /**
+     * The two global first-unlock facts this screen displays: where the logical day starts, and the
+     * stamp that decides whether an override saved now waits for tomorrow. See
+     * [refreshFirstUnlockHints].
+     */
+    @Volatile private var logicalDayStartMinute: Int = FirstUnlockWindow.DEFAULT_DAY_START_MINUTE
+    @Volatile private var firstUnlockStamp: Long = FirstUnlockWindow.NO_STAMP
+
     init {
         loadState()
+        viewModelScope.launch {
+            nudgePreferences.dayStartMinute.collect { minute ->
+                logicalDayStartMinute = minute
+                refreshFirstUnlockHints()
+            }
+        }
+        viewModelScope.launch {
+            nudgePreferences.firstUnlockAt.collect { stamp ->
+                firstUnlockStamp = stamp
+                refreshFirstUnlockHints()
+            }
+        }
+    }
+
+    /**
+     * "Starts at your next first unlock." comes from the one pure rule, which knows whether this
+     * save re-arms ([RuleArming.startsAtNextUnlock]): an existing rule whose window is running now
+     * keeps its stamp, so the line must stay quiet for it (review should-fix 2).
+     */
+    private fun refreshFirstUnlockHints() {
+        _uiState.update { state ->
+            val next = buildScheduledRule(state)
+            state.copy(
+                dayStartMinute = logicalDayStartMinute,
+                startsAtNextUnlock = next != null && RuleArming.startsAtNextUnlock(
+                    previous = existingScheduledRule,
+                    next = next,
+                    stampMs = firstUnlockStamp,
+                    nowMs = System.currentTimeMillis(),
+                    dayStartMinute = logicalDayStartMinute,
+                    zone = ZoneId.systemDefault()
+                )
+            )
+        }
     }
 
     private fun loadState() {
@@ -124,18 +188,36 @@ class UnifiedAppConfigViewModel @Inject constructor(
             val directRules = allRules.filter { it.packageName == packageName && it.groupId == null }
 
             // Separate into categories
+            // A scheduled rule is either a days-and-times window or a first-unlock one (spec 3.5).
+            // `scheduleDays != null` stays in the test on purpose: a days-only rule (days set, no
+            // times) used to count as the scheduled override, and treating it as the default would
+            // have a save rewrite it as always-on. A first-unlock rule always carries days too, and
+            // an imported one may carry none, which the other two checks catch.
+            fun isScheduled(rule: BlockRule): Boolean =
+                rule.firstUnlockMinutes != null ||
+                    rule.scheduleStartMinute != null ||
+                    rule.scheduleEndMinute != null ||
+                    rule.scheduleDays != null
+
             val defaultAppRule = directRules.firstOrNull {
-                it.inAppFeatures.isNullOrEmpty() && it.scheduleDays == null
+                it.inAppFeatures.isNullOrEmpty() && !isScheduled(it)
             }
             existingDefaultRule = defaultAppRule
             val scheduledAppRule = directRules.firstOrNull {
-                it.inAppFeatures.isNullOrEmpty() && it.scheduleDays != null
+                it.inAppFeatures.isNullOrEmpty() && isScheduled(it)
             }
+            existingScheduledRule = scheduledAppRule
             val defaultFeatureRules = directRules.filter {
-                !it.inAppFeatures.isNullOrEmpty() && it.scheduleDays == null
+                !it.inAppFeatures.isNullOrEmpty() && !isScheduled(it)
             }
             val scheduledFeatureRules = directRules.filter {
-                !it.inAppFeatures.isNullOrEmpty() && it.scheduleDays != null
+                !it.inAppFeatures.isNullOrEmpty() && isScheduled(it)
+            }
+            existingDefaultFeatureRules = defaultFeatureRules.associateBy {
+                it.inAppFeatures.orEmpty()
+            }
+            existingScheduledFeatureRules = scheduledFeatureRules.associateBy {
+                it.inAppFeatures.orEmpty()
             }
 
             // Build feature overrides from default feature rules
@@ -227,7 +309,12 @@ class UnifiedAppConfigViewModel @Inject constructor(
                 featureOverrides = featureOverrides,
                 // Scheduled override
                 scheduledOverrideEnabled = scheduledAppRule != null,
+                scheduledOverrideFirstUnlock = scheduledAppRule?.firstUnlockMinutes != null,
+                firstUnlockMinutes = scheduledAppRule?.firstUnlockMinutes
+                    ?: FirstUnlockWindow.DEFAULT_FIRST_UNLOCK_MINUTES,
                 scheduleDays = scheduleDays,
+                // A saved override's days are the user's; a new one starts from the shared default.
+                scheduleDaysTouched = scheduledAppRule != null,
                 scheduleStartHour = scheduleStartMinute / 60,
                 scheduleStartMinute = scheduleStartMinute % 60,
                 scheduleEndHour = scheduleEndMinute / 60,
@@ -246,6 +333,9 @@ class UnifiedAppConfigViewModel @Inject constructor(
                 hasExistingRules = directRules.isNotEmpty(),
                 showDeleteConfirmation = false
             )
+            // The override now has a kind, so an existing first-unlock window opened after today's
+            // unlock already says "Starts at your next first unlock." before any edit.
+            refreshFirstUnlockHints()
         }
     }
 
@@ -264,6 +354,44 @@ class UnifiedAppConfigViewModel @Inject constructor(
 
     // ═══ Save logic ═══
 
+    /**
+     * Builds the scheduled override rule that [save] would persist, or null when the override is
+     * off. One construction, used by the save AND by the weakening check: a gate that judged a
+     * different row from the one written would be the one way Strict Mode could disagree with what
+     * actually lands on disk.
+     *
+     * A first-unlock override keeps its days, takes the window length and writes NO clock times
+     * (spec 3.5): one kind of schedule or the other.
+     */
+    internal fun buildScheduledRule(state: UnifiedAppConfigState): BlockRule? {
+        if (!state.scheduledOverrideEnabled) return null
+        val scheduleDaysStr = state.scheduleDays.sorted().joinToString(",")
+        val startMin = state.scheduleStartHour * 60 + state.scheduleStartMinute
+        val endMin = state.scheduleEndHour * 60 + state.scheduleEndMinute
+        val firstUnlockMinutes = if (state.scheduledOverrideFirstUnlock) {
+            state.firstUnlockMinutes
+        } else {
+            null
+        }
+        val rule = BlockRule(
+            packageName = packageName,
+            mode = state.scheduledMode.name,
+            delaySeconds = state.scheduledDelaySeconds,
+            enabled = state.enabled,
+            scheduleDays = scheduleDaysStr,
+            scheduleStartMinute = if (firstUnlockMinutes != null) null else startMin,
+            scheduleEndMinute = if (firstUnlockMinutes != null) null else endMin,
+            firstUnlockMinutes = firstUnlockMinutes,
+            tabVanish = state.tabVanish,
+            keepPassOnShortTrips = state.effectiveKeepPassOnShortTrips
+        )
+        // `performSave` deletes and re-adds this row, so the repository cannot see the row it
+        // replaces; the stamp is carried here. `carriedArmedAt` is the same three-way rule the
+        // repository applies: keep it for an ordinary save (including a stronger window), and let
+        // the repository arm now for a create, an off-to-on switch or a newly first-unlock rule.
+        return rule.copy(armedAt = RuleArming.carriedArmedAt(existingScheduledRule, rule))
+    }
+
     /** Builds the app-level default rule that [save] would persist for the current state. */
     internal fun buildDefaultRule(state: UnifiedAppConfigState): BlockRule {
         val webDomains = if (state.webDomainEnabled && state.webDomains.isNotBlank()) {
@@ -277,7 +405,7 @@ class UnifiedAppConfigViewModel @Inject constructor(
             state.webBlockMode.name
         } else null
 
-        return BlockRule(
+        val rule = BlockRule(
             packageName = packageName,
             mode = state.defaultMode.name,
             delaySeconds = state.defaultDelaySeconds,
@@ -315,6 +443,10 @@ class UnifiedAppConfigViewModel @Inject constructor(
             // reads it off whichever rule DECIDED the block, exactly like tabVanish.
             keepPassOnShortTrips = state.effectiveKeepPassOnShortTrips
         )
+        // Carried across the delete and re-add in performSave, so an ordinary save does not re-arm
+        // the package's rules. The default rule is never a first-unlock rule, so it can only ever
+        // keep the stamp it had -- or re-arm when the app goes from off to on.
+        return rule.copy(armedAt = RuleArming.carriedArmedAt(existingDefaultRule, rule))
     }
 
     fun save() {
@@ -325,7 +457,17 @@ class UnifiedAppConfigViewModel @Inject constructor(
 
             // A save only needs the challenge when it weakens an EXISTING rule. Creating a fresh
             // rule (no prior rule) is strengthening, so it saves freely even under Strict Mode.
-            val weakens = old != null && RuleWeakening.isWeakening(old, newDefault)
+            val defaultWeakens = old != null && RuleWeakening.isWeakening(old, newDefault)
+            // The scheduled override is a rule in its own right (spec 5.6): shortening its
+            // first-unlock window, changing its kind, or turning the override off opens time that
+            // was blocked. Judged against the row the save will actually write.
+            val newScheduled = buildScheduledRule(state)
+            val oldScheduled = existingScheduledRule
+            val scheduledWeakens = oldScheduled != null && RuleWeakening.isWeakening(
+                oldScheduled,
+                newScheduled ?: oldScheduled.copy(enabled = false)
+            )
+            val weakens = defaultWeakens || scheduledWeakens
             if (weakens) {
                 strictModeGate.run(prompt = "Weaken blocking for this app") {
                     performSave(state, newDefault)
@@ -341,16 +483,18 @@ class UnifiedAppConfigViewModel @Inject constructor(
         blockRuleRepository.deleteDirectRulesForPackage(packageName)
 
         // 2. Create app-level default rule
-        blockRuleRepository.addRule(newDefault)
-        // Keep the snapshot in sync so a second save in the same session compares correctly.
-        existingDefaultRule = newDefault
+        val defaultId = blockRuleRepository.addRule(newDefault)
+        // Keep the snapshot in sync so a second save in the same session compares correctly. Read
+        // it back rather than reusing the built row: the repository is what stamped `armedAt`, and
+        // a stale NEVER_ARMED here would re-arm on the next save (review nit).
+        existingDefaultRule = blockRuleRepository.getRule(defaultId) ?: newDefault
 
         // 3. Create feature override rules (non-INHERIT only)
+        val writtenDefaultFeatureRules = mutableMapOf<String, BlockRule>()
         for ((featureKey, override) in state.featureOverrides) {
             if (override.mode == FeatureMode.INHERIT) continue
             val ruleMode = override.mode.toBlockMode()?.name ?: continue
-            blockRuleRepository.addRule(
-                BlockRule(
+            val candidate = BlockRule(
                     packageName = packageName,
                     mode = ruleMode,
                     delaySeconds = override.delaySeconds,
@@ -371,63 +515,78 @@ class UnifiedAppConfigViewModel @Inject constructor(
                     // Same reasoning (#110): the deciding rule's value is the one handed to the
                     // grant, so it must not depend on which of this app's rules happened to win.
                     keepPassOnShortTrips = state.effectiveKeepPassOnShortTrips
+            )
+            val id = blockRuleRepository.addRule(
+                candidate.copy(
+                    armedAt = RuleArming.carriedArmedAt(
+                        existingDefaultFeatureRules[featureKey],
+                        candidate
+                    )
                 )
             )
+            writtenDefaultFeatureRules[featureKey] =
+                blockRuleRepository.getRule(id) ?: candidate
         }
+        existingDefaultFeatureRules = writtenDefaultFeatureRules
 
         // 4. Create scheduled override rules
-        if (state.scheduledOverrideEnabled) {
-            val scheduleDaysStr = state.scheduleDays.sorted().joinToString(",")
-            val startMin = state.scheduleStartHour * 60 + state.scheduleStartMinute
-            val endMin = state.scheduleEndHour * 60 + state.scheduleEndMinute
-
+        val scheduledRule = buildScheduledRule(state)
+        if (scheduledRule != null) {
             // Scheduled app-level rule. tabVanish carries here too -- same reasoning as the
             // feature override rules above: this rule can be the one that decides a HARD_BLOCK
             // during the scheduled window, so it needs the same flag as every other rule for
             // this package. followingSteer does NOT go here: it belongs on the app-level
             // DEFAULT rule only (see buildDefaultRule), never on a scheduled rule.
-            blockRuleRepository.addRule(
-                BlockRule(
-                    packageName = packageName,
-                    mode = state.scheduledMode.name,
-                    delaySeconds = state.scheduledDelaySeconds,
-                    enabled = state.enabled,
-                    scheduleDays = scheduleDaysStr,
-                    scheduleStartMinute = startMin,
-                    scheduleEndMinute = endMin,
-                    tabVanish = state.tabVanish,
-                    keepPassOnShortTrips = state.effectiveKeepPassOnShortTrips
-                )
-            )
+            val scheduledId = blockRuleRepository.addRule(scheduledRule)
+            // Read back for the real stamp, for the same reason as the default rule above.
+            existingScheduledRule = blockRuleRepository.getRule(scheduledId) ?: scheduledRule
 
             // Scheduled feature override rules
+            val writtenScheduledFeatureRules = mutableMapOf<String, BlockRule>()
             for ((featureKey, override) in state.scheduledFeatureOverrides) {
                 if (override.mode == FeatureMode.INHERIT) continue
                 val ruleMode = override.mode.toBlockMode()?.name ?: continue
-                blockRuleRepository.addRule(
-                    BlockRule(
-                        packageName = packageName,
-                        mode = ruleMode,
-                        delaySeconds = override.delaySeconds,
-                        enabled = state.enabled,
-                        inAppFeatures = featureKey,
-                        autoKickAfter = if (override.autoKickEnabled) override.autoKickAfter else null,
-                        autoKickCooldownSeconds = DurationInput.resolveCooldownSeconds(
-                            override.autoKickCooldownMinutesText,
-                            override.originalAutoKickCooldownSeconds
-                        ),
-                        showCounter = state.showCounter,
-                        scheduleDays = scheduleDaysStr,
-                        scheduleStartMinute = startMin,
-                        scheduleEndMinute = endMin,
-                        // Same reasoning as every other rule persisted here: tabVanish must be
-                        // uniform across all of this package's rules, since the engine reads it
-                        // off whichever rule decides the block.
-                        tabVanish = state.tabVanish,
-                        keepPassOnShortTrips = state.effectiveKeepPassOnShortTrips
+                val candidate = BlockRule(
+                    packageName = packageName,
+                    mode = ruleMode,
+                    delaySeconds = override.delaySeconds,
+                    enabled = state.enabled,
+                    inAppFeatures = featureKey,
+                    autoKickAfter = if (override.autoKickEnabled) override.autoKickAfter else null,
+                    autoKickCooldownSeconds = DurationInput.resolveCooldownSeconds(
+                        override.autoKickCooldownMinutesText,
+                        override.originalAutoKickCooldownSeconds
+                    ),
+                    showCounter = state.showCounter,
+                    // The schedule is the parent rule's, read off the one construction, so a
+                    // feature override can never be in a different window from the rule that
+                    // owns it (first-unlock included).
+                    scheduleDays = scheduledRule.scheduleDays,
+                    scheduleStartMinute = scheduledRule.scheduleStartMinute,
+                    scheduleEndMinute = scheduledRule.scheduleEndMinute,
+                    firstUnlockMinutes = scheduledRule.firstUnlockMinutes,
+                    // The override carries the schedule's window, so it carries its stamp too.
+                    // Without it, `performSave`'s delete and re-add re-armed the override on every
+                    // save, and a free save ended the window for the feature it blocks (review
+                    // blocker 2).
+                    // Same reasoning as every other rule persisted here: tabVanish must be
+                    // uniform across all of this package's rules, since the engine reads it
+                    // off whichever rule decides the block.
+                    tabVanish = state.tabVanish,
+                    keepPassOnShortTrips = state.effectiveKeepPassOnShortTrips
+                )
+                val id = blockRuleRepository.addRule(
+                    candidate.copy(
+                        armedAt = RuleArming.carriedArmedAt(
+                            existingScheduledFeatureRules[featureKey],
+                            candidate
+                        )
                     )
                 )
+                writtenScheduledFeatureRules[featureKey] =
+                    blockRuleRepository.getRule(id) ?: candidate
             }
+            existingScheduledFeatureRules = writtenScheduledFeatureRules
         }
 
         _uiState.value = state.copy(isSaved = true)
@@ -611,10 +770,50 @@ class UnifiedAppConfigViewModel @Inject constructor(
 
     fun setScheduledOverrideEnabled(enabled: Boolean) {
         _uiState.value = _uiState.value.copy(scheduledOverrideEnabled = enabled)
+        refreshFirstUnlockHints()
+    }
+
+    fun setScheduledOverrideFirstUnlock(firstUnlock: Boolean) {
+        _uiState.value = _uiState.value.let { state ->
+            // A new override switched to After first unlock starts on every day: Morning Lock is a
+            // daily thing. A saved override, or one whose days the user edited, keeps its days
+            // (decision 2026-11-05; the group and All apps editors do the same in `withKind`).
+            val days = if (firstUnlock && !state.scheduleDaysTouched) {
+                GroupRuleForm.ALL_DAYS
+            } else {
+                state.scheduleDays
+            }
+            state.copy(scheduledOverrideFirstUnlock = firstUnlock, scheduleDays = days)
+        }
+        refreshFirstUnlockHints()
+    }
+
+    fun setFirstUnlockMinutes(minutes: Int) {
+        _uiState.value = _uiState.value.copy(firstUnlockMinutes = minutes)
+    }
+
+    /**
+     * "New day starts at". One global setting, written through the use case that owns the Strict
+     * Mode question: moving it can push today's unlock out of an enabled first-unlock rule's
+     * logical day, which is weakening (spec 5.6).
+     */
+    fun setDayStartMinute(minute: Int) {
+        viewModelScope.launch {
+            val write: suspend () -> Unit = {
+                setDayStartMinuteUseCase.execute(minute)
+                logicalDayStartMinute = minute
+                refreshFirstUnlockHints()
+            }
+            if (setDayStartMinuteUseCase.requiresUnlock(minute)) {
+                strictModeGate.run(prompt = "Change when your day starts", action = write)
+            } else {
+                write()
+            }
+        }
     }
 
     fun setScheduleDays(days: Set<Int>) {
-        _uiState.value = _uiState.value.copy(scheduleDays = days)
+        _uiState.value = _uiState.value.copy(scheduleDays = days, scheduleDaysTouched = true)
     }
 
     fun setScheduleStartTime(hour: Int, minute: Int) {

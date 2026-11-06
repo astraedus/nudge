@@ -7,6 +7,7 @@ import com.astraedus.nudge.domain.lock.GroupWeakening
 import com.astraedus.nudge.domain.lock.RuleWeakening
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.domain.packages.AppCategory
+import com.astraedus.nudge.ui.components.rule.ScheduleKind
 
 /**
  * The editable half of a group's own rule: what the "Block these apps" switch, How and When show.
@@ -25,13 +26,40 @@ data class GroupRuleForm(
     val scheduled: Boolean = false,
     val scheduleDays: Set<Int> = WEEKDAYS,
     val startMinute: Int = 9 * 60,
-    val endMinute: Int = 17 * 60
+    val endMinute: Int = 17 * 60,
+    val firstUnlock: Boolean = false,
+    val firstUnlockMinutes: Int = 30,
+    /**
+     * Whether the user (or the saved rule) has chosen days, so switching the kind must not quietly
+     * replace them. False on a new rule, true once a day chip is tapped or a saved rule is loaded.
+     */
+    val daysTouched: Boolean = false
 ) {
-    /** A days-and-times window with no day picked would never be active; Save waits for a day. */
-    val isComplete: Boolean get() = !scheduled || scheduleDays.isNotEmpty()
+    /**
+     * A schedule of any kind with no day picked would never be active; Save waits for a day.
+     * "All the time" is always complete.
+     */
+    val isComplete: Boolean
+        get() = (!scheduled && !firstUnlock) || scheduleDays.isNotEmpty()
+
+    /**
+     * The same form switched to another "When" kind. Switching to After first unlock on a rule whose
+     * days were never chosen selects every day, because Morning Lock is a daily thing; an existing
+     * rule, or one whose days the user edited, keeps them (decision 2026-11-05).
+     */
+    fun withKind(kind: ScheduleKind): GroupRuleForm = when (kind) {
+        ScheduleKind.ALL_TIME -> copy(scheduled = false, firstUnlock = false)
+        ScheduleKind.DAYS_TIMES -> copy(scheduled = true, firstUnlock = false)
+        ScheduleKind.FIRST_UNLOCK -> copy(
+            scheduled = false,
+            firstUnlock = true,
+            scheduleDays = if (daysTouched) scheduleDays else ALL_DAYS
+        )
+    }
 
     companion object {
         val WEEKDAYS: Set<Int> = setOf(1, 2, 3, 4, 5)
+        val ALL_DAYS: Set<Int> = setOf(1, 2, 3, 4, 5, 6, 7)
 
         /** The form for a saved rule, or the new-group defaults (blocking on, Delay 15s) for none. */
         fun from(rule: BlockRule?): GroupRuleForm {
@@ -39,7 +67,8 @@ data class GroupRuleForm(
             val mode = runCatching { BlockMode.valueOf(rule.mode) }.getOrNull()
                 ?.takeIf { it != BlockMode.NONE }
                 ?: BlockMode.DELAY
-            val scheduled = rule.scheduleStartMinute != null && rule.scheduleEndMinute != null
+            val firstUnlock = rule.firstUnlockMinutes != null
+            val scheduled = !firstUnlock && rule.scheduleStartMinute != null && rule.scheduleEndMinute != null
             val defaults = GroupRuleForm()
             return GroupRuleForm(
                 blockEnabled = rule.enabled,
@@ -54,9 +83,17 @@ data class GroupRuleForm(
                     ?.filter { it in 1..7 }
                     ?.toSet()
                     ?.takeIf { it.isNotEmpty() }
-                    ?: defaults.scheduleDays,
+                    // No days on a first-unlock rule means every day to the engine, so the editor
+                    // must open that way rather than showing Mon-Fri and narrowing it on save
+                    // (review nit; a hand-edited import can produce one).
+                    ?: if (firstUnlock) ALL_DAYS else defaults.scheduleDays,
                 startMinute = rule.scheduleStartMinute ?: defaults.startMinute,
-                endMinute = rule.scheduleEndMinute ?: defaults.endMinute
+                endMinute = rule.scheduleEndMinute ?: defaults.endMinute,
+                firstUnlock = firstUnlock,
+                firstUnlockMinutes = rule.firstUnlockMinutes ?: defaults.firstUnlockMinutes,
+                // A saved rule already has days (or deliberately has none); either way the user's
+                // schedule is not replaced when they change the kind.
+                daysTouched = rule.scheduleDays != null
             )
         }
     }
@@ -76,9 +113,10 @@ fun GroupRuleForm.toRule(existing: BlockRule?): BlockRule {
         delaySeconds = waitSeconds,
         dailyLimitMinutes = if (dailyLimitEnabled) dailyLimitMinutes else null,
         enabled = blockEnabled,
-        scheduleDays = if (scheduled) scheduleDays.sorted().joinToString(",") else null,
+        scheduleDays = if (scheduled || firstUnlock) scheduleDays.sorted().joinToString(",") else null,
         scheduleStartMinute = if (scheduled) startMinute else null,
-        scheduleEndMinute = if (scheduled) endMinute else null
+        scheduleEndMinute = if (scheduled) endMinute else null,
+        firstUnlockMinutes = if (firstUnlock) firstUnlockMinutes else null
     )
 }
 

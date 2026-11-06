@@ -1,5 +1,6 @@
 package com.astraedus.nudge.domain.events
 
+import com.astraedus.nudge.domain.engine.FirstUnlockState
 import com.astraedus.nudge.domain.engine.BlockEngine
 import com.astraedus.nudge.domain.engine.RuleEvaluator
 import com.astraedus.nudge.domain.engine.ScheduleEvaluator
@@ -436,7 +437,7 @@ class A11yCaptureReplayTest {
             )
         )
         val evaluator = RuleEvaluator()
-        val engine = BlockEngine(ScheduleEvaluator())
+        val engine = BlockEngine(ScheduleEvaluator(FirstUnlockState.NONE))
         fun decide(pkg: String) = engine.evaluate(
             packageName = pkg,
             activeRules = evaluator.resolveRulesForPackage(pkg, rules, GroupMembershipResolver.NONE, CoverageFacts(essential = false, launchable = true, category = null, browser = false)),

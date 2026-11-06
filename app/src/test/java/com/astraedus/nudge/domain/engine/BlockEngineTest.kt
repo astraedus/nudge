@@ -1,5 +1,6 @@
 package com.astraedus.nudge.domain.engine
 
+import com.astraedus.nudge.domain.engine.FirstUnlockState
 import com.astraedus.nudge.domain.model.ActiveRule
 import com.astraedus.nudge.domain.model.BlockDecision
 import com.astraedus.nudge.domain.model.BlockMode
@@ -16,7 +17,7 @@ class BlockEngineTest {
 
     @Before
     fun setUp() {
-        engine = BlockEngine(ScheduleEvaluator())
+        engine = BlockEngine(ScheduleEvaluator(FirstUnlockState.NONE))
     }
 
     @Test

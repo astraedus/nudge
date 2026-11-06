@@ -1,5 +1,6 @@
 package com.astraedus.nudge.domain.engine
 
+import com.astraedus.nudge.domain.engine.FirstUnlockState
 import com.astraedus.nudge.domain.logging.NudgeLog
 import com.astraedus.nudge.domain.model.AllAppsBlock
 import com.astraedus.nudge.domain.model.BlockDecision
@@ -24,7 +25,7 @@ class BlockEngineUntilTest {
         }
 
     private fun engineAt(now: Calendar) =
-        BlockEngine(ScheduleEvaluator(), NudgeLog.NoOp) { now.clone() as Calendar }
+        BlockEngine(ScheduleEvaluator(FirstUnlockState.NONE), NudgeLog.NoOp) { now.clone() as Calendar }
 
     private val allAppsLine = AllAppsBlock(
         exceptPackages = listOf("maps"),
@@ -129,6 +130,6 @@ class BlockEngineUntilTest {
     fun `the overnight window itself ends at six`() {
         val now = at(4, 23, 30)
         val rule = anActiveRule(mode = BlockMode.DELAY, scheduleStartMinute = 22 * 60, scheduleEndMinute = 6 * 60, dailyLimitMinutes = 30)
-        assertEquals(at(5, 6, 0).timeInMillis, ScheduleEvaluator().windowEndAt(rule, now))
+        assertEquals(at(5, 6, 0).timeInMillis, ScheduleEvaluator(FirstUnlockState.NONE).windowEndAt(rule, now))
     }
 }

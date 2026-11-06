@@ -17,6 +17,46 @@ class RuleWeakeningTest {
     /** The shipped rule row, aimed at one app. Each test overrides only what it is about. */
     private val example = aBlockRule(packageName = "com.example")
 
+
+    private fun rule(
+        mode: String = "DELAY",
+        delaySeconds: Int = 15,
+        dailyLimitMinutes: Int? = null,
+        enabled: Boolean = true,
+        autoKickAfter: Int? = null,
+        autoKickAfterMinutes: Int? = null,
+        autoKickCooldownSeconds: Int = 60,
+        webDomains: String? = null,
+        webBlockMode: String? = null,
+        tabVanish: Boolean = true,
+        followingSteer: Boolean = false,
+        remindAfterMinutes: Int? = null,
+        keepPassOnShortTrips: Boolean = false,
+        scheduleDays: String? = null,
+        scheduleStartMinute: Int? = null,
+        scheduleEndMinute: Int? = null,
+        firstUnlockMinutes: Int? = null
+    ) = aBlockRule(
+        packageName = "com.example",
+        mode = mode,
+        delaySeconds = delaySeconds,
+        dailyLimitMinutes = dailyLimitMinutes,
+        enabled = enabled,
+        autoKickAfter = autoKickAfter,
+        autoKickAfterMinutes = autoKickAfterMinutes,
+        autoKickCooldownSeconds = autoKickCooldownSeconds,
+        webDomains = webDomains,
+        webBlockMode = webBlockMode,
+        tabVanish = tabVanish,
+        followingSteer = followingSteer,
+        remindAfterMinutes = remindAfterMinutes,
+        keepPassOnShortTrips = keepPassOnShortTrips,
+        scheduleDays = scheduleDays,
+        scheduleStartMinute = scheduleStartMinute,
+        scheduleEndMinute = scheduleEndMinute,
+        firstUnlockMinutes = firstUnlockMinutes
+    )
+
     // ── delay ──
 
     @Test
@@ -703,6 +743,150 @@ class RuleWeakeningTest {
             RuleWeakening.isWeakening(
                 example,
                 example.copy(scheduleDays = "1", scheduleStartMinute = 540, scheduleEndMinute = 600)
+            )
+        )
+    }
+
+    // ── first-unlock schedule (spec 5.6) ──
+    //
+    // Two axes in one: within the first-unlock kind a SHORTER window is weakening, and any change
+    // of schedule kind (first-unlock / days-and-times / all the time) is weakening in either
+    // direction. Edits where neither side is a first-unlock rule stay free (F6).
+
+    @Test
+    fun `a longer first-unlock window is not weakening`() {
+        assertFalse(
+            RuleWeakening.isWeakening(
+                rule(firstUnlockMinutes = 30),
+                rule(firstUnlockMinutes = 60)
+            )
+        )
+    }
+
+    @Test
+    fun `a shorter first-unlock window is weakening`() {
+        assertTrue(
+            RuleWeakening.isWeakening(
+                rule(firstUnlockMinutes = 60),
+                rule(firstUnlockMinutes = 30)
+            )
+        )
+    }
+
+    @Test
+    fun `adding a first-unlock window to an all-the-time rule is weakening`() {
+        assertTrue(
+            RuleWeakening.isWeakening(
+                rule(firstUnlockMinutes = null),
+                rule(firstUnlockMinutes = 15)
+            )
+        )
+    }
+
+    /**
+     * The literal spec 5.6 reading: ANY change of schedule kind weakens, even this one. All the
+     * time actually blocks more minutes than a 15-minute window does, but the rule has moved off
+     * the first-unlock kind, so it challenges. Pinned here so nobody "fixes" it to free later
+     * without changing the spec first.
+     */
+    @Test
+    fun `taking a day off a first-unlock rule is weakening, adding one is free`() {
+        // The days pick which logical days the window opens on, so dropping today ends a running
+        // window with no challenge (review, spec 5.6).
+        assertTrue(
+            "dropping Friday from a Mon-Fri window",
+            RuleWeakening.isWeakening(
+                rule(firstUnlockMinutes = 30, scheduleDays = "1,2,3,4,5"),
+                rule(firstUnlockMinutes = 30, scheduleDays = "1,2,3,4")
+            )
+        )
+        assertFalse(
+            "adding a day only blocks more",
+            RuleWeakening.isWeakening(
+                rule(firstUnlockMinutes = 30, scheduleDays = "1,2,3,4"),
+                rule(firstUnlockMinutes = 30, scheduleDays = "1,2,3,4,5")
+            )
+        )
+        assertTrue(
+            "every day to one day",
+            RuleWeakening.isWeakening(
+                rule(firstUnlockMinutes = 30, scheduleDays = null),
+                rule(firstUnlockMinutes = 30, scheduleDays = "1")
+            )
+        )
+        assertFalse(
+            "one day to every day",
+            RuleWeakening.isWeakening(
+                rule(firstUnlockMinutes = 30, scheduleDays = "1"),
+                rule(firstUnlockMinutes = 30, scheduleDays = null)
+            )
+        )
+    }
+
+    @Test
+    fun `a days edit on a days-and-times rule stays free`() {
+        assertFalse(
+            RuleWeakening.isWeakening(
+                rule(scheduleDays = "1,2,3,4,5"),
+                rule(scheduleDays = "1,2")
+            )
+        )
+    }
+
+    @Test
+    fun `a first-unlock window to all the time is weakening under the literal schedule-kind reading`() {
+        assertTrue(
+            RuleWeakening.isWeakening(
+                rule(firstUnlockMinutes = 15),
+                rule(firstUnlockMinutes = null)
+            )
+        )
+    }
+
+    @Test
+    fun `an unchanged first-unlock window is not weakening`() {
+        assertFalse(
+            RuleWeakening.isWeakening(
+                rule(firstUnlockMinutes = 15),
+                rule(firstUnlockMinutes = 15)
+            )
+        )
+    }
+
+    @Test
+    fun `a first-unlock schedule to days and times is weakening`() {
+        val old = rule(firstUnlockMinutes = 15)
+        val new = rule(scheduleStartMinute = 540, scheduleEndMinute = 600)
+        assertTrue(RuleWeakening.isWeakening(old, new))
+    }
+
+    @Test
+    fun `a days and times edit on a non first-unlock rule stays free`() {
+        assertFalse(
+            RuleWeakening.isWeakening(
+                rule(scheduleStartMinute = 540, scheduleEndMinute = 1020),
+                rule(scheduleStartMinute = 600, scheduleEndMinute = 1020)
+            )
+        )
+    }
+
+    /**
+     * Existing convention: [RuleWeakening] compares the two versions without looking at `enabled`
+     * (disabling is its own axis, and enabling is free). A disabled -> disabled edit therefore
+     * still answers the minutes question the same way.
+     */
+    @Test
+    fun `a disabled to disabled first-unlock edit follows the same minutes axis`() {
+        assertFalse(
+            RuleWeakening.isWeakening(
+                rule(enabled = false, firstUnlockMinutes = 30),
+                rule(enabled = false, firstUnlockMinutes = 60)
+            )
+        )
+        assertTrue(
+            RuleWeakening.isWeakening(
+                rule(enabled = false, firstUnlockMinutes = 60),
+                rule(enabled = false, firstUnlockMinutes = 30)
             )
         )
     }

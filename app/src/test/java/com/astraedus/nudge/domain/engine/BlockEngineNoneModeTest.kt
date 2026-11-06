@@ -1,5 +1,6 @@
 package com.astraedus.nudge.domain.engine
 
+import com.astraedus.nudge.domain.engine.FirstUnlockState
 import com.astraedus.nudge.domain.model.ActiveRule
 import com.astraedus.nudge.domain.model.BlockDecision
 import com.astraedus.nudge.domain.model.BlockMode
@@ -21,7 +22,7 @@ import org.junit.Test
  */
 class BlockEngineNoneModeTest {
 
-    private val engine = BlockEngine(ScheduleEvaluator())
+    private val engine = BlockEngine(ScheduleEvaluator(FirstUnlockState.NONE))
     private val pkg = "com.google.android.youtube"
 
     private fun noneAppRule(dailyLimitMinutes: Int? = null) = ActiveRule(

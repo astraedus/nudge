@@ -91,7 +91,9 @@ fun BlockRule.toRuleData(
         allApps = allApps,
         exceptPackages = ExceptCsv.packages(exceptPackages),
         exceptGroupIds = exceptGroups,
-        exceptGroupNames = exceptGroups.mapNotNull { groupNames[it] }
+        exceptGroupNames = exceptGroups.mapNotNull { groupNames[it] },
+        firstUnlockMinutes = firstUnlockMinutes,
+        armedAt = armedAt
     )
 }
 

@@ -10,11 +10,13 @@ data class NudgeExport(
     val rules: List<ExportedRule>,
     val groups: List<ExportedGroup> = emptyList(),
     /**
-     * Rules an older Nudge would MISREAD if they sat in [rules]: today, every All apps rule (spec
-     * 5.8). Same [ExportedRule] shape, with [ExportedRule.allApps] and the except lists filled in.
-     * An older importer reads the envelope by known key only, so it skips this array and these
-     * rules, where in [rules] it would have imported each one as a rule with no target. Written
-     * only when non-empty, so a file without All apps rules is byte-for-byte what it was before.
+     * Rules an older Nudge would MISREAD if they sat in [rules]: every All apps rule and every
+     * first-unlock rule (spec 5.8). Same [ExportedRule] shape, with [ExportedRule.allApps] and the
+     * except lists filled in for an All apps rule, or [ExportedRule.firstUnlockMinutes] for a
+     * first-unlock one. An older importer reads the envelope by known key only, so it skips this
+     * array and these rules, where in [rules] it would have imported an All apps rule as a rule
+     * with no target and a first-unlock rule with no window at all (i.e. always on). Written only
+     * when non-empty, so a file without either kind is byte-for-byte what it was before.
      */
     val extendedRules: List<ExportedRule> = emptyList(),
     /**
@@ -106,7 +108,14 @@ data class ExportedSettings(
      */
     val customDelayTitles: String? = null,
     val customDelaySubtitles: String? = null,
-    val customHardBlockMessages: String? = null
+    val customHardBlockMessages: String? = null,
+    /**
+     * The hour the first-unlock logical day starts, minutes from midnight (default 240). Null means
+     * the file does not carry it. Changing it is weakening while an enabled first-unlock rule
+     * exists, because it can move today's unlock into yesterday (spec 5.6), so the import gate
+     * checks it like the other protection settings.
+     */
+    val dayStartMinute: Int? = null
 ) {
     /** True when this carries no setting at all, so there is nothing to write to the file. */
     val isEmpty: Boolean
@@ -124,7 +133,8 @@ data class ExportedSettings(
             phoneNudgePauseSeconds == null &&
             customDelayTitles == null &&
             customDelaySubtitles == null &&
-            customHardBlockMessages == null
+            customHardBlockMessages == null &&
+            dayStartMinute == null
 }
 
 data class ExportedRule(
@@ -171,6 +181,13 @@ data class ExportedRule(
      * exactly as it did on the device that wrote it.
      */
     val keepPassOnShortTrips: Boolean = false,
+    /**
+     * The first-unlock window in minutes (spec 5.3), or null for every ordinary rule. Only ever
+     * carried by an entry of `extendedRules`: in `rules` the key is neither written nor read, so a
+     * hand-edited `"firstUnlockMinutes"` there can not add a schedule the file's writer did not
+     * understand. See [NudgeExport.extendedRules].
+     */
+    val firstUnlockMinutes: Int? = null,
     /**
      * An All apps rule (spec 3.4). Only ever true for an entry of `extendedRules`: in `rules` the
      * key is not read, so a hand-edited `"allApps": true` there can not turn an app rule into a
