@@ -605,7 +605,8 @@ class UnifiedAppConfigViewModelTest {
         // Review blocker: re-arming on every save meant 30 -> 60 minutes, or a save with nothing
         // changed, ended this morning's block. The row must keep its stamp across App config's
         // delete and re-add, and the window must still be active afterwards.
-        val stamp = LocalDate.now(ZoneId.systemDefault()).atTime(8, 0)
+        // A fixed Monday, because the rule runs Mon-Fri: a stamp from today fails at weekends.
+        val stamp = LocalDate.of(2026, 11, 2).atTime(8, 0)
             .atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
         val vm = viewModel(listOf(firstUnlockRule(minutes = 30).copy(armedAt = stamp)))
 
