@@ -1,0 +1,2 @@
+• New: a schedule that starts at your first unlock of the day. A rule can block apps for a set time after you first unlock your phone, such as 30 minutes with only Spotify and Maps open. The new day starts at 4:00 AM, and you can change that.
+• With Strict Mode on, switching off or softening a scheduled override in an app's settings now asks for the challenge.

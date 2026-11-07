@@ -4,6 +4,14 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+## [1.28.0] - 2026-11-07
+
+### Added
+- **After first unlock.** A third choice under "When", next to "All the time" and "Days and times": a rule can block for a set time (15 min, 30 min, 1 h, or 5 to 240 minutes) after your first unlock of the day, on the days you pick. Morning Lock is one such rule: all apps except Spotify and Maps, hard block, 30 minutes after first unlock. A rule saved after you have already unlocked says "Starts at your next first unlock". The block screen and the Home lock card say "Until 8:42 AM". The day starts at 4:00 AM by default, and that hour is one setting shown where these rules are made. Backups carry these rules, and an older Nudge skips them. Thanks to @danieltsam. (#155, #107)
+
+### Changed
+- With Strict Mode on, App config now asks for the challenge when you switch off or soften a scheduled override, including a hard-blocking one that used to cost nothing. Shortening a days-and-times window stays free.
+
 ## [1.27.0] - 2026-11-06
 
 ### Added
