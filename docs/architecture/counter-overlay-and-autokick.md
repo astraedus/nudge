@@ -42,7 +42,7 @@ Covers the floating interaction counter, the time-remaining overlay, both auto-k
 - `CounterOverlayManager` (@Singleton): WindowManager overlay using service context (required for TYPE_ACCESSIBILITY_OVERLAY token). `setServiceContext()` called in `onServiceConnected()`. Centered on screen with escalating colors (white -> orange -> deep orange -> red) based on session count.
 - `TimeRemainingOverlayManager` (@Singleton): Standalone floating overlay in top-right corner. Shows "Xm left" with color-coded text (green >50%, orange 25-50%, red <25%) and increasingly opaque background. Separate from counter overlay so both can show independently.
 - `activeReelLabel`: once Shorts/Reels feature detected, skip tree inspection on subsequent scrolls. Reset on app switch.
-- Tracked packages cached every 10s via `CounterCacheRefresher` (Map<String, CounterCacheEntry> with showCounter, autoKickAfter, showTimeRemaining, dailyLimitMinutes, autoKickCooldownSeconds, autoKickAfterMinutes per package). A rule enters the cache if it wants **any** of: the counter, the time-remaining overlay, a time-based auto-kick, or (**v1.18.4**) a daily time limit on its own — a budget needs the foreground clock to be enforced mid-session, not only on re-entry; see "Why a plain daily limit needed its own clock, v1.18.4". `mergeEntries` collapses multiple rules per package to the strictest reading (lowest thresholds, longest cooldown, any overlay wins).
+- Tracked packages cached every 10s via `CounterCacheRefresher` (Map<String, CounterCacheEntry> with showCounter, autoKickAfter, showTimeRemaining, dailyLimitMinutes, autoKickCooldownSeconds, autoKickAfterMinutes per package). A rule enters the cache if it wants **any** of: the counter, the time-remaining overlay, a time-based auto-kick, or (**v1.18.4**) a daily time limit on its own — a budget needs the foreground clock to be enforced mid-session, not only on re-entry; see "Why a plain daily limit needed its own clock, v1.18.4". **Since #146 the cache is keyed by every package a rule COVERS, not only by the packages rules name**: a group rule's members and an All apps rule's apps get the rule's entry too, resolved by `RuleCoverage` exactly as block evaluation resolves them (`CounterCacheCoverage`; see "Group and All apps rules get the clock too, #146"). `mergeEntries` collapses multiple rules per package to the strictest reading (lowest thresholds, any overlay wins, and the longest cooldown among the entries that configure a kick).
 - **`hasEntry` vs `isCounterEnabled` (v1.10.0)** — these are different questions and conflating them is a bug. `hasEntry` = "this package is tracked at all" (drives foreground/session bookkeeping); `isCounterEnabled` = `showCounter`, and is the ONLY thing that may draw or feed the interaction counter. Before the split, cache membership implied a counter, so a rule that only wanted a time-based kick (or only the time-remaining overlay) would have switched on a floating tap counter the user never asked for. Guarded by `InteractionHandlerTest."a package tracked only for a time-based kick gets no counter overlay"`. **v1.18.4 widened the question again**: a plain daily limit now puts a package in the cache too, so cache membership no longer implies the counter, the time-remaining overlay, OR an auto-kick — it implies only "something here needs the foreground clock". `CounterCacheEntry.configuresAutoKick` (`autoKickAfter != null || autoKickAfterMinutes != null`) is now the narrower, separate question "can anything here actually kick", and `NudgeAccessibilityService.hideUnwantedAwarenessOverlays` asks the entry directly what it wants rather than testing membership, for the same reason. See "Why a plain daily limit needed its own clock, v1.18.4".
 - Auto-kick: two triggers, ONE kick. `AutoKickExecutor.kick(pkg, reason)` is the single place the kick happens — arm cooldown, go home, `resetSession`, hide the counter — so the interaction trigger (`InteractionHandler`) and the time trigger (`AutoKickTimeHandler`) can never drift in what they do to the user. It takes a `goHome` lambda rather than building the Intent itself, which keeps the policy JVM-testable and lets the service prefer `requestGoHome()` (accessibility `GLOBAL_ACTION_HOME`) over a HOME intent, as `EmergencyPassManager` already does.
 - Auto-kick cooldown: configurable per-rule (default 60s). After auto-kick, re-opening the app shows a DELAY overlay for the remaining cooldown. Session counter NOT reset during cooldown.
@@ -307,6 +307,90 @@ launches, claims and logs NOTHING itself; `enforceExhaustedBudget` re-evaluates 
 to a HARD_BLOCK; one `wasBlocked` writer in the service, still). L6:
 `scripts/device-qa.sh daily-limit-midsession`, which sits in Calculator with a derived budget and
 asserts the limit screen arrives without leaving the app, for exactly +1 on the Blocked tile.
+
+## Group and All apps rules get the clock too, #146
+
+**The bug.** v1.18.4 made a daily limit a clock consumer, but the cache that decides which packages
+get a clock was still built from the rules that NAME a package (`CounterCacheRefresher.appEntryFor`,
+one `(packageName, entry)` per rule row). A group rule and an All apps rule name none, so their apps
+had no entry, `updateForegroundTimeTicker` never started a clock for them, and a group's "Daily limit
+for each app" was enforced only when the app was next opened. Bench repro
+([#146](https://github.com/astraedus/nudge/issues/146)): a one-app group, Hard, 2 min/day, the app
+left in front for ~178 s, never blocked, `clock started` never logged. The same hole covered an All
+apps rule carrying a limit (only an imported file can give one a limit today, but the engine honours
+it, so the clock must too). The time-based auto-kick, the time-remaining readout and the usage
+reminder on a group or All apps rule had the same gap, for the same reason.
+
+**The fix: one coverage answer, not a second one.** `service/CounterCacheCoverage.kt` builds the app
+half of the cache from the `RuleSnapshot` (the in-memory rules, groups and memberships evaluation
+reads; see `rule-snapshot.md`):
+
+- Every enabled rule that wants an entry (`CounterCacheRefresher.entryFor`, the same "wants something
+  from the clock or an overlay" predicate as before) is asked, per candidate package, whether it
+  covers that package, through `RuleCoverage.covers` and `RuleCoverage.groupIdsOf` with the
+  snapshot's `GroupMembershipResolver`. That is the resolver `RuleEvaluator`, `WholeAppCoverage` and
+  the Home count already share, so category groups, "Removed by you", essentials (never under a group
+  or All apps rule; an explicit app rule on an essential is still honoured) and a browser joining a
+  group by hand only all come out the same here as in evaluation. Nothing in the cache re-derives
+  membership.
+- Candidates are the set `CoveredApps` enumerates: packages rules name, every group's hand-added apps,
+  and every launchable app (`InstalledAppsRepository`, with its category).
+- Not `DeviceGroupMembers`, deliberately: it reads the tables rather than the snapshot evaluation
+  reads, and it answers group membership only, so an All apps rule would still have had no clock.
+- **Strictest wins**, as in `BlockEngine`: every rule covering an app counts together (rules only add;
+  a group rule never shadows a direct one or the other way round), and `mergeEntries` takes the lowest
+  limit and threshold and any overlay asked for. For a daily limit that is exactly the limit the
+  engine blocks on first. Two groups on one app: the lower limit.
+- **The budget is per app**, as at open time and as the editor labels it ("Daily limit for each
+  app"): `TimeRemainingHandler` compares the app's OWN usage today with the merged limit, the same
+  number `BlockEngine` compares. A shared budget across a group's apps is spec follow-up F3
+  (`docs/exec-plans/active/groups-categories-allowlist.md`), not this.
+
+**Why the agreement matters at runtime, not only in tests.** The clock reports and
+`enforceExhaustedBudget` re-derives through `EvaluateBlockUseCase`, which may only escalate to a
+HARD_BLOCK. A cache that covered an app evaluation does not would log `rules_disagree` on every tick
+and show nothing; one that missed an app evaluation covers is #146 itself. Same resolver, same
+answer.
+
+**Battery (#63).** A package still gets an entry only if a covering rule wants one, and the device
+lists are read only when they can matter (`CounterCacheCoverage.needs`): the essentials list once any
+group or All apps rule wants an entry, the installed-apps list (with the browser list) only for an All
+apps rule or a group that matches by category. A phone with app rules only reads nothing new, and a
+group rule with no clock feature (a plain Delay group) reads nothing and spins no timer.
+
+**Freshness.** Membership edits reach the cache on the same at-most-10-second refresh as rule edits:
+`RuleSnapshotSource` re-emits on any change to the rules, groups or members tables, and the loader
+reads `current()`. The first open within 10 s of an edit can still be judged against the previous
+cache, which is the pre-existing trade-off of the 10-second snapshot (and why the device cases wait
+12 s after a save), not something this changes.
+
+**The cooldown merge had to narrow, because group rows joined it.** `mergeEntries` took the longest
+`autoKickCooldownSeconds` of every entry for a package. A group row with only a limit carries the
+column default (60 s) and configures no kick, so once group rows entered the merge it would have
+stretched a direct rule's 30-second kick cooldown to 60. The longest cooldown is now taken over the
+entries that `configuresAutoKick`, falling back to all of them only when none does.
+
+**Edges, all consistent with evaluation:** an installed app with no launcher entry is covered by a
+group only if it was added by hand (category groups and All apps cover launchable apps only); a rule
+for a deleted group covers nothing; a disabled rule contributes nothing; a corrupt row with no target
+is dropped.
+
+**Tests, per layer.** L1: `CounterCacheGroupEntriesTest` (members get an entry that ticks, "Removed by
+you" gets none, category members by category and never a browser, essentials never under a group but
+a direct rule on one still counts, strictest wins both ways, two groups, a disabled rule, a group with
+no clock feature, a deleted group, All apps with allowed apps and groups, the cooldown merge, and what
+`load` reads for app-only, hand-picked and category snapshots), plus two rows in
+`CounterCacheRefresherMergeTest` (a group row's `entryFor`, the kick-only cooldown). Counterfactual:
+with `appEntries` swapped back to `enabledRules.mapNotNull(appEntryFor)`, 15 of the 21 new tests
+fail. L3: `CounterCacheGroupMidSessionTest` drives the tick end to end (the loader fills a real
+`CounterCacheRefresher`, the real `TimeRemainingHandler` reports the spent limit for the member, and
+the real `EvaluateBlockUseCase` on the same snapshot and usage returns the hard block the re-derive
+needs), with injected usage and a pinned engine clock. `CounterCacheCoverageDriftTest` pins the
+agreement over a mixed fixture: for every package, the cache's daily limit equals the limit the real
+`EvaluateBlockUseCase` blocks on, and the cache's app keys equal `CoveredApps` over the rules that
+want an entry. L6: `scripts/device-qa.sh group-limit-midsession` (group3, the mid-session clock
+chunk) sits in a group member with a derived limit and asserts the limit screen arrives without
+leaving the app, for exactly +1 on the Blocked tile.
 
 ## Usage reminder, "remind me instead of kicking me" (issue #77)
 
