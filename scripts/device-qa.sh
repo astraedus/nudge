@@ -344,7 +344,7 @@ screen_is_usable() {
 
 # Wake the phone, dismiss the keyguard, and hold both. Returns 1 if it could not.
 #
-# The PIN is known (1337) and lives in `~/bin/astra-pixel-unlock.sh` — the lock screen is never a
+# The PIN lives in `~/bin/astra-pixel-unlock.sh` (private, never commit it) — the lock screen is never a
 # reason to stop and wait for a human. Two attempts, because the helper's own wake can race a
 # device that is mid-doze.
 wake_and_unlock() {
