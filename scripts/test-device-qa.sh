@@ -9,11 +9,14 @@
 #   (b) nudge_notif_records read the FIRST Nudge notification record instead of id=1, so a
 #       lingering usage reminder (id 4, listed first) made `notif-idle` read a timestamp that
 #       never moves;
-#   (c) `all` runs ~18 minutes, more than a bounded call can hold, so there are now group1-4
+#   (c) `all` runs ~30 minutes, more than a bounded call can hold, so there are now group1-5
 #       chunks: they must cover `all` exactly, and a chunked series must keep crash-check's
 #       whole-series meaning.
 # Later: home-reopen turns YouTube's picture-in-picture off for its own duration (its PiP
 # explainer stood in front of the launcher), so the save/restore of that appop is tested too.
+# The schedule-boundary cases (#169, #170) seed a rule at minutes computed from the device clock, so
+# the arithmetic, the fixture they write and the seeding order are tested here too; the waits
+# themselves need the real clock and the real device.
 #
 # Everything here runs against a shimmed `adb` and a stateful fake of the config screen, with no
 # device and no lock, exactly as test-cert-guard.sh does for the install path. device-qa.sh is
@@ -141,27 +144,33 @@ check "a preset limit (2h: the chip says 'Custom'): sets and saves 5"          t
 check "the 15m preset: sets and saves 1"                                       test "$(limit_from 15 1)"  = "rc=0 saved=1"
 
 # ─── 3. (c) the chunks cover `all`, exactly and in order ──────────────────────
-echo "group1 / group2 / group3 / group4:"
+echo "group1 / group2 / group3 / group4 / group5:"
 cases_of() { run_qa "$OUT" -- "target_cases $1" && tr '\n' ' ' <"$OUT"; }
 all_cases="$(run_qa "$OUT" -- 'printf "%s " "${ALL_CASES[@]}"' && cat "$OUT")"
 check "group1 is the setup chunk" test "$(cases_of group1)" = "setup delay-block home-reopen walkaway-count "
 check "group2 is the daily-limit chunk" test "$(cases_of group2)" = "daily-limit-refresh daily-limit-midsession "
 check "group3 is the mid-session clock chunk" test "$(cases_of group3)" = "group-limit-midsession "
-check "group4 is the idle / crash chunk" test "$(cases_of group4)" = "notif-idle crash-check refusal-alert "
+check "group4 is the schedule-boundary chunk" test "$(cases_of group4)" = "schedule-start-open-app schedule-end-overlay "
+check "group5 is the idle / crash chunk (refusal-alert last: it needs the cert switch)" \
+  test "$(cases_of group5)" = "notif-idle crash-check refusal-alert "
 check "all is every case, in the run order" test "$(cases_of all)" = "$all_cases"
-check "group1 + group2 + group3 + group4 == ALL_CASES, in order" \
-  test "$(cases_of group1)$(cases_of group2)$(cases_of group3)$(cases_of group4)" = "$all_cases"
+check "group1 + group2 + group3 + group4 + group5 == ALL_CASES, in order" \
+  test "$(cases_of group1)$(cases_of group2)$(cases_of group3)$(cases_of group4)$(cases_of group5)" = "$all_cases"
 rc=0; run_qa "$OUT" -- 'target_cases delay-block' || rc=$?
 check "a single case is not a multi-case target (nonzero, prints nothing)" bash -c "[[ $rc != 0 && ! -s '$OUT' ]]"
 check "check_groups passes on the real lists" run_qa "$OUT" -- "check_groups"
 rc=0; run_qa "$OUT" -- 'GROUP2_CASES=(daily-limit-refresh); check_groups' || rc=$?
 check "a case dropped from the groups: exits 2 and names ALL_CASES" bash -c "[[ $rc == 2 ]] && grep -q 'ALL_CASES' '$OUT'"
-rc=0; run_qa "$OUT" -- 'GROUP4_CASES=(crash-check notif-idle refusal-alert); check_groups' || rc=$?
+rc=0; run_qa "$OUT" -- 'GROUP5_CASES=(crash-check notif-idle refusal-alert); check_groups' || rc=$?
 check "the order of the groups matters: exits 2" test "$rc" = 2
-rc=0; run_qa "$OUT" -- 'GROUP4_CASES+=(brand-new-case); check_groups' || rc=$?
+rc=0; run_qa "$OUT" -- 'GROUP4_CASES=(schedule-end-overlay schedule-start-open-app); check_groups' || rc=$?
+check "the schedule cases swapped inside group4: exits 2" test "$rc" = 2
+rc=0; run_qa "$OUT" -- 'GROUP5_CASES+=(brand-new-case); check_groups' || rc=$?
 check "a case added to a group but not to ALL_CASES: exits 2" test "$rc" = 2
 rc=0; run_qa "$OUT" -- 'GROUP4_CASES=(); check_groups' || rc=$?
 check "group4 is part of the concatenation (emptying it): exits 2" test "$rc" = 2
+rc=0; run_qa "$OUT" -- 'GROUP5_CASES=(); check_groups' || rc=$?
+check "group5 is part of the concatenation (emptying it): exits 2" test "$rc" = 2
 # A case named in ALL_CASES with no case_<name> function only fails when the chunk reaches it on the
 # bench ("unknown case"), minutes into a gate run. Checked here for every case, so registering a
 # case and writing it cannot drift apart.
@@ -176,8 +185,8 @@ check "every case in ALL_CASES has a case_<name> function" bash -c "! grep -q MI
 check "list is unchanged: one case per line, in order" \
   test "$(bash "$QA" list | tr '\n' ' ')" = "$all_cases"
 bash "$QA" --help >"$OUT" 2>&1
-check "--help documents the chunks (group1-group4 and the APK=installed hand-off)" \
-  bash -c "grep -q group1 '$OUT' && grep -q group2 '$OUT' && grep -q group3 '$OUT' && grep -q group4 '$OUT' && grep -q 'APK=installed' '$OUT'"
+check "--help documents the chunks (group1-group5 and the APK=installed hand-off)" \
+  bash -c "grep -q group1 '$OUT' && grep -q group2 '$OUT' && grep -q '^group3: group-limit-midsession' '$OUT' && grep -q '^group4: schedule-start-open-app' '$OUT' && grep -q '^group5: notif-idle' '$OUT' && grep -q 'APK=installed' '$OUT'"
 rc=0; bash "$QA" no-such-case >"$OUT" 2>&1 || rc=$?
 check "an unknown target dies (exit 2) before the lock or the phone, and names the groups" \
   bash -c "[[ $rc == 2 ]] && grep -q 'group1' '$OUT'"
@@ -342,6 +351,104 @@ check "ui_tap_edittext taps the EditText by class, not the 'Name' label above it
   test "$(tapped 'ui_tap_edittext 1')" = "TAP 540 360,"
 check "ui_tap_switch_of taps the right edge of the labelled row (width read from wm size)" \
   test "$(tapped 'ui_tap_switch_of "Daily limit for each app" 1')" = "TAP 970 1040,"
+
+# ─── 8. schedule-boundary cases (#169, #170): clock arithmetic, fixture, seeding ──
+echo "schedule boundaries:"
+bw() { run_qa "$OUT" -- "boundary_window $*" && tr -d '\n' <"$OUT"; }
+check "a window 3 min out, 2 min long, on a Wednesday at 10:00: weekday 3, 603->605" test "$(bw 3 600 3 2)" = "3 603 605"
+check "already open (offset 0), 3 min long: 600->603" test "$(bw 3 600 0 3)" = "3 600 603"
+check "ending the minute before midnight stays on today's weekday (1439)" test "$(bw 3 1435 2 2)" = "3 1437 1439"
+check "ending AT midnight (1440) wraps: every day, end 0 (an overnight window)" test "$(bw 3 1437 0 3)" = "- 1437 0"
+check "straddling midnight: every day, start 1438, end 1 (overnight form)" test "$(bw 3 1438 0 3)" = "- 1438 1"
+check "starting past midnight: every day, small start < small end" test "$(bw 3 1438 3 2)" = "- 1 3"
+
+dclock() { # <what `date +'%u %H %M %S %s'` prints on the device>
+  run_qa "$OUT" FAKE_DATE="$1" -- "ash() { printf '%b\n' \"\$FAKE_DATE\"; }; device_clock" || true
+  tr -d '\n' <"$OUT"
+}
+check "device_clock: 09/08 are decimal, not octal (a bad-octal error would print nothing)" \
+  test "$(dclock '5 09 08 08 1700000000\r')" = "5 548 8 1700000000"
+check "device_clock: midnight and the last second of a minute" \
+  test "$(dclock '7 00 00 59 1700000059')" = "7 0 59 1700000059"
+rc=0; run_qa "$OUT" -- "ash() { :; }; device_clock" || rc=$?
+check "device_clock: no answer from the device is a failure, not a zero" test "$rc" != 0
+
+until_epoch() { # <device now> <target epoch>
+  run_qa "$OUT" FAKE_NOW="$1" -- "ash() { printf '%s\r\n' \"\$FAKE_NOW\"; }; secs_until_epoch $2" || true
+  tr -d '\n' <"$OUT"
+}
+check "secs_until_epoch: 90s ahead" test "$(until_epoch 1000 1090)" = 90
+check "secs_until_epoch: already past floors at 0" test "$(until_epoch 1000 900)" = 0
+run_qa "$OUT" -- "ash() { :; }; secs_until_epoch 99" || true
+check "secs_until_epoch: an unreadable device clock floors at 0 (the precondition then fails the case)" \
+  test "$(tr -d '\n' <"$OUT")" = 0
+
+# The rule file: valid JSON, one HARD_BLOCK on the package, the minutes asked for, and EXACTLY the
+# keys the shipped fixture has (fixture honesty: a key the importer reads must not be silently
+# left to a parser default).
+bjson() { # <days, or - for every day> -> $TMP/boundary.json
+  run_qa "$OUT" -- "boundary_fixture_json com.example.app $1 603 605" || true
+  cp "$OUT" "$TMP/boundary.json"
+}
+bjson 3
+check "boundary fixture: valid JSON, one rule, HARD_BLOCK, the package, the minutes, weekday '3'" \
+  python3 -I -c "
+import json
+r = json.load(open('$TMP/boundary.json'))['rules']
+assert len(r) == 1
+r = r[0]
+assert (r['mode'], r['packageName'], r['scheduleDays'], r['scheduleStartMinute'], r['scheduleEndMinute'], r['enabled']) == ('HARD_BLOCK', 'com.example.app', '3', 603, 605, True), r"
+bjson -
+check "boundary fixture: days '-' becomes null (every day)" \
+  python3 -I -c "import json; assert json.load(open('$TMP/boundary.json'))['rules'][0]['scheduleDays'] is None"
+check "boundary fixture: same keys as .maestro/fixtures/rules.json (no key left to a parser default)" \
+  python3 -I -c "
+import json
+mine = json.load(open('$TMP/boundary.json'))
+ship = json.load(open('$ROOT/.maestro/fixtures/rules.json'))
+assert set(mine) == set(ship), (set(mine), set(ship))
+assert set(mine['rules'][0]) == set(ship['rules'][0]), set(mine['rules'][0]) ^ set(ship['rules'][0])"
+
+# seed_boundary_rule against fakes: the order of the import walk, the real boundaries it reports and
+# the file it pushes. Device clock 10:00:20 (minute 600), weekday 3, epoch 1700000020.
+SEED_FAKES='
+device_clock() { echo "3 600 20 1700000020"; }
+adbs() { [[ "$1" == push ]] && cp "$2" "$SEED_PUSHED"; return 0; }
+ash() { return 0; }
+sleep() { :; }
+nudge_route_home() { echo "home" >>"$SEED_LOG"; }
+scroll_to_text() { echo "scroll:$1" >>"$SEED_LOG"; }
+ui_wait_text() { echo "wait:$1" >>"$SEED_LOG"; [[ "$1" != "$SEED_FAIL" ]]; }
+ui_tap_text() { echo "tap:$1" >>"$SEED_LOG"; [[ "$1" != "$SEED_FAIL" ]]; }
+'
+seed() { # <offset> <length> [step that fails] -> rc; log in $TMP/seed.log, pushed file in $TMP/seed.json
+  : >"$TMP/seed.log"; rm -f "$TMP/seed.json"
+  run_qa "$OUT" SEED_LOG="$TMP/seed.log" SEED_PUSHED="$TMP/seed.json" SEED_FAIL="${3:-}" -- \
+    "$SEED_FAKES seed_boundary_rule $1 $2; rc=\$?; echo \"EPOCHS=\$BOUNDARY_START_EPOCH \$BOUNDARY_END_EPOCH\"; exit \$rc"
+}
+rc=0; seed 3 2 || rc=$?
+check "seed_boundary_rule: succeeds" test "$rc" = 0
+check "  ...boundaries are the FIRST SECOND of the start / end minute (epoch - sec + offset), not 'N min from now'" \
+  grep -qx 'EPOCHS=1700000180 1700000300' "$OUT"
+check "  ...pushes a rule for minutes 603->605 on weekday 3" \
+  python3 -I -c "
+import json
+r = json.load(open('$TMP/seed.json'))['rules'][0]
+assert (r['scheduleStartMinute'], r['scheduleEndMinute'], r['scheduleDays']) == (603, 605, '3'), r"
+check "  ...walks Settings > Import backup > the file > Import > Import Complete > OK, in that order" \
+  test "$(grep -v '^scroll' "$TMP/seed.log" | tr '\n' ' ')" = \
+  "home tap:Settings tap:Import backup tap:nudge-qa-boundary.json tap:Import wait:Import Complete tap:OK home "
+seed 0 3 || true
+check "offset 0: the start boundary is the minute already running" grep -qx 'EPOCHS=1700000000 1700000180' "$OUT"
+for step in "nudge-qa-boundary.json" "Import" "Import Complete"; do
+  rc=0; seed 3 2 "$step" || rc=$?
+  check "a failing import step ('$step') fails the seed, so the case never waits on a rule that is not there" test "$rc" != 0
+done
+
+# run_case derives the function from the case name, so both must exist.
+for fn in case_schedule_start_open_app case_schedule_end_overlay; do
+  check "$fn is defined" run_qa "$OUT" -- "declare -F $fn"
+done
 
 echo
 echo "$pass passed, $fail failed"

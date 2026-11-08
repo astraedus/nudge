@@ -60,6 +60,24 @@ sealed class BlockDecision {
          * Set when the deciding rule is an All apps rule: the rule line and the allowed-app icons
          * (spec 3.9). Null for every other block, which then keeps its redirect bubble.
          */
-        val allApps: AllAppsBlock? = null
-    ) : BlockDecision()
+        val allApps: AllAppsBlock? = null,
+        /**
+         * For a block decided by a SPENT DAILY LIMIT: the next local midnight, when the day's usage
+         * starts again from zero and the limit stops blocking. Set even when the rule is on all the
+         * time, which is what [until] (a display value) deliberately leaves null. Null for every
+         * other block. Read it through [endsAt].
+         */
+        val budgetResetAt: Long? = null
+    ) : BlockDecision() {
+        /**
+         * When this block stops being in force by the clock alone, as wall-clock epoch ms: the
+         * earlier of [until] and [budgetResetAt]. Null means the clock never ends it (on all the
+         * time, or Nuke).
+         *
+         * The block screen closes itself at this instant and the app in front is evaluated afresh.
+         * The daily pass is not spent on a block already past it (#170).
+         */
+        val endsAt: Long?
+            get() = listOfNotNull(until, budgetResetAt).minOrNull()
+    }
 }

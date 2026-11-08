@@ -94,4 +94,21 @@ class ScheduleEvaluatorWindowEndTest {
         val data = aBlockRuleData(id = 1L, scheduleStartMinute = 22 * 60, scheduleEndMinute = 6 * 60, allApps = true)
         assertEquals(at(5, 6, 0).timeInMillis, evaluator.windowEndAt(data, at(4, 23, 0)))
     }
+
+    /**
+     * Regression (found building #169): across the spring-forward night the old walk counted seven
+     * WALL hours from 23:00 and added them as absolute ones, so "Until" read 07:00 BST, an hour after
+     * the rule actually let go. Europe/London went forward on 29 March 2026.
+     */
+    @Test
+    fun `across a DST change the window ends at the wall-clock end`() {
+        val london = java.util.TimeZone.getTimeZone("Europe/London")
+        fun londonAt(month: Int, day: Int, hour: Int): Calendar = Calendar.getInstance(london).apply {
+            clear()
+            set(2026, month, day, hour, 0, 0)
+        }
+        val overnight = anActiveRule(scheduleStartMinute = 22 * 60, scheduleEndMinute = 6 * 60)
+        assertEquals(londonAt(Calendar.MARCH, 29, 6).timeInMillis, evaluator.windowEndAt(overnight, londonAt(Calendar.MARCH, 28, 23)))
+        assertEquals(londonAt(Calendar.OCTOBER, 25, 6).timeInMillis, evaluator.windowEndAt(overnight, londonAt(Calendar.OCTOBER, 24, 23)))
+    }
 }

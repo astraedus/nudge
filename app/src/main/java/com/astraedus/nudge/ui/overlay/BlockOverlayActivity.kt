@@ -16,10 +16,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.core.net.toUri
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.data.repository.DeviceGroupMembers
 import com.astraedus.nudge.data.repository.InstalledAppsRepository
 import com.astraedus.nudge.data.repository.RedirectAppRepository
+import com.astraedus.nudge.domain.block.BlockInForce
 import com.astraedus.nudge.domain.block.OverlayLifecycle
 import com.astraedus.nudge.domain.block.OverlayWindowMode
 import com.astraedus.nudge.domain.block.WebBlockEscape
@@ -38,6 +40,8 @@ import com.astraedus.nudge.ui.redirect.RedirectAppPickerHost
 import com.astraedus.nudge.ui.theme.NudgeTheme
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -60,6 +64,9 @@ class BlockOverlayActivity : ComponentActivity() {
 
     /** Posts the walk-away fail-safe finish. Cleared in [onDestroy]. */
     private val mainHandler = Handler(Looper.getMainLooper())
+
+    /** Closes the screen at the shown block's end (#170). One per delivery; see [scheduleBlockEnd]. */
+    private var blockEndJob: Job? = null
 
     /**
      * EVERY lifecycle decision this activity makes, and the only place any of them is made.
@@ -128,6 +135,15 @@ class BlockOverlayActivity : ComponentActivity() {
          * spec 3.9): the footer's "Until 8:42 AM". Absent for a rule that is on all the time.
          */
         const val EXTRA_UNTIL = "until"
+
+        /**
+         * When the block stops being in force by the clock, epoch ms (`BlockDecision.Block.endsAt`,
+         * #170): the earlier of [EXTRA_UNTIL] and a spent daily limit's midnight reset. Unlike
+         * [EXTRA_UNTIL] it is set for a daily-limit block on a rule that is on all the time. The
+         * screen closes itself at this instant ([scheduleBlockEnd]), and the daily pass is not spent
+         * after it. Absent = nothing on a clock ends this block.
+         */
+        const val EXTRA_ENDS_AT = "ends_at"
 
         /**
          * Present only when an All apps rule decided this block (`BlockDecision.Block.allApps`,
@@ -207,6 +223,9 @@ class BlockOverlayActivity : ComponentActivity() {
                 )
 
                 OverlayLifecycle.Effect.RelaunchFullscreen -> relaunchFullscreen()
+
+                OverlayLifecycle.Effect.UseEmergencyPass ->
+                    emergencyPassManager.usePass(passthroughPackage(intent))
             }
         }
     }
@@ -438,9 +457,15 @@ class BlockOverlayActivity : ComponentActivity() {
         // Scoped to the package the user is actually IN, which for a web block is the browser --
         // the service checks `isPassActive` against the foreground package, so a window opened on
         // the rule's app package would never be seen and the escape would silently re-block.
+        //
+        // Spent only while the block is still in force (#170): a tap landing after the rule's end
+        // closes the screen like the end itself does and keeps the day's one pass. The block's end
+        // is read here, once per delivery, so the pass and the screen's own close share one instant.
+        val endsAt = intent.getLongExtra(EXTRA_ENDS_AT, -1L).takeIf { it >= 0 }
         val onUsePass = {
-            emergencyPassManager.usePass(passthroughPackage(intent))
-            finish()
+            val inForce = BlockInForce.isInForce(endsAt, System.currentTimeMillis())
+            if (!inForce) nudgeLogger.i("daily pass not spent, the block had already ended")
+            runEffects(overlayLifecycle.onEmergencyPassTapped(inForce))
         }
 
         // Issue #15: a block delivered while the overlay is already up arrives via onNewIntent, and
@@ -456,6 +481,7 @@ class BlockOverlayActivity : ComponentActivity() {
         // identity anyway — keying on delaySeconds alone is NOT enough, since two apps sharing the
         // default 15s delay would still hand each other stale state.
         val blockToken = overlayLifecycle.renderToken
+        scheduleBlockEnd(blockToken, endsAt)
 
         setContent {
             NudgeTheme {
@@ -859,6 +885,44 @@ class BlockOverlayActivity : ComponentActivity() {
                 )
             )
         }, delayMs)
+    }
+
+    /**
+     * Close this screen when the block it shows stops being in force by the clock (#170): the rule's
+     * window ends, or a spent daily limit resets at midnight. [OverlayLifecycle.onBlockEnded] decides
+     * whether it is still THIS delivery's to close; the finish while resumed pops the app forward and
+     * the service evaluates it afresh, so another rule that covers it shows its own block.
+     *
+     * A coroutine under `repeatOnLifecycle(STARTED)`, NOT [mainHandler]: a new delivery's
+     * `CancelPendingFailSafe` clears every message on that handler, and the end must not ride on the
+     * walk-away's timer. STARTED because invariant #8 already finishes a stopped overlay, so the wait
+     * only runs while the screen is up. The remaining time is re-read from the wall clock every time
+     * the wait resumes or elapses: `delay` runs on uptime, so a clock set back while waiting would
+     * otherwise close the screen early.
+     */
+    private fun scheduleBlockEnd(token: Int, endsAt: Long?) {
+        blockEndJob?.cancel()
+        blockEndJob = null
+        if (endsAt == null) return
+        blockEndJob = lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                while (true) {
+                    val wait = BlockInForce.msUntil(endsAt, System.currentTimeMillis()) ?: return@repeatOnLifecycle
+                    if (wait == 0L) break
+                    delay(wait)
+                }
+                val effects = overlayLifecycle.onBlockEnded(
+                    token = token,
+                    atLeastStarted = lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED),
+                    isFinishing = isFinishing,
+                    isDestroyed = isDestroyed
+                )
+                if (effects.isNotEmpty()) {
+                    nudgeLogger.i("block ended under the overlay, closing back into the app")
+                }
+                runEffects(effects)
+            }
+        }
     }
 
     /**

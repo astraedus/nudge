@@ -258,6 +258,64 @@ stale in the new zone's logical day, which allows apps rather than blocks them; 
 ends at the boundary, because the new day has no unlock yet. The full matrix, with explicit `ZoneId`s, is
 `FirstUnlockWindowTest` and `ScheduleEvaluatorFirstUnlockTest`.
 
+## Schedule boundaries: one timer to the next start or end (#169, #170)
+
+Before this, a rule was only ever checked when something happened in the app: a window change or an
+arrival. An app opened at 21:55 under a 22:00-23:00 rule stayed open past 22:00 (#169), and a block
+screen up at 22:59 stayed up past 23:00 until the user did something (#170). The clock alone changes
+the answer at four kinds of instant, and nothing was watching them.
+
+| Piece | Where | What it owns |
+|---|---|---|
+| `ScheduleWalk` | `domain/engine/ScheduleWalk.kt` | Pure: `nextStart` and `windowEnd` of a days-and-times window, and `nextLocalMidnight`. It walks ABSOLUTE minutes and reads the wall clock at each, so it agrees with `isActiveAt` across midnight, a days-of-week edge and a DST change. The walk `windowEndAt` used before added wall minutes as absolute ones: across spring-forward its "Until 6:00 AM" said 7:00. Bounded at eight days. |
+| `ScheduleEvaluator.nextStartAt` | `domain/engine/ScheduleEvaluator.kt` | When a rule's window next STARTS, strictly after now. Null for a rule on all the time, every day all day, and a first-unlock rule: an unlock opens that window, and the service already re-checks the app in front when the stamp moves (`reevaluateForegroundForFirstUnlock`). Its END is a time, and `windowEndAt` gives it. |
+| `ScheduleBoundaries.next` | `domain/engine/ScheduleBoundaries.kt` | The earliest boundary over every enabled rule: each one's next start and its window's end, plus the next local midnight when any rule has a daily limit (a spent limit stops blocking at the rollover, even on a rule with no window). Null when nothing is on a clock. |
+| `BlockDecision.Block.endsAt` | `domain/model/BlockDecision.kt`, `BlockEngine` | When the block stops being in force by the clock: the earlier of `until` (the window's end) and `budgetResetAt` (a spent limit's midnight). The block screen closes at it (`docs/architecture/block-overlay-lifecycle.md`, "A block that ends under its screen"). |
+| `ScheduleBoundaryWatch` | `service/ScheduleBoundaryWatch.kt` | The ONE timer. Posts one main-looper `Handler` task to `ScheduleBoundaries.next`, and at it re-checks the app in front through the service's ordinary `evaluateForegroundPackage` (`recheckForegroundAtBoundary`, the shape of `reevaluateForegroundForNuke`), then arms the next one. A re-arm replaces the timer, never adds one. |
+
+**What a boundary re-check does, and does not do.** It goes through `evaluateForegroundPackage`, so
+`grantLetsThrough` (the emergency pass, the auto-kick cooldown, the passthrough grant) runs BEFORE
+the engine. A pass earned under a Delay rule keeps lasting its sitting when a stricter schedule
+starts (groups spec 534-537); the next arrival after the sitting meets the new block. Without a
+grant, the block arrives exactly as a fresh open would, and a Delay schedule shows its countdown
+over the open app. The re-check looks at nothing while Nudge is off, while a block screen is up
+(its own end closes it), or when the window in front is unreadable or Nudge itself
+(`ScheduleBoundaryWatch.recheckTarget`).
+
+**Why a Handler, not AlarmManager.** An exact alarm needs `SCHEDULE_EXACT_ALARM` on API 31+ (a new
+permission, and a Play declaration); an inexact one can be minutes late; either wakes the CPU for a
+screen nobody is looking at. A rule only matters to an app on screen, so the Handler is enough with
+three catch-ups, because `Handler` runs on uptime and does not run in deep sleep or Doze:
+
+- **screen on** (`ACTION_SCREEN_ON`, the shared `unlockReceiver`): re-arm from the wall clock, and
+  if the target has passed, cross it now;
+- **unlock** (`ACTION_USER_PRESENT`): a boundary crossed behind the lock screen (`deviceReady` is
+  `isPastKeyguardNow()`) is re-checked at the unlock, once;
+- **the clock moved** (`ACTION_TIME_CHANGED`, `ACTION_TIMEZONE_CHANGED`, `ACTION_DATE_CHANGED`, the
+  `timeChangeReceiver`): re-check now and re-arm from the new time. A task that fires before its
+  wall-clock target (the clock went back while waiting) re-arms and re-checks nothing.
+
+It also re-arms on every rule snapshot, the master toggle going on (off cancels it), and the
+first-unlock stamp moving. Day rollover is a boundary in its own right when a daily limit exists,
+and otherwise the walk already crosses midnight. Teardown cancels it
+(`cancel_schedule_boundary_watch`).
+
+**#63 holds.** Rules with nothing on a clock post no timer at all, and a schedule-only rule gets no
+per-minute foreground clock (`CounterCacheRefresher.appEntryFor` gives it no tick; pinned by
+`ScheduleBoundaryTriggerPathTest`). The whole cost of a schedule is one wake of the main looper per
+boundary while the screen is on.
+
+**Shared with daily limits:** only `ScheduleWalk.nextLocalMidnight`, used by `BlockEngine` for
+`budgetResetAt` and by `ScheduleBoundaries` for the rollover. A limit running OUT is not a
+boundary: it depends on usage, and the per-app foreground clock watches it (v1.18.4, and #146 for
+group limits).
+
+Tests: `ScheduleWalkTest`, `ScheduleBoundariesTest`, `BlockEngineEndsAtTest`, the DST case in
+`ScheduleEvaluatorWindowEndTest` (L1); `ScheduleBoundaryWatchTest` and
+`ScheduleBoundaryTriggerPathTest` (L3, the second one runs the timer into the real use case and
+engine on one injected clock); `schedule-start-open-app` and `schedule-end-overlay` in
+`scripts/device-qa.sh` (L6, real clock).
+
 ## Manage Apps: one list (spec PR 3)
 
 Spec: `docs/exec-plans/active/groups-categories-allowlist.md`, sections 3.1, 3.2. Active Rules and Manage Apps were two

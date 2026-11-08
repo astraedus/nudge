@@ -114,6 +114,12 @@ class OverlayLifecycle {
         data object LogFailSafeFired : Effect
 
         /**
+         * Spend today's daily 2-minute pass on the blocked app: `EmergencyPassManager.usePass(...)`.
+         * Emitted only while the block is still in force ([onEmergencyPassTapped], #170).
+         */
+        data object UseEmergencyPass : Effect
+
+        /**
          * The block screen is in a split-screen half, a floating window or PiP (issue #71): remove
          * this task and start the same block in a fresh, fullscreen one. See [OverlayWindowMode].
          */
@@ -271,6 +277,51 @@ class OverlayLifecycle {
             if (hasPassthroughTarget && atLeastStarted) add(Effect.GrantPassthrough)
             add(Effect.MarkOverlayInactive)
             add(Effect.Finish)
+        }
+
+    /**
+     * The block this screen shows has ENDED by the clock: its rule's window closed, or a spent daily
+     * limit reset at midnight ([BlockInForce], #170). Close the screen and land the user back in
+     * the app.
+     *
+     * The close is a plain finish WHILE RESUMED, and that pop is wanted here. It is the very
+     * mechanism the walk-away avoids (#26): the app underneath comes forward and fires a real window
+     * event, and the service evaluates that arrival afresh. If another rule covers the app, that
+     * block is launched; if nothing does, the user is simply back in their app. No pass is granted,
+     * so a rule still in force cannot be skipped through this path.
+     *
+     * Refused (an empty list) when it would not be THIS screen closing on THIS block:
+     *  - [token] is not the current [renderToken]: a newer block was delivered, and its own end is
+     *    its own;
+     *  - this delivery already walked away, or the block was handed to a fullscreen replacement;
+     *  - the activity is finishing or destroyed;
+     *  - it is not at least STARTED. Invariant #8 already finishes a stopped overlay from
+     *    [onStopped]; this keeps the end from being a second finish behind it.
+     */
+    fun onBlockEnded(
+        token: Int,
+        atLeastStarted: Boolean,
+        isFinishing: Boolean,
+        isDestroyed: Boolean
+    ): List<Effect> =
+        if (token != renderToken || walkedAway || handedOff || isFinishing || isDestroyed || !atLeastStarted) {
+            emptyList()
+        } else {
+            listOf(Effect.MarkOverlayInactive, Effect.Finish)
+        }
+
+    /**
+     * "Use for 2 minutes" was tapped.
+     *
+     * The pass is spent only while the block is still in force ([BlockInForce.isInForce], #170). A
+     * tap that lands after the block's end (the screen is a frame from closing itself) closes the
+     * screen exactly as the end would and keeps the day's one pass for a block that needs it.
+     */
+    fun onEmergencyPassTapped(inForce: Boolean): List<Effect> =
+        if (inForce) {
+            listOf(Effect.UseEmergencyPass, Effect.Finish)
+        } else {
+            listOf(Effect.MarkOverlayInactive, Effect.Finish)
         }
 
     /**

@@ -4,13 +4,14 @@
 # Replaces the 60–100 minute LLM tap-walk that gated every release with a deterministic run
 # that finishes in minutes, prints a PASS/FAIL table, and exits nonzero on any failure.
 #
-#   scripts/device-qa.sh            # every case (same as `all`), ~18 minutes
+#   scripts/device-qa.sh            # every case (same as `all`), ~30 minutes
 #   scripts/device-qa.sh all
 #   scripts/device-qa.sh delay-block
 #   scripts/device-qa.sh list
 #   scripts/device-qa.sh group1 && APK=installed scripts/device-qa.sh group2 \
 #     && APK=installed scripts/device-qa.sh group3 \
-#     && APK=installed scripts/device-qa.sh group4    # `all` in four bounded chunks (below)
+#     && APK=installed scripts/device-qa.sh group4 \
+#     && APK=installed scripts/device-qa.sh group5    # `all` in five bounded chunks (below)
 #
 # ── WHY MOST OF THIS IS NOT MAESTRO (the central design fact) ─────────────────
 # Maestro — and every other UiAutomator-based driver — connects a `UiAutomation` session, and
@@ -56,9 +57,11 @@
 #                                    APK=debug ALLOW_CERT_SWITCH=1 scripts/device-qa.sh refusal-alert
 #                                    APK=main  ALLOW_CERT_SWITCH=1 scripts/device-qa.sh setup
 #
-# ── Running the gate in bounded chunks: group1 · group2 · group3 · group4 ─────
-# `all` takes ~18 minutes (setup 107s · delay-block 14s · home-reopen 140s · walkaway-count 55s ·
-# daily-limit-refresh 177s · daily-limit-midsession 258s · notif-idle 338s, plus ~45s of lock /
+# ── Running the gate in bounded chunks: group1 · group2 · group3 · group4 · group5 ─
+# `all` takes ~30 minutes (setup 107s · delay-block 14s · home-reopen 140s · walkaway-count 55s ·
+# daily-limit-refresh 177s · daily-limit-midsession 258s · notif-idle 338s, measured; the three
+# clock cases group-limit-midsession, schedule-start-open-app and schedule-end-overlay are each an
+# unmeasured ~3.5-4.5 min of real-clock waiting; plus ~45s of lock /
 # connect / install / grants per invocation), which no 10-minute foreground call can finish — and a
 # run cut off mid-way restores the bench but proves nothing. A group is a slice of `all` sized to
 # fit one such call (the longest, group2, is ~8 minutes). Membership: GROUP*_CASES below, and
@@ -68,21 +71,22 @@
 #   APK=installed scripts/device-qa.sh group2
 #   APK=installed scripts/device-qa.sh group3
 #   APK=installed scripts/device-qa.sh group4
+#   APK=installed scripts/device-qa.sh group5
 #
 # Run them IN THAT ORDER: group1 carries `setup`, which every later case assumes. Give every later
 # group APK=installed so the series tests the ONE build group1 put on the bench (APK=main would
 # re-download whatever main-latest has become and reinstall it between chunks). The series passes
-# only if all four exit 0. group3 is the mid-session clock chunk, added when group2 had no room left
-# (#146, #169/#170); group4 is the old group3 unchanged, so `crash-check` still runs last. No case
+# only if all five exit 0. group3 (#146) and group4 (#169/#170) are the clock chunks, added when
+# group2 had no room left; group5 is the old group3 unchanged, so `crash-check` still runs last. No case
 # asserts anything different from `all`:
 #   · `crash-check` still means "no app crash since the SERIES started". group1 records the
 #     dropbox count in ~/.cache/nudge-qa/crash-baseline and every later group reuses it (when it is
 #     under 3h old; otherwise they warn and take a fresh one) instead of re-baselining — a per-chunk
-#     baseline would let a crash during group1 pass a crash-check that only watches group4.
+#     baseline would let a crash during group1 pass a crash-check that only watches group5.
 #   · like `all`, a group skips the ~40s restore of the 1-minute Calculator limit after the
 #     daily-limit cases (the next `setup` re-imports it), so a lone group2 leaves the limit wherever
 #     the last case ended.
-#   · the four groups are asserted at startup to concatenate to ALL_CASES, so a case added to
+#   · the five groups are asserted at startup to concatenate to ALL_CASES, so a case added to
 #     `all` cannot silently drop out of the chunked gate.
 #
 # ── Other knobs ───────────────────────────────────────────────────────────────
@@ -92,6 +96,13 @@
 #   LIMIT_BURN_SECS=70             foreground time spent exhausting the 1-minute daily limit
 #   LIMIT_WAIT_SECS=45             how long to wait, after re-entry, for the limit to fire
 #   MIDSESSION_WAIT_SECS=240       ceiling on the mid-session sit (the case derives its own wait)
+#   BOUNDARY_PKG=com.google.android.keep   the ordinary app the schedule-boundary cases (#169, #170)
+#                                  put a Hard block on. NOT Calculator: its 1-minute daily limit is
+#                                  spent by then, which would block it for the wrong reason. NOT
+#                                  the Clock either: group-limit-midsession puts a limit on it.
+#   BOUNDARY_LEAD_MIN=3            minutes between seeding and the schedule STARTING (the import
+#                                  through the UI takes ~40s of that)
+#   BOUNDARY_WAIT_SLACK_SECS=90    how long past the real boundary the cases wait for the app to react
 #   QA_LOCK_OWNER=<name>           reuse a Pixel lock the caller already holds. ONLY works when
 #                                  this script runs in the caller's own process tree:
 #                                  `device-lock.sh` keys a holder on owner AND pid, and under
@@ -154,6 +165,11 @@ LIMIT_WAIT_SECS="${LIMIT_WAIT_SECS:-45}"
 # Ceiling on the mid-session sit. The case computes its own wait from the budget it actually has
 # left plus one 30-second clock tick; this only stops a mis-derived limit from parking the run.
 MIDSESSION_WAIT_SECS="${MIDSESSION_WAIT_SECS:-240}"
+# Google Keep: on the bench (its captures are in docs/architecture/accessibility-event-pipeline.md)
+# and carrying no fixture rule. The case fails loud if it is missing, never skips.
+BOUNDARY_PKG="${BOUNDARY_PKG:-com.google.android.keep}"
+BOUNDARY_LEAD_MIN="${BOUNDARY_LEAD_MIN:-3}"
+BOUNDARY_WAIT_SLACK_SECS="${BOUNDARY_WAIT_SLACK_SECS:-90}"
 MAESTRO_BIN="${MAESTRO_BIN:-${HOME}/.maestro/bin/maestro}"
 GH_REPO="${GH_REPO:-astraedus/nudge}"
 
@@ -169,6 +185,9 @@ WORK="$(mktemp -d "${QA_CACHE_DIR}/run-${RUN_TS}-XXXX")"
 LOGCAT_FILE="${WORK}/logcat.txt"
 SAMPLER_FILE="${WORK}/load.txt"
 FIXTURE_DEVICE_PATH="/sdcard/Download/nudge-qa-rules.json"
+# The schedule-boundary cases write their own rule file at run time (the minutes depend on the
+# clock), under a name of its own so the picker cannot offer `setup`'s fixture instead.
+BOUNDARY_FIXTURE_DEVICE_PATH="/sdcard/Download/nudge-qa-boundary.json"
 
 export PATH="${HOME}/.maestro/bin:${PATH}"
 export MAESTRO_CLI_NO_ANALYTICS=true
@@ -183,6 +202,8 @@ ALL_CASES=(
   daily-limit-refresh
   daily-limit-midsession
   group-limit-midsession
+  schedule-start-open-app
+  schedule-end-overlay
   notif-idle
   crash-check
   refusal-alert
@@ -190,12 +211,15 @@ ALL_CASES=(
 
 # The chunked gate (header: "Running the gate in bounded chunks"): `all`, cut so each slice fits one
 # 10-minute call. Explicit lists, not index slices of ALL_CASES, so that adding a case forces a
-# decision about which chunk has the time for it; check_groups() fails the run when the four stop
-# concatenating to ALL_CASES.
+# decision about which chunk has the time for it; check_groups() fails the run when the five stop
+# concatenating to ALL_CASES. The schedule-boundary cases wait on the REAL clock for a minute
+# boundary (~3.5-4 min each), so they get a chunk of their own: group-limit-midsession (~4.5 min)
+# and the two of them would not fit one call.
 GROUP1_CASES=(setup delay-block home-reopen walkaway-count)
 GROUP2_CASES=(daily-limit-refresh daily-limit-midsession)
 GROUP3_CASES=(group-limit-midsession)
-GROUP4_CASES=(notif-idle crash-check refusal-alert)
+GROUP4_CASES=(schedule-start-open-app schedule-end-overlay)
+GROUP5_CASES=(notif-idle crash-check refusal-alert)
 
 # ─── Output helpers ───────────────────────────────────────────────────────────
 info() { printf '[qa] %s\n' "$*"; }
@@ -2204,7 +2228,7 @@ count_app_crashes() {
 #             CRASH_BASELINE_FILE.
 #   continue  a later chunk: reuses the recorded count, so `crash-check` keeps meaning "no crash
 #             since the series started". Re-baselining per chunk would let a crash during group1
-#             pass a crash-check that only watches group4 — the chunked gate quietly weaker than
+#             pass a crash-check that only watches group5 — the chunked gate quietly weaker than
 #             `all`. A missing or stale file (> 3h: a series is ~25 minutes, so older is some
 #             other day's) falls back to a fresh baseline and says so, rather than inventing a window.
 CRASH_BASELINE_FILE="${CRASH_BASELINE_FILE:-${QA_CACHE_DIR}/crash-baseline}"
@@ -2365,6 +2389,333 @@ case_refusal_alert() {
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Schedule boundaries (#169, #170): the app reacts when a schedule STARTS or ENDS under a user
+# who is doing nothing
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# Both bugs live in the gap a user sitting still opens: no touch means no accessibility event, and
+# an event is the only thing that ever re-asked the engine. So a schedule that starts under an open
+# app blocked nothing until the user next switched apps (#169), and a block screen whose schedule had
+# ended stayed up until they pressed something (#170). The fix is a one-shot timer at the boundary
+# minute, which is exactly what a unit test cannot see: it needs a REAL minute boundary on a real
+# clock. The device clock is never moved (a forced clock is unproven until a real-time run agrees).
+#
+# ## How the rule is seeded: an IMPORTED fixture with arbitrary minutes
+# The rule editor moves times in 15-minute steps (ui/components/rule/TimeSelector.kt), which would
+# make a case wait up to a quarter of an hour. The backup importer takes ANY minute: RuleExporter's
+# parseRuleFields reads `scheduleStartMinute` / `scheduleEndMinute` with optIntOrNull (getInt, no
+# range or step check, RuleExporter.kt:826-829) and ImportRulesUseCase.toBlockRule passes them
+# straight into the BlockRule. So the case reads the DEVICE's local clock (the app evaluates in the
+# device zone), writes a one-rule file for the minutes it wants, and imports it through Nudge's own
+# Settings > Import backup, driven with element-located taps exactly like set_daily_limit_minutes.
+# The import is done BEFORE the app under test is opened: every `uiautomator dump` rebinds the
+# accessibility service (see daily-limit-midsession), so no dump may happen once the case is waiting.
+#
+# ## Why not Calculator
+# Calculator carries the 1-minute daily limit, spent by the daily-limit cases that run just before;
+# it would be blocked before the schedule starts, and for a different reason than the one under test.
+# Not the Clock (com.google.android.deskclock) either: group-limit-midsession (#146) puts a group
+# daily limit on it, and a run of both would leave the Clock limited for the wrong reason.
+# BOUNDARY_PKG (Google Keep by default) is an ordinary app with no other rule.
+#
+# ## Leftovers
+# The imported rule stays (a days-and-times window on today's weekday, or every day when it crosses
+# midnight). `setup` starts from `pm clear`, so a series never sees it; a lone re-run of one of these
+# cases later the same day simply seeds a fresh window. Rules are deduplicated on
+# target+mode+schedule, so different minutes never collide.
+
+# "<iso weekday 1-7> <minute of day> <second> <epoch seconds>" on the DEVICE, in its local time.
+# One `date` call so the four numbers describe the same instant.
+device_clock() {
+  local dow hh mm ss epoch
+  read -r dow hh mm ss epoch < <(ash date +'%u %H %M %S %s' 2>/dev/null | tr -d '\r')
+  [[ -n "${epoch:-}" ]] || return 1
+  printf '%d %d %d %d\n' "$dow" $(( 10#$hh * 60 + 10#$mm )) $(( 10#$ss )) "$epoch"
+}
+
+# "<days> <start minute> <end minute>" for a window that starts <offset> minutes after the minute
+# <now> and lasts <length> minutes. Pure arithmetic (tested device-free). Days is today's ISO weekday,
+# or "-" (every day) when the window reaches midnight, where the weekday would be wrong and the
+# end<start wrap is the evaluator's own overnight form (ScheduleEvaluator.isScheduledAt).
+boundary_window() { # iso_dow minute_of_day offset_min length_min
+  local dow="$1" now="$2" start end
+  start=$(( now + $3 ))
+  end=$(( start + $4 ))
+  if (( end < 1440 )); then
+    printf '%s %d %d\n' "$dow" "$start" "$end"
+  else
+    printf '%s %d %d\n' "-" $(( start % 1440 )) $(( end % 1440 ))
+  fi
+}
+
+# The one-rule backup file: a HARD_BLOCK on <pkg> in the given window. Every key the importer reads
+# is spelled out, as in .maestro/fixtures/rules.json, so the file does not lean on parser defaults.
+boundary_fixture_json() { # pkg days(or -) start_minute end_minute
+  local days_json=null
+  [[ "$2" != "-" ]] && days_json="\"$2\""
+  cat <<EOF
+{
+  "version": 1,
+  "exportedAt": 1759000000000,
+  "rules": [
+    {
+      "packageName": "$1",
+      "groupName": null,
+      "mode": "HARD_BLOCK",
+      "delaySeconds": 15,
+      "dailyLimitMinutes": null,
+      "enabled": true,
+      "scheduleDays": ${days_json},
+      "scheduleStartMinute": $3,
+      "scheduleEndMinute": $4,
+      "inAppFeatures": null,
+      "grayscale": false,
+      "showCounter": false,
+      "autoKickAfter": null,
+      "showTimeRemaining": false,
+      "autoKickCooldownSeconds": 60,
+      "webDomains": null,
+      "autoKickAfterMinutes": null,
+      "webBlockMode": null,
+      "tabVanish": false,
+      "followingSteer": false
+    }
+  ],
+  "groups": [],
+  "history": []
+}
+EOF
+}
+
+# Writes the fixture for a window <offset>/<length> minutes from now, imports it through the UI, and
+# sets BOUNDARY_START_EPOCH / BOUNDARY_END_EPOCH (device epoch seconds) to the real boundaries.
+seed_boundary_rule() { # offset_min length_min
+  local dow mod sec epoch days start end
+  read -r dow mod sec epoch < <(device_clock) || { fail "could not read the device clock"; return 1; }
+  read -r days start end < <(boundary_window "$dow" "$mod" "$1" "$2")
+  # Boundaries are on the minute: the first second of minute `start`, not "start minutes from now".
+  BOUNDARY_START_EPOCH=$(( epoch - sec + $1 * 60 ))
+  BOUNDARY_END_EPOCH=$(( BOUNDARY_START_EPOCH + $2 * 60 ))
+  info "device clock ${mod}min ${sec}s (weekday ${dow}); seeding ${BOUNDARY_PKG} HARD_BLOCK days=${days} ${start}->${end} (minute of day)"
+
+  boundary_fixture_json "$BOUNDARY_PKG" "$days" "$start" "$end" >"${WORK}/boundary-rules.json"
+  adbs push "${WORK}/boundary-rules.json" "$BOUNDARY_FIXTURE_DEVICE_PATH" >/dev/null 2>&1 ||
+    { fail "could not push the boundary rule file to the device"; return 1; }
+  ash am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE \
+    -d "file://${BOUNDARY_FIXTURE_DEVICE_PATH}" >/dev/null 2>&1
+
+  # Settings > Import backup > the file > Import > Import Complete > OK: the same path
+  # .maestro/nudge-setup.yaml walks, driven here by element-located taps because a Maestro session
+  # would hold the accessibility service off (and this case must not need to re-establish it).
+  local name="${BOUNDARY_FIXTURE_DEVICE_PATH##*/}"
+  nudge_route_home
+  scroll_to_text "Settings" 8 && ui_tap_text "Settings" 10 || { fail "could not open Settings from the dashboard"; return 1; }
+  scroll_to_text "Import backup" 8 && ui_tap_text "Import backup" 10 || { fail "no 'Import backup' row in Settings"; return 1; }
+  ui_tap_text "$name" 30 || { fail "the file picker never listed ${name}"; return 1; }
+  ui_tap_text "Import" 20 || { fail "no Import button on the preview"; return 1; }
+  ui_wait_text "Import Complete" 25 || { fail "the import never reported 'Import Complete'"; return 1; }
+  ui_tap_text "OK" 10 || return 1
+  nudge_route_home
+}
+
+boundary_preflight() {
+  ash pm list packages "$BOUNDARY_PKG" 2>/dev/null | tr -d '\r' | grep -qx "package:${BOUNDARY_PKG}" || {
+    fail "${BOUNDARY_PKG} is not installed on the bench: set BOUNDARY_PKG to an ordinary single-activity app with no rule"
+    return 1
+  }
+}
+
+# Seconds from now (device clock) until <epoch>, floored at 0.
+secs_until_epoch() { # device epoch seconds
+  local now
+  now="$(ash date +%s 2>/dev/null | tr -d '\r')"
+  [[ -n "$now" ]] || { echo 0; return; }
+  echo $(( $1 > now ? $1 - now : 0 ))
+}
+
+# Stop the capture and keep it: every case that asserts the app REACTED must leave the log behind
+# (a later start_logcat truncates the shared file), because "never armed", "armed but never fired"
+# and "fired but the block failed" are three different bugs.
+boundary_keep_log() { # tag
+  stop_logcat
+  cp -f "$LOGCAT_FILE" "${ALBUM}/logcat-$1.txt" 2>/dev/null || true
+}
+
+# ── schedule-start-open-app (#169): a schedule that starts over an open app blocks it ──
+#
+# The app is opened BEFORE the schedule starts (so it is allowed), then nobody touches the phone. At
+# the start minute the service's one-shot timer must re-evaluate the app in front and block it
+# exactly as a fresh open would. Before the fix the user sat in the app untouched indefinitely.
+#
+# The sit uses only non-invasive oracles (`dumpsys activity activities` and the service's own log):
+# a `uiautomator dump` would rebind the very service whose timer is under test.
+case_schedule_start_open_app() {
+  local rc=0 i fg
+  boundary_preflight || return 1
+  go_home
+  wait_fg "$LAUNCHER_PKG" 10 || { fail "Home did not reach the launcher"; return 1; }
+
+  # Start BOUNDARY_LEAD_MIN minutes out; the window is 2 minutes long (its end is not under test).
+  seed_boundary_rule "$BOUNDARY_LEAD_MIN" 2 || return 1
+
+  # Settled start, then open the app. A fresh capture so nothing counted below is a leftover.
+  go_home
+  ash am force-stop "$BOUNDARY_PKG" >/dev/null 2>&1
+  sleep 2
+  start_logcat
+  ash monkey -p "$BOUNDARY_PKG" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
+  wait_fg "$BOUNDARY_PKG" 15 || { fail "${BOUNDARY_PKG} did not come to the foreground"; boundary_keep_log schedule-start-open-app-FAIL; return 1; }
+  sleep 3
+  shot 60-boundary-app-open-before-start
+
+  # Precondition, or the case proves nothing: the app must be open and NOT blocked, with the window
+  # still in the future. A block here means the import was slower than BOUNDARY_LEAD_MIN (the
+  # window already opened, so this would be the ordinary fresh-open path, not #169).
+  local wait_s
+  wait_s="$(secs_until_epoch "$BOUNDARY_START_EPOCH")"
+  if (( wait_s == 0 )) || (( $(log_count "handling block package=${BOUNDARY_PKG}") > 0 )); then
+    fail "the window had already started (or the app was already blocked) when the app was opened: the import took too long for BOUNDARY_LEAD_MIN=${BOUNDARY_LEAD_MIN}; this run would test a fresh open, not #169"
+    boundary_keep_log schedule-start-open-app-FAIL; return 1
+  fi
+  info "app open and allowed; the schedule starts in ${wait_s}s of real time. Sitting still, no taps, no dumps."
+
+  # Wait ON THE CONDITION (the block decision for the app, from the service's own log), bounded by
+  # the real boundary plus slack. The deadline is derived from the boundary, never a fixed sleep.
+  local deadline=$(( $(date +%s) + wait_s + BOUNDARY_WAIT_SLACK_SECS )) blocked=0 left=""
+  while (( $(date +%s) < deadline )); do
+    if (( $(log_count "handling block package=${BOUNDARY_PKG}") > 0 )); then blocked=1; break; fi
+    fg="$(foreground_package)"
+    # The launcher in front means we were bounced out, and a block after that would be the
+    # fresh-open path in disguise.
+    [[ "$fg" == "$LAUNCHER_PKG" ]] && left="$fg"
+    sleep 3
+  done
+  if [[ -n "$left" ]]; then
+    fail "the app was left during the sit (saw '${left}' in front): this case only proves anything while we stay inside"
+    rc=1
+  fi
+  if (( blocked == 0 )); then
+    fail "the schedule started ${BOUNDARY_WAIT_SLACK_SECS}s ago and the open app was never blocked (no 'handling block package=${BOUNDARY_PKG}')"
+    grep -E "schedule boundary|handling block|evaluate package=${BOUNDARY_PKG}" "$LOGCAT_FILE" 2>/dev/null | tail -12 >&2
+    boundary_keep_log schedule-start-open-app-FAIL
+    return 1
+  fi
+
+  # The block must be on the SCREEN: the overlay is Nudge's own activity, so Nudge in front is the
+  # arrival. Poll for it, then read nothing from the accessibility tree.
+  for ((i = 0; i < 10; i++)); do
+    fg="$(foreground_package)"
+    [[ "$fg" == "$APP_ID" ]] && break
+    sleep 1
+  done
+  shot 61-boundary-start-blocked
+  if [[ "$fg" != "$APP_ID" ]]; then
+    fail "the block was decided but Nudge's block screen is not in front (got '${fg}')"
+    rc=1
+  fi
+  # And it must have come from the timer, not from some stray event: the service logs the re-check.
+  if (( $(log_count "schedule boundary re-check package=${BOUNDARY_PKG}") == 0 )); then
+    fail "blocked, but with no 'schedule boundary re-check package=${BOUNDARY_PKG}' line: the boundary timer did not do it"
+    rc=1
+  fi
+  if (( $(log_count_re "handling block package=${BOUNDARY_PKG} mode=HARD_BLOCK") == 0 )); then
+    fail "the block was not the seeded HARD_BLOCK rule (see the capture)"
+    rc=1
+  fi
+  info "armed lines: $(log_count "schedule boundary armed"), re-check lines: $(log_count "schedule boundary re-check package=${BOUNDARY_PKG}")"
+  boundary_keep_log "schedule-start-open-app$([[ $rc -ne 0 ]] && echo -FAIL)"
+  go_home
+  CASE_NOTE="${BOUNDARY_PKG} opened ${wait_s}s before its schedule; blocked untouched after the boundary (re-check line + HARD_BLOCK + overlay in front)"
+  return $rc
+}
+
+# ── schedule-end-overlay (#170): a block screen closes itself when its schedule ends ──
+#
+# A HARD_BLOCK window that is already open: opening the app lands on the block screen. Nobody
+# touches anything. When the window ends the screen must close and the user must be back in the
+# app they had opened (not Nudge, not the launcher), with the overlay's own log line as the proof
+# that it was the end-of-block path.
+#
+# NOT covered here, deliberately: "another rule still covers the app, so ITS block shows instead".
+# It needs a second, permanent all-the-time rule on the same app, and the only way to remove a
+# rule is the rule-editor UI, which this harness refuses to drive for state (a Compose Switch has
+# no text node). Left behind it would block that app in every later case until the next `setup`.
+# It is a pure engine question (rules covering a package at a given minute) and belongs at L1.
+#
+# Ordering: this case runs right after schedule-start-open-app on the same package. That case's
+# window ends before this one's does (this one starts later and lasts longer), so by this case's end
+# only this case's rule still covers the app.
+case_schedule_end_overlay() {
+  local rc=0 i fg
+  boundary_preflight || return 1
+  go_home
+  wait_fg "$LAUNCHER_PKG" 10 || { fail "Home did not reach the launcher"; return 1; }
+
+  # Already open (offset 0), 3 minutes long: the import (~40s) and the open fit inside it with
+  # ~2 minutes to spare before the end.
+  seed_boundary_rule 0 3 || return 1
+
+  go_home
+  ash am force-stop "$BOUNDARY_PKG" >/dev/null 2>&1
+  sleep 2
+  start_logcat
+  ash monkey -p "$BOUNDARY_PKG" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
+
+  # Precondition: the block screen is up. The decision from the service's log, and Nudge in front.
+  local up=0
+  for ((i = 0; i < 25; i++)); do
+    if (( $(log_count_re "handling block package=${BOUNDARY_PKG} mode=HARD_BLOCK") > 0 )) &&
+       [[ "$(foreground_package)" == "$APP_ID" ]]; then up=1; break; fi
+    sleep 1
+  done
+  shot 62-boundary-end-block-up
+  if (( up == 0 )); then
+    fail "no HARD_BLOCK screen for ${BOUNDARY_PKG} after opening it inside its window (the window may already have ended: slow import?)"
+    boundary_keep_log schedule-end-overlay-FAIL; return 1
+  fi
+  local blocks_before wait_s
+  blocks_before="$(log_count "handling block package=${BOUNDARY_PKG}")"
+  wait_s="$(secs_until_epoch "$BOUNDARY_END_EPOCH")"
+  info "block screen up; its schedule ends in ${wait_s}s of real time. Sitting still, no taps, no dumps."
+
+  # Wait ON THE CONDITION: the app (not Nudge) in front, bounded by the real end plus slack.
+  local deadline=$(( $(date +%s) + wait_s + BOUNDARY_WAIT_SLACK_SECS )) back=0
+  while (( $(date +%s) < deadline )); do
+    fg="$(foreground_package)"
+    if [[ "$fg" == "$BOUNDARY_PKG" ]]; then back=1; break; fi
+    sleep 3
+  done
+  if (( back == 0 )); then
+    fail "the schedule ended ${BOUNDARY_WAIT_SLACK_SECS}s ago and the block screen is still up (front: '${fg}')"
+    grep -E "schedule boundary|block ended under|handling block" "$LOGCAT_FILE" 2>/dev/null | tail -12 >&2
+    boundary_keep_log schedule-end-overlay-FAIL
+    return 1
+  fi
+
+  # Settle, then re-check: back in the app must STAY back (no re-block), and it is the app, not
+  # Nudge and not the launcher.
+  sleep 5
+  fg="$(foreground_package)"
+  shot 63-boundary-end-back-in-app
+  if [[ "$fg" != "$BOUNDARY_PKG" ]]; then
+    fail "after the block ended, '${fg}' is in front, expected ${BOUNDARY_PKG}"
+    rc=1
+  fi
+  if (( $(log_count "handling block package=${BOUNDARY_PKG}") != blocks_before )); then
+    fail "the app was blocked AGAIN after its schedule ended (a block after the end means a rule still covered it)"
+    rc=1
+  fi
+  if (( $(log_count "block ended under the overlay, closing back into the app") == 0 )); then
+    fail "no 'block ended under the overlay, closing back into the app' line: the overlay did not close itself"
+    rc=1
+  fi
+  boundary_keep_log "schedule-end-overlay$([[ $rc -ne 0 ]] && echo -FAIL)"
+  go_home
+  CASE_NOTE="${BOUNDARY_PKG} HARD_BLOCK screen closed itself ~${wait_s}s later at its schedule end, app in front, no re-block"
+  return $rc
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Driver
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -2431,27 +2782,28 @@ usage() {
   # the usage text the moment the header gained a paragraph.
   awk 'NR>1 { if ($0 !~ /^#/) exit; sub(/^# ?/, ""); print }' "${BASH_SOURCE[0]}"
   printf 'cases:  %s\n' "${ALL_CASES[*]}"
-  printf 'group1: %s\ngroup2: %s\ngroup3: %s\ngroup4: %s\n' \
-    "${GROUP1_CASES[*]}" "${GROUP2_CASES[*]}" "${GROUP3_CASES[*]}" "${GROUP4_CASES[*]}"
+  printf 'group1: %s\ngroup2: %s\ngroup3: %s\ngroup4: %s\ngroup5: %s\n' \
+    "${GROUP1_CASES[*]}" "${GROUP2_CASES[*]}" "${GROUP3_CASES[*]}" "${GROUP4_CASES[*]}" "${GROUP5_CASES[*]}"
 }
 
-# Fails (exit 2) unless group1+group2+group3+group4 are exactly ALL_CASES, in order — before the lock is
-# taken or the phone touched, so a case added to `all` and forgotten here costs one line, not a
+# Fails (exit 2) unless group1+group2+group3+group4+group5 are exactly ALL_CASES, in order, before
+# the lock is taken or the phone touched, so a case added to `all` and forgotten here costs one line, not a
 # chunked gate that quietly stops running it.
 check_groups() {
-  local joined="${GROUP1_CASES[*]} ${GROUP2_CASES[*]} ${GROUP3_CASES[*]} ${GROUP4_CASES[*]}"
+  local joined="${GROUP1_CASES[*]} ${GROUP2_CASES[*]} ${GROUP3_CASES[*]} ${GROUP4_CASES[*]} ${GROUP5_CASES[*]}"
   [[ "$joined" == "${ALL_CASES[*]}" ]] ||
-    die "group1+group2+group3+group4 [${joined}] must concatenate to ALL_CASES [${ALL_CASES[*]}]: a case was added or moved without placing it in a group"
+    die "group1+group2+group3+group4+group5 [${joined}] must concatenate to ALL_CASES [${ALL_CASES[*]}]: a case was added or moved without placing it in a group"
 }
 
 # The cases a multi-case target runs, one per line; nonzero for anything else (a single case).
-target_cases() { # all | group1 | group2 | group3 | group4
+target_cases() { # all | group1 | group2 | group3 | group4 | group5
   case "$1" in
     all)    printf '%s\n' "${ALL_CASES[@]}" ;;
     group1) printf '%s\n' "${GROUP1_CASES[@]}" ;;
     group2) printf '%s\n' "${GROUP2_CASES[@]}" ;;
     group3) printf '%s\n' "${GROUP3_CASES[@]}" ;;
     group4) printf '%s\n' "${GROUP4_CASES[@]}" ;;
+    group5) printf '%s\n' "${GROUP5_CASES[@]}" ;;
     *)      return 1 ;;
   esac
 }
@@ -2478,7 +2830,7 @@ main() {
   else
     # shellcheck disable=SC2076
     [[ " ${ALL_CASES[*]} " == *" ${target} "* ]] ||
-      die "unknown case '${target}'. Try: ${ALL_CASES[*]} — or all, group1, group2, group3, group4"
+      die "unknown case '${target}'. Try: ${ALL_CASES[*]} — or all, group1, group2, group3, group4, group5"
     cases=("$target")
     # Every case but `setup` assumes the fixtures `setup` creates, so a single case
     # runs against whatever is on the phone. That is deliberate (it is how you iterate
