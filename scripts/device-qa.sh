@@ -9,7 +9,8 @@
 #   scripts/device-qa.sh delay-block
 #   scripts/device-qa.sh list
 #   scripts/device-qa.sh group1 && APK=installed scripts/device-qa.sh group2 \
-#     && APK=installed scripts/device-qa.sh group3    # `all` in three bounded chunks (below)
+#     && APK=installed scripts/device-qa.sh group3 \
+#     && APK=installed scripts/device-qa.sh group4    # `all` in four bounded chunks (below)
 #
 # ── WHY MOST OF THIS IS NOT MAESTRO (the central design fact) ─────────────────
 # Maestro — and every other UiAutomator-based driver — connects a `UiAutomation` session, and
@@ -55,7 +56,7 @@
 #                                    APK=debug ALLOW_CERT_SWITCH=1 scripts/device-qa.sh refusal-alert
 #                                    APK=main  ALLOW_CERT_SWITCH=1 scripts/device-qa.sh setup
 #
-# ── Running the gate in bounded chunks: group1 · group2 · group3 ──────────────
+# ── Running the gate in bounded chunks: group1 · group2 · group3 · group4 ─────
 # `all` takes ~18 minutes (setup 107s · delay-block 14s · home-reopen 140s · walkaway-count 55s ·
 # daily-limit-refresh 177s · daily-limit-midsession 258s · notif-idle 338s, plus ~45s of lock /
 # connect / install / grants per invocation), which no 10-minute foreground call can finish — and a
@@ -66,19 +67,22 @@
 #   scripts/device-qa.sh group1
 #   APK=installed scripts/device-qa.sh group2
 #   APK=installed scripts/device-qa.sh group3
+#   APK=installed scripts/device-qa.sh group4
 #
-# Run them IN THAT ORDER: group1 carries `setup`, which every later case assumes. Give group2 and
-# group3 APK=installed so the series tests the ONE build group1 put on the bench (APK=main would
+# Run them IN THAT ORDER: group1 carries `setup`, which every later case assumes. Give every later
+# group APK=installed so the series tests the ONE build group1 put on the bench (APK=main would
 # re-download whatever main-latest has become and reinstall it between chunks). The series passes
-# only if all three exit 0. No case asserts anything different from `all`:
+# only if all four exit 0. group3 is the mid-session clock chunk, added when group2 had no room left
+# (#146, #169/#170); group4 is the old group3 unchanged, so `crash-check` still runs last. No case
+# asserts anything different from `all`:
 #   · `crash-check` still means "no app crash since the SERIES started". group1 records the
-#     dropbox count in ~/.cache/nudge-qa/crash-baseline and group2/group3 reuse it (when it is under
-#     3h old; otherwise they warn and take a fresh one) instead of re-baselining — a per-chunk
-#     baseline would let a crash during group1 pass a crash-check that only watches group3.
+#     dropbox count in ~/.cache/nudge-qa/crash-baseline and every later group reuses it (when it is
+#     under 3h old; otherwise they warn and take a fresh one) instead of re-baselining — a per-chunk
+#     baseline would let a crash during group1 pass a crash-check that only watches group4.
 #   · like `all`, a group skips the ~40s restore of the 1-minute Calculator limit after the
 #     daily-limit cases (the next `setup` re-imports it), so a lone group2 leaves the limit wherever
 #     the last case ended.
-#   · the three groups are asserted at startup to concatenate to ALL_CASES, so a case added to
+#   · the four groups are asserted at startup to concatenate to ALL_CASES, so a case added to
 #     `all` cannot silently drop out of the chunked gate.
 #
 # ── Other knobs ───────────────────────────────────────────────────────────────
@@ -165,6 +169,7 @@ ALL_CASES=(
   walkaway-count
   daily-limit-refresh
   daily-limit-midsession
+  group-limit-midsession
   notif-idle
   crash-check
   refusal-alert
@@ -172,11 +177,12 @@ ALL_CASES=(
 
 # The chunked gate (header: "Running the gate in bounded chunks"): `all`, cut so each slice fits one
 # 10-minute call. Explicit lists, not index slices of ALL_CASES, so that adding a case forces a
-# decision about which chunk has the time for it; check_groups() fails the run when the three stop
+# decision about which chunk has the time for it; check_groups() fails the run when the four stop
 # concatenating to ALL_CASES.
 GROUP1_CASES=(setup delay-block home-reopen walkaway-count)
 GROUP2_CASES=(daily-limit-refresh daily-limit-midsession)
-GROUP3_CASES=(notif-idle crash-check refusal-alert)
+GROUP3_CASES=(group-limit-midsession)
+GROUP4_CASES=(notif-idle crash-check refusal-alert)
 
 # ─── Output helpers ───────────────────────────────────────────────────────────
 info() { printf '[qa] %s\n' "$*"; }
@@ -1650,6 +1656,13 @@ case_daily_limit_midsession() {
   return $rc
 }
 
+# ── group-limit-midsession (#146): a GROUP's daily limit blocks while you are still in the app ──
+# Placeholder while the case is written (same branch, next commit): SKIP, never a silent PASS.
+case_group_limit_midsession() {
+  CASE_NOTE="not implemented yet"
+  return 77
+}
+
 # ── notif-idle (#63): the ongoing notification is posted on CHANGE, never on a timer ──
 #
 # Two halves, and the ORDER matters.
@@ -1807,7 +1820,7 @@ count_app_crashes() {
 #             CRASH_BASELINE_FILE.
 #   continue  a later chunk: reuses the recorded count, so `crash-check` keeps meaning "no crash
 #             since the series started". Re-baselining per chunk would let a crash during group1
-#             pass a crash-check that only watches group3 — the chunked gate quietly weaker than
+#             pass a crash-check that only watches group4 — the chunked gate quietly weaker than
 #             `all`. A missing or stale file (> 3h: a series is ~25 minutes, so older is some
 #             other day's) falls back to a fresh baseline and says so, rather than inventing a window.
 CRASH_BASELINE_FILE="${CRASH_BASELINE_FILE:-${QA_CACHE_DIR}/crash-baseline}"
@@ -2034,25 +2047,27 @@ usage() {
   # the usage text the moment the header gained a paragraph.
   awk 'NR>1 { if ($0 !~ /^#/) exit; sub(/^# ?/, ""); print }' "${BASH_SOURCE[0]}"
   printf 'cases:  %s\n' "${ALL_CASES[*]}"
-  printf 'group1: %s\ngroup2: %s\ngroup3: %s\n' "${GROUP1_CASES[*]}" "${GROUP2_CASES[*]}" "${GROUP3_CASES[*]}"
+  printf 'group1: %s\ngroup2: %s\ngroup3: %s\ngroup4: %s\n' \
+    "${GROUP1_CASES[*]}" "${GROUP2_CASES[*]}" "${GROUP3_CASES[*]}" "${GROUP4_CASES[*]}"
 }
 
-# Fails (exit 2) unless group1+group2+group3 are exactly ALL_CASES, in order — before the lock is
+# Fails (exit 2) unless group1+group2+group3+group4 are exactly ALL_CASES, in order — before the lock is
 # taken or the phone touched, so a case added to `all` and forgotten here costs one line, not a
 # chunked gate that quietly stops running it.
 check_groups() {
-  local joined="${GROUP1_CASES[*]} ${GROUP2_CASES[*]} ${GROUP3_CASES[*]}"
+  local joined="${GROUP1_CASES[*]} ${GROUP2_CASES[*]} ${GROUP3_CASES[*]} ${GROUP4_CASES[*]}"
   [[ "$joined" == "${ALL_CASES[*]}" ]] ||
-    die "group1+group2+group3 [${joined}] must concatenate to ALL_CASES [${ALL_CASES[*]}]: a case was added or moved without placing it in a group"
+    die "group1+group2+group3+group4 [${joined}] must concatenate to ALL_CASES [${ALL_CASES[*]}]: a case was added or moved without placing it in a group"
 }
 
 # The cases a multi-case target runs, one per line; nonzero for anything else (a single case).
-target_cases() { # all | group1 | group2 | group3
+target_cases() { # all | group1 | group2 | group3 | group4
   case "$1" in
     all)    printf '%s\n' "${ALL_CASES[@]}" ;;
     group1) printf '%s\n' "${GROUP1_CASES[@]}" ;;
     group2) printf '%s\n' "${GROUP2_CASES[@]}" ;;
     group3) printf '%s\n' "${GROUP3_CASES[@]}" ;;
+    group4) printf '%s\n' "${GROUP4_CASES[@]}" ;;
     *)      return 1 ;;
   esac
 }
@@ -2079,7 +2094,7 @@ main() {
   else
     # shellcheck disable=SC2076
     [[ " ${ALL_CASES[*]} " == *" ${target} "* ]] ||
-      die "unknown case '${target}'. Try: ${ALL_CASES[*]} — or all, group1, group2, group3"
+      die "unknown case '${target}'. Try: ${ALL_CASES[*]} — or all, group1, group2, group3, group4"
     cases=("$target")
     # Every case but `setup` assumes the fixtures `setup` creates, so a single case
     # runs against whatever is on the phone. That is deliberate (it is how you iterate

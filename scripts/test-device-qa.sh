@@ -9,7 +9,7 @@
 #   (b) nudge_notif_records read the FIRST Nudge notification record instead of id=1, so a
 #       lingering usage reminder (id 4, listed first) made `notif-idle` read a timestamp that
 #       never moves;
-#   (c) `all` runs ~18 minutes, more than a bounded call can hold, so there are now group1/2/3
+#   (c) `all` runs ~18 minutes, more than a bounded call can hold, so there are now group1-4
 #       chunks: they must cover `all` exactly, and a chunked series must keep crash-check's
 #       whole-series meaning.
 # Later: home-reopen turns YouTube's picture-in-picture off for its own duration (its PiP
@@ -141,24 +141,32 @@ check "a preset limit (2h: the chip says 'Custom'): sets and saves 5"          t
 check "the 15m preset: sets and saves 1"                                       test "$(limit_from 15 1)"  = "rc=0 saved=1"
 
 # ─── 3. (c) the chunks cover `all`, exactly and in order ──────────────────────
-echo "group1 / group2 / group3:"
+echo "group1 / group2 / group3 / group4:"
 cases_of() { run_qa "$OUT" -- "target_cases $1" && tr '\n' ' ' <"$OUT"; }
 all_cases="$(run_qa "$OUT" -- 'printf "%s " "${ALL_CASES[@]}"' && cat "$OUT")"
 check "group1 is the setup chunk" test "$(cases_of group1)" = "setup delay-block home-reopen walkaway-count "
 check "group2 is the daily-limit chunk" test "$(cases_of group2)" = "daily-limit-refresh daily-limit-midsession "
-check "group3 is the idle / crash chunk" test "$(cases_of group3)" = "notif-idle crash-check refusal-alert "
+check "group3 is the mid-session clock chunk" test "$(cases_of group3)" = "group-limit-midsession "
+check "group4 is the idle / crash chunk" test "$(cases_of group4)" = "notif-idle crash-check refusal-alert "
 check "all is every case, in the run order" test "$(cases_of all)" = "$all_cases"
-check "group1 + group2 + group3 == ALL_CASES, in order" \
-  test "$(cases_of group1)$(cases_of group2)$(cases_of group3)" = "$all_cases"
+check "group1 + group2 + group3 + group4 == ALL_CASES, in order" \
+  test "$(cases_of group1)$(cases_of group2)$(cases_of group3)$(cases_of group4)" = "$all_cases"
 rc=0; run_qa "$OUT" -- 'target_cases delay-block' || rc=$?
 check "a single case is not a multi-case target (nonzero, prints nothing)" bash -c "[[ $rc != 0 && ! -s '$OUT' ]]"
 check "check_groups passes on the real lists" run_qa "$OUT" -- "check_groups"
 rc=0; run_qa "$OUT" -- 'GROUP2_CASES=(daily-limit-refresh); check_groups' || rc=$?
 check "a case dropped from the groups: exits 2 and names ALL_CASES" bash -c "[[ $rc == 2 ]] && grep -q 'ALL_CASES' '$OUT'"
-rc=0; run_qa "$OUT" -- 'GROUP3_CASES=(crash-check notif-idle refusal-alert); check_groups' || rc=$?
+rc=0; run_qa "$OUT" -- 'GROUP4_CASES=(crash-check notif-idle refusal-alert); check_groups' || rc=$?
 check "the order of the groups matters: exits 2" test "$rc" = 2
-rc=0; run_qa "$OUT" -- 'GROUP3_CASES+=(brand-new-case); check_groups' || rc=$?
+rc=0; run_qa "$OUT" -- 'GROUP4_CASES+=(brand-new-case); check_groups' || rc=$?
 check "a case added to a group but not to ALL_CASES: exits 2" test "$rc" = 2
+rc=0; run_qa "$OUT" -- 'GROUP4_CASES=(); check_groups' || rc=$?
+check "group4 is part of the concatenation (emptying it): exits 2" test "$rc" = 2
+# A case named in ALL_CASES with no case_<name> function only fails when the chunk reaches it on the
+# bench ("unknown case"), minutes into a gate run. Checked here for every case, so registering a
+# case and writing it cannot drift apart.
+run_qa "$OUT" -- 'for c in "${ALL_CASES[@]}"; do declare -F "case_${c//-/_}" >/dev/null || echo "MISSING $c"; done'
+check "every case in ALL_CASES has a case_<name> function" bash -c "! grep -q MISSING '$OUT'"
 
 # These three EXECUTE the real script, so they must stay on the paths main() answers before it
 # takes the lock or touches adb (--help, list, an unknown target) — and their output is only ever
@@ -168,8 +176,8 @@ check "a case added to a group but not to ALL_CASES: exits 2" test "$rc" = 2
 check "list is unchanged: one case per line, in order" \
   test "$(bash "$QA" list | tr '\n' ' ')" = "$all_cases"
 bash "$QA" --help >"$OUT" 2>&1
-check "--help documents the chunks (group1, group2, group3 and the APK=installed hand-off)" \
-  bash -c "grep -q group1 '$OUT' && grep -q group2 '$OUT' && grep -q group3 '$OUT' && grep -q 'APK=installed' '$OUT'"
+check "--help documents the chunks (group1-group4 and the APK=installed hand-off)" \
+  bash -c "grep -q group1 '$OUT' && grep -q group2 '$OUT' && grep -q group3 '$OUT' && grep -q group4 '$OUT' && grep -q 'APK=installed' '$OUT'"
 rc=0; bash "$QA" no-such-case >"$OUT" 2>&1 || rc=$?
 check "an unknown target dies (exit 2) before the lock or the phone, and names the groups" \
   bash -c "[[ $rc == 2 ]] && grep -q 'group1' '$OUT'"
