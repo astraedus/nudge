@@ -359,8 +359,22 @@ class CounterCacheRefresherMergeTest {
     }
 
     @Test
-    fun `a group rule has no package and contributes no app entry`() {
-        assertNull(CounterCacheRefresher.appEntryFor(alpha.copy(packageName = null, remindAfterMinutes = 20)))
+    fun `a group rule has no package of its own, but still builds the entry its members get`() {
+        val groupRow = alpha.copy(packageName = null, groupId = 7L, remindAfterMinutes = 20)
+        // No (package, entry) pair: a group row names no package...
+        assertNull(CounterCacheRefresher.appEntryFor(groupRow))
+        // ...but it is NOT "contributes nothing" (#146): CounterCacheCoverage gives this entry to
+        // every member the resolver covers (CounterCacheGroupEntriesTest).
+        assertEquals(20, CounterCacheRefresher.entryFor(groupRow)?.remindAfterMinutes)
+    }
+
+    @Test
+    fun `cooldown counts only entries that configure a kick, so a limit-only row cannot stretch it`() {
+        val kick = CounterCacheEntry(autoKickAfterMinutes = 5, autoKickCooldownSeconds = 30)
+        val limitOnly = CounterCacheEntry(dailyLimitMinutes = 30) // default cooldown, no kick
+        val merged = CounterCacheRefresher.mergeEntries(listOf("p" to kick, "p" to limitOnly)).getValue("p")
+        assertEquals(30, merged.autoKickCooldownSeconds)
+        assertEquals(30, merged.dailyLimitMinutes)
     }
 
     @Test

@@ -138,9 +138,21 @@ class CounterCacheRefresher(
          * never a hand-kept list of rule fields: the next clock consumer joins by being added to
          * that one property. The interaction trigger ([BlockRule.autoKickAfter]) alone is not
          * enough, because it is fed by the counter.
+         *
+         * Only for a rule that names a package. The cache itself is built by
+         * [CounterCacheCoverage], which applies [entryFor] to every app any rule covers, groups and
+         * All apps included (#146).
          */
         fun appEntryFor(rule: BlockRule): Pair<String, CounterCacheEntry>? {
             val pkg = rule.packageName ?: return null
+            return entryFor(rule)?.let { pkg to it }
+        }
+
+        /**
+         * The entry [rule] contributes to EACH app it covers, whatever its target (an app, a group,
+         * All apps), or null when it wants nothing here. See [appEntryFor] for the predicate.
+         */
+        fun entryFor(rule: BlockRule): CounterCacheEntry? {
             val entry = CounterCacheEntry(
                 showCounter = rule.showCounter,
                 autoKickAfter = rule.autoKickAfter,
@@ -151,7 +163,7 @@ class CounterCacheRefresher(
                 remindAfterMinutes = rule.remindAfterMinutes
             )
             val wanted = entry.showCounter || entry.showTimeRemaining || entry.needsForegroundTimeTick
-            return if (wanted) pkg to entry else null
+            return if (wanted) entry else null
         }
 
         /**
@@ -206,6 +218,13 @@ class CounterCacheRefresher(
          * Collapses every rule targeting the same package into one entry. Where rules disagree the
          * merge always takes the STRICTEST interpretation: the lowest kick threshold, the lowest
          * daily limit, the longest cooldown, and any rule asking for an overlay wins.
+         *
+         * The cooldown is the longest among the entries that CONFIGURE an auto-kick
+         * ([CounterCacheEntry.configuresAutoKick]); only when none does is it the longest of all
+         * (it then guards nothing). Since #146 a group rule's members get entries, and a group row
+         * carries the entity's default 60 s cooldown with no kick of its own (the group editor
+         * offers neither), so a plain max would have let a limit-only group stretch a direct rule's
+         * chosen 30 s kick cooldown to 60 s, a setting the user never made.
          */
         fun mergeEntries(
             entries: Iterable<Pair<String, CounterCacheEntry>>
@@ -222,7 +241,8 @@ class CounterCacheRefresher(
                         dailyLimitMinutes = packageEntries
                             .mapNotNull { it.dailyLimitMinutes }
                             .minOrNull(),
-                        autoKickCooldownSeconds = packageEntries
+                        autoKickCooldownSeconds = (packageEntries.filter { it.configuresAutoKick }
+                            .ifEmpty { packageEntries })
                             .maxOf { it.autoKickCooldownSeconds },
                         autoKickAfterMinutes = packageEntries
                             .mapNotNull { it.autoKickAfterMinutes }
