@@ -199,7 +199,7 @@ one that matches what you are about to edit. Nothing here is optional reading if
 
 ## Testing (never regress)
 
-**Every new feature MUST ship with tests, and CI (`ci.yml`, the full `testDebugUnitTest` + lint) must be green before merge.** Locally run only the scoped tests for what you touched (`./gradlew testDebugUnitTest --tests '<pattern>' --max-workers=2`); the full suite runs on CI, never on the laptop. If tests fail,
+**Every new feature MUST ship with tests, and CI (`ci.yml`, the full `testDebugUnitTest` + lint) must be green before merge.** Locally run only the scoped tests for what you touched (`./gradlew :app:testDebugUnitTest --tests '<pattern>' --max-workers=2`; keep the `:app:`, because an unqualified task also runs `:qa-driver:testDebugUnitTest`, which matches nothing and fails "No tests found for given includes"); the full suite runs on CI, never on the laptop. If tests fail,
 the feature isn't done. When fixing a bug, write the test that reproduces it FIRST. Regression = blocker.
 The domain layer is pure Kotlin with no Android deps, so it is fast to JVM-test and carries the highest bar.
 
