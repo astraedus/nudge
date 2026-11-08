@@ -1548,3 +1548,11 @@ The 1.24.0 gate failed `home-reopen`, and the A/B looked like a regression (v1.2
 - **An event TYPE is not a meaning.** `TYPE_WINDOW_STATE_CHANGED` is also the pane event. Read `contentChangeTypes` before treating it as a window coming forward. The framework's own doc for the type says so.
 - **F/P/P against F/F/F at n=3 is not a regression signal.** Count the MECHANISM across every logcat you have, per build, before bisecting. Here the mechanism was in both builds, and every instance failed the same way.
 - **A gate case that presses a button must start from a settled state.** If the previous step leaves a timer running (a countdown, a hand-back window), wait it out, or the harness's own input becomes part of the race it is measuring.
+
+## A cache keyed by "the package a rule names" misses every group member (#146, 2026-11-08)
+
+The counter cache (which apps get the foreground clock) was built one `(rule.packageName, entry)` per rule row. Group rules and All apps rules name no package, so their apps never got a clock, and a group's daily limit was enforced only at the next open. v1.18.4 had widened WHICH FEATURES earn a clock and never asked WHICH APPS a rule reaches. Fixed by asking `RuleCoverage` (the one resolver evaluation uses) on the same `RuleSnapshot`, with a drift test comparing the cache to `EvaluateBlockUseCase` app by app.
+
+- **Anything keyed by package that derives from rules must go through `RuleCoverage`.** Never `rule.packageName`. That is the app-rule special case, and group/All apps rules have been the general case since PR 2 of the groups spec. Grep for `.packageName` on a `BlockRule` in any new per-package map.
+- **Folding new rows into a merge changes the merge.** Group rows carry column defaults (`autoKickCooldownSeconds = 60`) for features they do not configure. A plain `maxOf` would have let them stretch a direct rule's cooldown, so merge a field only across the entries that configure it.
+- **A scoped `--tests` run must name `:app:`.** `./gradlew testDebugUnitTest --tests '<pattern>'` also runs `:qa-driver:testDebugUnitTest`, which matches nothing and fails "No tests found for given includes" after a full compile, which reads like a filter typo. Use `./gradlew :app:testDebugUnitTest --tests '<pattern>'`.

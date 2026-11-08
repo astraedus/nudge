@@ -9,7 +9,7 @@
 #   (b) nudge_notif_records read the FIRST Nudge notification record instead of id=1, so a
 #       lingering usage reminder (id 4, listed first) made `notif-idle` read a timestamp that
 #       never moves;
-#   (c) `all` runs ~18 minutes, more than a bounded call can hold, so there are now group1/2/3/4
+#   (c) `all` runs ~30 minutes, more than a bounded call can hold, so there are now group1-5
 #       chunks: they must cover `all` exactly, and a chunked series must keep crash-check's
 #       whole-series meaning.
 # Later: home-reopen turns YouTube's picture-in-picture off for its own duration (its PiP
@@ -144,30 +144,38 @@ check "a preset limit (2h: the chip says 'Custom'): sets and saves 5"          t
 check "the 15m preset: sets and saves 1"                                       test "$(limit_from 15 1)"  = "rc=0 saved=1"
 
 # ─── 3. (c) the chunks cover `all`, exactly and in order ──────────────────────
-echo "group1 / group2 / group3 / group4:"
+echo "group1 / group2 / group3 / group4 / group5:"
 cases_of() { run_qa "$OUT" -- "target_cases $1" && tr '\n' ' ' <"$OUT"; }
 all_cases="$(run_qa "$OUT" -- 'printf "%s " "${ALL_CASES[@]}"' && cat "$OUT")"
 check "group1 is the setup chunk" test "$(cases_of group1)" = "setup delay-block home-reopen walkaway-count "
 check "group2 is the daily-limit chunk" test "$(cases_of group2)" = "daily-limit-refresh daily-limit-midsession "
-check "group3 is the schedule-boundary chunk" test "$(cases_of group3)" = "schedule-start-open-app schedule-end-overlay "
-check "group4 is the idle / crash chunk (refusal-alert last: it needs the cert switch)" \
-  test "$(cases_of group4)" = "notif-idle crash-check refusal-alert "
+check "group3 is the mid-session clock chunk" test "$(cases_of group3)" = "group-limit-midsession "
+check "group4 is the schedule-boundary chunk" test "$(cases_of group4)" = "schedule-start-open-app schedule-end-overlay "
+check "group5 is the idle / crash chunk (refusal-alert last: it needs the cert switch)" \
+  test "$(cases_of group5)" = "notif-idle crash-check refusal-alert "
 check "all is every case, in the run order" test "$(cases_of all)" = "$all_cases"
-check "group1 + group2 + group3 + group4 == ALL_CASES, in order" \
-  test "$(cases_of group1)$(cases_of group2)$(cases_of group3)$(cases_of group4)" = "$all_cases"
+check "group1 + group2 + group3 + group4 + group5 == ALL_CASES, in order" \
+  test "$(cases_of group1)$(cases_of group2)$(cases_of group3)$(cases_of group4)$(cases_of group5)" = "$all_cases"
 rc=0; run_qa "$OUT" -- 'target_cases delay-block' || rc=$?
 check "a single case is not a multi-case target (nonzero, prints nothing)" bash -c "[[ $rc != 0 && ! -s '$OUT' ]]"
 check "check_groups passes on the real lists" run_qa "$OUT" -- "check_groups"
 rc=0; run_qa "$OUT" -- 'GROUP2_CASES=(daily-limit-refresh); check_groups' || rc=$?
 check "a case dropped from the groups: exits 2 and names ALL_CASES" bash -c "[[ $rc == 2 ]] && grep -q 'ALL_CASES' '$OUT'"
-rc=0; run_qa "$OUT" -- 'GROUP4_CASES=(crash-check notif-idle refusal-alert); check_groups' || rc=$?
-check "the order inside a group matters: exits 2" test "$rc" = 2
-rc=0; run_qa "$OUT" -- 'GROUP3_CASES=(schedule-end-overlay schedule-start-open-app); check_groups' || rc=$?
-check "the schedule cases swapped: exits 2" test "$rc" = 2
-rc=0; run_qa "$OUT" -- 'GROUP4_CASES=(); check_groups' || rc=$?
-check "an emptied group4 (its cases dropped from the chunked gate): exits 2" test "$rc" = 2
-rc=0; run_qa "$OUT" -- 'GROUP4_CASES+=(brand-new-case); check_groups' || rc=$?
+rc=0; run_qa "$OUT" -- 'GROUP5_CASES=(crash-check notif-idle refusal-alert); check_groups' || rc=$?
+check "the order of the groups matters: exits 2" test "$rc" = 2
+rc=0; run_qa "$OUT" -- 'GROUP4_CASES=(schedule-end-overlay schedule-start-open-app); check_groups' || rc=$?
+check "the schedule cases swapped inside group4: exits 2" test "$rc" = 2
+rc=0; run_qa "$OUT" -- 'GROUP5_CASES+=(brand-new-case); check_groups' || rc=$?
 check "a case added to a group but not to ALL_CASES: exits 2" test "$rc" = 2
+rc=0; run_qa "$OUT" -- 'GROUP4_CASES=(); check_groups' || rc=$?
+check "group4 is part of the concatenation (emptying it): exits 2" test "$rc" = 2
+rc=0; run_qa "$OUT" -- 'GROUP5_CASES=(); check_groups' || rc=$?
+check "group5 is part of the concatenation (emptying it): exits 2" test "$rc" = 2
+# A case named in ALL_CASES with no case_<name> function only fails when the chunk reaches it on the
+# bench ("unknown case"), minutes into a gate run. Checked here for every case, so registering a
+# case and writing it cannot drift apart.
+run_qa "$OUT" -- 'for c in "${ALL_CASES[@]}"; do declare -F "case_${c//-/_}" >/dev/null || echo "MISSING $c"; done'
+check "every case in ALL_CASES has a case_<name> function" bash -c "! grep -q MISSING '$OUT'"
 
 # These three EXECUTE the real script, so they must stay on the paths main() answers before it
 # takes the lock or touches adb (--help, list, an unknown target) — and their output is only ever
@@ -177,8 +185,8 @@ check "a case added to a group but not to ALL_CASES: exits 2" test "$rc" = 2
 check "list is unchanged: one case per line, in order" \
   test "$(bash "$QA" list | tr '\n' ' ')" = "$all_cases"
 bash "$QA" --help >"$OUT" 2>&1
-check "--help documents the chunks (group1 to group4 and the APK=installed hand-off)" \
-  bash -c "grep -q group1 '$OUT' && grep -q group2 '$OUT' && grep -q group3 '$OUT' && grep -q '^group4: notif-idle' '$OUT' && grep -q 'APK=installed' '$OUT'"
+check "--help documents the chunks (group1-group5 and the APK=installed hand-off)" \
+  bash -c "grep -q group1 '$OUT' && grep -q group2 '$OUT' && grep -q '^group3: group-limit-midsession' '$OUT' && grep -q '^group4: schedule-start-open-app' '$OUT' && grep -q '^group5: notif-idle' '$OUT' && grep -q 'APK=installed' '$OUT'"
 rc=0; bash "$QA" no-such-case >"$OUT" 2>&1 || rc=$?
 check "an unknown target dies (exit 2) before the lock or the phone, and names the groups" \
   bash -c "[[ $rc == 2 ]] && grep -q 'group1' '$OUT'"
@@ -256,7 +264,95 @@ check "another service bound, Nudge only enabled: unbound" \
 check "grant off entirely: unbound" \
   test "$(bound "    Bound services:{}\n    Enabled services:{}")" = unbound
 
-# ─── 7. schedule-boundary cases (#169, #170): clock arithmetic, fixture, seeding ──
+# ─── 7. group-limit-midsession (#146): the case is real, cleans up, and tests the right app ────
+echo "group-limit-midsession:"
+# daily_usage_ms <pkg> serves both mid-session cases. The oracle for "the budget is the member's
+# OWN" is that two packages' evaluation lines interleave in one capture and each is read separately.
+LC="$TMP/logcat.txt"
+cat >"$LC" <<'EOF'
+01-01 10:00:00.000 D BlockEngine: evaluate package=com.google.android.calculator rules=1 dailyUsageMs=111
+01-01 10:00:01.000 D BlockEngine: evaluate package=com.google.android.deskclock rules=1 dailyUsageMs=60000
+01-01 10:00:02.000 D BlockEngine: evaluate package=com.google.android.deskclock rules=1 dailyUsageMs=75000
+01-01 10:00:03.000 D BlockEngine: evaluate package=com.google.android.calculator rules=2 dailyUsageMs=222
+01-01 10:00:04.000 D BlockEngine: evaluate package=com.google.android.deskclock.beta rules=1 dailyUsageMs=999
+EOF
+usage() { # <pkg> -> daily_usage_ms output
+  run_qa "$OUT" -- "LOGCAT_FILE='$LC'; daily_usage_ms $1" && tr -d '\n' <"$OUT"
+}
+check "daily_usage_ms: the LAST line of THAT package (deskclock, not calculator, not deskclock.beta)" \
+  test "$(usage com.google.android.deskclock)" = 75000
+check "daily_usage_ms: calculator's own last line" test "$(usage com.google.android.calculator)" = 222
+check "daily_usage_ms: no line for the package -> empty" test -z "$(usage com.example.absent)"
+run_qa "$OUT" -- "LOGCAT_FILE='$LC'; calculator_daily_usage_ms"
+check "calculator_daily_usage_ms is still the LIMIT_PKG wrapper" test "$(tr -d '\n' <"$OUT")" = 222
+
+run_qa "$OUT" -- 'declare -f case_group_limit_midsession'
+check "the case is no longer the placeholder (no 'return 77')" bash -c "! grep -q 'return 77' '$OUT' && grep -q delete_qa_group '$OUT'"
+
+# The member must get its clock from the GROUP only: a direct rule on it would pass this case on the
+# path the app already had before #146. Read from the script's own variable, not retyped here.
+run_qa "$OUT" -- 'printf %s "${GROUP_LIMIT_PKG:-}"' || true
+GPKG="$(cat "$OUT")"
+check "GROUP_LIMIT_PKG is set to a package name" bash -c "[[ '$GPKG' =~ ^[a-z][a-z0-9_.]+$ ]]"
+check "GROUP_LIMIT_PKG has no direct rule in .maestro/fixtures/rules.json" \
+  bash -c "[[ -n '$GPKG' ]] && ! grep -qF '\"$GPKG\"' '$ROOT/.maestro/fixtures/rules.json'"
+
+# Cleanup runs after EVERY outcome of the body, pre-sweeps first, and a failed delete fails the case.
+# The body and delete_qa_group are stubbed; the case's own sequencing is what runs.
+DLOG="$TMP/del.log"
+case_run() { # <body rc> <delete rc> -> "<case rc>|<delete calls>"
+  : >"$DLOG"
+  run_qa "$OUT" DLOG="$DLOG" -- \
+    "stop_logcat() { :; }; group_limit_midsession_body() { return $1; }; delete_qa_group() { echo \"DEL \$*\" >>\"\$DLOG\"; return $2; }; case_group_limit_midsession; echo \"rc=\$?\"" || true
+  printf '%s|%s' "$(sed -n 's/^rc=//p' "$OUT")" "$(tr '\n' ',' <"$DLOG")"
+}
+check "body passes: swept before, deleted after, case passes"  test "$(case_run 0 0)" = "0|DEL pre,DEL ,"
+check "body FAILS early: the group is still deleted, failure kept" test "$(case_run 1 0)" = "1|DEL pre,DEL ,"
+check "body passes but the delete fails: the case fails" test "$(case_run 0 1)" = "1|DEL pre,DEL ,"
+
+# delete_qa_group with no such group is a no-op, quiet up front and a warning at cleanup.
+dq() { # <pre|-> -> "<rc>"; message in $OUT
+  local arg="$1"; [[ "$arg" == "-" ]] && arg=""
+  run_qa "$OUT" -- "qa_group_open() { return 2; }; delete_qa_group $arg; echo \"rc=\$?\"" || true
+  sed -n 's/^rc=//p' "$OUT"
+}
+check "delete_qa_group, no group, up-front sweep: rc 0 and says so" \
+  bash -c "[[ \"$(dq pre)\" == 0 ]] && grep -q 'no leftover' '$OUT'"
+check "delete_qa_group, no group, at cleanup: rc 0 with a WARN" \
+  bash -c "[[ \"$(dq -)\" == 0 ]] && grep -q 'WARN' '$OUT'"
+run_qa "$OUT" -- 'qa_group_open() { return 1; }; delete_qa_group; echo "rc=$?"' || true
+check "delete_qa_group, editor could not be opened: rc 1 (a leftover group must be reported)" \
+  grep -q '^rc=1$' "$OUT"
+
+# The two raw-coordinate helpers, against a canned uiautomator tree and a fake `ash`.
+cat >"$TMP/fake-grp.sh" <<'EOF'
+ash() {
+  case "$*" in
+    "wm size") printf 'Physical size: 1080x2220\r\n' ;;
+    "input tap "*) echo "TAP ${*:3}" >>"$TAP_LOG" ;;
+  esac
+}
+ui_snapshot() { UI_XML="$TMP_XML"; }
+sleep() { :; }
+EOF
+cat >"$TMP/ui.xml" <<'EOF'
+<hierarchy><node index="0" class="android.widget.TextView" text="Name" bounds="[48,200][200,240]" />
+<node index="1" class="android.widget.EditText" text="" bounds="[48,300][1032,420]" />
+<node index="2" class="android.widget.TextView" text="Daily limit for each app" bounds="[48,1000][700,1080]" /></hierarchy>
+EOF
+TAPLOG="$TMP/tap.log"
+tapped() { # <snippet> -> the TAP lines, ','-joined
+  : >"$TAPLOG"
+  run_qa "$OUT" TAP_LOG="$TAPLOG" TMP_XML="$TMP/ui.xml" -- \
+    ". '$TMP/fake-grp.sh'; write_locator; $1" || true
+  tr '\n' ',' <"$TAPLOG"
+}
+check "ui_tap_edittext taps the EditText by class, not the 'Name' label above it" \
+  test "$(tapped 'ui_tap_edittext 1')" = "TAP 540 360,"
+check "ui_tap_switch_of taps the right edge of the labelled row (width read from wm size)" \
+  test "$(tapped 'ui_tap_switch_of "Daily limit for each app" 1')" = "TAP 970 1040,"
+
+# ─── 8. schedule-boundary cases (#169, #170): clock arithmetic, fixture, seeding ──
 echo "schedule boundaries:"
 bw() { run_qa "$OUT" -- "boundary_window $*" && tr -d '\n' <"$OUT"; }
 check "a window 3 min out, 2 min long, on a Wednesday at 10:00: weekday 3, 603->605" test "$(bw 3 600 3 2)" = "3 603 605"

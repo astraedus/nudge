@@ -15,6 +15,7 @@ import com.astraedus.nudge.data.db.entity.UsageEvent
 import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.data.repository.BlockRuleRepository
 import com.astraedus.nudge.data.repository.FirstUnlockStateCache
+import com.astraedus.nudge.data.repository.InstalledAppsRepository
 import com.astraedus.nudge.data.repository.RuleSnapshotSource
 import com.astraedus.nudge.data.repository.UsageRepository
 import com.astraedus.nudge.domain.WebDomainMatcher
@@ -41,7 +42,6 @@ import com.astraedus.nudge.domain.sitting.SittingEvent
 import com.astraedus.nudge.domain.sitting.endedSitting
 import com.astraedus.nudge.domain.model.BlockDecision
 import com.astraedus.nudge.domain.model.BlockMode
-import com.astraedus.nudge.domain.model.WebBlockMode
 import com.astraedus.nudge.domain.pip.PipEscapeLedger
 import com.astraedus.nudge.domain.surfaces.FollowingSteer
 import com.astraedus.nudge.domain.surfaces.HostSurface
@@ -113,6 +113,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         fun blockLaunchGuard(): BlockLaunchGuard
         fun essentialApps(): EssentialApps
         fun ruleSnapshotSource(): RuleSnapshotSource
+        fun installedAppsRepository(): InstalledAppsRepository
         fun scheduleEvaluator(): ScheduleEvaluator
         fun scheduleBoundaries(): ScheduleBoundaries
         fun packageFacts(): PackageFacts
@@ -4000,26 +4001,26 @@ class NudgeAccessibilityService : AccessibilityService() {
     }
 
     private suspend fun loadCounterCacheEntries(): Map<String, CounterCacheEntry> {
-        val rules = entryPoint.blockRuleRepository().getEnabledRules().first()
-        // Which rules put a package in the cache, and with what, is `CounterCacheRefresher.appEntryFor`
-        // (pure, `CounterCacheRefresherMergeTest`): its predicate is DERIVED from
-        // `CounterCacheEntry.needsForegroundTimeTick`, so a new clock consumer (the usage reminder,
-        // #77, was the fourth) cannot be filtered out here before the clock is ever asked about it.
-        val appEntries = rules.mapNotNull(CounterCacheRefresher::appEntryFor)
-
-        // A rule's websites are tracked under their own keys, so a kick or a cooldown lands on the
-        // site rather than on the whole browser. Gated on the resolved WEB mode (#21), never the
-        // app-level one: a rule that blocks nothing on the web must not eject anyone from it.
-        val webEntries = rules.flatMap { rule ->
-            CounterCacheRefresher.webEntriesFor(
-                webDomains = rule.webDomains,
-                webEnforces = WebBlockMode.resolve(rule.mode, rule.webBlockMode) != BlockMode.NONE,
-                autoKickAfterMinutes = rule.autoKickAfterMinutes,
-                autoKickCooldownSeconds = rule.autoKickCooldownSeconds
-            )
-        }
-
-        return CounterCacheRefresher.mergeEntries(appEntries + webEntries)
+        // Which packages get an entry, and with what, is `CounterCacheCoverage` (pure,
+        // `CounterCacheGroupEntriesTest` + `CounterCacheCoverageDriftTest`): every app ANY enabled
+        // rule covers, group and All apps rules included (#146), asked of the same resolver and the
+        // same snapshot block evaluation reads, so the clock runs for exactly the apps whose
+        // evaluation finds the rule. The per-rule predicate is still DERIVED from
+        // `CounterCacheEntry.needsForegroundTimeTick` (`CounterCacheRefresher.entryFor`), so a new
+        // clock consumer cannot be filtered out here. Website entries are unchanged: keyed per site,
+        // gated on the resolved WEB mode (#21).
+        //
+        // The device lists are read only when a rule that wants an entry can reach past its own
+        // package (a group, a category group, All apps); all three are in-memory caches once warm.
+        val essentials = entryPoint.essentialApps()
+        return CounterCacheCoverage.load(
+            snapshot = entryPoint.ruleSnapshotSource().current(),
+            readLaunchable = {
+                entryPoint.installedAppsRepository().getInstalledApps().associate { it.packageName to it.category }
+            },
+            readEssentials = { essentials.current() },
+            readBrowsers = { essentials.browsers() }
+        )
     }
 
     override fun onInterrupt() {}
