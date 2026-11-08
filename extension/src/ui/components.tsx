@@ -163,17 +163,21 @@ export function Chip({
   active,
   onClick,
   style,
+  title,
 }: {
   label: string;
   active: boolean;
   onClick: () => void;
   style?: CSSProperties;
+  /** Details on hover, for a chip whose label alone is terse. */
+  title?: string;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
       aria-pressed={active}
+      title={title}
       style={{
         padding: '6px 14px',
         borderRadius: 999,
