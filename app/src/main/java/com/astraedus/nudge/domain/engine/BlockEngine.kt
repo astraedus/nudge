@@ -135,7 +135,8 @@ class BlockEngine internal constructor(
                 tabVanish = timeBudgetRule.tabVanish,
                 feature = featureDecidedBy(timeBudgetRule, detectedFeature),
                 until = budgetUntilOf(timeBudgetRule, now),
-                allApps = timeBudgetRule.allApps
+                allApps = timeBudgetRule.allApps,
+                budgetResetAt = nextMidnight(now)
             )
         }
 
@@ -199,15 +200,15 @@ class BlockEngine internal constructor(
      */
     private fun budgetUntilOf(rule: ActiveRule, now: Calendar): Long? {
         val windowEnd = untilOf(rule, now) ?: return null
-        val midnight = (now.clone() as Calendar).apply {
-            set(Calendar.HOUR_OF_DAY, 0)
-            set(Calendar.MINUTE, 0)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
-            add(Calendar.DAY_OF_MONTH, 1)
-        }.timeInMillis
-        return minOf(windowEnd, midnight)
+        return minOf(windowEnd, nextMidnight(now))
     }
+
+    /**
+     * When today's usage starts again from zero. Shared with `ScheduleBoundaries`, which wakes the
+     * block screen at this instant, so the two can never name different midnights.
+     */
+    private fun nextMidnight(now: Calendar): Long =
+        ScheduleWalk.nextLocalMidnight(now.timeInMillis, now.timeZone.toZoneId())
 
     companion object {
         /** What the overlay's rule footer and the logs call a Nuke block. */

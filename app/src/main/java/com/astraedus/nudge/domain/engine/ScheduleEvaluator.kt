@@ -62,8 +62,9 @@ class ScheduleEvaluator @Inject constructor(
      *
      * Walks forward minute by minute over the SAME day/time test [isActiveAt] uses, so the answer
      * can never disagree with the schedule: an overnight window, back-to-back days ("Mon-Fri, all
-     * day" on a Tuesday ends Saturday 00:00) and a days-only rule all fall out of it. At most one
-     * week of minutes, pure integer arithmetic, and only asked once a rule has decided a block.
+     * day" on a Tuesday ends Saturday 00:00) and a days-only rule all fall out of it. The walk is
+     * over absolute minutes read in [now]'s zone, so a DST change in the window moves the end by
+     * exactly what the wall clock says ([ScheduleWalk]).
      */
     fun windowEndAt(rule: ActiveRule, now: Calendar): Long? {
         val minutes = rule.firstUnlockMinutes
@@ -76,6 +77,33 @@ class ScheduleEvaluator @Inject constructor(
         val minutes = rule.firstUnlockMinutes
         if (minutes != null) return firstUnlockEnd(minutes, rule.scheduleDays, rule.armedAt, now)
         return windowEndAt(rule.scheduleDays, rule.scheduleStartMinute, rule.scheduleEndMinute, now)
+    }
+
+    /**
+     * When [rule]'s days-and-times window next STARTS, as epoch ms strictly after [now]: the
+     * boundary at which an app already in front must be looked at again (#169). For a rule in its
+     * window at [now], the start of the NEXT window.
+     *
+     * Null when no clock can start it:
+     *  - no schedule: the rule is on all the time, so it never "starts";
+     *  - every day, all day: it never stops, so it never starts either;
+     *  - a first-unlock rule: its window opens at an UNLOCK, which is an event, not a time. The
+     *    service re-evaluates the app in front when the unlock stamp moves
+     *    (`reevaluateForegroundForFirstUnlock`). Its END is a time, and [windowEndAt] answers it.
+     *
+     * Same walk and same day/time test as [windowEndAt] ([ScheduleWalk]), so a start can never
+     * disagree with what [isActiveAt] reads at that instant, across midnight, a days-of-week edge or
+     * a DST change.
+     */
+    fun nextStartAt(rule: BlockRuleData, now: Calendar): Long? {
+        if (rule.firstUnlockMinutes != null) return null
+        return ScheduleWalk.nextStart(
+            rule.scheduleDays,
+            rule.scheduleStartMinute,
+            rule.scheduleEndMinute,
+            now.timeInMillis,
+            now.timeZone.toZoneId()
+        )
     }
 
     /**
@@ -117,24 +145,8 @@ class ScheduleEvaluator @Inject constructor(
         zone = firstUnlock.zoneId()
     )
 
-    private fun windowEndAt(days: List<Int>?, startMinute: Int?, endMinute: Int?, now: Calendar): Long? {
-        if (days == null && startMinute == null && endMinute == null) return null
-        if (!isScheduledAt(days, startMinute, endMinute, now)) return null
-        val dayIso = calendarDayToIso(now.get(Calendar.DAY_OF_WEEK))
-        val minute = now.get(Calendar.HOUR_OF_DAY) * 60 + now.get(Calendar.MINUTE)
-        for (step in 1..MINUTES_PER_WEEK) {
-            val total = minute + step
-            val stepDay = ((dayIso - 1 + total / MINUTES_PER_DAY) % 7) + 1
-            if (!isScheduledAt(days, startMinute, endMinute, stepDay, total % MINUTES_PER_DAY)) {
-                val end = now.clone() as Calendar
-                end.set(Calendar.SECOND, 0)
-                end.set(Calendar.MILLISECOND, 0)
-                end.add(Calendar.MINUTE, step)
-                return end.timeInMillis
-            }
-        }
-        return null
-    }
+    private fun windowEndAt(days: List<Int>?, startMinute: Int?, endMinute: Int?, now: Calendar): Long? =
+        ScheduleWalk.windowEnd(days, startMinute, endMinute, now.timeInMillis, now.timeZone.toZoneId())
 
     private fun isScheduledAt(
         days: List<Int>?,
@@ -149,40 +161,41 @@ class ScheduleEvaluator @Inject constructor(
         minuteOfDay = now.get(Calendar.HOUR_OF_DAY) * 60 + now.get(Calendar.MINUTE)
     )
 
-    private fun isScheduledAt(
-        days: List<Int>?,
-        startMinute: Int?,
-        endMinute: Int?,
-        dayIso: Int,
-        minuteOfDay: Int
-    ): Boolean {
-        // No schedule configured -- always active
-        if (days == null && startMinute == null && endMinute == null) return true
-
-        val currentDayIso = dayIso
-
-        // Check day-of-week constraint
-        if (days != null && days.isNotEmpty() && currentDayIso !in days) return false
-
-        // Check time-of-day constraint
-        if (startMinute != null && endMinute != null) {
-            val currentMinute = minuteOfDay
-            return if (startMinute <= endMinute) {
-                // Normal range: e.g. 09:00 - 17:00
-                currentMinute in startMinute until endMinute
-            } else {
-                // Overnight range: e.g. 23:00 - 06:00
-                currentMinute >= startMinute || currentMinute < endMinute
-            }
-        }
-
-        // Only days set (no time range) -- active all day on those days
-        return true
-    }
-
     companion object {
-        private const val MINUTES_PER_DAY = 24 * 60
-        private const val MINUTES_PER_WEEK = 7 * MINUTES_PER_DAY
+        /**
+         * THE days-and-times test, over a local ISO day and minute of day. One semantics for
+         * [isActiveAt] and for [ScheduleWalk], which asks it about future minutes.
+         */
+        internal fun isScheduledAt(
+            days: List<Int>?,
+            startMinute: Int?,
+            endMinute: Int?,
+            dayIso: Int,
+            minuteOfDay: Int
+        ): Boolean {
+            // No schedule configured -- always active
+            if (days == null && startMinute == null && endMinute == null) return true
+
+            val currentDayIso = dayIso
+
+            // Check day-of-week constraint
+            if (days != null && days.isNotEmpty() && currentDayIso !in days) return false
+
+            // Check time-of-day constraint
+            if (startMinute != null && endMinute != null) {
+                val currentMinute = minuteOfDay
+                return if (startMinute <= endMinute) {
+                    // Normal range: e.g. 09:00 - 17:00
+                    currentMinute in startMinute until endMinute
+                } else {
+                    // Overnight range: e.g. 23:00 - 06:00
+                    currentMinute >= startMinute || currentMinute < endMinute
+                }
+            }
+
+            // Only days set (no time range) -- active all day on those days
+            return true
+        }
 
         /**
          * Convert [Calendar.DAY_OF_WEEK] (Sunday=1 .. Saturday=7)
