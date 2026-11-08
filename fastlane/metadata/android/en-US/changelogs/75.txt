@@ -1,0 +1,4 @@
+• A schedule that starts while an app is open now blocks it right away, without waiting for you to leave the app.
+• A block screen now closes on its own when the block ends, at the schedule's end or at midnight for a daily limit, and puts you back in your app.
+• "Use for 2 minutes" no longer uses up the day's pass on a block that has already ended.
+• A group's daily limit now blocks while you are still in the app, not only the next time you open it.

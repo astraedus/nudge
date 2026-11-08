@@ -4,10 +4,13 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+## [1.28.1] - 2026-11-09
+
 ### Fixed
 - **A schedule now starts over an app you already have open.** An app opened at 9:55 under a 10:00 to 11:00 rule used to stay usable past 10:00 until you left it. At 10:00 the block now arrives exactly as it would on a fresh open, and a Delay schedule shows its countdown over the app. A pass you already earned under a Delay rule still lasts its sitting. Nudge waits on one timer to the next start or end, not a clock that ticks every minute, and rules with nothing on a clock have no timer at all. (#169)
 - **A block screen now closes when its block ends.** At a schedule's end, or at midnight for a spent daily limit, the screen closes and you are back in the app, unless another rule covers it, which then shows its own block. "Use for 2 minutes" no longer spends the day's pass on a block that has already ended. (#170)
 - "Until" on a block that crosses a daylight-saving change no longer names a time an hour off.
+- **A group's daily limit now blocks while you are still in the app.** Before, a group or All apps rule's limit was only checked the next time you opened a member app, so an app left open could run past it. The limit is still per app, as the group editor says. (#146)
 
 ## [1.28.0] - 2026-11-07
 
