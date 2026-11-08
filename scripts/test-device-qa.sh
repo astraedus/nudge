@@ -445,6 +445,78 @@ for step in "nudge-qa-boundary.json" "Import" "Import Complete"; do
   check "a failing import step ('$step') fails the seed, so the case never waits on a rule that is not there" test "$rc" != 0
 done
 
+# ─── 9. the four defects found by the 2026-11-08 bench run ───────────────────
+echo "bench-run defects:"
+# (1) device_clock must hand the device shell ONE argument: adb joins argv with spaces and the device
+# re-parses it, so `ash date +'%u ...'` (several words) failed "could not read the device clock".
+run_qa "$OUT" ARGC_FILE="$TMP/argc" -- "ash() { echo \"ARGC=\$#\" >\"\$ARGC_FILE\"; echo '3 10 00 20 1700000020'; }; device_clock"
+check "device_clock: the date command reaches the device as ONE argument" grep -qx ARGC=1 "$TMP/argc"
+
+# (2) the group-limit app must be one the Nudge picker lists: Contacts, not Clock; env still wins.
+run_qa "$OUT" -- 'echo "$GROUP_LIMIT_PKG $GROUP_LIMIT_LABEL"'
+check "GROUP_LIMIT defaults to Contacts (the Clock is not in the bench's app picker)" \
+  grep -qx 'com.google.android.contacts Contacts' "$OUT"
+run_qa "$OUT" GROUP_LIMIT_PKG=com.example.x GROUP_LIMIT_LABEL=Ex -- 'echo "$GROUP_LIMIT_PKG $GROUP_LIMIT_LABEL"'
+check "  ...and the env override still wins" grep -qx 'com.example.x Ex' "$OUT"
+
+# (3) a pushed file must be touched to "now" ON THE DEVICE, after the push, as one quoted argument.
+PUSH_FAKES='
+adbs() { echo "adbs:$*" >>"$PL"; [[ -z "$PUSH_FAIL" ]]; }
+ash()  { echo "ash#$#:$*" >>"$PL"; return 0; }
+sleep() { :; }
+'
+: >"$TMP/push.log"
+run_qa "$OUT" PL="$TMP/push.log" PUSH_FAIL= -- "$PUSH_FAKES push_to_download /tmp/local.json /sdcard/Download/x.json; echo rc=\$?"
+check "push_to_download: pushes, THEN touches the device copy as one argument" \
+  test "$(head -2 "$TMP/push.log" | tr '\n' '|')" = \
+  "adbs:push /tmp/local.json /sdcard/Download/x.json|ash#1:touch '/sdcard/Download/x.json'|"
+: >"$TMP/push.log"
+run_qa "$OUT" PL="$TMP/push.log" PUSH_FAIL=1 -- "$PUSH_FAKES push_to_download /tmp/local.json /sdcard/Download/x.json; echo rc=\$?"
+check "push_to_download: a failed push fails, and nothing is touched" \
+  bash -c "grep -qx 'rc=1' '$OUT' && ! grep -q touch '$TMP/push.log'"
+: >"$TMP/push.log"
+run_qa "$OUT" PL="$TMP/push.log" PUSH_FAIL= -- "$PUSH_FAKES push_fixture; echo rc=\$?"
+check "push_fixture: the setup fixture is touched on the device (so it lists first in the picker)" \
+  grep -q "touch '/sdcard/Download/nudge-qa-rules.json'" "$TMP/push.log"
+: >"$TMP/push.log"
+run_qa "$OUT" SEED_LOG="$TMP/seed.log" SEED_PUSHED="$TMP/seed.json" SEED_FAIL= PL="$TMP/push.log" -- \
+  "$SEED_FAKES ash() { echo \"ash#\$#:\$*\" >>\"\$PL\"; }; seed_boundary_rule 3 2"
+check "seed_boundary_rule: the boundary file is touched too (same picker)" \
+  grep -q "touch '/sdcard/Download/nudge-qa-boundary.json'" "$TMP/push.log"
+
+# (4) back-to-back boundary cases are independent: a case waits, on the recorded end epoch, for any
+# earlier boundary rule's window to be over before seeding its own.
+WAIT_FAKES='
+sleep() { :; }
+secs_until_epoch() { echo "secs_until:$1" >>"$WL"; local n; n=$(( $(cat "$WCOUNT") )); echo $(( n - 1 )) >"$WCOUNT"; echo $(( n > 0 ? n : 0 )); }
+'
+waitclear() { # <record content, or - for no record file> <initial seconds left>; log in $TMP/w.log
+  : >"$TMP/w.log"; echo "$2" >"$TMP/w.count"
+  local pre='rm -f "$BOUNDARY_LAST_END_FILE";'
+  [[ "$1" != "-" ]] && pre="echo '$1' >\"\$BOUNDARY_LAST_END_FILE\";"
+  run_qa "$OUT" WL="$TMP/w.log" WCOUNT="$TMP/w.count" -- "$WAIT_FAKES $pre boundary_wait_clear; echo rc=\$?"
+}
+waitclear - 99
+check "boundary_wait_clear: no earlier boundary rule recorded: returns at once, never asks the clock" \
+  bash -c "grep -qx 'rc=0' '$OUT' && [[ ! -s '$TMP/w.log' ]]"
+waitclear 1700000300 0
+check "boundary_wait_clear: the earlier window is already over: no wait" \
+  bash -c "grep -qx 'rc=0' '$OUT' && ! grep -q 'waiting for its window' '$OUT'"
+waitclear 1700000300 6
+check "boundary_wait_clear: an earlier window still open: waits on the recorded epoch, then proceeds" \
+  bash -c "grep -qx 'rc=0' '$OUT' && grep -q 'waiting for its window' '$OUT' && [[ \$(grep -c 'secs_until:1700000300' '$TMP/w.log') -ge 3 ]]"
+waitclear 'garbage' 5
+check "boundary_wait_clear: an unreadable record is ignored, not a hang" \
+  bash -c "grep -qx 'rc=0' '$OUT' && ! grep -q 'waiting for its window' '$OUT'"
+run_qa "$OUT" SEED_LOG="$TMP/seed.log" SEED_PUSHED="$TMP/seed.json" SEED_FAIL= -- \
+  "$SEED_FAKES seed_boundary_rule 3 2; cat \"\$BOUNDARY_LAST_END_FILE\""
+check "seed_boundary_rule: records its window's end epoch for the next case" grep -qx '1700000300' "$OUT"
+for fn in case_schedule_start_open_app case_schedule_end_overlay; do
+  run_qa "$OUT" -- "declare -f $fn"
+  check "$fn: waits for earlier boundary rules BEFORE it seeds its own" \
+    bash -c "w=\$(grep -n 'boundary_wait_clear ||' '$OUT' | head -1 | cut -d: -f1); s=\$(grep -n 'seed_boundary_rule ' '$OUT' | head -1 | cut -d: -f1); [[ -n \$w && -n \$s && \$w -lt \$s ]]"
+done
+
 # run_case derives the function from the case name, so both must exist.
 for fn in case_schedule_start_open_app case_schedule_end_overlay; do
   check "$fn is defined" run_qa "$OUT" -- "declare -F $fn"
