@@ -18,6 +18,7 @@
  */
 
 import {
+  activeChannelWindow,
   appliedBlockMode,
   gateAppliesNow,
   resolveYoutubeFeatures,
@@ -650,6 +651,7 @@ async function buildSiteConfig(url: string, now: Date): Promise<SiteConfig> {
       gates: [],
       hides: {},
       youtube: null,
+      channelWindow: null,
     };
   }
 
@@ -703,6 +705,7 @@ async function buildSiteConfig(url: string, now: Date): Promise<SiteConfig> {
     // The list in force NOW: a schedule window's own channel list replaces the rule's here,
     // so the feed filter and the watch gate enforce the same list DNR compiled.
     youtube: resolveYoutubeFeatures(rule, now) ?? null,
+    channelWindow: activeChannelWindow(rule, now),
   };
 }
 

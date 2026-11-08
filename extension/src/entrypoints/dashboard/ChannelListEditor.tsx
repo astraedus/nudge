@@ -14,14 +14,22 @@ import {
   DEFAULT_LIST_LABELS,
   EmptyWhitelistWarning,
   INVALID_CHANNEL_MESSAGE,
+  WhitelistOpenNote,
 } from './ChannelEntries';
 
 const CHANNEL_BLOCK_MODES: BlockMode[] = ['HARD_BLOCK', 'DELAY', 'BREATHING'];
 
+/** What "Only allow these channels" does, worded for the site mode in force. */
+function whitelistDescription(siteIsBlocked: boolean): string {
+  return siteIsBlocked
+    ? 'Only videos from the channels you list below are allowed. Everything else on YouTube gets blocked.'
+    : 'Only videos from the channels you list below play. Videos from other channels are held.';
+}
+
 const CHANNEL_MODE_OPTIONS: { mode: ChannelListMode; label: string; description: string }[] = [
   {
     mode: 'OFF',
-    label: 'Off',
+    label: 'No channel filter',
     description: "Every channel plays as normal — Nudge doesn't filter by channel.",
   },
   {
@@ -32,8 +40,7 @@ const CHANNEL_MODE_OPTIONS: { mode: ChannelListMode; label: string; description:
   {
     mode: 'WHITELIST',
     label: 'Only allow these channels',
-    description:
-      'Only videos from the channels you list below are allowed. Everything else on YouTube gets blocked.',
+    description: '',
   },
 ];
 
@@ -449,7 +456,7 @@ export function ChannelListEditor({
           <ChannelModeOption
             key={mode}
             label={label}
-            description={description}
+            description={mode === 'WHITELIST' ? whitelistDescription(isBlocked) : description}
             active={youtube.channelMode === mode}
             onClick={() => patch({ channelMode: mode })}
           />
@@ -466,8 +473,16 @@ export function ChannelListEditor({
         />
       )}
 
+      {youtube.channelMode === 'WHITELIST' && !isBlocked && <WhitelistOpenNote scope="site" />}
+
       {whitelistIsEmpty && (
-        <EmptyWhitelistWarning title="Your allow list is empty — this currently blocks ALL of YouTube." />
+        <EmptyWhitelistWarning
+          title={
+            isBlocked
+              ? 'Your allow list is empty — this currently blocks ALL of YouTube.'
+              : 'Your allow list is empty — every YouTube video is held.'
+          }
+        />
       )}
 
       {youtube.channelMode !== 'OFF' && (

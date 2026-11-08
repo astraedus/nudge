@@ -121,7 +121,7 @@ describe('ChannelListEditor — channel list', () => {
   });
 
   it('warns prominently when "only allow these channels" is chosen with an empty list, and the warning clears once a channel is added', () => {
-    render(<Harness initial={makeYoutubeSettings({ channelMode: 'OFF' })} />);
+    render(<Harness initial={makeYoutubeSettings({ channelMode: 'OFF' })} siteMode="HARD_BLOCK" />);
 
     expect(screen.queryByText(/blocks ALL of YouTube/i)).toBeNull();
 
@@ -130,6 +130,33 @@ describe('ChannelListEditor — channel list', () => {
 
     addChannel('@somechannel');
     expect(screen.queryByText(/blocks ALL of YouTube/i)).toBeNull();
+  });
+
+  it('under Allow the empty-list warning and the option text claim only what Allow does', () => {
+    render(<Harness initial={makeYoutubeSettings({ channelMode: 'OFF' })} siteMode="ALLOW" />);
+
+    expect(screen.getByText(/Videos from other channels are held/)).toBeDefined();
+    expect(screen.queryByText(/Everything else on YouTube gets blocked/)).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: /Only allow these channels/ }));
+    expect(screen.getByText(/every YouTube video is held/)).toBeDefined();
+    expect(screen.queryByText(/blocks ALL of YouTube/i)).toBeNull();
+    expect(
+      screen.getByText(/Home, search and Shorts stay open unless the site mode is Hard Block, Delay or Breathing/),
+    ).toBeDefined();
+  });
+
+  it('under a block mode keeps the strong wording and no open-surfaces note', () => {
+    render(<Harness initial={makeYoutubeSettings({ channelMode: 'WHITELIST' })} siteMode="DELAY" />);
+
+    expect(screen.getByText(/Everything else on YouTube gets blocked/)).toBeDefined();
+    expect(screen.queryByText(/Home, search and Shorts stay open/)).toBeNull();
+  });
+
+  it('labels the no-filter choice "No channel filter", not "Off"', () => {
+    render(<Harness initial={makeYoutubeSettings({ channelMode: 'OFF' })} />);
+    expect(screen.getByRole('button', { name: /No channel filter/ })).toBeDefined();
+    expect(screen.queryByRole('button', { name: /^Off\b/ })).toBeNull();
   });
 });
 

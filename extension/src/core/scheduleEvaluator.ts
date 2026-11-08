@@ -80,3 +80,9 @@ export function localDayKey(date: Date): string {
   const d = String(date.getDate()).padStart(2, '0');
   return `${y}-${m}-${d}`;
 }
+
+/** Minutes-from-midnight -> "09:30". */
+export function formatMinuteOfDay(minute: number): string {
+  const m = Math.max(0, Math.min(1439, Math.round(minute)));
+  return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+}

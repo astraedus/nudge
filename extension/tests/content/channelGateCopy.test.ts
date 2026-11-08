@@ -42,3 +42,33 @@ describe('channelGateCopy after the daily limit', () => {
     expect(copy.ruleLabel).toBe('YouTube channels');
   });
 });
+
+describe('channelGateCopy footer for a schedule window list', () => {
+  const channelRule = { action: 'BLOCK', mode: 'HARD_BLOCK', delaySeconds: 0, source: 'channel-rule', reason: 'not-listed' } as const;
+  const window = { startMinute: 1200, endMinute: 1425 };
+
+  it('says the hold comes from the schedule, with its hours', () => {
+    expect(channelGateCopy(channelRule, { channelWindow: window }).ruleLabel).toBe(
+      'YouTube channels, during your 20:00\u201323:45 schedule',
+    );
+  });
+
+  it('names an all-day window without inventing hours', () => {
+    expect(
+      channelGateCopy(channelRule, { channelWindow: { startMinute: null, endMinute: null } }).ruleLabel,
+    ).toBe('YouTube channels, during your schedule');
+  });
+
+  it('also explains a site-default hold that comes from the window list', () => {
+    expect(channelGateCopy(bySite('not-listed'), { channelWindow: window }).ruleLabel).toContain(
+      'during your 20:00\u201323:45 schedule',
+    );
+  });
+
+  it('leaves the label alone with no window, and a spent limit keeps its own label', () => {
+    expect(channelGateCopy(channelRule).ruleLabel).toBe('YouTube channels');
+    expect(channelGateCopy(bySite('not-listed'), { limitReached: true, channelWindow: window }).ruleLabel).toBe(
+      'YouTube',
+    );
+  });
+});

@@ -1,7 +1,8 @@
 import { useState } from 'react';
+import { isBlockMode, type SiteMode } from '../../core/types';
 import type { ChannelListMode, ScheduleChannelOverride, YoutubeFeatureSettings } from '../../core/settingsSchema';
 import { Chip } from '../../ui/components';
-import { ChannelEntriesEditor, EmptyWhitelistWarning } from './ChannelEntries';
+import { ChannelEntriesEditor, EmptyWhitelistWarning, WhitelistOpenNote } from './ChannelEntries';
 import type { ChannelEntriesLabels } from './ChannelEntries';
 import { SubscriptionsSection, useSubscriptionStatus } from './ChannelListEditor';
 
@@ -10,7 +11,7 @@ type WindowChoice = 'DEFAULT' | ChannelListMode;
 
 const WINDOW_CHOICES: { choice: WindowChoice; label: string; title: string }[] = [
   { choice: 'DEFAULT', label: 'Same as default', title: 'Use the YouTube channels setting below' },
-  { choice: 'OFF', label: 'Off', title: 'No channel filtering during this window' },
+  { choice: 'OFF', label: 'No channel filter', title: 'No channel filtering during this window' },
   { choice: 'BLACKLIST', label: 'Block these channels', title: 'Videos from these channels are blocked during this window' },
   {
     choice: 'WHITELIST',
@@ -37,10 +38,13 @@ const WINDOW_LIST_LABELS: ChannelEntriesLabels = {
 export function ScheduleChannelsEditor({
   override,
   youtube,
+  windowMode,
   onChange,
 }: {
   override: ScheduleChannelOverride | null;
   youtube: YoutubeFeatureSettings;
+  /** The window's own site mode: it decides whether home, search and Shorts stay open. */
+  windowMode: SiteMode;
   onChange: (next: ScheduleChannelOverride | null) => void;
 }) {
   // Flipping to "Same as default" and back while editing should not throw away the list
@@ -68,6 +72,8 @@ export function ScheduleChannelsEditor({
   const whitelistIsEmpty =
     override?.channelMode === 'WHITELIST' && override.channels.length === 0 && subscribedCount === 0;
 
+  const windowBlocks = isBlockMode(windowMode);
+
   return (
     <div>
       <p
@@ -94,6 +100,7 @@ export function ScheduleChannelsEditor({
 
       {override !== null && override.channelMode !== 'OFF' && (
         <div style={{ marginTop: 12 }}>
+          {override.channelMode === 'WHITELIST' && !windowBlocks && <WhitelistOpenNote scope="window" />}
           {override.channelMode === 'WHITELIST' && (
             <SubscriptionsSection
               allowSubscriptions={override.allowSubscriptions}
@@ -105,7 +112,13 @@ export function ScheduleChannelsEditor({
             />
           )}
           {whitelistIsEmpty && (
-            <EmptyWhitelistWarning title="This window's allow list is empty — it blocks ALL of YouTube during the window." />
+            <EmptyWhitelistWarning
+              title={
+                windowBlocks
+                  ? "This window's allow list is empty — it blocks ALL of YouTube during the window."
+                  : "This window's allow list is empty — every YouTube video is held during the window."
+              }
+            />
           )}
           <ChannelEntriesEditor
             channels={override.channels}

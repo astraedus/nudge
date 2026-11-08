@@ -240,7 +240,9 @@ unit-testable, exactly as the Android domain layer is.
    looser; edits to a disabled window are free until it is enabled. Learned identifiers
    (`CHANNEL_OBSERVED`, `keepLearnedChannelIdentifiers`) enrich both lists from what either
    list knows. featureSummary prints "During schedule: ..." and, given `now` inside the window
-   (the popup), drops the default list's part. UI: `ScheduleChannelsEditor` in the schedule
+   (the popup), drops the default list's part and says "Now, until HH:MM: ...". The site
+   config carries `channelWindow` (`applies.activeChannelWindow`, same resolver) so the
+   channel gate's footer reads "Rule: YouTube channels, during your 20:00-23:45 schedule". UI: `ScheduleChannelsEditor` in the schedule
    card, sharing `ChannelEntries.tsx` with the default list under its own aria labels.
 1d. **The priority ladder**: site redirect 1 < gate redirect 2 < channel allow 3 < temp allow 4.
    Rung 4 above rung 2 is deliberate — a pause completed ON a gate surface must not bounce

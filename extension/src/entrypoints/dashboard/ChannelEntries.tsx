@@ -179,6 +179,15 @@ export function ChannelEntriesEditor({
 }
 
 /** The loud "an empty allow list blocks everything" warning. */
+/** One line under an "Only allow these channels" list whose mode in force is Allow. */
+export function WhitelistOpenNote({ scope }: { scope: 'site' | 'window' }) {
+  return (
+    <p style={{ margin: '0 0 12px', fontSize: 12, color: 'var(--nudge-on-surface-variant)' }}>
+      Home, search and Shorts stay open unless the {scope} mode is Hard Block, Delay or Breathing.
+    </p>
+  );
+}
+
 export function EmptyWhitelistWarning({ title }: { title: string }) {
   return (
     <div

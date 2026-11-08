@@ -80,6 +80,22 @@ export function isScheduleInForce(rule: SiteRule, now: Date): boolean {
   return activeSchedule(rule, now) !== null;
 }
 
+/**
+ * The clock span of the schedule window whose own channel list is in force at `now`, or null
+ * when no window list is (no schedule, outside the window, or "same as default"). Null
+ * minutes mean the window runs all day. Computed here, beside `resolveYoutubeFeatures`, so
+ * "the list in force is the window's" is decided in one place and the content script only
+ * words it.
+ */
+export function activeChannelWindow(
+  rule: SiteRule,
+  now: Date,
+): { startMinute: number | null; endMinute: number | null } | null {
+  const schedule = activeSchedule(rule, now);
+  if (schedule === null || schedule.channels === null) return null;
+  return { startMinute: schedule.startMinute, endMinute: schedule.endMinute };
+}
+
 /** The rule's schedule when it is switched on and `now` is inside its window, else null. */
 function activeSchedule(rule: SiteRule, now: Date): ScheduleOverride | null {
   const schedule = rule.schedule;

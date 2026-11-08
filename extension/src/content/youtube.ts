@@ -31,6 +31,7 @@
 
 import type { ResolvedGate, SiteConfig } from '../core/protocol';
 import { gateDefinition } from '../core/platforms';
+import { formatMinuteOfDay } from '../core/scheduleEvaluator';
 import type { BlockMode } from '../core/types';
 import { send } from '../ui/rpc';
 import {
@@ -332,8 +333,13 @@ function overlayHost(doc: Document): Element {
  */
 export function channelGateCopy(
   verdict: Extract<WatchGateVerdict, { action: 'BLOCK' }>,
-  options: { limitReached?: boolean } = {},
+  options: { limitReached?: boolean; channelWindow?: SiteConfig['channelWindow'] } = {},
 ): YoutubeGateCopy {
+  // When the list holding the video is a schedule window's, the footer says so: a channel
+  // that is fine the rest of the day needs that explanation more than any other.
+  const listLabel = options.channelWindow
+    ? `YouTube channels, ${windowPhrase(options.channelWindow)}`
+    : 'YouTube channels';
   if (verdict.source === 'site-default' && options.limitReached === true) {
     return {
       title: "You're out of YouTube for today",
@@ -356,7 +362,7 @@ export function channelGateCopy(
     return {
       title: 'This channel is off your list',
       subtitle: "YouTube is blocked except the channels you picked. This one isn't one of them.",
-      ruleLabel: 'YouTube',
+      ruleLabel: options.channelWindow ? listLabel : 'YouTube',
     };
   }
 
@@ -366,8 +372,16 @@ export function channelGateCopy(
       verdict.reason === 'not-listed'
         ? 'You chose to watch only channels you picked. Still want this one?'
         : 'You asked Nudge to keep you away from this channel.',
-    ruleLabel: 'YouTube channels',
+    ruleLabel: listLabel,
   };
+}
+
+/** "during your 20:00–23:45 schedule"; an all-day window has no times to name. */
+function windowPhrase(window: NonNullable<SiteConfig['channelWindow']>): string {
+  const { startMinute, endMinute } = window;
+  return startMinute === null || endMinute === null
+    ? 'during your schedule'
+    : `during your ${formatMinuteOfDay(startMinute)}–${formatMinuteOfDay(endMinute)} schedule`;
 }
 
 /* --------------------------------------------------------------- page gate */
@@ -748,7 +762,10 @@ export function initYoutubeContentScript(
         NUDGE_OVERLAY_ID,
         channelGate.mode,
         channelGate.delaySeconds,
-        channelGateCopy(channelGate, { limitReached: config.siteLimitReached }),
+        channelGateCopy(channelGate, {
+          limitReached: config.siteLimitReached,
+          channelWindow: config.channelWindow,
+        }),
         {
           onComplete: () => {
             channelGateSatisfiedFor = gatedUrl;

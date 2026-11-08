@@ -11,16 +11,27 @@ namespaces were already split for exactly that reason.
 ### Added
 
 - **A Scheduled Override can have its own YouTube channel list.** Under "Channels during this
-  window" in the schedule, pick Same as default, Off, Block these channels or Only allow these
+  window" in the schedule, pick Same as default, No channel filter, Block these channels or Only allow these
   channels, and add channels just for that window. For example: YouTube open all day with a
   few junk channels blocked, but on weekdays from 9 to 5 only your study channels play. The
   window's list replaces the default one only while the window is on; what happens to a
   rejected channel, creator mode and autoplay stay as set in "YouTube channels". Existing
   schedules start at "Same as default", so nothing changes until you pick something. The
-  popup says which list is in force right now, and the site list shows both. Under Strict Mode, loosening the
+  popup says which list is in force right now ("Now, until 23:45: only 1 channel allowed"), the
+  YouTube block screen says when a video is held by the window's list ("Rule: YouTube channels,
+  during your 20:00-23:45 schedule"), and the site list shows both. Under Strict Mode, loosening the
   window's list (adding to an allow list, removing from a block list, switching to an allow
   list, turning on subscriptions, or going back to a weaker default) needs the challenge, the
   same as the default list. Export and import carry the window's list.
+
+### Changed
+
+- **"Off" in the YouTube channel lists is now "No channel filter"**, so it no longer reads like
+  the schedule or YouTube itself is switched off.
+- **"Only allow these channels" no longer over-promises.** When the site (or the window) is set
+  to Allow, videos from other channels are held but the home feed, search and Shorts stay open,
+  and the editor now says so. Everything on YouTube is blocked only under Hard Block, Delay or
+  Breathing.
 
 ### Fixed
 
