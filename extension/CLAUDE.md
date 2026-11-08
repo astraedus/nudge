@@ -61,7 +61,8 @@ src/
     types.ts, settingsSchema.ts, protocol.ts
     platforms.ts        (the platform registry: which gates/hides exist per platform,
                          their labels and their URL PATH PATTERNS)
-    applies.ts          (siteRuleAppliesNow / gateAppliesNow -- THE predicate)
+    applies.ts          (siteRuleAppliesNow / gateAppliesNow -- THE predicate;
+                         resolveYoutubeFeatures -- THE channel list in force at `now`)
     blockEngine.ts      <- domain/engine/BlockEngine.kt
     scheduleEvaluator.ts<- domain/engine/ScheduleEvaluator.kt
     domainMatcher.ts    <- domain/WebDomainMatcher.kt
@@ -218,6 +219,29 @@ unit-testable, exactly as the Android domain layer is.
    Packing: identifiers are packed into alternation groups under
    `CHANNEL_ALTERNATION_BUDGET` characters so 500 subscriptions compile to a few hundred
    rules, not 1000+.
+1c'. **A Scheduled Override can carry its own channel list** (`ScheduleOverride.channels`,
+   schema v8, YouTube only; Anti 2026-11-08: "at a certain time we can only watch whitelisted
+   youtubers"). `ScheduleChannelOverride` is `{channelMode, channels, allowSubscriptions}`;
+   **null = "Same as default"**, which is what every pre-v8 schedule reads as (the coerce is
+   the migration) and what a non-YouTube rule is always coerced to. Inside an enabled, active
+   window the override REPLACES those three fields; `channelBlockMode`, the delay, creator
+   mode, `subscribedChannels` and autoplay stay the rule's. **Every consumer reads the list
+   through `core/applies.ts#resolveYoutubeFeatures(rule, now)`**: the DNR compiler
+   (`channelAllowFilters`), `GET_SITE_CONFIG`'s `youtube` (so the content script's watch gate
+   and page gate), the block page's allowed-channel links, the repeat pause's carve-out check,
+   and `isWhitelistedVideoUrl` / `survivesLimitCrossing`, which take a REQUIRED `now` so `tsc`
+   finds any caller left on the default list. `ruleUsesSubscriptions` asks either list, so the
+   subscription sync runs when only the window wants it. Schedule edges: the
+   `SCHEDULE_ALARM` arms at EVERY enabled window boundary, including one where only the list
+   changes (window mode == default mode), recompiles DNR and writes `nudge:scheduleEdgeAt` so
+   open tabs refetch. Strict Mode compares the list in force INSIDE the window
+   (`isWindowChannelListWeakened`, the same rules as the default list), so dropping back to
+   "Same as default", or disabling/deleting the schedule, is a weakening when the default is
+   looser; edits to a disabled window are free until it is enabled. Learned identifiers
+   (`CHANNEL_OBSERVED`, `keepLearnedChannelIdentifiers`) enrich both lists from what either
+   list knows. featureSummary prints "During schedule: ..." and, given `now` inside the window
+   (the popup), drops the default list's part. UI: `ScheduleChannelsEditor` in the schedule
+   card, sharing `ChannelEntries.tsx` with the default list under its own aria labels.
 1d. **The priority ladder**: site redirect 1 < gate redirect 2 < channel allow 3 < temp allow 4.
    Rung 4 above rung 2 is deliberate — a pause completed ON a gate surface must not bounce
    straight back into that gate's redirect. The cost is that a site-level grant also opens
@@ -332,9 +356,12 @@ site pause again every N minutes while the user stays on it. The worker answers
     the repeat off, a settings change or a usage write that spends the budget flips the field and
     the page gate takes over. A limit crossing does not need it: the tracker pushes tabs out itself
     (`redirectOpenTabs`).
-  - **Known gaps.** A schedule edge writes nothing, so a page standing down when its rule flips to
-    Hard Block stays open until the next usage write, about a minute while the tab is in use. If the
-    registered script failed to inject, a refused hop has no gate until the next full load. On a hop
+  - **Known gaps.** A schedule edge used to write nothing, so a page standing down when its rule
+    flipped to Hard Block stayed open until the next usage write. Since 0.7.0 the schedule alarm
+    writes `nudge:scheduleEdgeAt` (`markScheduleEdge`) to `storage.local`, and that `onChanged`
+    makes the youtube and platformGate scripts refetch their config at the edge.
+    `content/repeatPause.ts` still reloads only on `nudge:settings`, so the repeat pill itself
+    catches up on its next tick or usage write. If the registered script failed to inject, a refused hop has no gate until the next full load. On a hop
     to a refused page the media hold lets go before the overlay's next tick, so a video can run for
     up to a second.
   - **Testing it.** The page gate reads the grant's end from the config it fetched, and only a hop
@@ -613,6 +640,12 @@ xvfb), scoped with `paths: ['extension/**']`. The Android workflow carries the m
 
 - **A DNR redirect target MUST be in `web_accessible_resources`.** Redirecting to a page the
   extension owns still fails *silently* otherwise (w3c/webextensions#604).
+- **Settings are ONE `storage.sync` item, capped at 8 KB (`QUOTA_BYTES_PER_ITEM`), and
+  `loadSettings` prefers sync.** A save too big for sync used to be swallowed after the local
+  write, so the next load read the OLDER synced copy and the change silently reverted.
+  `saveSettings` now removes the sync copy when `sync.set` fails (local is then the truth,
+  this device only, until a save fits again). Long channel lists on two lists (default and
+  a schedule window) are what push a rule toward the cap.
 - **`regexSubstitution` needs `regexFilter`, and `\0` is the ENTIRE match** — so the pattern
   must be anchored `^...$` for `\0` to be the whole URL rather than just its prefix. This is
   how the original URL reaches the block page.

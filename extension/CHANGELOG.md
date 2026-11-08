@@ -6,6 +6,33 @@ independently-numbered products in one file invites the reader to match a `v1.17
 release against a `0.2.0` extension release and conclude something about both; the tag
 namespaces were already split for exactly that reason.
 
+## 0.7.0 — 2026-11-08
+
+### Added
+
+- **A Scheduled Override can have its own YouTube channel list.** Under "Channels during this
+  window" in the schedule, pick Same as default, Off, Block these channels or Only allow these
+  channels, and add channels just for that window. For example: YouTube open all day with a
+  few junk channels blocked, but on weekdays from 9 to 5 only your study channels play. The
+  window's list replaces the default one only while the window is on; what happens to a
+  rejected channel, creator mode and autoplay stay as set in "YouTube channels". Existing
+  schedules start at "Same as default", so nothing changes until you pick something. The
+  popup says which list is in force right now, and the site list shows both. Under Strict Mode, loosening the
+  window's list (adding to an allow list, removing from a block list, switching to an allow
+  list, turning on subscriptions, or going back to a weaker default) needs the challenge, the
+  same as the default list. Export and import carry the window's list.
+
+### Fixed
+
+- **An open page now notices a schedule starting or ending.** Before, a tab already open when
+  a Scheduled Override began or ended kept the old rules until you navigated or the next
+  usage update, and a whitelisted video, whose time is not counted, could keep them
+  indefinitely. The schedule alarm now tells open YouTube and feature-gated tabs to look again.
+- **Settings too large for Chrome sync no longer revert.** When a save did not fit in
+  Chrome's sync storage, the older synced copy kept winning on the next load, so the change
+  seemed to undo itself. The stale synced copy is now cleared and the settings are kept on
+  this device until a save fits again.
+
 ## 0.6.0 — 2026-11-06
 
 ### Added
