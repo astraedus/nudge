@@ -17,7 +17,12 @@
  * the user would see an overlay on a page DNR had already let through (or the reverse).
  */
 
-import { appliedBlockMode, gateAppliesNow, siteRuleAppliesNow } from '../core/applies';
+import {
+  appliedBlockMode,
+  gateAppliesNow,
+  resolveYoutubeFeatures,
+  siteRuleAppliesNow,
+} from '../core/applies';
 import { ruleForHost, rulesForDomain, usageKeyForHost } from '../core/ruleResolver';
 import { evaluate } from '../core/blockEngine';
 import {
@@ -36,6 +41,7 @@ import { coerceRepeatPauseMinutes, pauseGrantMinutes } from '../core/repeatPause
 import {
   STUDIO_HOST_PREFIX,
   isWhitelistedVideoUrl,
+  ruleUsesSubscriptions,
   watchPageVideoId,
   youtubePageAccess,
 } from '../core/youtubeAccess';
@@ -287,7 +293,7 @@ async function buildBlockContext(target: string, now: Date): Promise<BlockContex
     gateItemsToday,
     gateCountLimit,
     gateItemNoun,
-    allowedChannels: allowedChannelsFor(rule),
+    allowedChannels: allowedChannelsFor(rule, now),
     creator: creatorLinksFor(rule),
     repeatPauseMinutes: rule?.repeatPauseMinutes ?? null,
     repeatPauseOffered:
@@ -362,7 +368,7 @@ async function repeatOnPage(
   }
 
   let carvedVideoId: string | null = null;
-  const youtube = rule.features?.youtube;
+  const youtube = resolveYoutubeFeatures(rule, now);
   if (youtube !== undefined) {
     const access = youtubePageAccess({
       url,
@@ -403,7 +409,7 @@ async function repeatInForce(
 
   const until = await repeatAnchorFor(carvedVideoId);
   if (until === null) return null;
-  if (isWhitelistedVideoUrl(settings.rules, url, await videoChannelLookup())) return null;
+  if (isWhitelistedVideoUrl(settings.rules, url, await videoChannelLookup(), now)) return null;
   return { ...fields, anchor: { videoId: carvedVideoId, until } };
 }
 
@@ -450,10 +456,10 @@ async function handleChannelPauseDone(
  * Without these links "block YouTube except these channels" is technically correct and
  * practically useless: the home feed, search and subscriptions are all redirected, so the
  * only way into an allowed channel is typing a URL from memory. The block page has to BE
- * the way in.
+ * the way in. The list is the one in force at `now`, a schedule window's included.
  */
-function allowedChannelsFor(rule: SiteRule | null): ChannelEntry[] {
-  const youtube = rule?.features?.youtube;
+function allowedChannelsFor(rule: SiteRule | null, now: Date): ChannelEntry[] {
+  const youtube = rule === null ? undefined : resolveYoutubeFeatures(rule, now);
   if (youtube === undefined || youtube.channelMode !== 'WHITELIST') return [];
   // Synced subscriptions are allowed channels too (`effectiveChannelLists`), and they need
   // the links MORE than typed ones: the subscriptions page is itself redirected, so without
@@ -594,7 +600,9 @@ async function buildPopupState(now: Date): Promise<PopupState> {
     // — the popup must not count down a budget the network layer is ignoring.
     currentApplies: settings.globalEnabled && (verdict?.applies ?? false),
     currentGrayscale: currentRule?.grayscale ?? false,
-    currentFeatureSummary: currentRule === null ? null : featureSummary(currentRule),
+    // With `now`: inside a schedule window that has its own channel list, the popup names
+    // that list, the one being enforced.
+    currentFeatureSummary: currentRule === null ? null : featureSummary(currentRule, now),
     currentRepeatEveryMinutes: repeat?.everyMinutes ?? null,
     currentNextPauseAt: repeat === null ? null : await nextPauseAt(repeat, now.getTime()),
   };
@@ -692,7 +700,9 @@ async function buildSiteConfig(url: string, now: Date): Promise<SiteConfig> {
     grayscale: rule.grayscale,
     gates,
     hides: features?.hides ?? {},
-    youtube: features?.youtube ?? null,
+    // The list in force NOW: a schedule window's own channel list replaces the rule's here,
+    // so the feed filter and the watch gate enforce the same list DNR compiled.
+    youtube: resolveYoutubeFeatures(rule, now) ?? null,
   };
 }
 
@@ -750,7 +760,7 @@ async function handleSave(
 }
 
 function anySubscriptionsOn(settings: NudgeSettings): boolean {
-  return settings.rules.some((rule) => rule.features?.youtube?.allowSubscriptions === true);
+  return settings.rules.some(ruleUsesSubscriptions);
 }
 
 function subscriptionsJustEnabled(before: NudgeSettings, after: NudgeSettings): boolean {
@@ -870,9 +880,15 @@ async function handleChannelObserved(
     return { ok: true, changed: false, reason: 'no-rule' };
   }
 
+  // Both lists learn: the rule's own and its schedule window's (v0.8). Either can hold a
+  // handle-only entry, and a window's whitelist is no less in need of the `/channel/UC...`
+  // allow-rule an id unlocks.
   const enriched = enrichEntries(youtube.channels, observation);
-  if (!enriched.changed) {
-    if (enriched.reason === 'contradiction') {
+  const scheduleChannels = rule.schedule?.channels ?? null;
+  const enrichedScheduled =
+    scheduleChannels === null ? null : enrichEntries(scheduleChannels.channels, observation);
+  if (!enriched.changed && enrichedScheduled?.changed !== true) {
+    if (enriched.reason === 'contradiction' || enrichedScheduled?.reason === 'contradiction') {
       // Worth saying out loud: the page named a channel that disagrees with a stored entry
       // on an axis they share, so either YouTube served two channels on one page or our
       // detection is wrong. Both are bugs, and both are invisible without this line.
@@ -881,20 +897,29 @@ async function handleChannelObserved(
     return { ok: true, changed: false, reason: enriched.reason };
   }
 
+  const schedule =
+    rule.schedule !== null && scheduleChannels !== null && enrichedScheduled?.changed === true
+      ? {
+          ...rule.schedule,
+          channels: { ...scheduleChannels, channels: enrichedScheduled.entries },
+        }
+      : rule.schedule;
   const rules = settings.rules.map((candidate) =>
     candidate.id === rule.id
       ? {
           ...candidate,
+          schedule,
           features: { ...features, youtube: { ...youtube, channels: enriched.entries } },
         }
       : candidate,
   );
 
   const saved = await handleSave({ ...settings, rules }, undefined, now);
+  const reason = enriched.changed ? enriched.reason : (enrichedScheduled?.reason ?? enriched.reason);
   return {
     ok: saved.ok,
     changed: saved.ok,
-    reason: saved.ok ? enriched.reason : 'not-saved',
+    reason: saved.ok ? reason : 'not-saved',
   };
 }
 

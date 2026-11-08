@@ -23,7 +23,13 @@
 
 import { isOverBudget, isOverCount } from './budgets';
 import { isScheduleActiveAt } from './scheduleEvaluator';
-import type { GateSetting, SiteRule } from './settingsSchema';
+import type {
+  GateSetting,
+  ScheduleChannelOverride,
+  ScheduleOverride,
+  SiteRule,
+  YoutubeFeatureSettings,
+} from './settingsSchema';
 import { isBlockMode, type BlockMode, type SiteMode } from './types';
 
 /**
@@ -63,18 +69,71 @@ export function resolveSiteMode(
   rule: SiteRule,
   now: Date,
 ): { mode: SiteMode; delaySeconds: number } {
-  const schedule = rule.schedule;
-  const scheduleActive =
-    schedule !== null &&
-    schedule.enabled &&
-    isScheduleActiveAt(
-      { days: schedule.days, startMinute: schedule.startMinute, endMinute: schedule.endMinute },
-      now,
-    );
-
-  return scheduleActive
+  const schedule = activeSchedule(rule, now);
+  return schedule !== null
     ? { mode: schedule.mode, delaySeconds: schedule.delaySeconds }
     : { mode: rule.mode, delaySeconds: rule.delaySeconds };
+}
+
+/** Whether the rule's schedule is switched on and `now` is inside its window. */
+export function isScheduleInForce(rule: SiteRule, now: Date): boolean {
+  return activeSchedule(rule, now) !== null;
+}
+
+/** The rule's schedule when it is switched on and `now` is inside its window, else null. */
+function activeSchedule(rule: SiteRule, now: Date): ScheduleOverride | null {
+  const schedule = rule.schedule;
+  if (schedule === null || !schedule.enabled) return null;
+  const inWindow = isScheduleActiveAt(
+    { days: schedule.days, startMinute: schedule.startMinute, endMinute: schedule.endMinute },
+    now,
+  );
+  return inWindow ? schedule : null;
+}
+
+/**
+ * The rule's YouTube settings at `now`, with the schedule window's channel list applied.
+ *
+ * THE one place a scheduled channel list (v0.8) takes effect. Inside an active window whose
+ * `channels` is set, its mode, list and subscriptions toggle replace the rule's own; every
+ * other field (the block mode for a disallowed channel, autoplay, creator mode, the synced
+ * subscriptions) stays the rule's. Outside the window, or with "same as default" (null),
+ * this returns the rule's own settings unchanged.
+ *
+ * Every enforcement consumer reads the list through this: DNR compile, the site config the
+ * content scripts get, the limit exemption for whitelisted videos and the popup status. A
+ * consumer that read `rule.features.youtube` raw would enforce the default list while the
+ * page showed the window's, which is the contradiction `resolveSiteMode` exists to prevent
+ * for the site mode. The dashboard editor is the one place that edits the raw fields.
+ *
+ * Undefined when the rule has no YouTube settings at all.
+ */
+export function resolveYoutubeFeatures(
+  rule: SiteRule,
+  now: Date,
+): YoutubeFeatureSettings | undefined {
+  const youtube = rule.features?.youtube;
+  if (youtube === undefined) return undefined;
+  return withChannelOverride(youtube, activeSchedule(rule, now)?.channels ?? null);
+}
+
+/**
+ * `youtube` with a window's channel list in place of its own; `youtube` itself for null
+ * ("same as default"). The one substitution, shared by `resolveYoutubeFeatures` and the
+ * Commitment Lock's "what does the window allow" comparison, so the two cannot disagree on
+ * which fields a window overrides.
+ */
+export function withChannelOverride(
+  youtube: YoutubeFeatureSettings,
+  override: ScheduleChannelOverride | null,
+): YoutubeFeatureSettings {
+  if (override === null) return youtube;
+  return {
+    ...youtube,
+    channelMode: override.channelMode,
+    channels: override.channels,
+    allowSubscriptions: override.allowSubscriptions,
+  };
 }
 
 /**

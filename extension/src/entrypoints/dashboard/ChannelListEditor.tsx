@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { CSSProperties } from 'react';
-import { addChannel, parseChannelInput, removeChannel } from '../../core/channels';
+import { parseChannelInput } from '../../core/channels';
 import { DELAY_MAX_SECONDS, DELAY_MIN_SECONDS, DELAY_PRESETS } from '../../core/settingsSchema';
 import type { ChannelEntry, ChannelListMode, YoutubeFeatureSettings } from '../../core/settingsSchema';
 import type { BlockMode, SiteMode } from '../../core/types';
@@ -8,6 +7,14 @@ import { isBlockMode, MODE_LABELS, SITE_MODE_LABELS } from '../../core/types';
 import type { SubscriptionSyncStatus } from '../../core/protocol';
 import { Button, Card, Chip, Toggle } from '../../ui/components';
 import { send } from '../../ui/rpc';
+import {
+  CHANNEL_INPUT_STYLE,
+  ChannelEntriesEditor,
+  channelIdentifierLine,
+  DEFAULT_LIST_LABELS,
+  EmptyWhitelistWarning,
+  INVALID_CHANNEL_MESSAGE,
+} from './ChannelEntries';
 
 const CHANNEL_BLOCK_MODES: BlockMode[] = ['HARD_BLOCK', 'DELAY', 'BREATHING'];
 
@@ -29,18 +36,6 @@ const CHANNEL_MODE_OPTIONS: { mode: ChannelListMode; label: string; description:
       'Only videos from the channels you list below are allowed. Everything else on YouTube gets blocked.',
   },
 ];
-
-const INVALID_CHANNEL_MESSAGE = "That doesn't look like a channel handle, URL, or channel ID.";
-
-const CHANNEL_INPUT_STYLE: CSSProperties = {
-  flex: '1 1 220px',
-  padding: '10px 12px',
-  fontSize: 14,
-  borderRadius: 8,
-  border: '1px solid var(--nudge-outline)',
-  background: 'var(--nudge-background)',
-  color: 'var(--nudge-on-surface)',
-};
 
 function clamp(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return min;
@@ -146,32 +141,6 @@ function ChannelModeOption({
       </span>
     </button>
   );
-}
-
-/** A stable React key for a channel entry — it has no id field, but at least one of
- * `channelId`/`handle` is always present (coerceChannel drops entries with neither). */
-function channelKey(entry: ChannelEntry): string {
-  return entry.channelId ?? entry.handle ?? entry.displayName;
-}
-
-/**
- * The secondary "what we actually know" line under a channel row's display name.
- *
- * Background: handle-entry enrichment learns the missing identifier and a real display
- * name over time, so a row that starts as the `@handle`/id fallback for `displayName`
- * eventually gets a real name plus both identifiers underneath. Returns null rather than
- * an empty string when there is nothing to add beyond the primary line — a row must never
- * show the same string twice, so a single known identifier that IS the (fallback)
- * displayName is suppressed rather than repeated one line down.
- */
-function channelIdentifierLine(entry: ChannelEntry): string | null {
-  const parts: string[] = [];
-  if (entry.handle !== null) parts.push(`@${entry.handle}`);
-  if (entry.channelId !== null) parts.push(entry.channelId);
-
-  if (parts.length === 0) return null;
-  if (parts.length === 1) return parts[0] === entry.displayName ? null : parts[0]!;
-  return parts.join(' · ');
 }
 
 /**
@@ -317,7 +286,7 @@ export function subscriptionTruncationText(status: SubscriptionSyncStatus): stri
  * The worker's sync status, read only while the option is on. Never throws: outside the
  * extension (a test page with no `chrome`) it simply stays null.
  */
-function useSubscriptionStatus(enabled: boolean) {
+export function useSubscriptionStatus(enabled: boolean) {
   const [status, setStatus] = useState<SubscriptionSyncStatus | null>(null);
   // When the status was read: "synced 5 min ago" is measured from here, never from a clock
   // read during render.
@@ -361,18 +330,21 @@ function useSubscriptionStatus(enabled: boolean) {
  * every other edit, so the rule's "Save rule" sends it through the worker's Commitment Lock;
  * the worker then syncs on its own (`background/youtubeSubscriptions.ts`).
  */
-function SubscriptionsSection({
+export function SubscriptionsSection({
   allowSubscriptions,
   status,
   readAt,
   onToggle,
   onSyncNow,
+  label = "Also allow channels I'm subscribed to",
 }: {
   allowSubscriptions: boolean;
   status: SubscriptionSyncStatus | null;
   readAt: number;
   onToggle: (next: boolean) => void;
   onSyncNow: () => void;
+  /** The toggle's label; a second list on the same screen needs its own. */
+  label?: string;
 }) {
   const error = status === null ? null : subscriptionErrorText(status);
   const truncation = status === null ? null : subscriptionTruncationText(status);
@@ -381,7 +353,7 @@ function SubscriptionsSection({
       <Toggle
         checked={allowSubscriptions}
         onChange={onToggle}
-        label="Also allow channels I'm subscribed to"
+        label={label}
       />
       {allowSubscriptions && status !== null && (
         <div style={{ margin: '8px 0 0 30px' }}>
@@ -434,26 +406,9 @@ export function ChannelListEditor({
   onChange: (next: YoutubeFeatureSettings) => void;
 }) {
   const isBlocked = isBlockMode(siteMode);
-  const [channelInput, setChannelInput] = useState('');
-  const [channelInputError, setChannelInputError] = useState<string | null>(null);
 
   function patch(changes: Partial<YoutubeFeatureSettings>) {
     onChange({ ...youtube, ...changes });
-  }
-
-  function handleAddChannel() {
-    const entry = parseChannelInput(channelInput);
-    if (entry === null) {
-      setChannelInputError(INVALID_CHANNEL_MESSAGE);
-      return;
-    }
-    setChannelInputError(null);
-    setChannelInput('');
-    patch({ channels: addChannel(youtube.channels, entry) });
-  }
-
-  function handleRemoveChannel(entry: ChannelEntry) {
-    patch({ channels: removeChannel(youtube.channels, entry) });
   }
 
   const subscriptionsOn = youtube.channelMode === 'WHITELIST' && youtube.allowSubscriptions;
@@ -512,21 +467,7 @@ export function ChannelListEditor({
       )}
 
       {whitelistIsEmpty && (
-        <div
-          style={{
-            margin: '10px 0 16px',
-            padding: '12px 14px',
-            borderRadius: 'var(--nudge-radius-sm)',
-            border: '1px solid var(--nudge-danger)',
-          }}
-        >
-          <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: 'var(--nudge-danger)' }}>
-            Your allow list is empty — this currently blocks ALL of YouTube.
-          </p>
-          <p style={{ margin: '4px 0 0', fontSize: 12, color: 'var(--nudge-on-surface-variant)' }}>
-            Add at least one channel below to let anything through.
-          </p>
-        </div>
+        <EmptyWhitelistWarning title="Your allow list is empty — this currently blocks ALL of YouTube." />
       )}
 
       {youtube.channelMode !== 'OFF' && (
@@ -564,88 +505,12 @@ export function ChannelListEditor({
             )}
           </div>
 
-          <div style={{ display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
-            <input
-              type="text"
-              aria-label="Add YouTube channel"
-              value={channelInput}
-              placeholder="@handle, channel URL, or channel ID"
-              onChange={(e) => {
-                setChannelInput(e.target.value);
-                setChannelInputError(null);
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleAddChannel();
-              }}
-              style={CHANNEL_INPUT_STYLE}
-            />
-            <Button onClick={handleAddChannel}>Add channel</Button>
-          </div>
-          {channelInputError && (
-            <p style={{ margin: '0 0 12px', fontSize: 13, color: 'var(--nudge-danger)' }}>
-              {channelInputError}
-            </p>
-          )}
-
-          {youtube.channels.length === 0 ? (
-            !whitelistIsEmpty && (
-              <p style={{ margin: 0, fontSize: 13, color: 'var(--nudge-on-surface-variant)' }}>
-                No channels added yet — add one above.
-              </p>
-            )
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {youtube.channels.map((entry) => {
-                const identifierLine = channelIdentifierLine(entry);
-                return (
-                  <div
-                    key={channelKey(entry)}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      gap: 12,
-                      padding: '8px 12px',
-                      borderRadius: 'var(--nudge-radius-sm)',
-                      border: '1px solid var(--nudge-surface-variant)',
-                    }}
-                  >
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, flex: '1 1 auto' }}>
-                      <span
-                        style={{
-                          fontSize: 14,
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        {entry.displayName}
-                      </span>
-                      {identifierLine !== null && (
-                        <span
-                          style={{
-                            fontSize: 12,
-                            color: 'var(--nudge-on-surface-variant)',
-                            wordBreak: 'break-all',
-                          }}
-                        >
-                          {identifierLine}
-                        </span>
-                      )}
-                    </div>
-                    <Button
-                      variant="muted"
-                      onClick={() => handleRemoveChannel(entry)}
-                      aria-label={`Remove ${entry.displayName}`}
-                      style={{ padding: '6px 12px', fontSize: 13, flexShrink: 0 }}
-                    >
-                      Remove
-                    </Button>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+          <ChannelEntriesEditor
+            channels={youtube.channels}
+            onChange={(channels) => patch({ channels })}
+            labels={DEFAULT_LIST_LABELS}
+            hideEmptyText={whitelistIsEmpty}
+          />
         </>
       )}
 

@@ -57,7 +57,19 @@ export function buildExport(settings: NudgeSettings): NudgeRuleExport {
     exportedAt: new Date().toISOString(),
     rules: exportable.rules.map((r) => ({
       ...r,
-      schedule: r.schedule ? { ...r.schedule, days: r.schedule.days ? [...r.schedule.days] : null } : null,
+      schedule: r.schedule
+        ? {
+            ...r.schedule,
+            days: r.schedule.days ? [...r.schedule.days] : null,
+            // The window's own channel list (v0.8) is exported like the default one.
+            channels: r.schedule.channels
+              ? {
+                  ...r.schedule.channels,
+                  channels: r.schedule.channels.channels.map((entry) => ({ ...entry })),
+                }
+              : null,
+          }
+        : null,
     })),
   };
 }

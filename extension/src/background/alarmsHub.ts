@@ -29,7 +29,7 @@ import { msUntilNextLocalMidnight } from '../core/scheduleEvaluator';
 import type { NudgeSettings } from '../core/settingsSchema';
 import { refreshBadge } from './badge';
 import { applyRules } from './dnr';
-import { loadSettings } from './storage';
+import { loadSettings, markScheduleEdge } from './storage';
 import { domainFromAlarm, handleTempAllowExpiry, rearmTempAllows } from './tempAllow';
 import { onActivityEvent } from './tracker';
 
@@ -148,9 +148,14 @@ export async function handleAlarm(alarm: chrome.alarms.Alarm): Promise<void> {
   if (alarm.name === SCHEDULE_ALARM) {
     const now = new Date();
     const settings = await loadSettings();
+    // Every edge recompiles, including one that only swaps the channel list (v0.8) and
+    // leaves the site mode alone: `nextScheduleBoundary` arms on every enabled window
+    // whatever it changes, and the compile reads the list through `resolveYoutubeFeatures`.
     await applyRules(settings, now);
     await ensureScheduleAlarm(settings, now);
     await refreshBadge();
+    // Open tabs hold the config they fetched; this write is what makes them fetch again.
+    await markScheduleEdge(now);
     return;
   }
 

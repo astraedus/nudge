@@ -154,7 +154,7 @@ export async function accountAndSwitch(
   if (
     state.url !== null &&
     watchPageVideoId(state.url) !== null &&
-    isWhitelistedVideoUrl(settings.rules, state.url, await videoChannelLookup())
+    isWhitelistedVideoUrl(settings.rules, state.url, await videoChannelLookup(), at)
   ) {
     return;
   }
@@ -252,7 +252,7 @@ async function enforceBudget(step: AccountingStep, now: Date): Promise<void> {
     const channelForVideo = await videoChannelLookup();
     await redirectOpenTabs(
       step.domain,
-      (url) => !survivesLimitCrossing(settings.rules, url, channelForVideo),
+      (url) => !survivesLimitCrossing(settings.rules, url, channelForVideo, now),
     );
   } else {
     await redirectOpenTabs(

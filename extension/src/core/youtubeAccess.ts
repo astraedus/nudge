@@ -25,6 +25,7 @@
  *    content script checks the page's own canonical channel id before letting it stay.
  */
 
+import { resolveYoutubeFeatures } from './applies';
 import { isChannelListed, type ChannelProbe } from './channels';
 import { extractDomain, hostMatchesRuleDomain, normalizeToBaseDomain } from './domainMatcher';
 import type { ChannelEntry, ChannelListMode, SiteRule, YoutubeFeatureSettings } from './settingsSchema';
@@ -249,6 +250,18 @@ export function limitSparesWhitelist(youtube: YoutubeFeatureSettings): boolean {
   return youtube.channelMode === 'WHITELIST';
 }
 
+/**
+ * Whether `rule` ever lets synced subscriptions in: on its own list, or on its schedule
+ * window's (v0.8). The bare toggle, as before: the list is synced while the toggle is on even
+ * if the list is not a whitelist right now, so switching it back finds a fresh one.
+ */
+export function ruleUsesSubscriptions(rule: SiteRule): boolean {
+  return (
+    rule.features?.youtube?.allowSubscriptions === true ||
+    rule.schedule?.channels?.allowSubscriptions === true
+  );
+}
+
 /** Studio plus the creator routes, for the rule on `domain`. */
 export function creatorFilters(domain: string): string[] {
   const base = normalizeToBaseDomain(domain);
@@ -403,16 +416,20 @@ export function watchPageVideoId(url: string): string | null {
  */
 export type ChannelForVideo = (videoId: string) => ChannelProbe | null;
 
-/** The enabled YouTube rules that cover `url`'s host, with their feature settings. */
+/**
+ * The enabled YouTube rules that cover `url`'s host, with their feature settings AT `now`:
+ * a schedule window's own channel list is already applied (`resolveYoutubeFeatures`).
+ */
 function youtubeRulesFor(
   rules: readonly SiteRule[],
   url: string,
+  now: Date,
 ): { rule: SiteRule; youtube: YoutubeFeatureSettings }[] {
   const host = extractDomain(url);
   if (host === null) return [];
   const covering: { rule: SiteRule; youtube: YoutubeFeatureSettings }[] = [];
   for (const rule of rules) {
-    const youtube = rule.features?.youtube;
+    const youtube = resolveYoutubeFeatures(rule, now);
     if (!rule.enabled || youtube === undefined) continue;
     if (!hostMatchesRuleDomain(host, normalizeToBaseDomain(rule.domain))) continue;
     covering.push({ rule, youtube });
@@ -431,15 +448,17 @@ function youtubeRulesFor(
  * The answer is re-derived from the CURRENT settings on every call, never cached: the report
  * is a fact about the video ("uploaded by X"), and whether X is still on the list is a
  * question about today's settings. Removing a channel takes effect on the next interval.
+ * `now` is required for the same reason: the list in force can be a schedule window's.
  */
 export function isWhitelistedVideoUrl(
   rules: readonly SiteRule[],
   url: string,
   channelForVideo: ChannelForVideo,
+  now: Date,
 ): boolean {
   const videoId = watchPageVideoId(url);
   if (videoId === null) return false;
-  const covering = youtubeRulesFor(rules, url).filter(({ youtube }) =>
+  const covering = youtubeRulesFor(rules, url, now).filter(({ youtube }) =>
     limitSparesWhitelist(youtube),
   );
   if (covering.length === 0) return false;
@@ -466,10 +485,11 @@ export function survivesLimitCrossing(
   rules: readonly SiteRule[],
   url: string,
   channelForVideo: ChannelForVideo,
+  now: Date,
 ): boolean {
   if (isCreatorExemptUrl(rules, url)) return true;
-  if (isWatchPage(url)) return isWhitelistedVideoUrl(rules, url, channelForVideo);
-  return youtubeRulesFor(rules, url).some(({ rule, youtube }) =>
+  if (isWatchPage(url)) return isWhitelistedVideoUrl(rules, url, channelForVideo, now);
+  return youtubeRulesFor(rules, url, now).some(({ rule, youtube }) =>
     youtubeAllowFilters(rule.domain, youtube, { siteApplies: true, limitReached: true }).channel.some(
       (filter) => urlMatchesFilter(url, filter),
     ),

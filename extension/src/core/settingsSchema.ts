@@ -68,8 +68,16 @@ import type { BlockMode, SiteMode } from './types';
  * minutes"), defaulting to null (off), so nothing changes on upgrade. Same total-migration
  * pattern: `coerceRule` reading a missing value as null IS the step. It stays stored but inert
  * under Allow or Hard Block, so a schedule that swaps the mode does not lose it.
+ *
+ * 7 -> 8 (v0.7): CHANNEL LISTS DURING THE SCHEDULE WINDOW. `ScheduleOverride` gains `channels`
+ * (`ScheduleChannelOverride | null`): YouTube's own channel list for inside the window, e.g. a
+ * blacklist all day and only five study channels Mon-Fri 09:00-17:00. Null means "same as
+ * default", which is what every existing schedule reads as, so nothing changes on upgrade.
+ * Same total-migration pattern: `coerceSchedule` reading a missing value as null IS the step.
+ * It is dropped on any rule whose domain is not YouTube, where no channel can be matched.
+ * `core/applies.resolveYoutubeFeatures` is the one place it is applied.
  */
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 
 /** Delay presets, seconds (Android parity). Custom range 1–300. */
 export const DELAY_PRESETS = [5, 15, 30, 60] as const;
@@ -246,6 +254,24 @@ export interface ScheduleOverride {
    */
   mode: SiteMode;
   delaySeconds: number;
+  /**
+   * YouTube only (v0.8): the channel list in force INSIDE the window, or null for "same as
+   * default" (the rule's own `features.youtube` list). Always null on other domains. Never
+   * read directly by enforcement: `core/applies.resolveYoutubeFeatures` substitutes it.
+   */
+  channels: ScheduleChannelOverride | null;
+}
+
+/**
+ * The channel list a schedule window uses instead of the rule's default one. Only the list
+ * axes are overridden: the block mode for a disallowed channel, autoplay, creator mode and
+ * the synced subscriptions themselves stay the rule's. `allowSubscriptions` decides whether
+ * that same synced list joins THIS window's whitelist.
+ */
+export interface ScheduleChannelOverride {
+  channelMode: ChannelListMode;
+  channels: ChannelEntry[];
+  allowSubscriptions: boolean;
 }
 
 /** Rotating message pools. Empty array = use the bundled Android defaults. */
@@ -556,7 +582,7 @@ function coerceStringArray(value: unknown): string[] {
   return value.filter((v): v is string => typeof v === 'string');
 }
 
-function coerceSchedule(value: unknown): ScheduleOverride | null {
+function coerceSchedule(domain: string, value: unknown): ScheduleOverride | null {
   if (!value || typeof value !== 'object') return null;
   const raw = value as Partial<ScheduleOverride>;
   const days = Array.isArray(raw.days)
@@ -572,6 +598,21 @@ function coerceSchedule(value: unknown): ScheduleOverride | null {
     // unreadable mode there falls to the strongest option, never to ALLOW.
     mode: coerceSiteMode(raw.mode, 'HARD_BLOCK'),
     delaySeconds: coerceDelay(raw.delaySeconds),
+    // v7 -> v8: absent means "same as default". Only a YouTube rule can carry one.
+    channels:
+      platformForDomain(domain)?.id === 'youtube' ? coerceScheduleChannels(raw.channels) : null,
+  };
+}
+
+/** A window's own channel list, or null ("same as default") when there is none. */
+function coerceScheduleChannels(value: unknown): ScheduleChannelOverride | null {
+  if (!value || typeof value !== 'object') return null;
+  const raw = value as Partial<ScheduleChannelOverride>;
+  return {
+    channelMode: coerceChannelMode(raw.channelMode),
+    channels: coerceChannelList(raw.channels),
+    // Only a literal `true` turns it on, as on the default list.
+    allowSubscriptions: raw.allowSubscriptions === true,
   };
 }
 
@@ -761,7 +802,7 @@ export function coerceRule(value: unknown): SiteRule | null {
     enabled: raw.enabled !== false,
     createdAt: typeof raw.createdAt === 'number' ? raw.createdAt : 0,
     showTimeRemaining: raw.showTimeRemaining === true,
-    schedule: coerceSchedule(raw.schedule),
+    schedule: coerceSchedule(domain, raw.schedule),
     grayscale: raw.grayscale === true,
     repeatPauseMinutes: coerceRepeatPauseMinutes(raw.repeatPauseMinutes),
     features: coerceFeatures(domain, raw.features),

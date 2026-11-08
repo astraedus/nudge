@@ -23,6 +23,7 @@ import {
 import { formatMinuteOfDay } from '../../ui/format';
 import { Button, Card, Chip, Toggle } from '../../ui/components';
 import { ChannelListEditor } from './ChannelListEditor';
+import { ScheduleChannelsEditor } from './ScheduleChannelsEditor';
 
 const SITE_MODES: SiteMode[] = ['ALLOW', 'HARD_BLOCK', 'DELAY', 'BREATHING'];
 const GATE_BLOCK_MODES: BlockMode[] = ['HARD_BLOCK', 'DELAY', 'BREATHING'];
@@ -444,6 +445,7 @@ export function RuleEditor({
             endMinute: 1020, // 17:00
             mode: d.mode,
             delaySeconds: d.delaySeconds,
+            channels: null, // "Same as default"
           })
         : d.schedule
           ? { ...d.schedule, enabled: false }
@@ -672,6 +674,14 @@ export function RuleEditor({
                   />
                 )}
               </div>
+
+              {draft.features?.youtube !== undefined && (
+                <ScheduleChannelsEditor
+                  override={schedule.channels}
+                  youtube={draft.features.youtube}
+                  onChange={(channels) => setSchedule({ channels })}
+                />
+              )}
             </div>
           )}
         </Card>

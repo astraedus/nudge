@@ -53,6 +53,7 @@ describe('buildExport', () => {
           endMinute: 120,
           mode: 'HARD_BLOCK',
           delaySeconds: 5,
+          channels: null,
         },
       }),
     ];
@@ -78,6 +79,7 @@ describe('parseImport round trip', () => {
           endMinute: 360,
           mode: 'HARD_BLOCK',
           delaySeconds: 30,
+          channels: null,
         },
       }),
     ];

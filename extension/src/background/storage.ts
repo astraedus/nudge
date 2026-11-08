@@ -66,9 +66,33 @@ export async function saveSettings(settings: NudgeSettings): Promise<void> {
   await chrome.storage.local.set({ [SETTINGS_KEY]: normalized });
   try {
     await chrome.storage.sync.set({ [SETTINGS_KEY]: normalized });
-  } catch {
-    // Sync unavailable or over quota — local mirror above is authoritative.
+  } catch (error) {
+    // Sync unavailable or over quota (settings travel as ONE sync item, capped at 8 KB; two
+    // long channel lists, a rule's own and a schedule window's, can pass it). The local
+    // mirror above has the new settings, but `loadStoredSettings` PREFERS sync, so leaving
+    // the old sync copy in place would make this save look fine and then silently revert on
+    // the next read. Removing it is what makes local authoritative; the next save that fits
+    // puts settings back in sync.
+    console.warn('[nudge] settings not synced, kept on this device only', error);
+    try {
+      await chrome.storage.sync.remove(SETTINGS_KEY);
+    } catch {
+      // Sync is unavailable altogether, so `loadStoredSettings` cannot read it either.
+    }
   }
+}
+
+/**
+ * Written at each Scheduled Override edge, and read by nothing. Its only job is the
+ * `storage.onChanged` event it fires: every content script refetches its config on any
+ * storage change, so an open tab picks up the site mode and the channel list of the window
+ * that just started (or ended) straight away, instead of on its next navigation or usage
+ * write. The worker's own listener ignores the key.
+ */
+export const SCHEDULE_EDGE_KEY = 'nudge:scheduleEdgeAt';
+
+export async function markScheduleEdge(now: Date): Promise<void> {
+  await chrome.storage.local.set({ [SCHEDULE_EDGE_KEY]: now.getTime() });
 }
 
 /** The synced subscriptions and their sync status. An empty state when nothing is stored. */

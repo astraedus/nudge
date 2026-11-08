@@ -803,9 +803,10 @@ export function keepLearnedIdentifiers(
 }
 
 /**
- * `keepLearnedIdentifiers` over every rule's channel list, pairing rules by id (a rule that
- * was deleted and re-added is a new rule and inherits nothing). Returns `next` itself when
- * nothing was carried over.
+ * `keepLearnedIdentifiers` over every rule's channel lists, its own and its schedule
+ * window's (v0.8), pairing rules by id (a rule that was deleted and re-added is a new rule and
+ * inherits nothing). What either stored list learned is known for both: an identifier
+ * describes a channel, not a list. Returns `next` itself when nothing was carried over.
  */
 export function keepLearnedChannelIdentifiers(
   current: NudgeSettings,
@@ -813,18 +814,35 @@ export function keepLearnedChannelIdentifiers(
 ): NudgeSettings {
   let changed = false;
   const rules = next.rules.map((rule) => {
-    const youtube = rule.features?.youtube;
-    if (rule.features === null || youtube === undefined) return rule;
-    const stored = current.rules.find((candidate) => candidate.id === rule.id)?.features?.youtube;
-    if (stored === undefined || stored.channels.length === 0) return rule;
+    const storedRule = current.rules.find((candidate) => candidate.id === rule.id);
+    if (storedRule === undefined) return rule;
+    const known = [
+      ...(storedRule.features?.youtube?.channels ?? []),
+      ...(storedRule.schedule?.channels?.channels ?? []),
+    ];
+    if (known.length === 0) return rule;
 
-    const channels = keepLearnedIdentifiers(stored.channels, youtube.channels);
-    const unchanged =
-      channels.length === youtube.channels.length &&
-      channels.every((entry, index) => sameEntry(entry, youtube.channels[index]!));
-    if (unchanged) return rule;
-    changed = true;
-    return { ...rule, features: { ...rule.features, youtube: { ...youtube, channels } } };
+    let result = rule;
+    const youtube = rule.features?.youtube;
+    if (rule.features !== null && youtube !== undefined) {
+      const channels = keepLearnedIdentifiers(known, youtube.channels);
+      if (!sameEntries(channels, youtube.channels)) {
+        result = { ...result, features: { ...rule.features, youtube: { ...youtube, channels } } };
+      }
+    }
+    const window = rule.schedule?.channels ?? null;
+    if (rule.schedule !== null && window !== null) {
+      const channels = keepLearnedIdentifiers(known, window.channels);
+      if (!sameEntries(channels, window.channels)) {
+        result = { ...result, schedule: { ...rule.schedule, channels: { ...window, channels } } };
+      }
+    }
+    if (result !== rule) changed = true;
+    return result;
   });
   return changed ? { ...next, rules } : next;
+}
+
+function sameEntries(a: readonly ChannelEntry[], b: readonly ChannelEntry[]): boolean {
+  return a.length === b.length && a.every((entry, index) => sameEntry(entry, b[index]!));
 }

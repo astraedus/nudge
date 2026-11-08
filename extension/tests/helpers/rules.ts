@@ -48,6 +48,7 @@ export function scheduleOverride(
     endMinute: null,
     mode: 'BREATHING',
     delaySeconds: 20,
+    channels: null,
     ...overrides,
   };
 }
