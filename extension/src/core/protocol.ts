@@ -401,6 +401,12 @@ export interface SiteConfig {
   hides: Partial<Record<HideId, boolean>>;
   /** YouTube's channel lists and creator mode; null on every other platform. */
   youtube: YoutubeFeatureSettings | null;
+  /**
+   * The schedule window whose own channel list is the one in `youtube` right now
+   * (`core/applies.activeChannelWindow`), or null. The gate's footer names it, so a
+   * usually-fine channel held during the window says why.
+   */
+  channelWindow: { startMinute: number | null; endMinute: number | null } | null;
 }
 
 /**

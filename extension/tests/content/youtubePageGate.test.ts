@@ -60,6 +60,7 @@ function blockedSiteConfig(overrides: Partial<SiteConfig> = {}, youtube: Partial
     grayscale: false,
     gates: [],
     hides: {},
+    channelWindow: null,
     youtube: {
       channelMode: 'WHITELIST',
       channels: [listed],

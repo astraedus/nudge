@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveYoutubeFeatures } from '../../src/core/applies';
+import { activeChannelWindow, resolveYoutubeFeatures } from '../../src/core/applies';
 import { featureSummary, featureSummaryParts, isNothingActive } from '../../src/core/featureSummary';
 import type {
   ChannelEntry,
@@ -219,7 +219,27 @@ describe('feature summary with a window channel list', () => {
   });
 
   it('prints only the window part when now is inside the window', () => {
-    expect(summaryOf(override(), MON_10AM)).toEqual(['During schedule: only 1 channel allowed']);
+    expect(summaryOf(override(), MON_10AM)).toEqual(['Now, until 17:00: only 1 channel allowed']);
+  });
+
+  it('says "Now" with the window end only while the window is live, never when merely configured', () => {
+    expect(summaryOf(override(), MON_10AM)[0]).toMatch(/^Now, until 17:00: /);
+    expect(summaryOf(override())).not.toContain('Now');
+    expect(summaryOf(override(), MON_8AM).join('|')).not.toContain('Now');
+  });
+
+  it('names the end time of an overnight window, and drops "until" for an all-day one', () => {
+    const overnight = youtubeRule(weekdayWindow({ days: null, startMinute: 1200, endMinute: 1425 }));
+    expect(featureSummaryParts(overnight, new Date(2026, 10, 2, 21, 0))).toEqual([
+      'Now, until 23:45: only 1 channel allowed',
+    ]);
+    const wraps = youtubeRule(weekdayWindow({ days: null, startMinute: 1320, endMinute: 360 }));
+    // 02:00 is inside 22:00-06:00; the end is still 06:00.
+    expect(featureSummaryParts(wraps, new Date(2026, 10, 3, 2, 0))).toEqual([
+      'Now, until 06:00: only 1 channel allowed',
+    ]);
+    const allDay = youtubeRule(weekdayWindow({ startMinute: null, endMinute: null }));
+    expect(featureSummaryParts(allDay, MON_10AM)).toEqual(['Now: only 1 channel allowed']);
   });
 
   it('prints both parts when now is outside the window', () => {
@@ -231,7 +251,7 @@ describe('feature summary with a window channel list', () => {
 
   it('joins the parts into the summary line', () => {
     expect(featureSummary(youtubeRule(weekdayWindow({ mode: 'ALLOW' })), MON_10AM)).toBe(
-      'During schedule: only 1 channel allowed',
+      'Now, until 17:00: only 1 channel allowed',
     );
   });
 
@@ -243,5 +263,22 @@ describe('feature summary with a window channel list', () => {
       youtube: { channelMode: 'OFF' },
     });
     expect(isNothingActive(bare)).toBe(true);
+  });
+});
+
+describe('activeChannelWindow', () => {
+  it('returns the window span while its own list is in force', () => {
+    expect(activeChannelWindow(youtubeRule(), MON_10AM)).toEqual({ startMinute: 540, endMinute: 1020 });
+  });
+
+  it('is null outside the window, for "same as default" and for a disabled schedule', () => {
+    expect(activeChannelWindow(youtubeRule(), MON_8AM)).toBeNull();
+    expect(activeChannelWindow(youtubeRule(weekdayWindow({ channels: null })), MON_10AM)).toBeNull();
+    expect(activeChannelWindow(youtubeRule(weekdayWindow({ enabled: false })), MON_10AM)).toBeNull();
+  });
+
+  it('keeps null minutes for an all-day window', () => {
+    const allDay = youtubeRule(weekdayWindow({ startMinute: null, endMinute: null }));
+    expect(activeChannelWindow(allDay, MON_10AM)).toEqual({ startMinute: null, endMinute: null });
   });
 });

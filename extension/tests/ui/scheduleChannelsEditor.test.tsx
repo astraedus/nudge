@@ -122,6 +122,35 @@ describe('Scheduled Override: channels during this window', () => {
     expect(screen.queryByText(/This window's allow list is empty/)).toBeNull();
   });
 
+  it('tells the truth about an empty window whitelist for the window mode in force', () => {
+    // Allow: every video is held, but the home feed and Shorts are not closed.
+    renderEditor(youtubeRule());
+    fireEvent.click(windowGroup().getByRole('button', { name: 'Only allow these channels' }));
+    expect(screen.getByText(/every YouTube video is held during the window/)).toBeTruthy();
+    expect(screen.queryByText(/blocks ALL of YouTube/)).toBeNull();
+    cleanup();
+
+    // Hard Block: all of YouTube goes to the block page.
+    renderEditor(youtubeRule({ schedule: scheduleOverride({ enabled: true, mode: 'HARD_BLOCK' }) }));
+    fireEvent.click(windowGroup().getByRole('button', { name: 'Only allow these channels' }));
+    expect(screen.getByText(/it blocks ALL of YouTube during the window/)).toBeTruthy();
+  });
+
+  it('adds one line that home, search and Shorts stay open, only while the window mode allows', () => {
+    const NOTE = /Home, search and Shorts stay open unless the window mode is Hard Block, Delay or Breathing/;
+    renderEditor(youtubeRule());
+    expect(screen.queryByText(NOTE)).toBeNull();
+    fireEvent.click(windowGroup().getByRole('button', { name: 'Only allow these channels' }));
+    expect(screen.getByText(NOTE)).toBeTruthy();
+    fireEvent.click(windowGroup().getByRole('button', { name: 'Block these channels' }));
+    expect(screen.queryByText(NOTE)).toBeNull();
+    cleanup();
+
+    renderEditor(youtubeRule({ schedule: scheduleOverride({ enabled: true, mode: 'DELAY' }) }));
+    fireEvent.click(windowGroup().getByRole('button', { name: 'Only allow these channels' }));
+    expect(screen.queryByText(NOTE)).toBeNull();
+  });
+
   it('"Same as default" saves null, and picking a list again brings back what was typed', () => {
     const editor = renderEditor(youtubeRule());
 
@@ -134,10 +163,10 @@ describe('Scheduled Override: channels during this window', () => {
     expect(handles(editor.save().schedule?.channels?.channels)).toEqual(['study']);
   });
 
-  it('Off saves an empty-handed Off override, which turns the default list off for the window', () => {
+  it('No channel filter saves an empty-handed Off override, which turns the default list off for the window', () => {
     const editor = renderEditor(youtubeRule());
 
-    fireEvent.click(windowGroup().getByRole('button', { name: 'Off' }));
+    fireEvent.click(windowGroup().getByRole('button', { name: 'No channel filter' }));
 
     expect(editor.save().schedule?.channels).toEqual({ channelMode: 'OFF', channels: [], allowSubscriptions: false });
     expect(screen.queryByLabelText('Add YouTube channel for this window')).toBeNull();

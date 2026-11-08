@@ -4,7 +4,7 @@ import { SCHEDULE_ALARM, handleAlarm } from '../../src/background/alarmsHub';
 import { compileRules } from '../../src/background/dnr';
 import { handleRequest } from '../../src/background/messagesRouter';
 import { SCHEDULE_EDGE_KEY, loadSettings, saveSettings } from '../../src/background/storage';
-import type { ChannelObservedResult, UsageSnapshot } from '../../src/core/protocol';
+import type { ChannelObservedResult, SiteConfig, UsageSnapshot } from '../../src/core/protocol';
 import type { ChannelEntry, NudgeSettings, ScheduleOverride } from '../../src/core/settingsSchema';
 import { featuresWith, scheduleOverride, settings, siteRule } from '../helpers/rules';
 import { installAttention, installDnr, resetBrowser, type DnrState } from './fakeApis';
@@ -184,5 +184,31 @@ describe('CHANNEL_OBSERVED with a window list', () => {
     expect(stored.rules[0]?.schedule?.channels?.channels).toEqual([STUDY()]);
     // The default list was empty and stays so: enrichment never adds a channel.
     expect(stored.rules[0]?.features?.youtube?.channels).toEqual([]);
+  });
+});
+
+describe('GET_SITE_CONFIG with a window list', () => {
+  const ask = (now: Date) =>
+    handleRequest(
+      { type: 'GET_SITE_CONFIG', url: 'https://www.youtube.com/watch?v=abc' } as never,
+      now,
+    ) as Promise<SiteConfig>;
+
+  it('names the active window, computed by the worker, so the gate footer can say why', async () => {
+    await saveSettings(youtubeSettings('ALLOW', window()));
+
+    const inside = await ask(INSIDE);
+    expect(inside.channelWindow).toEqual({ startMinute: 540, endMinute: 1020 });
+    expect(inside.youtube?.channelMode).toBe('WHITELIST');
+  });
+
+  it('is null outside the window (the default list holds) and for "same as default"', async () => {
+    await saveSettings(youtubeSettings('ALLOW', window()));
+    const outside = await ask(BEFORE);
+    expect(outside.channelWindow).toBeNull();
+    expect(outside.youtube?.channelMode).toBe('BLACKLIST');
+
+    await saveSettings(youtubeSettings('ALLOW', window({ channels: null })));
+    expect((await ask(INSIDE)).channelWindow).toBeNull();
   });
 });

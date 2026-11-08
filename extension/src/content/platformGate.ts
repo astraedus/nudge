@@ -230,6 +230,7 @@ export const IDLE_SITE_CONFIG: SiteConfig = {
   gates: [],
   hides: {},
   youtube: null,
+  channelWindow: null,
 };
 
 /**

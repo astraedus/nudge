@@ -97,6 +97,7 @@ function whitelistConfig(overrides: { grayscale?: boolean } = {}): SiteConfig {
     grayscale: overrides.grayscale === true,
     gates: [],
     hides: {},
+    channelWindow: null,
     youtube: {
       channelMode: 'WHITELIST',
       channels: [

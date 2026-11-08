@@ -45,6 +45,7 @@ function configWith(overrides: Partial<SiteConfig>): SiteConfig {
     gates: [],
     hides: {},
     youtube: null,
+    channelWindow: null,
     ...overrides,
   };
 }

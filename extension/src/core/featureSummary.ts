@@ -15,6 +15,7 @@
  */
 
 import { isScheduleInForce } from './applies';
+import { formatMinuteOfDay } from './scheduleEvaluator';
 import { isPauseMode, MODE_LABELS } from './types';
 import { platformById, type HideId } from './platforms';
 import type { ChannelListMode, SiteRule } from './settingsSchema';
@@ -48,7 +49,7 @@ function channelListLabel(mode: ChannelListMode, count: number): string | null {
  * default") or the schedule is off. Always said, even for a list that is empty or off, because
  * inside the window it REPLACES the default one: "no channel list" there lifts a blacklist.
  */
-function windowChannelPart(rule: SiteRule): string | null {
+function windowChannelPart(rule: SiteRule, now?: Date): string | null {
   const schedule = rule.schedule;
   if (schedule === null || !schedule.enabled || schedule.channels === null) return null;
   if (rule.features?.youtube === undefined) return null;
@@ -60,6 +61,13 @@ function windowChannelPart(rule: SiteRule): string | null {
         ? 'only subscriptions allowed'
         : 'no channels allowed'
       : 'no channel list');
+  // Said as live only when the popup asks about this moment; a configuration (no `now`)
+  // or a window not yet open reads "During schedule".
+  if (now !== undefined && isScheduleInForce(rule, now)) {
+    return schedule.endMinute === null
+      ? `Now: ${label}`
+      : `Now, until ${formatMinuteOfDay(schedule.endMinute)}: ${label}`;
+  }
   return `During schedule: ${label}`;
 }
 
@@ -121,7 +129,7 @@ export function featureSummaryParts(rule: SiteRule, now?: Date): string[] {
     else if (hidden.length > 1) parts.push(`${hidden.length} elements hidden`);
 
     const youtube = features.youtube;
-    const windowPart = windowChannelPart(rule);
+    const windowPart = windowChannelPart(rule, now);
     const windowInForce = windowPart !== null && now !== undefined && isScheduleInForce(rule, now);
     const defaultPart =
       youtube === undefined ? null : channelListLabel(youtube.channelMode, youtube.channels.length);

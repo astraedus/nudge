@@ -679,6 +679,7 @@ export function RuleEditor({
                 <ScheduleChannelsEditor
                   override={schedule.channels}
                   youtube={draft.features.youtube}
+                  windowMode={schedule.mode}
                   onChange={(channels) => setSchedule({ channels })}
                 />
               )}
