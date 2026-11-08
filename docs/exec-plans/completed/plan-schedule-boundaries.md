@@ -1,6 +1,6 @@
 # Plan: schedule boundaries (#169, #170)
 
-Status: in progress (lane T, 2026-11-08).
+Status: built (lane T, 2026-11-08). Docs: `docs/architecture/rules-and-features.md` "Schedule boundaries", `docs/architecture/block-overlay-lifecycle.md` "A block that ends under its screen".
 
 ## The two bugs
 

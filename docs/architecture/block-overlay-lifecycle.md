@@ -21,6 +21,43 @@ Fix for [#8](https://github.com/astraedus/nudge/issues/8): the delay could be by
 - **Known cosmetic**: rotation recreates the activity, and countdown state is `remember` (not `rememberSaveable`), so the timer restarts at full length. Errs toward *more* delay, never less.
 - **Device-verified** (Pixel 3, 15s DELAY rule on Keep): Home mid-count → wait past the would-be expiry → return shows a fresh full delay with no passthrough grant in logcat; Home → immediate return shows 15/15, not a continued count; rotation mid-count keeps `BlockOverlayActivity` resumed.
 
+### A block that ends under its screen ([#170](https://github.com/astraedus/nudge/issues/170))
+
+A block screen up at 22:59 under a 22:00-23:00 rule used to stay up past 23:00, and "Use for 2
+minutes" there spent the day's one pass on a block that was already over. Now the screen closes at
+its block's end:
+
+- **The end travels with the block.** `handleDecision` puts `BlockDecision.Block.endsAt` in
+  `EXTRA_ENDS_AT`: the earlier of the window's end and, for a spent daily limit, the next local
+  midnight. A daily-limit block on a rule that is on all the time has no `until` but still gets an
+  end. A daily limit spent mid-session reaches the same `handleDecision` (`enforceExhaustedBudget`),
+  so it gets the midnight end too. Absent means nothing on a clock ends this block. The two
+  auto-kick cooldown launches (app and web) set none: a cooldown's countdown is its own end.
+- **`scheduleBlockEnd` waits, `OverlayLifecycle.onBlockEnded` decides.** The wait is a
+  `lifecycleScope` coroutine under `repeatOnLifecycle(STARTED)`, re-reading the wall clock every time
+  it resumes or elapses (`BlockInForce.msUntil`; `delay` runs on uptime, so a clock set back would
+  otherwise close it early). It is NOT on `mainHandler`: a new delivery's `CancelPendingFailSafe`
+  clears every message there. `onBlockEnded` refuses when the token is stale (a newer block was
+  delivered; its end is its own), after a walk-away or a fullscreen hand-off, while finishing or
+  destroyed, or below STARTED. That last one is invariant #8's: a stopped overlay is already finished
+  by `onStopped`, and the end must not be a second finish behind it.
+- **The close is a finish WHILE RESUMED**, which pops the app underneath forward. That pop is the
+  thing the walk-away avoids (#26), and here it is wanted: it fires a real window event, the service
+  evaluates that arrival afresh, and if another rule covers the app its block is launched
+  (`BlockLaunchGuard`'s fingerprint lets a different rule's block through). If none does, the user is
+  back in their app. No pass is granted, so this path cannot skip a rule still in force. Log line:
+  `block ended under the overlay, closing back into the app`.
+- **The pass is spent only while the block is in force.** `onUsePass` asks the pure
+  `BlockInForce.isInForce(endsAt, now)`; `OverlayLifecycle.onEmergencyPassTapped(inForce)` gives
+  `UseEmergencyPass + Finish` while it is, and otherwise closes like the end and keeps the pass (log
+  line `daily pass not spent, the block had already ended`).
+
+Tests: `BlockInForceTest` (L1), `OverlayLifecycleBlockEndTest` (L3), the `EXTRA_ENDS_AT` wiring
+contract in `ScheduleBoundaryTriggerPathTest`, and `schedule-end-overlay` in `scripts/device-qa.sh`
+(L6, real clock). Known edge: a block ending under a second after its launch can meet the service's
+same-package debounce on the pop, and the arrival is then not re-evaluated. A second rule that also
+covers the app then waits for the next window event; not covered by a test.
+
 ## The walk-away path — "I changed my mind" (2026-08-20)
 
 `navigateHome()` is the terminal path for the button on every overlay and for the back button. It is the ONLY writer of `userChangedMind = true`, so it is the sole source of the home screen's "Walked Away" tile and of every number on the Willpower insight page. It had no owner and no voice; both defects were silent, which is why the report arrived as "it just doesn't count".
@@ -291,7 +328,7 @@ Opt-in escape hatch on the block overlays. **ONE 2-minute free window per rollin
 - **`service/EmergencyPassManager.kt`** (`@Singleton`) — modeled on `PassthroughManager`. In-memory `activeUntil: ConcurrentHashMap<pkg, Long>` — the active window stays **per-app** (pressing the pass on Instagram unblocks Instagram, not everything); only the lockout is global. Per-package `kickJobs` so a fresh grant replaces the prior timer. `isPassActive(pkg)` is the non-blocking hot-path check. `usePass(pkg)` opens the window, persists the global lockout (`prefs.recordEmergencyPassUsed(now)`), and schedules `delay(PASS_DURATION_MS) → remove → kickHome()` **only if `isGlobalEnabled`** (a scheduled kick must not fire while Nudge is globally disabled). `cancelAll()` cancels every window + pending kick (called on global-disable). `kickHome()` prefers `NudgeAccessibilityService.requestGoHome()` and falls back to a HOME intent. The active window is in-memory only — a restart ends the window (fail-safe toward re-blocking); only the lockout is persisted.
 - **Prefs** (`NudgePreferences`): `emergencyPassEnabled` (bool, default **true**) + `emergencyPassUsage` (serialized ledger string) + `recordEmergencyPassUsed(now)` (overwrites the ledger with the single global entry — the lockout is global, no per-app merge).
 - **Service integration** (`NudgeAccessibilityService`): `emergencyPassManager()` on the EntryPoint; in `evaluateForegroundPackage`, `if (isPassActive(pkg)) return` placed **before** the auto-kick-cooldown block so an active pass overrides cooldown too. When the window expires the scheduled kick sends the user home AND the next foreground event re-blocks normally (backstop).
-- **UI**: `ui/overlay/EmergencyPassAction.kt` — the pure resolver **plus** one shared composable rendered by every overlay below the primary button: muted `TextButton` "Use for 2 minutes · once a day" when available; a **disabled/greyed** `TextButton` "Daily pass used · next in Xh" when spent (visible, not hidden); nothing otherwise. `internal fun resolveEmergencyPassState(packageName, passEnabled, usage, now, lockoutMs)` → `EmergencyPassUiState(canUse, locked, nextPassMs)` owns the **entire** decision (pseudo-package skip → toggle → `canUseGlobal`/`nextAvailableGlobalMs`); it is pure so it is JVM-tested (`EmergencyPassVisibilityTest`) instead of buried in the Activity. `BlockOverlayActivity` just calls it inside the existing `runBlocking` alongside the message pools (correct on first composition, no flash) and forwards the three fields. Rendered on ALL `BlockOverlayActivity` launch paths — rule blocks (`handleDecision`), auto-kick cooldown DELAY (`evaluateForegroundPackage`), and daily-limit HARD_BLOCK (`TimeRemainingHandler`) — since all set a real package and go through `render()`. Tap → `emergencyPassManager.usePass(pkg); finish()`. Settings master toggle under "Escape Hatch" (live under Strict Mode; enabling it is challenge-gated).
+- **UI**: `ui/overlay/EmergencyPassAction.kt` — the pure resolver **plus** one shared composable rendered by every overlay below the primary button: muted `TextButton` "Use for 2 minutes · once a day" when available; a **disabled/greyed** `TextButton` "Daily pass used · next in Xh" when spent (visible, not hidden); nothing otherwise. `internal fun resolveEmergencyPassState(packageName, passEnabled, usage, now, lockoutMs)` → `EmergencyPassUiState(canUse, locked, nextPassMs)` owns the **entire** decision (pseudo-package skip → toggle → `canUseGlobal`/`nextAvailableGlobalMs`); it is pure so it is JVM-tested (`EmergencyPassVisibilityTest`) instead of buried in the Activity. `BlockOverlayActivity` just calls it inside the existing `runBlocking` alongside the message pools (correct on first composition, no flash) and forwards the three fields. Rendered on ALL `BlockOverlayActivity` launch paths — rule blocks (`handleDecision`), auto-kick cooldown DELAY (`evaluateForegroundPackage`), and daily-limit HARD_BLOCK (`TimeRemainingHandler`) — since all set a real package and go through `render()`. Tap → `emergencyPassManager.usePass(pkg); finish()`, but only while the block is still in force (#170, `OverlayLifecycle.onEmergencyPassTapped`; see "A block that ends under its screen"). Settings master toggle under "Escape Hatch" (live under Strict Mode; enabling it is challenge-gated).
 - **Strict Mode vs. the escape hatch (v1.10.0)** — Strict Mode used to hide the pass on overlays and freeze/grey the Settings toggle. That silently revoked an escape hatch the user had deliberately opted into, so the lock now bites where protection is actually WEAKENED instead: **`resolveEmergencyPassState` takes no strict-mode flag at all** (a regression would have to add the parameter back), and turning the toggle OFF→ON while Strict Mode is on requires the typed unlock challenge. Turning it ON→OFF strengthens protection and is always free. Policy lives in `domain/lock/SettingsWeakening.requiresUnlock(toggle, enable, strictModeEnabled)` with `LockedToggle` = { STRICT_MODE, EMERGENCY_PASS, CONTENT_FILTER, CONTENT_FILTER_STRICT_KEYWORDS } — the Settings-screen sibling of `RuleWeakening`.
 - **Device-verified**: v1.9.0 (per-app 1min); v1.9.2 (global 2min button text, cross-app greyed lockout). v1.10.0 semantics change is unit-tested; device QA pending.
 
