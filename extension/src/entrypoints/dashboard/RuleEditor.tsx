@@ -444,6 +444,7 @@ export function RuleEditor({
             endMinute: 1020, // 17:00
             mode: d.mode,
             delaySeconds: d.delaySeconds,
+            channels: null, // "Same as default"
           })
         : d.schedule
           ? { ...d.schedule, enabled: false }

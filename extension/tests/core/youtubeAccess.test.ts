@@ -37,6 +37,8 @@ function yt(overrides: Partial<YoutubeFeatureSettings> = {}): YoutubeFeatureSett
 const VERITASIUM = channel('veritasium', 'UCHnyfMqiRRG1u-2MsSQLbXA');
 const MINE = channel('mine', 'UCmine000000000000000001');
 const ON = { siteApplies: true, limitReached: false };
+/** Any instant: none of these rules has a schedule, so the list in force is the rule's own. */
+const NOW = new Date(2026, 10, 2, 12, 0);
 
 describe('constants are written as paths (leading slash)', () => {
   it('every path pattern starts with /', () => {
@@ -320,23 +322,23 @@ describe("isWhitelistedVideoUrl: is this watch page a whitelisted channel's vide
   const V1 = 'https://www.youtube.com/watch?v=v1';
 
   it('is true for a reported video by a listed channel, by handle or by id', () => {
-    expect(isWhitelistedVideoUrl([whitelistRule], V1, byHandle)).toBe(true);
-    expect(isWhitelistedVideoUrl([whitelistRule], V1, byId)).toBe(true);
+    expect(isWhitelistedVideoUrl([whitelistRule], V1, byHandle, NOW)).toBe(true);
+    expect(isWhitelistedVideoUrl([whitelistRule], V1, byId, NOW)).toBe(true);
   });
 
   it('is false for a video by an unlisted channel', () => {
-    expect(isWhitelistedVideoUrl([whitelistRule], V1, byOther)).toBe(false);
+    expect(isWhitelistedVideoUrl([whitelistRule], V1, byOther, NOW)).toBe(false);
   });
 
   it('is false for a video nobody reported (an unknown channel is counted)', () => {
-    expect(isWhitelistedVideoUrl([whitelistRule], 'https://www.youtube.com/watch?v=v2', byId)).toBe(false);
+    expect(isWhitelistedVideoUrl([whitelistRule], 'https://www.youtube.com/watch?v=v2', byId, NOW)).toBe(false);
   });
 
   it('re-decides against the current list: a removed channel is no longer exempt', () => {
     const emptied = siteRule({
       features: featuresWith('youtube', { youtube: { channelMode: 'WHITELIST', channels: [] } }),
     });
-    expect(isWhitelistedVideoUrl([emptied], V1, byId)).toBe(false);
+    expect(isWhitelistedVideoUrl([emptied], V1, byId, NOW)).toBe(false);
   });
 
   it('is false for a blacklist or an OFF list, even one naming the channel', () => {
@@ -344,14 +346,14 @@ describe("isWhitelistedVideoUrl: is this watch page a whitelisted channel's vide
       const rule = siteRule({
         features: featuresWith('youtube', { youtube: { channelMode, channels: [VERITASIUM] } }),
       });
-      expect(isWhitelistedVideoUrl([rule], V1, byId)).toBe(false);
+      expect(isWhitelistedVideoUrl([rule], V1, byId, NOW)).toBe(false);
     }
   });
 
   it('is false for a disabled rule, a Short, and a host the rule does not cover', () => {
-    expect(isWhitelistedVideoUrl([{ ...whitelistRule, enabled: false }], V1, byId)).toBe(false);
-    expect(isWhitelistedVideoUrl([whitelistRule], 'https://www.youtube.com/shorts/v1', byId)).toBe(false);
-    expect(isWhitelistedVideoUrl([whitelistRule], 'https://example.com/watch?v=v1', byId)).toBe(false);
+    expect(isWhitelistedVideoUrl([{ ...whitelistRule, enabled: false }], V1, byId, NOW)).toBe(false);
+    expect(isWhitelistedVideoUrl([whitelistRule], 'https://www.youtube.com/shorts/v1', byId, NOW)).toBe(false);
+    expect(isWhitelistedVideoUrl([whitelistRule], 'https://example.com/watch?v=v1', byId, NOW)).toBe(false);
   });
 });
 
@@ -370,7 +372,7 @@ describe('survivesLimitCrossing: which open tabs the limit-crossing redirect lea
     'https://studio.youtube.com/',
     'https://www.youtube.com/upload',
   ])('keeps %s', (url) => {
-    expect(survivesLimitCrossing([rule], url, lookup)).toBe(true);
+    expect(survivesLimitCrossing([rule], url, lookup, NOW)).toBe(true);
   });
 
   it.each([
@@ -380,27 +382,27 @@ describe('survivesLimitCrossing: which open tabs the limit-crossing redirect lea
     'https://www.youtube.com/shorts/v1',
     'https://www.youtube.com/@other',
   ])('redirects %s', (url) => {
-    expect(survivesLimitCrossing([rule], url, lookup)).toBe(false);
+    expect(survivesLimitCrossing([rule], url, lookup, NOW)).toBe(false);
   });
 
   it("keeps my channel only when the stored list is a whitelist, not via creator mode's implicit one", () => {
     // Stored WHITELIST + creator mode: my channel is folded into the whitelist, which survives.
-    expect(survivesLimitCrossing([rule], 'https://www.youtube.com/@mine', lookup)).toBe(true);
+    expect(survivesLimitCrossing([rule], 'https://www.youtube.com/@mine', lookup, NOW)).toBe(true);
     const implicitOnly = siteRule({
       features: featuresWith('youtube', {
         youtube: { channelMode: 'OFF', channels: [], creatorMode: true, myChannel: MINE },
       }),
     });
-    expect(survivesLimitCrossing([implicitOnly], 'https://www.youtube.com/@mine', lookup)).toBe(false);
-    expect(survivesLimitCrossing([implicitOnly], 'https://studio.youtube.com/', lookup)).toBe(true);
+    expect(survivesLimitCrossing([implicitOnly], 'https://www.youtube.com/@mine', lookup, NOW)).toBe(false);
+    expect(survivesLimitCrossing([implicitOnly], 'https://studio.youtube.com/', lookup, NOW)).toBe(true);
   });
 
   it('keeps only creator pages for a blacklist', () => {
     const blacklist = siteRule({
       features: featuresWith('youtube', { youtube: { channelMode: 'BLACKLIST', channels: [VERITASIUM] } }),
     });
-    expect(survivesLimitCrossing([blacklist], 'https://www.youtube.com/watch?v=v1', lookup)).toBe(false);
-    expect(survivesLimitCrossing([blacklist], 'https://www.youtube.com/@veritasium', lookup)).toBe(false);
+    expect(survivesLimitCrossing([blacklist], 'https://www.youtube.com/watch?v=v1', lookup, NOW)).toBe(false);
+    expect(survivesLimitCrossing([blacklist], 'https://www.youtube.com/@veritasium', lookup, NOW)).toBe(false);
   });
 });
 
@@ -477,16 +479,16 @@ describe('effectiveChannelLists: synced subscriptions (schema v6)', () => {
       });
 
     it('is whitelisted while the option is on', () => {
-      expect(isWhitelistedVideoUrl([rule({ allowSubscriptions: true })], V1, bySub)).toBe(true);
+      expect(isWhitelistedVideoUrl([rule({ allowSubscriptions: true })], V1, bySub, NOW)).toBe(true);
     });
 
     it('is counted again the moment the option is off', () => {
-      expect(isWhitelistedVideoUrl([rule({ allowSubscriptions: false })], V1, bySub)).toBe(false);
+      expect(isWhitelistedVideoUrl([rule({ allowSubscriptions: false })], V1, bySub, NOW)).toBe(false);
     });
 
     it('is counted under a blacklist, where subscriptions mean nothing', () => {
       expect(
-        isWhitelistedVideoUrl([rule({ channelMode: 'BLACKLIST', allowSubscriptions: true })], V1, bySub),
+        isWhitelistedVideoUrl([rule({ channelMode: 'BLACKLIST', allowSubscriptions: true })], V1, bySub, NOW),
       ).toBe(false);
     });
   });

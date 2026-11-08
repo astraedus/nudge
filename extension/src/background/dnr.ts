@@ -52,7 +52,7 @@
  */
 
 import { BLOCK_PAGE_PATH, blockPageUrl } from '../core/blockPage';
-import { gateAppliesNow, siteRuleAppliesNow } from '../core/applies';
+import { gateAppliesNow, resolveYoutubeFeatures, siteRuleAppliesNow } from '../core/applies';
 import {
   extractDomain,
   hostMatchesRuleDomain,
@@ -237,7 +237,8 @@ function channelAllowFilters(
   const filters = new Set<string>();
 
   for (const rule of settings.rules) {
-    const youtube = rule.features?.youtube;
+    // The list in force at `now`: a schedule window's own channel list replaces the rule's.
+    const youtube = resolveYoutubeFeatures(rule, now);
     if (!rule.enabled || youtube === undefined) continue;
     const domain = siteUsageKey(rule);
     const verdict = siteRuleAppliesNow(rule, usage.ms[domain] ?? 0, now);

@@ -14,9 +14,10 @@
  * looking card for a rule with no effect.
  */
 
+import { isScheduleInForce } from './applies';
 import { isPauseMode, MODE_LABELS } from './types';
 import { platformById, type HideId } from './platforms';
-import type { SiteRule } from './settingsSchema';
+import type { ChannelListMode, SiteRule } from './settingsSchema';
 
 /** Shown on a card whose rule has no effect whatsoever. */
 export const NOTHING_ACTIVE = 'Nothing active';
@@ -35,11 +36,43 @@ function canPause(rule: SiteRule): boolean {
   return isPauseMode(rule.mode) || (rule.schedule?.enabled === true && isPauseMode(rule.schedule.mode));
 }
 
+/** "Only 3 channels allowed" / "2 channels blocked", or null for a list that does nothing. */
+function channelListLabel(mode: ChannelListMode, count: number): string | null {
+  if (mode === 'OFF' || count === 0) return null;
+  const noun = count === 1 ? 'channel' : 'channels';
+  return mode === 'WHITELIST' ? `Only ${count} ${noun} allowed` : `${count} ${noun} blocked`;
+}
+
+/**
+ * The schedule window's own channel list (v0.8), or null when the window has none ("same as
+ * default") or the schedule is off. Always said, even for a list that is empty or off, because
+ * inside the window it REPLACES the default one: "no channel list" there lifts a blacklist.
+ */
+function windowChannelPart(rule: SiteRule): string | null {
+  const schedule = rule.schedule;
+  if (schedule === null || !schedule.enabled || schedule.channels === null) return null;
+  if (rule.features?.youtube === undefined) return null;
+  const { channelMode, channels, allowSubscriptions } = schedule.channels;
+  const label =
+    channelListLabel(channelMode, channels.length)?.toLowerCase() ??
+    (channelMode === 'WHITELIST'
+      ? allowSubscriptions
+        ? 'only subscriptions allowed'
+        : 'no channels allowed'
+      : 'no channel list');
+  return `During schedule: ${label}`;
+}
+
 /**
  * The parts of a rule that are doing something, in the order a user thinks about them.
  * Empty when the rule has no effect at all.
+ *
+ * Without `now` (the dashboard) it describes the configuration: the default channel list and,
+ * when the schedule window has its own, that one too. With `now` (the popup, about this
+ * moment) a window list that is in force replaces the default one, so the popup names the
+ * list actually being enforced.
  */
-export function featureSummaryParts(rule: SiteRule): string[] {
+export function featureSummaryParts(rule: SiteRule, now?: Date): string[] {
   const parts: string[] = [];
 
   if (rule.dailyLimitMinutes !== null) parts.push(`${rule.dailyLimitMinutes}m/day`);
@@ -88,14 +121,12 @@ export function featureSummaryParts(rule: SiteRule): string[] {
     else if (hidden.length > 1) parts.push(`${hidden.length} elements hidden`);
 
     const youtube = features.youtube;
-    if (youtube !== undefined && youtube.channelMode !== 'OFF' && youtube.channels.length > 0) {
-      const noun = youtube.channels.length === 1 ? 'channel' : 'channels';
-      parts.push(
-        youtube.channelMode === 'WHITELIST'
-          ? `Only ${youtube.channels.length} ${noun} allowed`
-          : `${youtube.channels.length} ${noun} blocked`,
-      );
-    }
+    const windowPart = windowChannelPart(rule);
+    const windowInForce = windowPart !== null && now !== undefined && isScheduleInForce(rule, now);
+    const defaultPart =
+      youtube === undefined ? null : channelListLabel(youtube.channelMode, youtube.channels.length);
+    if (defaultPart !== null && !windowInForce) parts.push(defaultPart);
+    if (windowPart !== null) parts.push(windowPart);
     if (youtube?.disableAutoplay === true) parts.push('Autoplay off');
   }
 
@@ -106,8 +137,8 @@ export function featureSummaryParts(rule: SiteRule): string[] {
  * The summary line, or `null` when the rule's own mode is the whole story (a plain Hard
  * Block needs no second sentence) — callers show the mode chip in that case.
  */
-export function featureSummary(rule: SiteRule): string | null {
-  const parts = featureSummaryParts(rule);
+export function featureSummary(rule: SiteRule, now?: Date): string | null {
+  const parts = featureSummaryParts(rule, now);
   return parts.length === 0 ? null : parts.join(' · ');
 }
 

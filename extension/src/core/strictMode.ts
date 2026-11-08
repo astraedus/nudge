@@ -15,6 +15,7 @@
  * No chrome.* imports — fully unit-testable under plain Node/vitest.
  */
 
+import { withChannelOverride } from './applies';
 import { gateModeStrength, type GateId, type HideId } from './platforms';
 import { isRepeatPauseWeakening } from './repeatPause';
 import type {
@@ -361,7 +362,37 @@ function isRuleWeakened(oldRule: SiteRule, newRule: SiteRule, tempAllowMinutes: 
   // happens INSIDE the window is a weakening even when the default behaviour is untouched.
   if (isScheduleWeakened(oldRule, newRule)) return true;
   if (areFeaturesWeakened(oldRule.features, newRule.features)) return true;
+  // The same for YouTube's channel list (v0.8): a window can carry its own list.
+  if (isWindowChannelListWeakened(oldRule, newRule)) return true;
   return false;
+}
+
+/**
+ * The channel list INSIDE the schedule window: the window's own when it has one and the
+ * schedule is on, otherwise the rule's default list. The `effectiveInWindow` idea applied
+ * to the list, so it is judged exactly as the window's mode is: adding to a window's
+ * whitelist, removing from its blacklist, a weaker window list mode, switching the window
+ * INTO a whitelist, turning on its subscriptions, and going back to "same as default" (or
+ * deleting or switching off the schedule) when the default list is the weaker one are all
+ * weakenings, and their mirror images are free. Edits to a window that is switched off are
+ * free until it is switched on, which is when they are judged.
+ */
+function youtubeInWindow(rule: SiteRule): YoutubeFeatureSettings | undefined {
+  const youtube = rule.features?.youtube;
+  if (youtube === undefined) return undefined;
+  const schedule = rule.schedule;
+  return withChannelOverride(
+    youtube,
+    schedule !== null && schedule.enabled ? schedule.channels : null,
+  );
+}
+
+function isWindowChannelListWeakened(oldRule: SiteRule, newRule: SiteRule): boolean {
+  const before = youtubeInWindow(oldRule);
+  const after = youtubeInWindow(newRule);
+  // Losing the YouTube settings altogether is `areFeaturesWeakened`'s to judge.
+  if (before === undefined || after === undefined) return false;
+  return isYoutubeFeatureWeakened(before, after);
 }
 
 /**

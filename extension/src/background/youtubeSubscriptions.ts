@@ -43,6 +43,7 @@ import {
   type SyncOutcome,
 } from '../core/youtubeSubscriptions';
 import type { ChannelEntry, NudgeSettings } from '../core/settingsSchema';
+import { ruleUsesSubscriptions } from '../core/youtubeAccess';
 import type { SubscriptionSyncStatus } from '../core/protocol';
 import { loadSettings, loadSubscriptionState, saveSubscriptionState } from './storage';
 import { tabSignedBrowser, type BrowseResult, type SignedBrowser } from './youtubeTabBrowse';
@@ -57,9 +58,12 @@ const networkFetch: Fetcher = (url, init) =>
   // eslint-disable-next-line no-restricted-globals -- opt-in youtube.com read, see above
   fetch(url, init);
 
-/** True when ANY YouTube rule has "Also allow channels I'm subscribed to" on. */
+/**
+ * True when ANY YouTube rule has "Also allow channels I'm subscribed to" on, for its own list
+ * or a schedule window's (`ruleUsesSubscriptions`). Either one needs the synced list.
+ */
 export function subscriptionsWanted(settings: NudgeSettings): boolean {
-  return settings.rules.some((rule) => rule.features?.youtube?.allowSubscriptions === true);
+  return settings.rules.some(ruleUsesSubscriptions);
 }
 
 function isSignInPage(response: Response): boolean {
