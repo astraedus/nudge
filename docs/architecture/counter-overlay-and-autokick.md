@@ -389,8 +389,11 @@ needs), with injected usage and a pinned engine clock. `CounterCacheCoverageDrif
 agreement over a mixed fixture: for every package, the cache's daily limit equals the limit the real
 `EvaluateBlockUseCase` blocks on, and the cache's app keys equal `CoveredApps` over the rules that
 want an entry. L6: `scripts/device-qa.sh group-limit-midsession` (group3, the mid-session clock
-chunk) sits in a group member with a derived limit and asserts the limit screen arrives without
-leaving the app, for exactly +1 on the Blocked tile.
+chunk) builds a throwaway Hard group through the real editor (Clock, an app with no direct rule
+in the fixture, so only the group can give it a clock), measures today's usage, sets the group's
+limit to usage + 2 minutes, then sits in Clock with no UI dumps. It asserts the
+`reason=daily_limit_reached ... source=foreground_clock` line, the limit screen arriving without
+leaving the app, and exactly +1 on the Blocked tile, and it deletes the group on every exit.
 
 ## Usage reminder, "remind me instead of kicking me" (issue #77)
 

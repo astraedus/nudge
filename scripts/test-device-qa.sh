@@ -255,6 +255,94 @@ check "another service bound, Nudge only enabled: unbound" \
 check "grant off entirely: unbound" \
   test "$(bound "    Bound services:{}\n    Enabled services:{}")" = unbound
 
+# ─── 7. group-limit-midsession (#146): the case is real, cleans up, and tests the right app ────
+echo "group-limit-midsession:"
+# daily_usage_ms <pkg> serves both mid-session cases. The oracle for "the budget is the member's
+# OWN" is that two packages' evaluation lines interleave in one capture and each is read separately.
+LC="$TMP/logcat.txt"
+cat >"$LC" <<'EOF'
+01-01 10:00:00.000 D BlockEngine: evaluate package=com.google.android.calculator rules=1 dailyUsageMs=111
+01-01 10:00:01.000 D BlockEngine: evaluate package=com.google.android.deskclock rules=1 dailyUsageMs=60000
+01-01 10:00:02.000 D BlockEngine: evaluate package=com.google.android.deskclock rules=1 dailyUsageMs=75000
+01-01 10:00:03.000 D BlockEngine: evaluate package=com.google.android.calculator rules=2 dailyUsageMs=222
+01-01 10:00:04.000 D BlockEngine: evaluate package=com.google.android.deskclock.beta rules=1 dailyUsageMs=999
+EOF
+usage() { # <pkg> -> daily_usage_ms output
+  run_qa "$OUT" -- "LOGCAT_FILE='$LC'; daily_usage_ms $1" && tr -d '\n' <"$OUT"
+}
+check "daily_usage_ms: the LAST line of THAT package (deskclock, not calculator, not deskclock.beta)" \
+  test "$(usage com.google.android.deskclock)" = 75000
+check "daily_usage_ms: calculator's own last line" test "$(usage com.google.android.calculator)" = 222
+check "daily_usage_ms: no line for the package -> empty" test -z "$(usage com.example.absent)"
+run_qa "$OUT" -- "LOGCAT_FILE='$LC'; calculator_daily_usage_ms"
+check "calculator_daily_usage_ms is still the LIMIT_PKG wrapper" test "$(tr -d '\n' <"$OUT")" = 222
+
+run_qa "$OUT" -- 'declare -f case_group_limit_midsession'
+check "the case is no longer the placeholder (no 'return 77')" bash -c "! grep -q 'return 77' '$OUT' && grep -q delete_qa_group '$OUT'"
+
+# The member must get its clock from the GROUP only: a direct rule on it would pass this case on the
+# path the app already had before #146. Read from the script's own variable, not retyped here.
+run_qa "$OUT" -- 'printf %s "${GROUP_LIMIT_PKG:-}"' || true
+GPKG="$(cat "$OUT")"
+check "GROUP_LIMIT_PKG is set to a package name" bash -c "[[ '$GPKG' =~ ^[a-z][a-z0-9_.]+$ ]]"
+check "GROUP_LIMIT_PKG has no direct rule in .maestro/fixtures/rules.json" \
+  bash -c "[[ -n '$GPKG' ]] && ! grep -qF '\"$GPKG\"' '$ROOT/.maestro/fixtures/rules.json'"
+
+# Cleanup runs after EVERY outcome of the body, pre-sweeps first, and a failed delete fails the case.
+# The body and delete_qa_group are stubbed; the case's own sequencing is what runs.
+DLOG="$TMP/del.log"
+case_run() { # <body rc> <delete rc> -> "<case rc>|<delete calls>"
+  : >"$DLOG"
+  run_qa "$OUT" DLOG="$DLOG" -- \
+    "stop_logcat() { :; }; group_limit_midsession_body() { return $1; }; delete_qa_group() { echo \"DEL \$*\" >>\"\$DLOG\"; return $2; }; case_group_limit_midsession; echo \"rc=\$?\"" || true
+  printf '%s|%s' "$(sed -n 's/^rc=//p' "$OUT")" "$(tr '\n' ',' <"$DLOG")"
+}
+check "body passes: swept before, deleted after, case passes"  test "$(case_run 0 0)" = "0|DEL pre,DEL ,"
+check "body FAILS early: the group is still deleted, failure kept" test "$(case_run 1 0)" = "1|DEL pre,DEL ,"
+check "body passes but the delete fails: the case fails" test "$(case_run 0 1)" = "1|DEL pre,DEL ,"
+
+# delete_qa_group with no such group is a no-op, quiet up front and a warning at cleanup.
+dq() { # <pre|-> -> "<rc>"; message in $OUT
+  local arg="$1"; [[ "$arg" == "-" ]] && arg=""
+  run_qa "$OUT" -- "qa_group_open() { return 2; }; delete_qa_group $arg; echo \"rc=\$?\"" || true
+  sed -n 's/^rc=//p' "$OUT"
+}
+check "delete_qa_group, no group, up-front sweep: rc 0 and says so" \
+  bash -c "[[ \"$(dq pre)\" == 0 ]] && grep -q 'no leftover' '$OUT'"
+check "delete_qa_group, no group, at cleanup: rc 0 with a WARN" \
+  bash -c "[[ \"$(dq -)\" == 0 ]] && grep -q 'WARN' '$OUT'"
+run_qa "$OUT" -- 'qa_group_open() { return 1; }; delete_qa_group; echo "rc=$?"' || true
+check "delete_qa_group, editor could not be opened: rc 1 (a leftover group must be reported)" \
+  grep -q '^rc=1$' "$OUT"
+
+# The two raw-coordinate helpers, against a canned uiautomator tree and a fake `ash`.
+cat >"$TMP/fake-grp.sh" <<'EOF'
+ash() {
+  case "$*" in
+    "wm size") printf 'Physical size: 1080x2220\r\n' ;;
+    "input tap "*) echo "TAP ${*:3}" >>"$TAP_LOG" ;;
+  esac
+}
+ui_snapshot() { UI_XML="$TMP_XML"; }
+sleep() { :; }
+EOF
+cat >"$TMP/ui.xml" <<'EOF'
+<hierarchy><node index="0" class="android.widget.TextView" text="Name" bounds="[48,200][200,240]" />
+<node index="1" class="android.widget.EditText" text="" bounds="[48,300][1032,420]" />
+<node index="2" class="android.widget.TextView" text="Daily limit for each app" bounds="[48,1000][700,1080]" /></hierarchy>
+EOF
+TAPLOG="$TMP/tap.log"
+tapped() { # <snippet> -> the TAP lines, ','-joined
+  : >"$TAPLOG"
+  run_qa "$OUT" TAP_LOG="$TAPLOG" TMP_XML="$TMP/ui.xml" -- \
+    ". '$TMP/fake-grp.sh'; write_locator; $1" || true
+  tr '\n' ',' <"$TAPLOG"
+}
+check "ui_tap_edittext taps the EditText by class, not the 'Name' label above it" \
+  test "$(tapped 'ui_tap_edittext 1')" = "TAP 540 360,"
+check "ui_tap_switch_of taps the right edge of the labelled row (width read from wm size)" \
+  test "$(tapped 'ui_tap_switch_of "Daily limit for each app" 1')" = "TAP 970 1040,"
+
 echo
 echo "$pass passed, $fail failed"
 [[ "$fail" -eq 0 ]]

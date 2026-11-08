@@ -124,6 +124,19 @@ WATCHDOG_ACTION="${APP_ID}.debug.RUN_WATCHDOG"
 LAUNCHER_PKG="com.google.android.apps.nexuslauncher"
 YOUTUBE_PKG="com.google.android.youtube"
 LIMIT_PKG="com.google.android.calculator"
+# `group-limit-midsession` (#146): the member app of the group it creates through the UI. It must be
+# an app with NO direct rule in `.maestro/fixtures/rules.json` (that file has direct rules on
+# YouTube and Calculator only), so the only thing that can give it a daily clock is the GROUP rule;
+# a package with its own rule would pass this case on the direct-rule path the app already had
+# (test-device-qa.sh greps the fixture for this package so a later fixture edit fails the harness).
+# The stock Pixel clock is always installed on the bench Pixel 3, and its launcher label is what the
+# group picker's list shows, so both are config rather than literals.
+GROUP_LIMIT_PKG="${GROUP_LIMIT_PKG:-com.google.android.deskclock}"
+GROUP_LIMIT_LABEL="${GROUP_LIMIT_LABEL:-Clock}"
+# The throwaway group's name. A fixed name is what lets a run find and delete the group an aborted
+# run left behind. The row Manage Apps draws for it reads "<name> · 1 app" (RuleSummary.groupTitle).
+QA_GROUP_NAME="${QA_GROUP_NAME:-QA group 146}"
+QA_GROUP_TITLE="${QA_GROUP_NAME} · 1 app"
 
 ADB_SERIAL="${ADB_SERIAL:-192.168.1.68:5555}"
 APK="${APK:-main}"
@@ -1394,7 +1407,7 @@ case_daily_limit_refresh() {
 # Calculator today. Two copies of a seven-tap Compose flow is two things to re-find the next time
 # that screen moves.
 set_daily_limit_minutes() { # minutes
-  local minutes="$1" i
+  local minutes="$1"
   nudge_route_home
   ui_wait_text "Manage Apps" 5 || scroll_to_text "Manage Apps" 6
   ui_tap_text "Manage Apps" 10 || return 1
@@ -1413,16 +1426,25 @@ set_daily_limit_minutes() { # minutes
   # in. "2h" is always there; a preset is a draft until "Save", and the dialog below overwrites it.
   ui_tap_text "2h" 8 || return 1
   ui_tap_text "Custom" 8 || return 1
-  ui_wait_text "Custom Daily Limit" 8 || return 1
+  type_custom_minutes "Custom Daily Limit" "$minutes" || return 1
+  ui_tap_text "Save" 8 || return 1
+  sleep 2
+  info "Calculator daily limit set to ${minutes}m."
+}
+
+# The "Custom ..." minutes dialog (CustomTimeDialog), once it has been opened: waits for its title,
+# replaces the pre-filled value and confirms with "Set". App config titles it "Custom Daily Limit"
+# and the group editor "Custom daily limit" (different call sites of the same shared dialog), so the
+# title is a parameter; the rest of the flow is one thing to re-find when that dialog moves.
+type_custom_minutes() { # dialog-title minutes
+  local title="$1" minutes="$2" i
+  ui_wait_text "$title" 8 || return 1
   # The field is pre-filled with the current value, so clear it before typing.
   ui_tap_text "Value (minutes)" 5 || true
   for ((i = 0; i < 6; i++)); do ash input keyevent KEYCODE_DEL >/dev/null 2>&1; done
   ash input text "$minutes" >/dev/null 2>&1
   sleep 1
-  ui_tap_text "Set" 8 || return 1
-  ui_tap_text "Save" 8 || return 1
-  sleep 2
-  info "Calculator daily limit set to ${minutes}m."
+  ui_tap_text "Set" 8
 }
 
 restore_daily_limit() { set_daily_limit_minutes 1; }
@@ -1434,10 +1456,16 @@ restore_daily_limit() { set_daily_limit_minutes 1; }
 # the limit, and that is a `queryEvents` pairing walk through `ScreenTimeProvider`. Reading a
 # different source would derive a limit the app does not agree with, which is the fixture-honesty
 # rule one layer out.
-calculator_daily_usage_ms() {
-  grep -o "evaluate package=${LIMIT_PKG} rules=[0-9]* dailyUsageMs=[0-9]*" "$LOGCAT_FILE" 2>/dev/null |
+#
+# The package is matched up to the space after `package=<pkg>` so `com.google.android.calculator`
+# can never pick up a longer name that merely starts with it. The LAST line wins: usage only grows
+# during a case, and the newest evaluation is the one the clock compares against.
+daily_usage_ms() { # package
+  grep -o "evaluate package=${1} rules=[0-9]* dailyUsageMs=[0-9]*" "$LOGCAT_FILE" 2>/dev/null |
     grep -o 'dailyUsageMs=[0-9]*' | tail -1 | cut -d= -f2
 }
+
+calculator_daily_usage_ms() { daily_usage_ms "$LIMIT_PKG"; }
 
 # ── daily-limit-midsession (v1.18.4): the budget blocks while you are still IN the app ──
 #
@@ -1657,10 +1685,366 @@ case_daily_limit_midsession() {
 }
 
 # ── group-limit-midsession (#146): a GROUP's daily limit blocks while you are still in the app ──
-# Placeholder while the case is written (same branch, next commit): SKIP, never a silent PASS.
+#
+# Same subject as `daily-limit-midsession`, other rule shape. Until #146 the 30-second foreground
+# clock only ran for a DIRECT rule on the app; a GROUP's daily limit was read once, at app open, so
+# you could sit in a group member past the group's budget forever (bench repro: a Hard group, 3
+# apps). The fix made the clock follow whatever rule covers the package, which is the thing this
+# case proves on the device: a clock fires `daily_limit_reached` for an app that has NO rule of its
+# own and is limited only through its group.
+#
+# ## Why the group is built through the UI, not the fixture
+# `.maestro/fixtures/rules.json` is shared with Maestro's setup flow and with qa-driver; a group
+# there would put a limit on the member app for every other case and every other harness. A group
+# made here exists for this case only and is deleted on EVERY exit path (see `delete_qa_group`).
+# Driving the real editor also covers the half of #146 the unit tests cannot: that the editor writes
+# a group rule the engine reads back with its limit.
+#
+# ## Why the limit is set in a SECOND step, after measuring
+# Same reason as `daily-limit-midsession` plus one: the engine logs `dailyUsageMs` only when a
+# covering rule HAS a limit. So the group is created with a limit that cannot trip (the 2h preset),
+# the member is launched once to make the engine report today's usage, and only then does the group
+# get `usage + 2` minutes through the custom dialog. The 2h preset keeps the first save a plain chip
+# tap; the second save is the same custom-dialog flow `set_daily_limit_minutes` uses.
+#
+# ## The budget is PER APP
+# The editor's switch reads "Daily limit for each app": every member has its own budget, compared
+# against that member's OWN foreground total, not a pooled one. So the usage measured here is the
+# member's, and the group's other members (there are none) would not matter.
+#
+# ## The central constraint, again
+# NO `uiautomator dump` while the member is in front: a dump tears down the accessibility service
+# and with it the clock under test (the long comment in `daily-limit-midsession`, step 4). Every UI
+# interaction below happens in Nudge's own screens, BEFORE the member is entered or AFTER the block.
+
+# Taps the first text field on screen. The group editor has exactly one (Name), and its label is a
+# separate Compose node whose uiautomator text is not guaranteed, so the field is found by CLASS;
+# the label text is the fallback. Compose text fields report `android.widget.EditText`.
+ui_tap_edittext() { # [timeout_secs]
+  local timeout="${1:-10}" xy i
+  for ((i = 0; i < timeout; i++)); do
+    ui_snapshot
+    xy="$(python3 - "$UI_XML" <<'PYEOF'
+import re
+import sys
+
+xml = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+for attrs in re.findall(r"<node([^>]*)>", xml):
+    if 'class="android.widget.EditText"' not in attrs:
+        continue
+    b = re.search(r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]', attrs)
+    if b:
+        x1, y1, x2, y2 = (int(g) for g in b.groups())
+        print((x1 + x2) // 2, (y1 + y2) // 2)
+        break
+PYEOF
+)"
+    if [[ -n "$xy" ]]; then
+      # shellcheck disable=SC2086
+      ash input tap $xy >/dev/null 2>&1
+      sleep 1
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+# Taps the SWITCH on the row labelled $1. The group editor's `LabelledSwitch` is a Row whose label
+# is plain text and whose Switch has no text, so `ui_tap_text` cannot reach it (and tapping the
+# label does nothing). The label gives the row's y; the switch sits at the right edge, 16dp in from
+# the screen edge and 52dp wide, i.e. its centre is ~110px in from the right on every density the
+# bench uses. The screen width is read from `wm size` rather than assumed.
+ui_tap_switch_of() { # label [timeout_secs]
+  local needle="$1" timeout="${2:-10}" xy w i
+  w="$(ash wm size 2>/dev/null | tr -d '\r' | grep -o '[0-9]\+x[0-9]\+' | tail -1 | cut -dx -f1)"
+  w="${w:-1080}"
+  for ((i = 0; i < timeout; i++)); do
+    ui_snapshot
+    xy="$(python3 "${WORK}/locate.py" "$UI_XML" "$needle")"
+    if [[ -n "$xy" ]]; then
+      ash input tap $(( w - 110 )) "${xy#* }" >/dev/null 2>&1
+      sleep 1
+      return 0
+    fi
+    sleep 1
+  done
+  fail "cannot tap the switch on '${needle}': not on screen within ${timeout}s"
+  return 1
+}
+
+# Opens the QA group's editor from Manage Apps. Returns 0 with the editor open, 2 when there is no
+# such group (not an error: the caller decides), 1 when navigation itself failed.
+#
+# Found by SEARCH, not by scrolling: a bench with many groups would push it off screen, and the
+# search filters groups by name. The search text is typed with `%s` for spaces (`input text` has no
+# other way to type one).
+qa_group_open() {
+  nudge_route_home
+  ui_wait_text "Manage Apps" 5 || scroll_to_text "Manage Apps" 6
+  ui_tap_text "Manage Apps" 10 || return 1
+  ui_tap_text "Search apps and groups" 10 || return 1
+  ash input text "${QA_GROUP_NAME// /%s}" >/dev/null 2>&1
+  sleep 2
+  ash input keyevent KEYCODE_BACK >/dev/null 2>&1
+  sleep 1
+  ui_wait_text "$QA_GROUP_TITLE" 5 || return 2
+  ui_tap_text "$QA_GROUP_TITLE" 5 || return 1
+  ui_wait_text "Save" 8 || return 1
+}
+
+# Creates the QA group: Hard block, the member app, and a daily limit that cannot trip (2h).
+#
+# Hard block is the mode of the bench repro. It is also the mode with the LEAST in the way: a Hard
+# rule WITH a daily limit blocks only once the limit is spent (BlockEngine line ~104), so launching
+# the member to measure is not itself blocked, while a Delay group would put a 15 s overlay in front
+# of every launch below.
+qa_group_create() {
+  nudge_route_home
+  ui_wait_text "Manage Apps" 5 || scroll_to_text "Manage Apps" 6
+  ui_tap_text "Manage Apps" 10 || return 1
+  ui_tap_text "Block several apps" 10 || return 1
+  ui_tap_text "A group of apps" 10 || return 1
+  ui_wait_text "New group" 8 || { fail "the new-group editor did not open"; return 1; }
+
+  ui_tap_edittext 8 || ui_tap_text "Name" 8 || return 1
+  ash input text "${QA_GROUP_NAME// /%s}" >/dev/null 2>&1
+  sleep 1
+  ash input keyevent KEYCODE_BACK >/dev/null 2>&1   # the keyboard only; the editor is still dirty
+  sleep 1
+  ui_snapshot
+  ui_has "$QA_GROUP_NAME" || { fail "the group name did not land in the Name field"; return 1; }
+
+  ui_tap_text "Add apps" 8 || return 1
+  ui_wait_text "Search apps" 8 || return 1
+  ui_tap_text "Search apps" 8 || return 1
+  # One character short of the label on purpose. The picker's list is filtered by CONTAINS, and the
+  # typed query is itself a node whose text is what was typed: with the full label the exact-text
+  # locator would find the search field first and "select the app" by tapping the field.
+  ash input text "${GROUP_LIMIT_LABEL%?}" >/dev/null 2>&1
+  sleep 2
+  ash input keyevent KEYCODE_BACK >/dev/null 2>&1
+  sleep 1
+  ui_tap_text "$GROUP_LIMIT_LABEL" 8 || return 1
+  ui_wait_text "1 selected" 5 || { fail "the picker did not register ${GROUP_LIMIT_LABEL} as selected"; return 1; }
+  ui_tap_text "Done" 8 || return 1
+
+  scroll_to_text "Hard" 8 || { fail "no 'Hard' mode segment — is 'Block these apps' on?"; return 1; }
+  ui_tap_text "Hard" 8 || return 1
+  scroll_to_text "Daily limit for each app" 8 || return 1
+  ui_tap_switch_of "Daily limit for each app" 8 || return 1
+  ui_wait_text "2h" 5 || { fail "the daily limit chips did not appear after switching 'Daily limit for each app' on"; return 1; }
+  ui_tap_text "2h" 8 || return 1
+  ui_tap_text "Save" 8 || return 1
+  ui_wait_text "$QA_GROUP_TITLE" 10 || { fail "saved, but '${QA_GROUP_TITLE}' is not listed on Manage Apps"; return 1; }
+  info "QA group '${QA_GROUP_NAME}' created: ${GROUP_LIMIT_LABEL}, Hard block, 2h daily limit."
+}
+
+# Sets the QA group's daily limit to $1 minutes. Same custom-dialog flow as
+# `set_daily_limit_minutes`, including the "tap 2h first" step: the fifth chip reads "Custom" only
+# while the limit is one of the presets, so a leftover custom limit would otherwise hide it.
+qa_group_set_limit() { # minutes
+  local minutes="$1"
+  qa_group_open || return 1
+  scroll_to_text "Daily limit for each app" 8 || return 1
+  ash input swipe 540 1500 540 1100 300 >/dev/null 2>&1   # bring the chips above the fold
+  sleep 1
+  ui_tap_text "2h" 8 || return 1
+  ui_tap_text "Custom" 8 || return 1
+  type_custom_minutes "Custom daily limit" "$minutes" || return 1
+  ui_tap_text "Save" 8 || return 1
+  ui_wait_text "$QA_GROUP_TITLE" 10 || { fail "saved, but '${QA_GROUP_TITLE}' is not listed on Manage Apps"; return 1; }
+  info "QA group daily limit set to ${minutes}m."
+}
+
+# Deletes the QA group through its editor ("Delete group" -> "Delete"). Idempotent: no such group is
+# a no-op (info when $1 is "pre", the up-front sweep for an aborted run's leftover; a warning when it
+# is the final cleanup, because then the group should have existed). Returns 1 only when the group
+# IS there and could not be deleted, which the caller must report: a group left on the bench puts a
+# daily limit on the Clock app for every later case run alone.
+delete_qa_group() { # [pre]
+  local when="${1:-}" rc=0
+  qa_group_open || rc=$?
+  if (( rc == 2 )); then
+    if [[ "$when" == "pre" ]]; then
+      info "no leftover '${QA_GROUP_NAME}' on the bench"
+    else
+      warn "cleanup found no '${QA_GROUP_NAME}' to delete (it was never created, or already gone)"
+    fi
+    return 0
+  fi
+  if (( rc != 0 )); then
+    warn "could not open '${QA_GROUP_NAME}' to delete it — check Manage Apps for a leftover group"
+    return 1
+  fi
+  scroll_to_text "Delete group" 10 || { warn "no 'Delete group' button in the editor"; return 1; }
+  ui_tap_text "Delete group" 8 || return 1
+  ui_tap_text "Delete" 8 || return 1
+  sleep 2
+  info "QA group '${QA_GROUP_NAME}' deleted."
+}
+
+# The case = body + cleanup. The cleanup must run after EVERY exit of the body, and the body has a
+# dozen early returns once the group exists, so it is a separate function rather than a trap or a
+# copy of the cleanup at each `return`.
 case_group_limit_midsession() {
-  CASE_NOTE="not implemented yet"
-  return 77
+  local rc=0
+  delete_qa_group pre || warn "a leftover QA group may still be on the bench"
+  group_limit_midsession_body || rc=$?
+  stop_logcat
+  delete_qa_group || { fail "the QA group could not be deleted — remove '${QA_GROUP_NAME}' by hand before running anything else"; rc=1; }
+  return $rc
+}
+
+group_limit_midsession_body() {
+  local rc=0 i
+  local clock_re="block package=${GROUP_LIMIT_PKG} reason=daily_limit_reached .*source=foreground_clock"
+
+  # 1. Create the group (member + a limit that cannot trip), through the real editor.
+  qa_group_create || { fail "could not create the QA group through the editor"; return 1; }
+
+  # 2. Measure. One launch makes the engine log today's total for the member, because a covering
+  #    rule with a limit now exists. Fresh logcat first so no earlier line can be mistaken for it.
+  go_home
+  start_logcat
+  ash am force-stop "$GROUP_LIMIT_PKG" >/dev/null 2>&1
+  sleep 1
+  ash monkey -p "$GROUP_LIMIT_PKG" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
+  local usage_ms=""
+  for ((i = 0; i < 20; i++)); do
+    usage_ms="$(daily_usage_ms "$GROUP_LIMIT_PKG")"
+    [[ -n "$usage_ms" ]] && break
+    sleep 1
+  done
+  if [[ -z "$usage_ms" ]]; then
+    fail "no 'evaluate package=${GROUP_LIMIT_PKG} … dailyUsageMs=' line — is debug logging on (run 'setup'), and did the group's limit save?"
+    return 1
+  fi
+  info "Android has recorded ${usage_ms}ms of ${GROUP_LIMIT_LABEL} today"
+
+  # 3. Derive and set: usage + 2 whole minutes, so entry has 60-120s of real budget left. The 2h
+  #    preset the group was created with is the ceiling: past it the group would already be tripping.
+  local limit_min=$(( usage_ms / 60000 + 2 ))
+  if (( limit_min >= 120 )); then
+    fail "${GROUP_LIMIT_LABEL} has already run ${usage_ms}ms today — a derived limit of ${limit_min}m is not below the 2h the group started with"
+    return 1
+  fi
+  qa_group_set_limit "$limit_min" || { fail "could not set the derived ${limit_min}m group limit"; return 1; }
+
+  # 4. Baseline the Blocked count BEFORE entering (reading the dashboard later means leaving the app).
+  nudge_route_home
+  local before b_before w_before
+  before="$(read_blocked_counts)" || { fail "could not read the week summary on the dashboard"; return 1; }
+  b_before="${before% *}"; w_before="${before#* }"
+  info "before: blocked=${b_before} walkedAway=${w_before}"
+
+  # 5. Open the member fresh, with budget left. A fresh logcat so the lines counted below cannot be
+  #    leftovers from the measurement launch. The 12 s is the counter cache TTL (see the same wait in
+  #    `daily-limit-midsession`): the clock reads the LIMIT out of a 10-second snapshot, and for a
+  #    group that snapshot also carries the group rule just saved.
+  go_home
+  ash am force-stop "$GROUP_LIMIT_PKG" >/dev/null 2>&1
+  sleep 12
+  start_logcat
+  ash monkey -p "$GROUP_LIMIT_PKG" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
+  wait_fg "$GROUP_LIMIT_PKG" 15 || { fail "${GROUP_LIMIT_PKG} did not come to the foreground"; return 1; }
+  sleep 3
+  shot 54-group-member-fresh-budget
+  # NOT `ui_snapshot` from here until the block lands: see "The central constraint" above.
+  local fg_now
+  fg_now="$(foreground_package)"
+  if [[ "$fg_now" != "$GROUP_LIMIT_PKG" ]]; then
+    fail "expected to be sitting in ${GROUP_LIMIT_PKG} at entry, but '${fg_now}' is in front — a Hard block on entry means the group blocked it outright"
+    return 1
+  fi
+  if (( $(log_count_re "$clock_re") > 0 )) || (( $(log_count "block package=${GROUP_LIMIT_PKG} reason=daily_limit_reached") > 0 )); then
+    fail "entered with the limit already tripped (usage=${usage_ms}ms, derived limit=${limit_min}m) — this case needs budget REMAINING at entry"
+    return 1
+  fi
+
+  local entry_usage remaining_s wait_s
+  entry_usage="$(daily_usage_ms "$GROUP_LIMIT_PKG")"
+  entry_usage="${entry_usage:-$usage_ms}"
+  remaining_s=$(( (limit_min * 60000 - entry_usage) / 1000 ))
+  (( remaining_s < 0 )) && remaining_s=0
+  wait_s=$(( remaining_s + 45 ))
+  (( wait_s > MIDSESSION_WAIT_SECS )) && wait_s="$MIDSESSION_WAIT_SECS"
+  info "entered with ${remaining_s}s of budget left; waiting up to ${wait_s}s WITHOUT leaving the app"
+
+  # 6. Sit still. No taps, no swipes, no UI dumps — the only thing that may happen is the clock.
+  local limited=0 left_the_app="" fg
+  for ((i = 0; i < wait_s; i += 5)); do
+    if (( $(log_count_re "$clock_re") > 0 )); then
+      limited=1
+      info "the group budget ran out after ~${i}s of sitting still"
+      break
+    fi
+    fg="$(foreground_package)"
+    [[ "$fg" == "$LAUNCHER_PKG" ]] && left_the_app="$fg"
+    sleep 5
+  done
+
+  if [[ -n "$left_the_app" ]]; then
+    fail "the app was left during the sit (saw '${left_the_app}' in front) — this case only proves anything while we stay inside"
+    rc=1
+  fi
+  if (( limited == 0 )); then
+    fail "sat ${wait_s}s inside ${GROUP_LIMIT_PKG} with a ${limit_min}m GROUP budget and the limit never fired mid-session"
+    grep -E "evaluate package=${GROUP_LIMIT_PKG}|clock (started|stopped|exited)|daily_limit_reached" \
+      "$LOGCAT_FILE" 2>/dev/null | tail -12 >&2
+    stop_logcat
+    # Save the capture BEFORE anything else truncates it (every later case's `start_logcat` does):
+    # "the clock never started for a group member", "it ticked and the budget had not crossed" and
+    # "it blocked and the grep missed it" are three different bugs and only the capture tells them apart.
+    cp -f "$LOGCAT_FILE" "${ALBUM}/logcat-group-limit-midsession-FAIL.txt" 2>/dev/null || true
+    return 1
+  fi
+
+  # The block landed. Prove it reached the SCREEN without an accessibility session: the overlay is
+  # its own activity, so the foreground moving from the member to Nudge is the arrival.
+  local fg_blocked
+  for ((i = 0; i < 10; i++)); do
+    fg_blocked="$(foreground_package)"
+    [[ "$fg_blocked" == "$APP_ID" ]] && break
+    sleep 1
+  done
+  shot 55-group-limit-midsession
+  if [[ "$fg_blocked" != "$APP_ID" ]]; then
+    fail "the limit fired but Nudge's overlay never came to the front (got '${fg_blocked}')"
+    rc=1
+  fi
+
+  # 7. Push the member back in front WITHOUT going home: same sitting, so the block must be shown
+  #    again and must NOT be counted again (issue #36's invariant, on a timer-driven path).
+  ash monkey -p "$GROUP_LIMIT_PKG" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
+  sleep 8
+  shot 56-group-limit-screen-again
+  local fg_again
+  fg_again="$(foreground_package)"
+  [[ "$fg_again" == "$APP_ID" ]] ||
+    warn "re-fronting the app did not put the limit screen back (got '${fg_again}') — the count assertion below is the real gate"
+
+  # 8. Leave for good and read the count: +1 for the whole episode.
+  go_home
+  nudge_route_home
+  local after b_after w_after
+  after="$(read_blocked_counts)" || { fail "could not re-read the week summary"; return 1; }
+  b_after="${after% *}"; w_after="${after#* }"
+  info "after:  blocked=${b_after} walkedAway=${w_after}"
+  shot 57-dashboard-after-group-midsession
+  stop_logcat
+  cp -f "$LOGCAT_FILE" "${ALBUM}/logcat-group-limit-midsession.txt" 2>/dev/null || true
+
+  local db=$(( b_after - b_before )) dw=$(( w_after - w_before )) relaunches
+  relaunches="$(log_count_re "$clock_re")"
+  (( db == 1 )) || {
+    fail "Blocked moved by ${db}, expected exactly +1 (the mid-session block is one confrontation, whatever the clock did: ${relaunches} foreground_clock lines)"
+    rc=1
+  }
+  (( dw == 0 )) || { fail "Walked away moved by ${dw}, expected 0 — nothing was declined in this case"; rc=1; }
+
+  CASE_NOTE="${GROUP_LIMIT_LABEL} usage=${usage_ms}ms, derived group limit=${limit_min}m, fired mid-session after ~${remaining_s}s, ${relaunches} clock blocks, Blocked ${b_before}->${b_after}"
+  return $rc
 }
 
 # ── notif-idle (#63): the ongoing notification is posted on CHANGE, never on a timer ──
