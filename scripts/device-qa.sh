@@ -4,13 +4,13 @@
 # Replaces the 60–100 minute LLM tap-walk that gated every release with a deterministic run
 # that finishes in minutes, prints a PASS/FAIL table, and exits nonzero on any failure.
 #
-#   scripts/device-qa.sh            # every case (same as `all`), ~26 minutes
+#   scripts/device-qa.sh            # every case (same as `all`), ~18 minutes
 #   scripts/device-qa.sh all
 #   scripts/device-qa.sh delay-block
 #   scripts/device-qa.sh list
 #   scripts/device-qa.sh group1 && APK=installed scripts/device-qa.sh group2 \
-#     && APK=installed scripts/device-qa.sh group3 && APK=installed scripts/device-qa.sh group4
-#                                                      # `all` in four bounded chunks (below)
+#     && APK=installed scripts/device-qa.sh group3 \
+#     && APK=installed scripts/device-qa.sh group4    # `all` in four bounded chunks (below)
 #
 # ── WHY MOST OF THIS IS NOT MAESTRO (the central design fact) ─────────────────
 # Maestro — and every other UiAutomator-based driver — connects a `UiAutomation` session, and
@@ -57,25 +57,27 @@
 #                                    APK=main  ALLOW_CERT_SWITCH=1 scripts/device-qa.sh setup
 #
 # ── Running the gate in bounded chunks: group1 · group2 · group3 · group4 ─────
-# `all` takes ~26 minutes (setup 107s · delay-block 14s · home-reopen 140s · walkaway-count 55s ·
-# daily-limit-refresh 177s · daily-limit-midsession 258s · schedule-start-open-app ~230s ·
-# schedule-end-overlay ~210s · notif-idle 338s, plus ~45s of lock / connect / install / grants per
-# invocation), which no 10-minute foreground call can finish — and a run cut off mid-way restores
-# the bench but proves nothing. A group is a slice of `all` sized to fit one such call (the longest,
-# group2 and group3, are ~8-9 minutes). Membership: GROUP*_CASES below, and `--help` prints it.
+# `all` takes ~18 minutes (setup 107s · delay-block 14s · home-reopen 140s · walkaway-count 55s ·
+# daily-limit-refresh 177s · daily-limit-midsession 258s · notif-idle 338s, plus ~45s of lock /
+# connect / install / grants per invocation), which no 10-minute foreground call can finish — and a
+# run cut off mid-way restores the bench but proves nothing. A group is a slice of `all` sized to
+# fit one such call (the longest, group2, is ~8 minutes). Membership: GROUP*_CASES below, and
+# `--help` prints it.
 #
 #   scripts/device-qa.sh group1
 #   APK=installed scripts/device-qa.sh group2
 #   APK=installed scripts/device-qa.sh group3
 #   APK=installed scripts/device-qa.sh group4
 #
-# Run them IN THAT ORDER: group1 carries `setup`, which every later case assumes. Give group2, group3
-# and group4 APK=installed so the series tests the ONE build group1 put on the bench (APK=main would
+# Run them IN THAT ORDER: group1 carries `setup`, which every later case assumes. Give every later
+# group APK=installed so the series tests the ONE build group1 put on the bench (APK=main would
 # re-download whatever main-latest has become and reinstall it between chunks). The series passes
-# only if all four exit 0. No case asserts anything different from `all`:
+# only if all four exit 0. group3 is the mid-session clock chunk, added when group2 had no room left
+# (#146, #169/#170); group4 is the old group3 unchanged, so `crash-check` still runs last. No case
+# asserts anything different from `all`:
 #   · `crash-check` still means "no app crash since the SERIES started". group1 records the
-#     dropbox count in ~/.cache/nudge-qa/crash-baseline and group2/3/4 reuse it (when it is under
-#     3h old; otherwise they warn and take a fresh one) instead of re-baselining — a per-chunk
+#     dropbox count in ~/.cache/nudge-qa/crash-baseline and every later group reuses it (when it is
+#     under 3h old; otherwise they warn and take a fresh one) instead of re-baselining — a per-chunk
 #     baseline would let a crash during group1 pass a crash-check that only watches group4.
 #   · like `all`, a group skips the ~40s restore of the 1-minute Calculator limit after the
 #     daily-limit cases (the next `setup` re-imports it), so a lone group2 leaves the limit wherever
@@ -90,9 +92,10 @@
 #   LIMIT_BURN_SECS=70             foreground time spent exhausting the 1-minute daily limit
 #   LIMIT_WAIT_SECS=45             how long to wait, after re-entry, for the limit to fire
 #   MIDSESSION_WAIT_SECS=240       ceiling on the mid-session sit (the case derives its own wait)
-#   BOUNDARY_PKG=com.android.deskclock   the ordinary app the schedule-boundary cases (#169, #170)
+#   BOUNDARY_PKG=com.google.android.keep   the ordinary app the schedule-boundary cases (#169, #170)
 #                                  put a Hard block on. NOT Calculator: its 1-minute daily limit is
-#                                  spent by then, which would block it for the wrong reason.
+#                                  spent by then, which would block it for the wrong reason. NOT
+#                                  the Clock either: group-limit-midsession puts a limit on it.
 #   BOUNDARY_LEAD_MIN=3            minutes between seeding and the schedule STARTING (the import
 #                                  through the UI takes ~40s of that)
 #   BOUNDARY_WAIT_SLACK_SECS=90    how long past the real boundary the cases wait for the app to react
@@ -145,7 +148,9 @@ LIMIT_WAIT_SECS="${LIMIT_WAIT_SECS:-45}"
 # Ceiling on the mid-session sit. The case computes its own wait from the budget it actually has
 # left plus one 30-second clock tick; this only stops a mis-derived limit from parking the run.
 MIDSESSION_WAIT_SECS="${MIDSESSION_WAIT_SECS:-240}"
-BOUNDARY_PKG="${BOUNDARY_PKG:-com.android.deskclock}"
+# Google Keep: on the bench (its captures are in docs/architecture/accessibility-event-pipeline.md)
+# and carrying no fixture rule. The case fails loud if it is missing, never skips.
+BOUNDARY_PKG="${BOUNDARY_PKG:-com.google.android.keep}"
 BOUNDARY_LEAD_MIN="${BOUNDARY_LEAD_MIN:-3}"
 BOUNDARY_WAIT_SLACK_SECS="${BOUNDARY_WAIT_SLACK_SECS:-90}"
 MAESTRO_BIN="${MAESTRO_BIN:-${HOME}/.maestro/bin/maestro}"
@@ -2011,7 +2016,9 @@ case_refusal_alert() {
 # ## Why not Calculator
 # Calculator carries the 1-minute daily limit, spent by the daily-limit cases that run just before;
 # it would be blocked before the schedule starts, and for a different reason than the one under test.
-# BOUNDARY_PKG is an ordinary single-activity app with no other rule.
+# Not the Clock (com.google.android.deskclock) either: group-limit-midsession (#146) puts a group
+# daily limit on it, and a run of both would leave the Clock limited for the wrong reason.
+# BOUNDARY_PKG (Google Keep by default) is an ordinary app with no other rule.
 #
 # ## Leftovers
 # The imported rule stays (a days-and-times window on today's weekday, or every day when it crosses
