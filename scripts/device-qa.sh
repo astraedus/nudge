@@ -99,7 +99,7 @@
 #   BOUNDARY_PKG=com.google.android.keep   the ordinary app the schedule-boundary cases (#169, #170)
 #                                  put a Hard block on. NOT Calculator: its 1-minute daily limit is
 #                                  spent by then, which would block it for the wrong reason. NOT
-#                                  the Clock either: group-limit-midsession puts a limit on it.
+#                                  Contacts either: group-limit-midsession puts a limit on it.
 #   BOUNDARY_LEAD_MIN=3            minutes between seeding and the schedule STARTING (the import
 #                                  through the UI takes ~40s of that)
 #   BOUNDARY_WAIT_SLACK_SECS=90    how long past the real boundary the cases wait for the app to react
@@ -140,10 +140,12 @@ LIMIT_PKG="com.google.android.calculator"
 # YouTube and Calculator only), so the only thing that can give it a daily clock is the GROUP rule;
 # a package with its own rule would pass this case on the direct-rule path the app already had
 # (test-device-qa.sh greps the fixture for this package so a later fixture edit fails the harness).
-# The stock Pixel clock is always installed on the bench Pixel 3, and its launcher label is what the
-# group picker's list shows, so both are config rather than literals.
-GROUP_LIMIT_PKG="${GROUP_LIMIT_PKG:-com.google.android.deskclock}"
-GROUP_LIMIT_LABEL="${GROUP_LIMIT_LABEL:-Clock}"
+# Contacts, NOT the stock Clock: the bench's Nudge app picker does not list com.google.android.deskclock
+# at all (searching "lock" matches nothing, 2026-11-08), so the case could not add it to the group.
+# Contacts is installed, listed, and has no rule of its own. The launcher label is what the group
+# picker's list shows, so package and label are config rather than literals.
+GROUP_LIMIT_PKG="${GROUP_LIMIT_PKG:-com.google.android.contacts}"
+GROUP_LIMIT_LABEL="${GROUP_LIMIT_LABEL:-Contacts}"
 # The throwaway group's name. A fixed name is what lets a run find and delete the group an aborted
 # run left behind. The row Manage Apps draws for it reads "<name> · 1 app" (RuleSummary.groupTitle).
 QA_GROUP_NAME="${QA_GROUP_NAME:-QA group 146}"
@@ -188,6 +190,10 @@ FIXTURE_DEVICE_PATH="/sdcard/Download/nudge-qa-rules.json"
 # The schedule-boundary cases write their own rule file at run time (the minutes depend on the
 # clock), under a name of its own so the picker cannot offer `setup`'s fixture instead.
 BOUNDARY_FIXTURE_DEVICE_PATH="/sdcard/Download/nudge-qa-boundary.json"
+# Device epoch at which the LAST boundary rule seeded on the bench stops covering its app. The import
+# MERGES and nothing here deletes a rule, so each boundary case waits for this before seeding its own
+# (case independence); it is a file, not a variable, so back-to-back single-case runs agree too.
+BOUNDARY_LAST_END_FILE="${QA_CACHE_DIR}/boundary-last-end-epoch"
 
 export PATH="${HOME}/.maestro/bin:${PATH}"
 export MAESTRO_CLI_NO_ANALYTICS=true
@@ -213,7 +219,8 @@ ALL_CASES=(
 # 10-minute call. Explicit lists, not index slices of ALL_CASES, so that adding a case forces a
 # decision about which chunk has the time for it; check_groups() fails the run when the five stop
 # concatenating to ALL_CASES. The schedule-boundary cases wait on the REAL clock for a minute
-# boundary (~3.5-4 min each), so they get a chunk of their own: group-limit-midsession (~4.5 min)
+# boundary (~3.5-4 min each, plus up to ~1 min for schedule-end-overlay to wait out schedule-start-open-app's
+# 1-minute window, so group4 stays under ~10 min), so they get a chunk of their own: group-limit-midsession (~4.5 min)
 # and the two of them would not fit one call.
 GROUP1_CASES=(setup delay-block home-reopen walkaway-count)
 GROUP2_CASES=(daily-limit-refresh daily-limit-midsession)
@@ -1052,17 +1059,29 @@ nudge_notif_records() { # prints "<count> <mUpdateTimeMs of id=1>"
 # CASES
 # ═══════════════════════════════════════════════════════════════════════════════
 
-push_fixture() {
-  adbs push "${REPO_ROOT}/.maestro/fixtures/rules.json" "$FIXTURE_DEVICE_PATH" >/dev/null 2>&1 ||
-    { fail "could not push the rule fixture to the device"; return 1; }
+# Pushes <local file> to <device path> in /sdcard/Download so Nudge's Import-backup picker lists it
+# FIRST. The picker sorts newest-first and `adb push` keeps the LOCAL mtime, so the committed
+# fixture (mtime = whenever it was checked out) sank below the fold behind the other Download files
+# and `setup` failed three nights running. Touching the DEVICE copy to "now" fixes the ordering at
+# its source without moving or deleting anything else in Download. The path is one quoted string
+# for the device shell (see device_clock).
+push_to_download() { # local_file device_path
+  adbs push "$1" "$2" >/dev/null 2>&1 || return 1
+  ash "touch '$2'" >/dev/null 2>&1
   ash am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE \
-    -d "file://${FIXTURE_DEVICE_PATH}" >/dev/null 2>&1
+    -d "file://$2" >/dev/null 2>&1
+}
+
+push_fixture() {
+  push_to_download "${REPO_ROOT}/.maestro/fixtures/rules.json" "$FIXTURE_DEVICE_PATH" ||
+    { fail "could not push the rule fixture to the device"; return 1; }
   info "fixture pushed: ${FIXTURE_DEVICE_PATH}"
 }
 
 case_setup() {
   push_fixture || return 1
   info "pm clear — every case starts from a first-run install."
+  rm -f "$BOUNDARY_LAST_END_FILE"  # pm clear drops the boundary rules the record describes
   ash pm clear "$APP_ID" >/dev/null 2>&1
   sleep 2
   # `pm clear` RAISES THE KEYGUARD, and it does it with the screen still on, so nothing downstream
@@ -1885,7 +1904,7 @@ qa_group_set_limit() { # minutes
 # a no-op (info when $1 is "pre", the up-front sweep for an aborted run's leftover; a warning when it
 # is the final cleanup, because then the group should have existed). Returns 1 only when the group
 # IS there and could not be deleted, which the caller must report: a group left on the bench puts a
-# daily limit on the Clock app for every later case run alone.
+# daily limit on ${GROUP_LIMIT_LABEL} (Contacts by default) for every later case run alone.
 delete_qa_group() { # [pre]
   local when="${1:-}" rc=0
   qa_group_open || rc=$?
@@ -2414,21 +2433,24 @@ case_refusal_alert() {
 # ## Why not Calculator
 # Calculator carries the 1-minute daily limit, spent by the daily-limit cases that run just before;
 # it would be blocked before the schedule starts, and for a different reason than the one under test.
-# Not the Clock (com.google.android.deskclock) either: group-limit-midsession (#146) puts a group
-# daily limit on it, and a run of both would leave the Clock limited for the wrong reason.
+# Not Contacts (com.google.android.contacts) either: group-limit-midsession (#146) puts a group
+# daily limit on it, and a run of both would leave Contacts limited for the wrong reason.
 # BOUNDARY_PKG (Google Keep by default) is an ordinary app with no other rule.
 #
 # ## Leftovers
 # The imported rule stays (a days-and-times window on today's weekday, or every day when it crosses
-# midnight). `setup` starts from `pm clear`, so a series never sees it; a lone re-run of one of these
-# cases later the same day simply seeds a fresh window. Rules are deduplicated on
+# midnight). `setup` starts from `pm clear`, so a series never sees it; a re-run of one of these cases
+# first waits (boundary_wait_clear) for the last seeded window to end, then seeds a fresh one. Rules are deduplicated on
 # target+mode+schedule, so different minutes never collide.
 
 # "<iso weekday 1-7> <minute of day> <second> <epoch seconds>" on the DEVICE, in its local time.
 # One `date` call so the four numbers describe the same instant.
 device_clock() {
   local dow hh mm ss epoch
-  read -r dow hh mm ss epoch < <(ash date +'%u %H %M %S %s' 2>/dev/null | tr -d '\r')
+  # ONE string argument: `adb shell` joins argv with spaces and the DEVICE shell re-parses it, so
+  # the unquoted form arrived as `date +%u %H %M %S %s` (separate words) and failed on the bench.
+  # (Every other multi-word `ash` argument in this file is already passed as one string.)
+  read -r dow hh mm ss epoch < <(ash "date +'%u %H %M %S %s'" 2>/dev/null | tr -d '\r')
   [[ -n "${epoch:-}" ]] || return 1
   printf '%d %d %d %d\n' "$dow" $(( 10#$hh * 60 + 10#$mm )) $(( 10#$ss )) "$epoch"
 }
@@ -2496,13 +2518,12 @@ seed_boundary_rule() { # offset_min length_min
   # Boundaries are on the minute: the first second of minute `start`, not "start minutes from now".
   BOUNDARY_START_EPOCH=$(( epoch - sec + $1 * 60 ))
   BOUNDARY_END_EPOCH=$(( BOUNDARY_START_EPOCH + $2 * 60 ))
+  echo "$BOUNDARY_END_EPOCH" >"$BOUNDARY_LAST_END_FILE"
   info "device clock ${mod}min ${sec}s (weekday ${dow}); seeding ${BOUNDARY_PKG} HARD_BLOCK days=${days} ${start}->${end} (minute of day)"
 
   boundary_fixture_json "$BOUNDARY_PKG" "$days" "$start" "$end" >"${WORK}/boundary-rules.json"
-  adbs push "${WORK}/boundary-rules.json" "$BOUNDARY_FIXTURE_DEVICE_PATH" >/dev/null 2>&1 ||
+  push_to_download "${WORK}/boundary-rules.json" "$BOUNDARY_FIXTURE_DEVICE_PATH" ||
     { fail "could not push the boundary rule file to the device"; return 1; }
-  ash am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE \
-    -d "file://${BOUNDARY_FIXTURE_DEVICE_PATH}" >/dev/null 2>&1
 
   # Settings > Import backup > the file > Import > Import Complete > OK: the same path
   # .maestro/nudge-setup.yaml walks, driven here by element-located taps because a Maestro session
@@ -2533,6 +2554,29 @@ secs_until_epoch() { # device epoch seconds
   echo $(( $1 > now ? $1 - now : 0 ))
 }
 
+# Case independence: an earlier boundary case's rule is still in the DB (the import merges) and keeps
+# covering BOUNDARY_PKG until its own end. Seeding a second window on top of it makes the app
+# re-block at the FIRST rule's end (correctly), which the end-overlay case would count as a failure
+# (bench 2026-11-08). So wait, on the recorded end epoch (never a fixed sleep), until nothing seeded
+# earlier covers the app. A removal through the UI is not an option: this harness does not drive
+# the rule editor for state. A leftover from a previous series is wiped by `setup` (pm clear), which
+# clears the record too; a stale record only ever costs the (<= window length) wait, never a pass.
+boundary_wait_clear() {
+  local last="" left deadline
+  [[ -s "$BOUNDARY_LAST_END_FILE" ]] && last="$(tr -dc '0-9' <"$BOUNDARY_LAST_END_FILE")"
+  [[ -n "$last" ]] || return 0
+  left="$(secs_until_epoch "$last")"
+  (( left > 0 )) || return 0
+  info "an earlier boundary rule still covers ${BOUNDARY_PKG} for ${left}s: waiting for its window to end so this case starts from a clean slate"
+  deadline=$(( $(date +%s) + left + BOUNDARY_WAIT_SLACK_SECS ))
+  while (( $(date +%s) < deadline )); do
+    (( $(secs_until_epoch "$last") == 0 )) && { sleep 2; return 0; }
+    sleep 3
+  done
+  fail "the earlier boundary rule's window never ended on the device clock"
+  return 1
+}
+
 # Stop the capture and keep it: every case that asserts the app REACTED must leave the log behind
 # (a later start_logcat truncates the shared file), because "never armed", "armed but never fired"
 # and "fired but the block failed" are three different bugs.
@@ -2555,8 +2599,10 @@ case_schedule_start_open_app() {
   go_home
   wait_fg "$LAUNCHER_PKG" 10 || { fail "Home did not reach the launcher"; return 1; }
 
-  # Start BOUNDARY_LEAD_MIN minutes out; the window is 2 minutes long (its end is not under test).
-  seed_boundary_rule "$BOUNDARY_LEAD_MIN" 2 || return 1
+  # Start BOUNDARY_LEAD_MIN minutes out; the window is 1 minute long (its end is not under test, and
+  # schedule-end-overlay waits for it to end before seeding its own, so a short window is chunk time).
+  boundary_wait_clear || return 1
+  seed_boundary_rule "$BOUNDARY_LEAD_MIN" 1 || return 1
 
   # Settled start, then open the app. A fresh capture so nothing counted below is a leftover.
   go_home
@@ -2642,9 +2688,9 @@ case_schedule_start_open_app() {
 # no text node). Left behind it would block that app in every later case until the next `setup`.
 # It is a pure engine question (rules covering a package at a given minute) and belongs at L1.
 #
-# Ordering: this case runs right after schedule-start-open-app on the same package. That case's
-# window ends before this one's does (this one starts later and lasts longer), so by this case's end
-# only this case's rule still covers the app.
+# Independence: this case runs right after schedule-start-open-app on the same package, whose rule is
+# still in the DB. boundary_wait_clear() holds this case until that window is over, so only this
+# case's rule ever covers the app (see there for why not "just overlap it").
 case_schedule_end_overlay() {
   local rc=0 i fg
   boundary_preflight || return 1
@@ -2653,6 +2699,7 @@ case_schedule_end_overlay() {
 
   # Already open (offset 0), 3 minutes long: the import (~40s) and the open fit inside it with
   # ~2 minutes to spare before the end.
+  boundary_wait_clear || return 1
   seed_boundary_rule 0 3 || return 1
 
   go_home
