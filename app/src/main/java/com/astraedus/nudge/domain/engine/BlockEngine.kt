@@ -32,7 +32,7 @@ class BlockEngine internal constructor(
      *   list contains this feature will be considered. Whole-app rules are also considered unless
      *   [includeWholeAppRulesForFeature] is false.
      *
-     * Priority: NUKE > HARD_BLOCK > time budget exceeded > DELAY > HOLD > BREATHING > Allow
+     * Priority: NUKE > HARD_BLOCK > time budget exceeded > DELAY > HOLD > MIRROR > BREATHING > Allow
      *
      * @param nuked whether Nuke Mode covers [packageName] right now
      *   ([com.astraedus.nudge.domain.nuke.NukePolicy.isNuked], decided by the caller because it
@@ -235,12 +235,13 @@ class BlockEngine internal constructor(
          * wall-clock time (see `RuleWeakening.modeStrength`, which ranks them equal); the order
          * within the pair only decides which rule wins when a user has configured both for one app
          * at the same moment, and DELAY first keeps that answer identical to what it was before
-         * HOLD existed.
+         * HOLD existed. [BlockMode.MIRROR] is the same price again (a DELAY with the front camera
+         * as its picture), so it joins the tier after HOLD: adding it changes no existing answer.
          *
          * NOT `BlockMode.entries`: [BlockMode.NONE] gates nothing and [BlockMode.HARD_BLOCK] is
          * decided above, ahead of the daily budget.
          */
         private val TIMED_MODES_STRONGEST_FIRST =
-            listOf(BlockMode.DELAY, BlockMode.HOLD, BlockMode.BREATHING)
+            listOf(BlockMode.DELAY, BlockMode.HOLD, BlockMode.MIRROR, BlockMode.BREATHING)
     }
 }

@@ -37,7 +37,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.astraedus.nudge.ui.components.AppPicker
 import com.astraedus.nudge.ui.components.StrictModeChallengeHost
 import com.astraedus.nudge.ui.components.blockModeDescription
-import com.astraedus.nudge.ui.components.rule.BlockModeSegmentedRow
+import com.astraedus.nudge.ui.components.rule.BlockModePicker
 import com.astraedus.nudge.ui.components.rule.DayStartDialog
 import com.astraedus.nudge.ui.components.rule.EditorAddRow
 import com.astraedus.nudge.ui.components.rule.EditorSectionTitle
@@ -221,7 +221,7 @@ private fun HowAndWhen(
         Spacer(Modifier.height(0.dp))
         EditorSubsectionTitle("How")
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            BlockModeSegmentedRow(
+            BlockModePicker(
                 selected = form.mode,
                 onSelect = { mode -> onFormChange { it.copy(mode = mode) } },
                 compact = true

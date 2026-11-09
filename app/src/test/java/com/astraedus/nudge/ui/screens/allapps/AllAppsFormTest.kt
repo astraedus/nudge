@@ -101,10 +101,11 @@ class AllAppsFormTest {
     }
 
     @Test
-    fun `the wait time shows for every mode with a length, Breathing included`() {
+    fun `the wait time shows for every mode with a length, Breathing and Mirror included`() {
         val shown = BlockMode.entries.filter { AllAppsForm(mode = it).showsWaitTime }.toSet()
-        // Breathing runs for delaySeconds (BreathingContent), so it has a wait like Delay and Hold.
-        assertEquals(setOf(BlockMode.DELAY, BlockMode.HOLD, BlockMode.BREATHING), shown)
+        // Breathing runs for delaySeconds (BreathingContent), so it has a wait like Delay and Hold;
+        // Mirror is a Delay with the front camera as its picture, so it has the same wait.
+        assertEquals(setOf(BlockMode.DELAY, BlockMode.HOLD, BlockMode.BREATHING, BlockMode.MIRROR), shown)
     }
 
     @Test

@@ -27,12 +27,12 @@ import com.astraedus.nudge.ui.components.TonalIcon
  */
 
 /**
- * Whether the editor shows the wait time chips for [mode]: every mode that has a length. Delay and
- * Hold count down, and Breathing runs for the same seconds (`BreathingContent` reads
- * `delaySeconds`); Hard block has no wait. One answer for both editors, so they cannot drift.
+ * Whether the editor shows the wait time chips for [mode]: every mode that has a length. Delay,
+ * Hold and Mirror count down, and Breathing runs for the same seconds (`BreathingContent` reads
+ * `delaySeconds`); Hard block has no wait. One answer for both editors, so they cannot drift, and
+ * it is [BlockMode.usesDuration], so a mode added to the enum cannot be missed here.
  */
-fun showsWaitTime(mode: BlockMode): Boolean =
-    mode == BlockMode.DELAY || mode == BlockMode.HOLD || mode == BlockMode.BREATHING
+fun showsWaitTime(mode: BlockMode): Boolean = mode.usesDuration
 
 /** A section heading ("Apps", "How", "Except these"). */
 @Composable

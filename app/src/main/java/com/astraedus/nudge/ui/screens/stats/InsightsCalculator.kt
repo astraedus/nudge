@@ -373,6 +373,7 @@ class InsightsCalculator @Inject constructor() {
         "DELAY" -> "Delay"
         "HOLD" -> "Hold"
         "BREATHING" -> "Breathing"
+        "MIRROR" -> "Mirror"
         else -> "Other"
     }
 

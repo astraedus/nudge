@@ -578,6 +578,29 @@ class BlockOverlayActivity : ComponentActivity() {
                             redirect = redirectBubble
                         )
                     }
+
+                    // A DELAY with the front camera as its picture; the plain delay body when the
+                    // camera cannot be shown. Same countdown, same exits, same one grant path.
+                    BlockMode.MIRROR -> {
+                        MirrorContent(
+                            delaySeconds = delaySeconds,
+                            appLabel = appLabel,
+                            dailyTimeRemainingMs = dailyTimeRemainingMs,
+                            dailyLimitMinutes = dailyLimitMinutes,
+                            onComplete = { onTimerComplete() },
+                            onCancel = { navigateHome() },
+                            ruleName = visibleRuleName,
+                            untilText = untilText,
+                            titlePool = titlePool,
+                            subtitlePool = subtitlePool,
+                            canUseEmergencyPass = passState.canUse,
+                            emergencyLocked = passState.locked,
+                            nextPassMs = passState.nextPassMs,
+                            onUseEmergencyPass = onUsePass,
+                            onCameraFallback = { reason -> nudgeLogger.i("mirror fallback to delay: $reason") },
+                            redirect = redirectBubble
+                        )
+                    }
                 }
                 }
                 RedirectAppPickerHost(redirect)

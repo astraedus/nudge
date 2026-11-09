@@ -431,3 +431,79 @@ through to `Unit` beside `NONE`.
 what no JVM test can see is whether the target reads as something you press, whether fifteen seconds
 of holding feels like friction or like a bug, and whether TalkBack announces it usefully on a real
 phone.
+
+## MIRROR, your front camera for the wait (2026-11-09)
+
+MIRROR is a DELAY with a different picture. It takes the same `delaySeconds`, the same duration
+picker, the same exits ("I changed my mind", the redirect bubble, the daily pass) and the same one
+completion path (`onTimerComplete`). The only thing that changes is the body: the front camera's
+live preview, mirrored like a selfie, full bleed, with the app name and the countdown number at the
+top, "Still want it?" and the exits at the bottom, and a dark gradient behind both so they stay
+legible over any face or room.
+
+### Shape
+
+- `rememberBlockCountdown` (`ui/overlay/OverlayCountdown.kt`) is the countdown DELAY and MIRROR
+  share. It holds the #8 invariant (ticks only inside `repeatOnLifecycle(RESUMED)`, state remembered
+  outside it) and the exactly-once completion `AtomicBoolean`. `DelayContent` is now
+  `rememberBlockCountdown` + `DelayBody`; `MirrorContent` makes ONE countdown and hands it to
+  whichever body it shows.
+- `MirrorFallback.bodyFor(permissionGranted, hasFrontCamera, cameraFailed)` is the pure decision
+  (`ui/overlay/MirrorFallback.kt`, tested in `MirrorFallbackTest`): the camera body only when all
+  three allow it, otherwise `DelayBody`.
+- `mirrorCameraLifecycleState(parent, countdownRunning)` decides when the camera is OPEN. CameraX
+  binds the `Preview` use case to a `GatedLifecycleOwner` (the same class `PauseWhile` uses) held at
+  that state: RESUMED only while the block body is RESUMED and the countdown is running, CREATED
+  otherwise, never above the parent.
+
+### The fallback rule: the camera is a picture, never a gate
+
+Any of these shows `DelayBody` for the same wait, with the same countdown still running:
+
+- no CAMERA permission (checked when the block opens);
+- no front camera (`PackageManager.FEATURE_CAMERA_FRONT`, then `hasCamera(DEFAULT_FRONT_CAMERA)`);
+- `ProcessCameraProvider` fails to load, `bindToLifecycle` throws, or the camera reports ANY
+  `CameraState.error`, including the "recoverable" in-use ones (another app has the camera).
+
+The failure is sticky for the delivery, so a flapping camera never flickers between bodies, and the
+swap mid-wait does not restart or complete the countdown, because the countdown lives above both
+bodies. A camera problem can only cost the user the picture, never the wait, so it can never be a
+way into the app. A DARK frame is not a failure and is never checked: a phone face down on a desk,
+or a dark room, is a working camera showing the truth.
+
+### Camera lifecycle: when it closes
+
+The camera owner drops below STARTED (and CameraX closes the camera) when the countdown reaches
+zero, when the user walks away (the activity pauses), when the redirect picker opens (`PauseWhile`
+caps the body at STARTED), when the activity stops, and when the body leaves composition (a new
+block token, a camera failure swapping to `DelayBody`, the overlay finishing). On dispose it calls
+`unbind(preview)`, never `unbindAll()`, so it can never touch a use case it did not bind.
+
+### Privacy
+
+The only use case bound is `Preview`. There is no `ImageCapture`, no `ImageAnalysis`, no
+`VideoCapture`; frames go from the camera to the screen's `PreviewView` surface and nowhere else.
+Nothing is recorded, saved, analysed or kept in memory, and Nudge has no INTERNET permission, so
+there is nowhere for a frame to go. MIRROR reuses the CAMERA permission the QR scanner already
+declares (`docs/architecture/qr.md`); it adds no permission and no dependency.
+
+### Permission in the editor
+
+Picking Mirror in any block-mode picker asks for the camera if it is not granted
+(`rememberMirrorCameraAccess`, `ui/components/rule/MirrorCameraAccess.kt`, using the QR scanner's
+`CameraPermissionFlow` to tell "denied" from "denied for good"). A denial keeps Mirror selected and
+shows one line under the picker: "Camera is off, so Mirror shows a countdown instead.", with "Allow
+camera" (or "Open settings" once Android stops asking). The permission is re-read on resume, so the
+line goes away after the user grants it in Settings.
+
+The block-mode picker became a row of chips (`BlockModePicker`, was `BlockModeSegmentedRow`): five
+segments do not fit "Breathing" at 360 dp.
+
+### Strict Mode
+
+`RuleWeakening` ranks MIRROR EQUAL to DELAY and HOLD: at one duration it is the same wait, so
+switching between them is not a weakening, while MIRROR to BREATHING or NONE is, and so is
+shortening a MIRROR rule's wait.
+
+**Device QA pending:** that the camera opens and closes on the edges above (`adb shell dumpsys
+media.camera`, "Active Camera Clients"), and that a camera held by another app shows the countdown.

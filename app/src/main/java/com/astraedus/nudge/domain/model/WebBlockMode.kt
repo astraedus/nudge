@@ -34,12 +34,9 @@ object WebBlockMode {
      * and only fail toward HARD_BLOCK (enforcement) when neither is readable — the same direction
      * `EvaluateBlockUseCase` already takes for a corrupt mode string.
      */
-    private fun parse(mode: String?): BlockMode? = when (mode) {
-        "NONE" -> BlockMode.NONE
-        "HARD_BLOCK" -> BlockMode.HARD_BLOCK
-        "DELAY" -> BlockMode.DELAY
-        "HOLD" -> BlockMode.HOLD
-        "BREATHING" -> BlockMode.BREATHING
-        else -> null
-    }
+    //
+    // Derived from the enum rather than spelled out per mode: a hand-written list silently read
+    // a mode added later as "unparseable", so a website rule on that mode would fall back to the
+    // app-level mode instead of enforcing what the user picked.
+    private fun parse(mode: String?): BlockMode? = BlockMode.entries.firstOrNull { it.name == mode }
 }

@@ -30,8 +30,8 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 @Composable
 fun PauseWhile(paused: Boolean, content: @Composable () -> Unit) {
     val parent = LocalLifecycleOwner.current
-    val owner = remember(parent) { CappedLifecycleOwner(parent) }
-    SideEffect { owner.paused = paused }
+    val owner = remember(parent) { GatedLifecycleOwner(parent, ::cappedLifecycleState) }
+    SideEffect { owner.flag = paused }
     DisposableEffect(owner) {
         owner.attach()
         onDispose { owner.detach() }
@@ -46,14 +46,25 @@ fun PauseWhile(paused: Boolean, content: @Composable () -> Unit) {
 internal fun cappedLifecycleState(parent: Lifecycle.State, paused: Boolean): Lifecycle.State =
     if (paused && parent.isAtLeast(Lifecycle.State.RESUMED)) Lifecycle.State.STARTED else parent
 
-private class CappedLifecycleOwner(private val parent: LifecycleOwner) : LifecycleOwner {
+/**
+ * A [LifecycleOwner] whose state is a pure function of its [parent]'s state and one [flag]:
+ * [gate]`(parent, flag)`. It follows the parent until [detach], then is DESTROYED for good.
+ *
+ * Two users, each with its own tested gate: [PauseWhile] ([cappedLifecycleState], the flag is
+ * "the picker is open") and the MIRROR camera ([mirrorCameraLifecycleState], the flag is "the wait
+ * is still running"). A gate must never RAISE the parent's state; both only ever hold it back.
+ */
+internal class GatedLifecycleOwner(
+    private val parent: LifecycleOwner,
+    private val gate: (parent: Lifecycle.State, flag: Boolean) -> Lifecycle.State
+) : LifecycleOwner {
 
     private val registry = LifecycleRegistry(this)
     override val lifecycle: Lifecycle get() = registry
 
     private val observer = LifecycleEventObserver { _, _ -> sync() }
 
-    var paused: Boolean = false
+    var flag: Boolean = false
         set(value) {
             if (field == value) return
             field = value
@@ -77,7 +88,7 @@ private class CappedLifecycleOwner(private val parent: LifecycleOwner) : Lifecyc
     private fun sync() {
         val current = registry.currentState
         if (current == Lifecycle.State.DESTROYED) return
-        val target = cappedLifecycleState(parent.lifecycle.currentState, paused)
+        val target = gate(parent.lifecycle.currentState, flag)
         // LifecycleRegistry refuses INITIALIZED -> DESTROYED; there is nothing to tear down yet.
         if (target == Lifecycle.State.DESTROYED && current == Lifecycle.State.INITIALIZED) return
         registry.currentState = target

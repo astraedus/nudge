@@ -65,11 +65,14 @@ import com.astraedus.nudge.ui.components.UsageReminderSection
 import androidx.compose.ui.graphics.vector.ImageVector
 import com.astraedus.nudge.ui.components.TonalIcon
 import com.astraedus.nudge.ui.components.rule.AllAppsIcon
-import com.astraedus.nudge.ui.components.rule.BlockModeSegmentedRow
+import com.astraedus.nudge.ui.components.rule.BlockModePicker
 import com.astraedus.nudge.ui.components.rule.FirstUnlockFields
 import com.astraedus.nudge.ui.components.rule.DailyLimitChips
 import com.astraedus.nudge.ui.components.rule.DayStartDialog
 import com.astraedus.nudge.ui.components.rule.InfoButton
+import com.astraedus.nudge.ui.components.rule.MirrorCameraNote
+import com.astraedus.nudge.ui.components.rule.rememberMirrorCameraAccess
+import com.astraedus.nudge.ui.components.rule.shouldRequestCameraFor
 import com.astraedus.nudge.ui.components.rule.ScheduleSection
 import com.astraedus.nudge.ui.components.rule.WaitTimeChips
 import com.astraedus.nudge.ui.hasGrayscalePermission
@@ -382,7 +385,7 @@ fun UnifiedAppConfigScreen(
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Medium
                         )
-                        BlockModeSegmentedRow(
+                        BlockModePicker(
                             selected = state.webBlockMode,
                             onSelect = viewModel::setWebBlockMode
                         )
@@ -435,10 +438,10 @@ fun UnifiedAppConfigScreen(
                 )
             }
 
-            // Block mode segmented button — only meaningful when the app itself is blocked.
+            // Block mode picker: only meaningful when the app itself is blocked.
             if (state.blocksWholeApp) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    BlockModeSegmentedRow(
+                    BlockModePicker(
                         selected = state.defaultMode,
                         onSelect = viewModel::setDefaultMode,
                         compact = true
@@ -773,7 +776,7 @@ fun UnifiedAppConfigScreen(
                     }
                 } else {
                     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                        BlockModeSegmentedRow(
+                        BlockModePicker(
                             selected = state.scheduledMode,
                             onSelect = viewModel::setScheduledMode
                         )
@@ -918,12 +921,19 @@ private fun FeatureOverrideCard(
                 fontWeight = FontWeight.Medium
             )
 
-            // Mode selector
+            // Mode selector. Picking Mirror asks for the camera, as the app-level picker does.
+            val camera = rememberMirrorCameraAccess()
             FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 FeatureMode.entries.forEach { mode ->
                     FilterChip(
                         selected = override.mode == mode,
-                        onClick = { onUpdate(override.copy(mode = mode)) },
+                        onClick = {
+                            onUpdate(override.copy(mode = mode))
+                            val blockMode = mode.toBlockMode()
+                            if (blockMode != null && shouldRequestCameraFor(blockMode, camera.granted)) {
+                                camera.requestIfNeeded()
+                            }
+                        },
                         label = {
                             Text(
                                 featureModeLabel(mode),
@@ -933,6 +943,7 @@ private fun FeatureOverrideCard(
                     )
                 }
             }
+            if (override.mode == FeatureMode.MIRROR) MirrorCameraNote(camera)
 
             // Expanded settings for every mode that spends a duration.
             if (override.mode.usesDuration) {
@@ -989,6 +1000,7 @@ private fun featureModeLabel(mode: FeatureMode): String = when (mode) {
     FeatureMode.DELAY -> "Delay"
     FeatureMode.HOLD -> "Hold"
     FeatureMode.BREATHING -> "Breathing"
+    FeatureMode.MIRROR -> "Mirror"
 }
 
 /**

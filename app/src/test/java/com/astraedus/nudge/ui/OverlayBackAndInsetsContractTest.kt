@@ -52,6 +52,7 @@ class OverlayBackAndInsetsContractTest {
         "java/com/astraedus/nudge/ui/overlay/HardBlockContent.kt",
         "java/com/astraedus/nudge/ui/overlay/DelayContent.kt",
         "java/com/astraedus/nudge/ui/overlay/BreathingContent.kt",
+        "java/com/astraedus/nudge/ui/overlay/MirrorContent.kt",
         "java/com/astraedus/nudge/ui/overlay/PipEscapeContent.kt"
     )
 

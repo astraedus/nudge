@@ -375,6 +375,7 @@ class EvaluateBlockUseCase @Inject constructor(
             BlockMode.DELAY -> "Delay"
             BlockMode.HOLD -> "Hold"
             BlockMode.BREATHING -> "Breathing"
+            BlockMode.MIRROR -> "Mirror"
             BlockMode.NONE -> "Off" // unreachable: NONE rules are filtered out before this point
         }
         return "Web - $modeName"

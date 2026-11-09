@@ -24,7 +24,7 @@ Covers what a *rule* can express beyond a plain block: schedules, in-app feature
   per rule: `accessibility-event-pipeline.md`, "Per-rule opt-in: a launcher window as an ABSENCE".
 - **Rule editor UX** — info tooltips on all sections, block mode descriptions, per-app rules summary with enable/disable.
   `UnifiedAppConfigScreen` is the only per-app editor (the old `RuleEditorScreen` was deleted). Its reusable, stateless
-  pieces live in `ui/components/rule/`: `InfoButton`, `TimeSelector`, `BlockModeSegmentedRow` (+ `BLOCKING_MODES`),
+  pieces live in `ui/components/rule/`: `InfoButton`, `TimeSelector`, `BlockModePicker` (+ `BLOCKING_MODES`),
   `WaitTimeChips`, `ScheduleSection` (whose days-and-times half is `DaysAndTimesFields`), `DailyLimitChips`, and
   `WhenSection` (the three-way When, with the first-unlock fields and the day-start row). The group and All apps
   editors reuse them; `DeadRuleEditorContractTest` pins it.
