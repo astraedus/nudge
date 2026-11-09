@@ -1,0 +1,3 @@
+• New block mode: Mirror. Instead of a block screen, the wait shows your own face through the front camera, with the countdown over it.
+• Mirror works like Delay: same wait times, same "I changed my mind", redirect app and daily pass.
+• The camera preview is never recorded or saved. Without the camera, Mirror shows the normal countdown instead.

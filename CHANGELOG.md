@@ -4,6 +4,8 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+## [1.29.0] - 2026-11-09
+
 ### Added
 - **Mirror block mode.** Instead of a block screen, the wait shows your own face from the front camera, with the countdown and "Still want it?" over it. It works like Delay: same wait times, same "I changed my mind", redirect bubble and daily pass, and the same strength under Strict Mode. Picking Mirror asks for the camera. Without the camera (denied, missing, or in use by another app), Mirror shows the normal Delay countdown for the same wait instead. The preview is never recorded, saved or analysed. The block-mode picker is now a row of chips so five modes fit.
 

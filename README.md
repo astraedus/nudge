@@ -66,6 +66,7 @@ Nudge is open source, requests zero internet permissions, and keeps all your dat
 
 - **Delay-to-open** -- Before opening a blocked app, you wait through a breathing exercise or countdown timer. Not a hard lock -- a moment of friction that breaks the autopilot habit loop. This is the feature no other open-source blocker has.
 - **Hard blocking** -- Completely block apps you don't want to access at all.
+- **Mirror mode** -- Instead of a block screen, the wait shows you your own face through the front camera. Same wait times and exits as Delay. Preview only, never recorded or saved; without the camera it falls back to the normal countdown.
 - **Daily time budgets** -- Allow 30 minutes of Instagram per day, then block. You choose the limit.
 - **App groups** -- Create a "Social Media" group, configure once, apply to all.
 
@@ -167,7 +168,7 @@ No internet permission. No camera. No contacts. No location. No storage.
 
 ## Roadmap
 
-- [x] App blocking (hard block, delay, breathing)
+- [x] App blocking (hard block, delay, hold, breathing, mirror)
 - [x] Per-app daily time budgets & app groups
 - [x] In-app blocking (Reels, Shorts, TikTok For You)
 - [ ] Reliable Instagram Home feed / Explore detection on every device (tab state is unreadable on some newer devices and builds, [#18](https://github.com/astraedus/nudge/issues/18))
