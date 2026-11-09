@@ -92,6 +92,36 @@ class RuleExporterTest {
     }
 
     /**
+     * MIRROR (the front-camera delay) through a full backup: the app-level mode, its duration, and
+     * a website block mode set to MIRROR on its own, so both mode columns are proven to carry it.
+     * An older build reading this file refuses the unknown mode for that rule only (#20); this
+     * build must take all of it back.
+     */
+    @Test
+    fun `MIRROR rule round trip preserves mode, delaySeconds and a MIRROR website mode`() {
+        val rules = listOf(
+            aBlockRule(
+                id = 1,
+                packageName = "com.instagram.android",
+                mode = BlockMode.MIRROR.name,
+                delaySeconds = 30,
+                webDomains = "instagram.com",
+                webBlockMode = BlockMode.MIRROR.name,
+                enabled = true
+            )
+        )
+
+        val result = exporter.importRules(exporter.exportRules(rules, emptyList(), emptyMap()))
+
+        assertNull(result.error)
+        assertEquals(0, result.invalidCount)
+        val rule = result.rules.single()
+        assertEquals("MIRROR", rule.mode)
+        assertEquals(30, rule.delaySeconds)
+        assertEquals("MIRROR", rule.webBlockMode)
+    }
+
+    /**
      * An unrecognized mode is still refused -- tolerating one would write a rule the BlockEngine
      * cannot evaluate. Here it is the file's ONLY rule, so nothing is importable and the import
      * fails loudly; per-entry isolation (issue #20) is covered by [ImportSkipInvalidTest].

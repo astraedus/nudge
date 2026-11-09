@@ -222,6 +222,7 @@ object RuleSummary {
         "DELAY" -> "Delay ${delaySeconds}s"
         "HOLD" -> "Hold ${delaySeconds}s"
         "BREATHING" -> "Breathing ${delaySeconds}s"
+        "MIRROR" -> "Mirror ${delaySeconds}s"
         else -> mode
     }
 

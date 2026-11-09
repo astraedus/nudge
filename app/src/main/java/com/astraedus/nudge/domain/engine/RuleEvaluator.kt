@@ -110,6 +110,7 @@ class RuleEvaluator @Inject constructor() {
             BlockMode.DELAY -> "Delay"
             BlockMode.HOLD -> "Hold"
             BlockMode.BREATHING -> "Breathing"
+            BlockMode.MIRROR -> "Mirror"
         }
         parts += when (RuleTarget.of(rule)) {
             is RuleTarget.Group -> rule.groupName?.takeIf { it.isNotBlank() } ?: GROUP_FALLBACK_NAME

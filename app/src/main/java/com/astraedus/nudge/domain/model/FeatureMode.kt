@@ -15,7 +15,8 @@ enum class FeatureMode {
     BLOCK,
     DELAY,
     HOLD,
-    BREATHING;
+    BREATHING,
+    MIRROR;
 
     /**
      * The [BlockMode] a rule written for this override carries, or null for [INHERIT] — which
@@ -27,10 +28,11 @@ enum class FeatureMode {
         DELAY -> BlockMode.DELAY
         HOLD -> BlockMode.HOLD
         BREATHING -> BlockMode.BREATHING
+        MIRROR -> BlockMode.MIRROR
     }
 
     /** True when this override gates the feature behind a duration the user can edit. */
-    val usesDuration: Boolean get() = this == DELAY || this == HOLD || this == BREATHING
+    val usesDuration: Boolean get() = toBlockMode()?.usesDuration == true
 
     companion object {
         /**

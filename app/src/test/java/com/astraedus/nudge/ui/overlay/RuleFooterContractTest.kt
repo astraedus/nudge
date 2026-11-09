@@ -27,7 +27,7 @@ class RuleFooterContractTest {
         val contents = overlayDir().listFiles { f -> f.name.endsWith("Content.kt") }!!
             .filter { code(it.readText()).contains("ruleName") }
         assertEquals(
-            setOf("HardBlockContent.kt", "DelayContent.kt", "HoldContent.kt", "BreathingContent.kt"),
+            setOf("HardBlockContent.kt", "DelayContent.kt", "HoldContent.kt", "BreathingContent.kt", "MirrorContent.kt"),
             contents.map { it.name }.toSet()
         )
         contents.forEach { file ->
@@ -74,13 +74,13 @@ class RuleFooterContractTest {
     fun `the activity feeds the footer the All apps title and the until text`() {
         assertTrue(activity.contains("OverlayBlockInfo.visibleRuleName("))
         assertTrue(activity.contains("OverlayBlockInfo.untilLine("))
-        assertEquals(4, Regex("""ruleName = visibleRuleName""").findAll(activity).count())
-        assertEquals(4, Regex("""untilText = untilText""").findAll(activity).count())
+        assertEquals(5, Regex("""ruleName = visibleRuleName""").findAll(activity).count())
+        assertEquals(5, Regex("""untilText = untilText""").findAll(activity).count())
     }
 
     @Test
     fun `the daily pass is still rendered by every timed body and the hard block`() {
-        listOf("HardBlockContent.kt", "DelayContent.kt", "HoldContent.kt", "BreathingContent.kt").forEach {
+        listOf("HardBlockContent.kt", "DelayContent.kt", "HoldContent.kt", "BreathingContent.kt", "MirrorContent.kt").forEach {
             assertTrue("$it keeps the daily pass", code(File(overlayDir(), it).readText()).contains("EmergencyPassAction("))
         }
     }

@@ -1,5 +1,6 @@
 package com.astraedus.nudge.domain.lock
 
+import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.testing.aBlockRule
 import com.astraedus.nudge.testing.aGroupRule
 import org.junit.Assert.assertEquals
@@ -171,6 +172,56 @@ class RuleWeakeningTest {
         val old = example.copy(mode = "NONE", webDomains = "instagram.com", webBlockMode = "HOLD")
         val new = example.copy(mode = "NONE", webDomains = "instagram.com", webBlockMode = "DELAY")
         assertFalse(RuleWeakening.isWeakening(old, new))
+    }
+
+    // ── mode MIRROR (ranks EQUAL to DELAY: it IS a delay, with the front camera as its picture,
+    // and it falls back to the DELAY body when the camera is unavailable) ──
+
+    @Test
+    fun `MIRROR ranks equal to DELAY and HOLD, below HARD_BLOCK and above BREATHING`() {
+        assertEquals(RuleWeakening.modeStrength("DELAY"), RuleWeakening.modeStrength("MIRROR"))
+        assertEquals(RuleWeakening.modeStrength("HOLD"), RuleWeakening.modeStrength("MIRROR"))
+        assertTrue(RuleWeakening.modeStrength("HARD_BLOCK") > RuleWeakening.modeStrength("MIRROR"))
+        assertTrue(RuleWeakening.modeStrength("MIRROR") > RuleWeakening.modeStrength("BREATHING"))
+    }
+
+    @Test
+    fun `switching between DELAY, HOLD and MIRROR at one duration is never weakening`() {
+        val timed = listOf("DELAY", "HOLD", "MIRROR")
+        for (from in timed) for (to in timed) {
+            assertFalse(
+                "$from -> $to",
+                RuleWeakening.isWeakening(
+                    example.copy(mode = from, delaySeconds = 15),
+                    example.copy(mode = to, delaySeconds = 15)
+                )
+            )
+        }
+    }
+
+    @Test
+    fun `MIRROR to BREATHING or NONE is weakening, HARD_BLOCK to MIRROR too`() {
+        assertTrue(RuleWeakening.isWeakening(example.copy(mode = "MIRROR"), example.copy(mode = "BREATHING")))
+        assertTrue(RuleWeakening.isWeakening(example.copy(mode = "MIRROR"), example.copy(mode = "NONE")))
+        assertTrue(RuleWeakening.isWeakening(example.copy(mode = "HARD_BLOCK"), example.copy(mode = "MIRROR")))
+    }
+
+    @Test
+    fun `shortening delaySeconds on a MIRROR rule is weakening`() {
+        assertTrue(
+            RuleWeakening.isWeakening(
+                example.copy(mode = "MIRROR", delaySeconds = 30),
+                example.copy(mode = "MIRROR", delaySeconds = 15)
+            )
+        )
+    }
+
+    /** The class: every mode the enum has is ranked on purpose; an unranked one would read as 0. */
+    @Test
+    fun `every gating block mode ranks above NONE`() {
+        BlockMode.entries
+            .filter { it != BlockMode.NONE }
+            .forEach { assertTrue("$it must be ranked", RuleWeakening.modeStrength(it.name) > 0) }
     }
 
     // ── mode NONE (whole-app blocking switched off) ──

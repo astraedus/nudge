@@ -48,7 +48,23 @@ enum class BlockMode {
      * strictly more attention, so flipping between them is not a way around Strict Mode.
      */
     HOLD,
-    BREATHING;
+    BREATHING,
+
+    /**
+     * Like [DELAY], except the wait is spent looking at yourself: the block screen is the FRONT
+     * camera's live preview, with the countdown and the usual exits laid over it.
+     *
+     * Same price as [DELAY] by construction: it reads the same `delaySeconds`, runs the same
+     * countdown and offers the same exits ("I changed my mind", the redirect bubble, the daily
+     * pass). Only the picture differs, which is why [com.astraedus.nudge.domain.lock.RuleWeakening]
+     * ranks it EQUAL to DELAY.
+     *
+     * The camera is never a bypass: when it cannot be shown (no CAMERA permission, no front
+     * camera, the camera busy or failing) the overlay renders the plain DELAY body for the same
+     * wait. Preview only: nothing is captured, analysed, recorded or stored, and the app has no
+     * INTERNET permission. See `docs/architecture/block-overlay-lifecycle.md` "Mirror".
+     */
+    MIRROR;
 
     /**
      * Whether this mode spends the rule's `delaySeconds`, i.e. whether a duration picker is
@@ -58,5 +74,6 @@ enum class BlockMode {
      * the three call sites that used to spell it out: a mode added without being listed there would
      * have silently shipped with an uneditable duration, stuck on whatever was last saved.
      */
-    val usesDuration: Boolean get() = this == DELAY || this == HOLD || this == BREATHING
+    val usesDuration: Boolean
+        get() = this == DELAY || this == HOLD || this == BREATHING || this == MIRROR
 }

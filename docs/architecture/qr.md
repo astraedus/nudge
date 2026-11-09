@@ -99,6 +99,10 @@ decisions are the pure `CameraPermissionFlow` (JVM-tested):
 
 Coming back from Settings with the permission granted starts scanning with no further tap.
 
+The MIRROR block mode reuses this CAMERA permission and `CameraPermissionFlow.afterRequest` for its
+editor prompt (`ui/components/rule/MirrorCameraAccess.kt`); it binds only a `Preview` use case and
+adds no permission. See "MIRROR" in `block-overlay-lifecycle.md`.
+
 ## Manifest and build gates
 
 - `QrScanActivity` is registered, `exported="false"`, portrait (Android 16 ignores the lock on

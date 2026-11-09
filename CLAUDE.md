@@ -130,7 +130,7 @@ AccessibilityService: TYPE_WINDOW_STATE_CHANGED
   (or a state-verified TYPE_WINDOW_CONTENT_CHANGED — see "Content-change app-switch fallback"
    in docs/architecture/foreground-detection.md)
   -> BlockEngine.evaluate(packageName, time, usage)
-  -> BlockDecision: ALLOW | HARD_BLOCK | DELAY | HOLD | BREATHING
+  -> BlockDecision: ALLOW | HARD_BLOCK | DELAY | HOLD | BREATHING | MIRROR
   -> Launch BlockOverlayActivity if not ALLOW
 ```
 
@@ -157,6 +157,7 @@ AccessibilityService: TYPE_WINDOW_STATE_CHANGED
 - `DELAY` — configurable countdown (5/15/30/60s) before app opens
 - `HOLD` — the same duration, but the clock only runs while a finger is held on the screen; letting go puts it back to zero ([#35](https://github.com/astraedus/nudge/issues/35))
 - `BREATHING` — guided breathing exercise before app opens (the signature feature)
+- `MIRROR` — the DELAY countdown over your front-camera preview (`Preview` use case only, never stored); any camera problem falls back to the DELAY body for the same wait, never a bypass. See "MIRROR" in `docs/architecture/block-overlay-lifecycle.md`
 
 ## Database
 

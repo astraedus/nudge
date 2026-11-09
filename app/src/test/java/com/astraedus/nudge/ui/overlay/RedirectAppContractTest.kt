@@ -39,7 +39,10 @@ class RedirectAppContractTest {
     @Test
     fun `every block body the overlay renders is found, including Nuke's`() {
         assertEquals(
-            setOf("NukeBlockContent", "HardBlockContent", "DelayContent", "HoldContent", "BreathingContent"),
+            setOf(
+                "NukeBlockContent", "HardBlockContent", "DelayContent", "HoldContent", "BreathingContent",
+                "MirrorContent"
+            ),
             bodies.toSet()
         )
     }

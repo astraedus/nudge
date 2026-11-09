@@ -323,6 +323,9 @@ private fun modeColor(mode: String): Color = when (mode) {
     // cost the same wait, and the chart reads as three kinds of block plus "other", not four.
     "HOLD" -> MaterialTheme.colorScheme.secondary
     "BREATHING" -> MaterialTheme.colorScheme.tertiary
+    // MIRROR is a DELAY too (the front camera instead of a ring), so it stays in the primary
+    // family, one step lighter than DELAY so the two stay apart on the bar.
+    "MIRROR" -> MaterialTheme.colorScheme.primaryContainer
     else -> MaterialTheme.colorScheme.surfaceVariant
 }
 

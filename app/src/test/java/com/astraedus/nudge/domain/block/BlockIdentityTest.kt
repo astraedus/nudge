@@ -72,7 +72,8 @@ class BlockIdentityTest {
         "spent daily budget" to (listOf(wholeApp(BlockMode.NONE, dailyLimitMinutes = 1)) to 120_000L),
         "DELAY" to (listOf(wholeApp(BlockMode.DELAY)) to 0L),
         "HOLD" to (listOf(wholeApp(BlockMode.HOLD)) to 0L),
-        "BREATHING" to (listOf(wholeApp(BlockMode.BREATHING)) to 0L)
+        "BREATHING" to (listOf(wholeApp(BlockMode.BREATHING)) to 0L),
+        "MIRROR" to (listOf(wholeApp(BlockMode.MIRROR)) to 0L)
     )
 
     @Test
@@ -97,7 +98,7 @@ class BlockIdentityTest {
      */
     @Test
     fun `a feature rule keeps its feature and stays a different block from the whole app`() {
-        for (mode in listOf(BlockMode.HARD_BLOCK, BlockMode.DELAY, BlockMode.HOLD, BlockMode.BREATHING)) {
+        for (mode in BlockMode.entries.filter { it != BlockMode.NONE }) {
             val feature = featurePath(listOf(shortsRule(mode)))
             assertEquals("$mode: the deciding rule names the feature", "shorts", feature.feature)
 

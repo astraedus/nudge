@@ -17,21 +17,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.compose.LocalLifecycleOwner
-import androidx.lifecycle.repeatOnLifecycle
-import kotlinx.coroutines.delay
-import java.util.concurrent.atomic.AtomicBoolean
 
 @Composable
 fun DelayContent(
@@ -51,43 +43,57 @@ fun DelayContent(
     onUseEmergencyPass: () -> Unit = {},
     redirect: @Composable () -> Unit = {}
 ) {
+    val countdown = rememberBlockCountdown(delaySeconds, onComplete)
+    DelayBody(
+        countdown = countdown,
+        onCancel = onCancel,
+        ruleName = ruleName,
+        untilText = untilText,
+        appLabel = appLabel,
+        dailyTimeRemainingMs = dailyTimeRemainingMs,
+        dailyLimitMinutes = dailyLimitMinutes,
+        titlePool = titlePool,
+        subtitlePool = subtitlePool,
+        canUseEmergencyPass = canUseEmergencyPass,
+        emergencyLocked = emergencyLocked,
+        nextPassMs = nextPassMs,
+        onUseEmergencyPass = onUseEmergencyPass,
+        redirect = redirect
+    )
+}
+
+/**
+ * The DELAY picture for a [countdown] someone else owns: the ring, the number and the exits.
+ * [DelayContent] is this plus its own countdown; MIRROR renders it as its fallback over the SAME
+ * countdown, so a camera that fails mid-wait changes the picture and nothing else.
+ */
+@Composable
+internal fun DelayBody(
+    countdown: BlockCountdown,
+    onCancel: () -> Unit,
+    ruleName: String?,
+    untilText: String?,
+    appLabel: String?,
+    dailyTimeRemainingMs: Long?,
+    dailyLimitMinutes: Int?,
+    titlePool: List<String>,
+    subtitlePool: List<String>,
+    canUseEmergencyPass: Boolean,
+    emergencyLocked: Boolean,
+    nextPassMs: Long,
+    onUseEmergencyPass: () -> Unit,
+    redirect: @Composable () -> Unit
+) {
     val title = remember { titlePool.random() }
     val subtitle = remember { subtitlePool.random() }
-    // Unkeyed by design: BlockOverlayActivity composes this subtree under a per-delivery key, so a
-    // new block already gets fresh state (issue #15). Keying here on delaySeconds would look like a
-    // fix but miss the common case — two apps both on the default 15s delay would still share it.
-    var remainingSeconds by remember { mutableIntStateOf(delaySeconds) }
+    val remainingSeconds = countdown.remainingSeconds
+    val delaySeconds = countdown.totalSeconds
 
     val progress by animateFloatAsState(
         targetValue = if (delaySeconds > 0) remainingSeconds.toFloat() / delaySeconds.toFloat() else 0f,
         animationSpec = tween(durationMillis = 900),
         label = "countdown_progress"
     )
-
-    // The countdown ticks ONLY while the overlay is actually on screen (issue #8). A plain
-    // LaunchedEffect(Unit) is not frame-gated: `delay()` kept counting after the user tabbed out,
-    // so the timer reached zero invisibly and granted passthrough while they were on the launcher —
-    // returning to the app then opened it with no delay at all. `remainingSeconds` is remembered
-    // OUTSIDE this block, so a pause resumes where it left off instead of restarting.
-    //
-    // repeatOnLifecycle cancels the block below RESUMED and starts a NEW one from the top on
-    // re-entry, so once the count has reached zero a pause/resume cycle would fall straight through
-    // the loop and fire onComplete a second time. The guard makes completion exactly-once —
-    // onComplete grants passthrough, and this path must never be able to grant it twice.
-    val completed = remember { AtomicBoolean(false) }
-    val lifecycleOwner = LocalLifecycleOwner.current
-    LaunchedEffect(lifecycleOwner) {
-        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
-            while (remainingSeconds > 0) {
-                delay(1000L)
-                remainingSeconds--
-                // "X left today" is deliberately NOT ticked down here: while this overlay is up the
-                // blocked app is paused, so UsageStatsManager accrues nothing against the budget.
-                // Draining the display would show the user spending time they are not spending.
-            }
-            if (completed.compareAndSet(false, true)) onComplete()
-        }
-    }
 
     // Centred while it fits, scrollable only when it does not: see overlayContentScroll.
     val scroll = rememberScrollState()

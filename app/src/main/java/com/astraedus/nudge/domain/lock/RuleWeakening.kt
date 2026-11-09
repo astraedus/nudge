@@ -33,7 +33,12 @@ object RuleWeakening {
         // of it -- so neither is a softer version of the other, and switching between them at one
         // duration is not an edit Strict Mode should stand in the way of. Ranking HOLD lower would
         // make the stricter of the two the one that needs a challenge to select.
-        "DELAY", "HOLD" -> 2
+        //
+        // MIRROR ranks EQUAL to DELAY for the same reason, more simply: it IS a delay. Same
+        // `delaySeconds`, same countdown, same exits; only the picture behind the countdown is the
+        // front camera instead of a ring. And when the camera cannot be shown it renders the DELAY
+        // body itself, so no path through it is ever cheaper than DELAY at that duration.
+        "DELAY", "HOLD", "MIRROR" -> 2
         "BREATHING" -> 1
         "NONE" -> 0
         else -> 0
@@ -46,7 +51,7 @@ object RuleWeakening {
      *
      * Weakening dimensions:
      *  - enabled true -> false (the rule stops applying)
-     *  - mode softened (HARD_BLOCK > DELAY = HOLD > BREATHING)
+     *  - mode softened (HARD_BLOCK > DELAY = HOLD = MIRROR > BREATHING)
      *  - delaySeconds shortened (less time to reconsider)
      *  - dailyLimitMinutes lowered, or removed when one existed (more allowance)
      *  - autoKickAfter raised, or removed when one existed (more interactions before the kick)

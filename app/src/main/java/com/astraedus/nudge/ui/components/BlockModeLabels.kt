@@ -20,16 +20,18 @@ internal fun blockModeLabel(mode: BlockMode): String = when (mode) {
     BlockMode.DELAY -> "Delay"
     BlockMode.HOLD -> "Hold"
     BlockMode.BREATHING -> "Breathing"
+    BlockMode.MIRROR -> "Mirror"
 }
 
 /**
- * The label inside a four-segment picker row, where each segment is about a quarter of the screen.
+ * The label inside a compact picker, where each option gets a fraction of the screen width.
  * One word each: "Hard Block" in a quarter-width segment with `maxLines = 1` was clipped to "Hard"
  * and, overflowing, drawn off-centre (device QA, groups PR 2).
  */
 internal fun blockModeShortLabel(mode: BlockMode): String = when (mode) {
     BlockMode.HARD_BLOCK -> "Hard"
-    BlockMode.NONE, BlockMode.DELAY, BlockMode.HOLD, BlockMode.BREATHING -> blockModeLabel(mode)
+    BlockMode.NONE, BlockMode.DELAY, BlockMode.HOLD, BlockMode.BREATHING, BlockMode.MIRROR ->
+        blockModeLabel(mode)
 }
 
 /**
@@ -44,4 +46,6 @@ internal fun blockModeDescription(mode: BlockMode, manyApps: Boolean): String = 
     BlockMode.DELAY -> "Shows a countdown timer before letting you in. Gives you time to reconsider."
     BlockMode.HOLD -> "You hold a button for the whole wait. Let go and it starts over."
     BlockMode.BREATHING -> "Guides you through a breathing exercise before opening. Calms the impulse."
+    BlockMode.MIRROR ->
+        "Shows your front camera for the wait, before ${if (manyApps) "they open" else "the app opens"}."
 }

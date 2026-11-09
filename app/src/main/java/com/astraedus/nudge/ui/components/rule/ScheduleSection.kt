@@ -160,7 +160,7 @@ fun ScheduleSection(
             onEndTimeChange = onEndTimeChange
         )
 
-        BlockModeSegmentedRow(selected = mode, onSelect = onModeChange)
+        BlockModePicker(selected = mode, onSelect = onModeChange)
 
         if (mode != BlockMode.HARD_BLOCK) {
             WaitTimeChips(seconds = waitSeconds, onSelect = onWaitSecondsChange)
