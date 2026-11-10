@@ -67,6 +67,7 @@ Nudge is open source, requests zero internet permissions, and keeps all your dat
 - **Delay-to-open** -- Before opening a blocked app, you wait through a breathing exercise or countdown timer. Not a hard lock -- a moment of friction that breaks the autopilot habit loop. This is the feature no other open-source blocker has.
 - **Hard blocking** -- Completely block apps you don't want to access at all.
 - **Mirror mode** -- Instead of a block screen, the wait shows you your own face through the front camera. Same wait times and exits as Delay. Preview only, never recorded or saved; without the camera it falls back to the normal countdown.
+- **Camera on block screens** -- An optional switch in Settings puts your front camera behind every block screen, so you see yourself instead of a plain screen when you get kept out.
 - **Daily time budgets** -- Allow 30 minutes of Instagram per day, then block. You choose the limit.
 - **App groups** -- Create a "Social Media" group, configure once, apply to all.
 
@@ -149,7 +150,7 @@ Nudge requires three permissions. Here's exactly what each does and why:
 | **Display Over Other Apps** | Shows the block/delay overlay on top of blocked apps | Nothing. It's a display permission. |
 | **Usage Stats** | Tracks your daily screen time per app for time budgets | App usage durations. Stored locally in a Room database on your device. |
 
-No internet permission. No camera. No contacts. No location. No storage.
+No internet permission. No contacts. No location. No storage. The camera is used only if you turn on Mirror mode or the block-screen camera, and only as a live preview: nothing is recorded or saved.
 
 ## Tech stack
 

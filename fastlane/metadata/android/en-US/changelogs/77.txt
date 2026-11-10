@@ -1,0 +1,3 @@
+• New setting: Show the camera on block screens. When it is on, you see yourself through the front camera behind every block screen, including after you get kicked out of an app.
+• Only the picture changes: same waits, same buttons, same Strict Mode.
+• It is off by default. The camera is never recorded or saved. Without the camera, block screens stay plain.
