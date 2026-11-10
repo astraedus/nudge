@@ -1,12 +1,5 @@
 package com.astraedus.nudge.ui.overlay
 
-import android.Manifest
-import android.content.Context
-import android.content.pm.PackageManager
-import androidx.camera.core.CameraSelector
-import androidx.camera.core.Preview
-import androidx.camera.lifecycle.ProcessCameraProvider
-import androidx.camera.view.PreviewView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -25,9 +18,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -41,9 +32,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
-import androidx.core.content.ContextCompat
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.astraedus.nudge.ui.theme.NudgeTheme
 
 /**
@@ -86,9 +74,7 @@ fun MirrorContent(
     // Read once per block. Revoking a runtime permission kills the process, so it cannot change
     // under a live overlay.
     val permissionGranted = remember { hasCameraPermission(context) }
-    val hasFrontCamera = remember {
-        context.packageManager.hasSystemFeature(PackageManager.FEATURE_CAMERA_FRONT)
-    }
+    val hasFrontCamera = remember { hasFrontCameraFeature(context) }
     var cameraFailed by remember { mutableStateOf(false) }
 
     val body = MirrorFallback.bodyFor(permissionGranted, hasFrontCamera, cameraFailed)
@@ -143,10 +129,6 @@ fun MirrorContent(
     }
 }
 
-private fun hasCameraPermission(context: Context): Boolean =
-    ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
-        PackageManager.PERMISSION_GRANTED
-
 /**
  * The camera picture: the feed full-bleed, a scrim top and bottom, and the countdown and exits
  * laid over it. The chrome is drawn in the dark theme whatever the system theme is, because it
@@ -175,7 +157,7 @@ private fun MirrorCameraBody(
         color = Color.Black
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
-            MirrorCameraPreview(countdownRunning = !countdown.finished, onCameraFailed = onCameraFailed)
+            FrontCameraPreview(open = !countdown.finished, onCameraFailed = onCameraFailed)
 
             NudgeTheme(darkTheme = true) {
                 // Legibility scrims: the text sits on these, not on the raw feed.
@@ -269,85 +251,6 @@ private fun MirrorCameraBody(
             }
         }
     }
-}
-
-/**
- * The front camera, full-bleed, bound to its OWN lifecycle owner that follows the block body's
- * but is only RESUMED while [countdownRunning] ([mirrorCameraLifecycleState]). So the camera
- * closes the moment the wait ends, the user walks away, the redirect picker opens or the overlay
- * pauses, and this composable leaving (fallback, a new block, the overlay finishing) destroys the
- * owner and unbinds the preview.
- *
- * Every way the camera can fail reports through [onCameraFailed]: the provider not starting, no
- * front camera, binding throwing, or the camera reporting an error (in use by another app,
- * disabled by policy, a device error). A black feed is NOT a failure.
- */
-@Composable
-private fun MirrorCameraPreview(countdownRunning: Boolean, onCameraFailed: (reason: String) -> Unit) {
-    val context = LocalContext.current
-    val parent = LocalLifecycleOwner.current
-    val cameraOwner = remember(parent) { GatedLifecycleOwner(parent, ::mirrorCameraLifecycleState) }
-    SideEffect { cameraOwner.flag = countdownRunning }
-    DisposableEffect(cameraOwner) {
-        cameraOwner.attach()
-        onDispose { cameraOwner.detach() }
-    }
-
-    val currentOnFailed by rememberUpdatedState(onCameraFailed)
-    val previewView = remember {
-        PreviewView(context).apply {
-            scaleType = PreviewView.ScaleType.FILL_CENTER
-            // TextureView-backed: it blends with the scrims and the controls drawn over it like
-            // any other view, where a SurfaceView punches a hole under the window.
-            implementationMode = PreviewView.ImplementationMode.COMPATIBLE
-        }
-    }
-
-    DisposableEffect(cameraOwner, previewView) {
-        val preview = Preview.Builder().build()
-        var provider: ProcessCameraProvider? = null
-        var disposed = false
-        val providerFuture = ProcessCameraProvider.getInstance(context)
-        providerFuture.addListener({
-            if (disposed) return@addListener
-            val cameraProvider = try {
-                providerFuture.get()
-            } catch (e: Exception) {
-                currentOnFailed("camera provider failed: ${e.javaClass.simpleName}")
-                return@addListener
-            }
-            val selector = CameraSelector.DEFAULT_FRONT_CAMERA
-            if (!runCatching { cameraProvider.hasCamera(selector) }.getOrDefault(false)) {
-                currentOnFailed("no front camera")
-                return@addListener
-            }
-            preview.setSurfaceProvider(previewView.surfaceProvider)
-            val camera = try {
-                cameraProvider.bindToLifecycle(cameraOwner, selector, preview)
-            } catch (e: RuntimeException) {
-                // IllegalStateException / IllegalArgumentException: the camera cannot take the
-                // use case right now (busy, unsupported). Fall back rather than show black.
-                currentOnFailed("bind failed: ${e.javaClass.simpleName}")
-                return@addListener
-            }
-            provider = cameraProvider
-            camera.cameraInfo.cameraState.observe(cameraOwner) { state ->
-                val error = state.error
-                if (MirrorFallback.isFailure(error?.code)) currentOnFailed("camera error ${error?.code}")
-            }
-        }, ContextCompat.getMainExecutor(context))
-
-        onDispose {
-            disposed = true
-            // Only OUR use case: never unbindAll, which would reach into any other camera user.
-            provider?.unbind(preview)
-        }
-    }
-
-    AndroidView(
-        factory = { previewView },
-        modifier = Modifier.fillMaxSize().background(Color.Black)
-    )
 }
 
 private val SCRIM = Color.Black.copy(alpha = 0.6f)

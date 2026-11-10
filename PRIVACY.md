@@ -47,11 +47,11 @@ For foreground detection, Nudge receives the **package name** of the active app.
 
 ## Camera
 
-Nudge asks for the camera for two features, and only when you use them: scanning the QR/barcode key for Nuke Mode, and the **Mirror** block mode, which shows your front camera's live preview during the wait before a blocked app opens.
+Nudge asks for the camera for three features, and only when you use them: scanning the QR/barcode key for Nuke Mode, the **Mirror** block mode, which shows your front camera's live preview during the wait before a blocked app opens, and the **Show the camera on block screens** setting (off unless you turn it on), which shows that same preview behind every block screen.
 
-- The Mirror preview goes straight from the camera to your screen. It is **never recorded, saved, photographed or analysed**, and no frame is kept after the screen closes.
-- The camera is open only while the Mirror countdown is on screen. It closes when the countdown ends, when you leave, or when the screen goes to the background.
-- Saying no to the camera is fine: Mirror then shows the normal countdown instead.
+- The preview goes straight from the camera to your screen. It is **never recorded, saved, photographed or analysed**, and no frame is kept after the screen closes.
+- The camera is open only while a Mirror countdown or a block screen with the camera setting on is on screen. It closes when the countdown or the block ends, when you leave, or when the screen goes to the background.
+- Saying no to the camera is fine: Mirror then shows the normal countdown instead, and block screens stay plain.
 - With no internet permission, no image could leave your device in any case.
 
 ## What Nudge does NOT do

@@ -61,7 +61,7 @@ class LeaveButtonContractTest {
             "HoldContent" to "HoldTarget(",
             "BreathingContent" to "LinearProgressIndicator(",
             // The camera feed is the visual; the countdown number sits over it, above the exits.
-            "MirrorContent" to "MirrorCameraPreview("
+            "MirrorContent" to "FrontCameraPreview("
         ).forEach { (body, visual) ->
             val source = code(body)
             assertTrue(

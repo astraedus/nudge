@@ -44,7 +44,8 @@ fun HardBlockContent(
     val scroll = rememberScrollState()
     Surface(
         modifier = Modifier.fillMaxSize(),
-        color = MaterialTheme.colorScheme.background
+        // Clear only while CameraBackdrop draws the camera under it; the theme background otherwise.
+        color = overlaySurfaceColor()
     ) {
         Column(
             modifier = Modifier
