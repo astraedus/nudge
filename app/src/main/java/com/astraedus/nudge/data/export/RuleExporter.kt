@@ -420,6 +420,7 @@ class RuleExporter @Inject constructor() {
         settings.strictModeChallengeLength?.let { put("strictModeChallengeLength", it) }
         settings.emergencyPassEnabled?.let { put("emergencyPassEnabled", it) }
         settings.bounceCheckInEnabled?.let { put("bounceCheckInEnabled", it) }
+        settings.cameraOnBlockScreens?.let { put("cameraOnBlockScreens", it) }
         settings.phoneNudgeEnabled?.let { put("phoneNudgeEnabled", it) }
         settings.phoneNudgeThresholdMinutes?.let { put("phoneNudgeThresholdMinutes", it) }
         settings.phoneNudgePauseSeconds?.let { put("phoneNudgePauseSeconds", it) }
@@ -580,6 +581,7 @@ class RuleExporter @Inject constructor() {
             },
             emergencyPassEnabled = obj.setting("emergencyPassEnabled", onSkip) { booleanValue(it) },
             bounceCheckInEnabled = obj.setting("bounceCheckInEnabled", onSkip) { booleanValue(it) },
+            cameraOnBlockScreens = obj.setting("cameraOnBlockScreens", onSkip) { booleanValue(it) },
             phoneNudgeEnabled = obj.setting("phoneNudgeEnabled", onSkip) { booleanValue(it) },
             phoneNudgeThresholdMinutes =
                 obj.setting("phoneNudgeThresholdMinutes", onSkip) { key ->

@@ -53,6 +53,7 @@ class SettingsExportTest {
         strictModeChallengeLength = StrictModeChallenge.LENGTH_HARD,
         emergencyPassEnabled = false,
         bounceCheckInEnabled = true,
+        cameraOnBlockScreens = true,
         phoneNudgeEnabled = true,
         phoneNudgeThresholdMinutes = 30,
         phoneNudgePauseSeconds = 10,
@@ -106,6 +107,7 @@ class SettingsExportTest {
         assertEquals("DELAY", settings.getString("contentFilterMode"))
         assertEquals(48, settings.getInt("strictModeChallengeLength"))
         assertEquals(true, settings.getBoolean("bounceCheckInEnabled"))
+        assertEquals(true, settings.getBoolean("cameraOnBlockScreens"))
         assertEquals(30, settings.getInt("phoneNudgeThresholdMinutes"))
         assertEquals(10, settings.getInt("phoneNudgePauseSeconds"))
         assertEquals("Not today.", settings.getString("customHardBlockMessages"))
@@ -267,6 +269,22 @@ class SettingsExportTest {
         val result = exporter.importRules(fileWithSettings(""""contentFilterEnabled": false"""))
 
         assertEquals(ExportedSettings(contentFilterEnabled = false), result.settings)
+    }
+
+    /** An older file has no `cameraOnBlockScreens` key: it imports as null, so the device value survives. */
+    @Test
+    fun `an older file without cameraOnBlockScreens imports it as null`() {
+        val result = exporter.importRules(fileWithSettings(""""bounceCheckInEnabled": true"""))
+
+        assertNull(result.settings?.cameraOnBlockScreens)
+        assertEquals(0, result.invalidSettingsCount)
+    }
+
+    @Test
+    fun `cameraOnBlockScreens false round-trips as false, not absent`() {
+        val result = exporter.importRules(export(settings = ExportedSettings(cameraOnBlockScreens = false)))
+
+        assertEquals(false, result.settings?.cameraOnBlockScreens)
     }
 
     /** The empty string is a REAL value ("use the built-in messages"), not an absent one. */

@@ -62,6 +62,7 @@ class NudgePreferences internal constructor(
         val EMERGENCY_PASS_ENABLED = booleanPreferencesKey("emergency_pass_enabled")
         val EMERGENCY_PASS_USAGE = stringPreferencesKey("emergency_pass_usage")
         val BOUNCE_CHECK_IN_ENABLED = booleanPreferencesKey("bounce_check_in_enabled")
+        val CAMERA_ON_BLOCK_SCREENS = booleanPreferencesKey("camera_on_block_screens")
         val PHONE_NUDGE_ENABLED = booleanPreferencesKey("phone_nudge_enabled")
         val PHONE_NUDGE_THRESHOLD_MINUTES = intPreferencesKey("phone_nudge_threshold_minutes")
         val PHONE_NUDGE_PAUSE_SECONDS = intPreferencesKey("phone_nudge_pause_seconds")
@@ -316,6 +317,20 @@ class NudgePreferences internal constructor(
 
     suspend fun setBounceCheckInEnabled(enabled: Boolean) {
         dataStore.edit { prefs -> prefs[Keys.BOUNCE_CHECK_IN_ENABLED] = enabled }
+    }
+
+    /**
+     * "Show the camera on block screens": off by default. When on, every block screen draws the
+     * mirrored front-camera preview behind it. Only a picture, nothing is recorded, so it is not a
+     * protection setting: importing it is never weakening and needs no gate (same as
+     * [bounceCheckInEnabled]).
+     */
+    val cameraOnBlockScreens: Flow<Boolean> = dataStore.data
+        .map { prefs -> prefs[Keys.CAMERA_ON_BLOCK_SCREENS] ?: false }
+        .distinctUntilChanged()
+
+    suspend fun setCameraOnBlockScreens(enabled: Boolean) {
+        dataStore.edit { prefs -> prefs[Keys.CAMERA_ON_BLOCK_SCREENS] = enabled }
     }
 
     /**
@@ -625,6 +640,7 @@ class NudgePreferences internal constructor(
         strictModeChallengeLength = strictModeChallengeLength.first(),
         emergencyPassEnabled = emergencyPassEnabled.first(),
         bounceCheckInEnabled = bounceCheckInEnabled.first(),
+        cameraOnBlockScreens = cameraOnBlockScreens.first(),
         phoneNudgeEnabled = phoneNudgeEnabled.first(),
         phoneNudgeThresholdMinutes = phoneNudgeThresholdMinutes.first(),
         phoneNudgePauseSeconds = phoneNudgePauseSeconds.first(),
@@ -670,6 +686,7 @@ class NudgePreferences internal constructor(
             }
             settings.emergencyPassEnabled?.let { prefs[Keys.EMERGENCY_PASS_ENABLED] = it }
             settings.bounceCheckInEnabled?.let { prefs[Keys.BOUNCE_CHECK_IN_ENABLED] = it }
+            settings.cameraOnBlockScreens?.let { prefs[Keys.CAMERA_ON_BLOCK_SCREENS] = it }
             settings.phoneNudgeEnabled?.let { prefs[Keys.PHONE_NUDGE_ENABLED] = it }
             settings.phoneNudgeThresholdMinutes?.let {
                 prefs[Keys.PHONE_NUDGE_THRESHOLD_MINUTES] = it

@@ -91,10 +91,14 @@ fun rememberMirrorCameraAccess(): MirrorCameraAccess {
 
 /**
  * The one line under a picker showing Mirror while the camera is off: what the block will do
- * instead, and the button that fixes it. Renders nothing once the camera is granted.
+ * instead ([text]), and the button that fixes it. Renders nothing once the camera is granted.
  */
 @Composable
-fun MirrorCameraNote(access: MirrorCameraAccess, modifier: Modifier = Modifier.fillMaxWidth()) {
+fun MirrorCameraNote(
+    access: MirrorCameraAccess,
+    modifier: Modifier = Modifier.fillMaxWidth(),
+    text: String = MIRROR_CAMERA_OFF_NOTE
+) {
     if (access.granted) return
     val context = LocalContext.current
     Row(
@@ -103,7 +107,7 @@ fun MirrorCameraNote(access: MirrorCameraAccess, modifier: Modifier = Modifier.f
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
         Text(
-            MIRROR_CAMERA_OFF_NOTE,
+            text,
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.weight(1f)

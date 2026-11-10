@@ -26,6 +26,7 @@ class ImportedSettingsWeakeningTest {
         strictModeChallengeLength: Int? = 24,
         emergencyPassEnabled: Boolean? = true,
         bounceCheckInEnabled: Boolean? = true,
+        cameraOnBlockScreens: Boolean? = false,
         customDelayTitles: String? = "",
         customDelaySubtitles: String? = "",
         customHardBlockMessages: String? = ""
@@ -38,6 +39,7 @@ class ImportedSettingsWeakeningTest {
         strictModeChallengeLength = strictModeChallengeLength,
         emergencyPassEnabled = emergencyPassEnabled,
         bounceCheckInEnabled = bounceCheckInEnabled,
+        cameraOnBlockScreens = cameraOnBlockScreens,
         customDelayTitles = customDelayTitles,
         customDelaySubtitles = customDelaySubtitles,
         customHardBlockMessages = customHardBlockMessages
@@ -383,6 +385,29 @@ class ImportedSettingsWeakeningTest {
             ImportedSettingsWeakening.isWeakening(
                 device(bounceCheckInEnabled = true),
                 device(bounceCheckInEnabled = false)
+            )
+        )
+    }
+
+    // ── cameraOnBlockScreens ──
+
+    /** Only a picture behind the block screen: neither direction changes what is blocked. */
+    @Test
+    fun `turning the camera on block screens on is not weakening`() {
+        assertFalse(
+            ImportedSettingsWeakening.isWeakening(
+                device(cameraOnBlockScreens = false),
+                device(cameraOnBlockScreens = true)
+            )
+        )
+    }
+
+    @Test
+    fun `turning the camera on block screens off is not weakening`() {
+        assertFalse(
+            ImportedSettingsWeakening.isWeakening(
+                device(cameraOnBlockScreens = true),
+                device(cameraOnBlockScreens = false)
             )
         )
     }

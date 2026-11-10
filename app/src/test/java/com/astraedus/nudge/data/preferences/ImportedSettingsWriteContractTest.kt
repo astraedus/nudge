@@ -47,7 +47,7 @@ class ImportedSettingsWriteContractTest {
     }
 
     /**
-     * The sixteen settings a backup carries. Each must be written through a null-guard, so a file
+     * The seventeen settings a backup carries. Each must be written through a null-guard, so a file
      * that does not carry it leaves this device's value alone.
      */
     @Test
@@ -62,6 +62,7 @@ class ImportedSettingsWriteContractTest {
             "strictModeChallengeLength" to "STRICT_MODE_CHALLENGE_LENGTH",
             "emergencyPassEnabled" to "EMERGENCY_PASS_ENABLED",
             "bounceCheckInEnabled" to "BOUNCE_CHECK_IN_ENABLED",
+            "cameraOnBlockScreens" to "CAMERA_ON_BLOCK_SCREENS",
             "phoneNudgeEnabled" to "PHONE_NUDGE_ENABLED",
             "phoneNudgeThresholdMinutes" to "PHONE_NUDGE_THRESHOLD_MINUTES",
             "phoneNudgePauseSeconds" to "PHONE_NUDGE_PAUSE_SECONDS",
@@ -133,6 +134,7 @@ class ImportedSettingsWriteContractTest {
             "strictModeChallengeLength",
             "emergencyPassEnabled",
             "bounceCheckInEnabled",
+            "cameraOnBlockScreens",
             "phoneNudgeEnabled",
             "phoneNudgeThresholdMinutes",
             "phoneNudgePauseSeconds",

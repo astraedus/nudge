@@ -95,6 +95,8 @@ data class ExportedSettings(
      * anything, so importing it is never weakening and needs no gate.
      */
     val bounceCheckInEnabled: Boolean? = null,
+    /** Camera preview behind block screens. Only a picture; not a protection setting, never weakening. */
+    val cameraOnBlockScreens: Boolean? = null,
     /** Whole-phone pause (#123). Off by default; not a protection setting. */
     val phoneNudgeEnabled: Boolean? = null,
     /** Minutes of session time before the first pause. */
@@ -128,6 +130,7 @@ data class ExportedSettings(
             strictModeChallengeLength == null &&
             emergencyPassEnabled == null &&
             bounceCheckInEnabled == null &&
+            cameraOnBlockScreens == null &&
             phoneNudgeEnabled == null &&
             phoneNudgeThresholdMinutes == null &&
             phoneNudgePauseSeconds == null &&
