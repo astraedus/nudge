@@ -377,6 +377,9 @@ class BlockOverlayActivity : ComponentActivity() {
         val blockPackages = setOf(packageName, passthroughPackage(intent))
             .filterTo(mutableSetOf()) { it.isNotBlank() }
         var redirectTarget: InstalledAppsRepository.AppInfo? = null
+        // "Show the camera on block screens", read before the first frame like everything above:
+        // a screen that draws plain and then turns into the camera would be a visible flash.
+        var cameraOnBlockScreens = false
         runBlocking {
             titlePool = NudgeMessages.resolvePool(
                 nudgePreferences.customDelayTitles.first(), NudgeMessages.delayTitles
@@ -387,6 +390,8 @@ class BlockOverlayActivity : ComponentActivity() {
             hardBlockPool = NudgeMessages.resolvePool(
                 nudgePreferences.customHardBlockMessages.first(), NudgeMessages.hardBlockMessages
             )
+
+            cameraOnBlockScreens = nudgePreferences.cameraOnBlockScreens.first()
 
             passState = resolveEmergencyPassState(
                 packageName = packageName,
@@ -489,6 +494,14 @@ class BlockOverlayActivity : ComponentActivity() {
                 // While the picker is open the block body is not what the user is looking at, so
                 // its timers hold still (see PauseWhile). The picker itself sits outside the pause.
                 PauseWhile(paused = redirect.pickerOpen) {
+                // The camera, when the user opted in, as the BACKGROUND of whichever screen is
+                // below: only the picture changes, never what the screen does. Inside PauseWhile,
+                // so the picker (which caps the lifecycle at STARTED) closes the camera too.
+                CameraBackdrop(
+                    settingOn = cameraOnBlockScreens,
+                    screen = OverlayScreen.of(mode, nuke),
+                    onCameraFallback = { reason -> nudgeLogger.i("block screen camera fallback: $reason") }
+                ) {
                 when (mode) {
                     // Unreachable: the early return above already finished us. Present so the
                     // `when` stays exhaustive and a future mode cannot silently fall through.
@@ -601,6 +614,7 @@ class BlockOverlayActivity : ComponentActivity() {
                             redirect = redirectBubble
                         )
                     }
+                }
                 }
                 }
                 RedirectAppPickerHost(redirect)

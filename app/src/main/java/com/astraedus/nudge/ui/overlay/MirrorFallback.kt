@@ -42,18 +42,20 @@ internal object MirrorFallback {
 }
 
 /**
- * The state the MIRROR camera's lifecycle owner is held at, given the block body's [parent] state.
+ * The state a [FrontCameraPreview]'s lifecycle owner is held at, given the screen's [parent] state.
+ * Shared by the MIRROR body ([open] = the wait is still running) and the "camera on block screens"
+ * backdrop ([open] = true for as long as it is drawn).
  *
  * CameraX opens the camera when its owner reaches STARTED and closes it when the owner drops below,
  * so this decides exactly when the camera is on: only while the block is RESUMED (on screen, not
- * behind the redirect picker, which caps [parent] at STARTED) AND [countdownRunning]. The moment the
- * wait ends, the user walks away, the picker opens or the activity pauses, it falls to CREATED and
- * the camera closes, before the overlay has even finished. Never above [parent], and a DESTROYED
- * or INITIALIZED parent passes straight through.
+ * behind the redirect picker, which caps [parent] at STARTED) AND [open]. The moment the wait ends,
+ * the user walks away, the picker opens or the activity pauses, it falls to CREATED and the camera
+ * closes, before the overlay has even finished. Never above [parent], and a DESTROYED or
+ * INITIALIZED parent passes straight through.
  */
-internal fun mirrorCameraLifecycleState(parent: Lifecycle.State, countdownRunning: Boolean): Lifecycle.State =
+internal fun mirrorCameraLifecycleState(parent: Lifecycle.State, open: Boolean): Lifecycle.State =
     when {
-        countdownRunning && parent.isAtLeast(Lifecycle.State.RESUMED) -> Lifecycle.State.RESUMED
+        open && parent.isAtLeast(Lifecycle.State.RESUMED) -> Lifecycle.State.RESUMED
         parent.isAtLeast(Lifecycle.State.CREATED) -> Lifecycle.State.CREATED
         else -> parent
     }

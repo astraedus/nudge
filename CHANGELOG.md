@@ -4,6 +4,9 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+### Added
+- **Show the camera on block screens.** A new switch in Settings, off by default. When it is on, every block screen (hard block, daily limit reached, schedules, Nuke, Delay, Hold, Breathing, and the screen that keeps you out after being kicked out of an app) shows your front camera behind its usual message and buttons, so you see yourself instead of a plain screen. Nothing else about the block changes: same waits, same exits, same Strict Mode. Turning it on asks for the camera. Without the camera (denied, missing, or in use by another app) block screens stay plain. Nothing is recorded, saved or analysed. The setting is included in backups.
+
 ## [1.29.0] - 2026-11-09
 
 ### Added

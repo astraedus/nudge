@@ -451,10 +451,12 @@ legible over any face or room.
 - `MirrorFallback.bodyFor(permissionGranted, hasFrontCamera, cameraFailed)` is the pure decision
   (`ui/overlay/MirrorFallback.kt`, tested in `MirrorFallbackTest`): the camera body only when all
   three allow it, otherwise `DelayBody`.
-- `mirrorCameraLifecycleState(parent, countdownRunning)` decides when the camera is OPEN. CameraX
+- `mirrorCameraLifecycleState(parent, open)` decides when the camera is OPEN. CameraX
   binds the `Preview` use case to a `GatedLifecycleOwner` (the same class `PauseWhile` uses) held at
-  that state: RESUMED only while the block body is RESUMED and the countdown is running, CREATED
-  otherwise, never above the parent.
+  that state: RESUMED only while the block body is RESUMED and `open` holds (for MIRROR: the
+  countdown is running), CREATED otherwise, never above the parent. The camera itself is
+  `FrontCameraPreview` (`ui/overlay/FrontCameraPreview.kt`), the one composable that talks to CameraX
+  for a picture; MIRROR and the camera backdrop below both draw it.
 
 ### The fallback rule: the camera is a picture, never a gate
 
@@ -507,3 +509,69 @@ shortening a MIRROR rule's wait.
 
 **Device QA pending:** that the camera opens and closes on the edges above (`adb shell dumpsys
 media.camera`, "Active Camera Clients"), and that a camera held by another app shows the countdown.
+
+## Camera on block screens, an opt-in background (2026-11-10)
+
+One switch in Settings ("Show the camera on block screens", Personalize, default OFF,
+`NudgePreferences.cameraOnBlockScreens`, carried by export/import) draws the mirrored front camera
+as the full-bleed BACKGROUND of every block screen, with that screen's own message, info and exits on
+top. Only the picture changes. The screen's text, timers, exits, the passthrough path, the daily pass
+and Strict Mode are exactly the ones it has with the switch off.
+
+### Which screens get it
+
+`OverlayScreen.of(mode, nuke)` names the screen the activity's `when (mode)` renders, and
+`BlockBackdrop.wantsCamera` (`ui/overlay/BlockBackdrop.kt`, tested in `BlockBackdropTest`) says
+which of them try the camera:
+
+| Branch | Body | Camera | Why |
+|---|---|---|---|
+| HARD_BLOCK | `HardBlockContent` | yes | also the daily limit reached (`dailyTimeRemainingMs <= 0`) and a hard-block schedule window |
+| HARD_BLOCK + nuke | `NukeBlockContent` | yes | a block that keeps you out like any other |
+| DELAY | `DelayContent` | yes | also the kicked-out re-entry (the auto-kick cooldown is launched as DELAY, "Auto-kick cooldown"), the web cooldown and a delay schedule window |
+| HOLD | `HoldContent` | yes | every screen the overlay shows; the hold face keeps its own fill |
+| BREATHING | `BreathingContent` | yes | the circles are translucent containers and stay visible over the scrim |
+| MIRROR | `MirrorContent` | no | its body already IS the camera; a second backdrop would open it twice |
+| NONE | none | no | never rendered |
+
+Not block screens, so not covered: `PhoneNudgeActivity` (a pause, not a block), the Strict Mode
+guard, and `PipEscapeActivity`.
+
+### Shape
+
+`CameraBackdrop` (`ui/overlay/CameraBackdrop.kt`) wraps the whole `when (mode)` inside
+`key(blockToken)` and `PauseWhile`. With the setting off (or on MIRROR) it is a plain pass-through.
+With it on it draws an opaque black Surface, `FrontCameraPreview(open = true)`, and a uniform
+`CameraBackdropPalette.SCRIM` (black at 65%), then the body over it. Each body colours its own
+full-bleed Surface with `overlaySurfaceColor()`, which is the theme background as before, or clear
+only while the camera is drawn. The setting is read in `render`'s `runBlocking` with the other
+preferences, so the first frame is already the right one.
+
+The body is always composed through the same call, camera or not, so a camera failing mid-wait swaps
+the background and colours and nothing else: every `remember` in the body (countdown, hold,
+breathing clock) carries on.
+
+### Fallback and lifecycle
+
+`BlockBackdrop.backdropFor` reuses `MirrorFallback.bodyFor`: no permission, no front camera, or any
+camera failure (provider, bind, any `CameraState.error`) gives the PLAIN screen, sticky for the
+delivery. Never a bypass, because nothing about the screen's behaviour depends on the camera. The
+camera closes by the same rules as MIRROR: the activity pausing (Home, walk-away, a finish from
+`scheduleBlockEnd` at `endsAt`, any exit), the redirect picker (`PauseWhile` caps at STARTED), and
+the composable leaving (`unbind(preview)`, never `unbindAll`).
+
+### Legibility
+
+Over the camera the body is drawn in the dark theme with `cameraColorScheme`: every role drawn
+straight onto the background (onBackground, onSurface, onSurfaceVariant, outline, primary, error,
+tertiary) is a fixed colour that passes WCAG AA over the scrim on a pure white frame and a black one,
+and onPrimary passes on primary (`CameraBackdropContrastTest`). Containers keep the dark scheme's
+own fills. With the setting off nothing about the theme changes, which the Paparazzi gallery pins.
+
+### Permission and Strict Mode
+
+Turning the switch on asks for CAMERA through `rememberMirrorCameraAccess`; a denial keeps the switch
+on and shows "Camera is off, so block screens stay plain." with "Allow camera" / "Open settings".
+The switch is not a Strict Mode axis (like `bounceCheckInEnabled`): it changes no block's strength,
+so turning it either way, or importing it, is never a weakening (`ImportedSettingsWeakeningTest`).
+Shape pins: `CameraBackdropContractTest`.
