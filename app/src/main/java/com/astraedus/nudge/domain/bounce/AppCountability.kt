@@ -28,8 +28,9 @@ enum class Countability {
  *
  * A home screen is told apart two ways, so neither has to be right on its own: the service's
  * resolved launcher set ([homePackages], which is empty until it first resolves and can be minutes
- * stale), and the package's own `homeScreen` fact (it handles `CATEGORY_HOME`), which is read per
- * package like launchability.
+ * stale), and the package's own `homeScreen` fact (it handles `CATEGORY_HOME` and passes the
+ * launcher set's own exclusions, so Settings' `FallbackHome` is not a home screen), which is read
+ * per package like launchability.
  *
  * Every answer is a cache read and never blocks: this runs on the accessibility event thread, under
  * the check-in's lock. On a miss it answers [Countability.UNKNOWN] and asks [requestLookup] to read

@@ -37,6 +37,7 @@ class AndroidPackageFacts @Inject constructor(
 ) : PackageFacts {
     private val log = logger.tagged("PackageFacts")
     private val pm: PackageManager = context.packageManager
+    private val ownPackageName: String = context.packageName
     private val cache = PackageFactsCache(::resolve)
 
     init {
@@ -95,12 +96,33 @@ class AndroidPackageFacts @Inject constructor(
         PackageFact(
             category = categoryOf(pm.getApplicationInfo(packageName, 0).category),
             launchable = pm.getLaunchIntentForPackage(packageName) != null,
-            homeScreen = pm.queryIntentActivities(homeIntentFor(packageName), 0).isNotEmpty()
+            homeScreen = isHomeScreenPackage(packageName, ownPackageName) {
+                pm.queryIntentActivities(homeIntentFor(it), 0).isNotEmpty()
+            }
         )
     } catch (_: PackageManager.NameNotFoundException) {
         PackageFact.NOT_INSTALLED
     }
 }
+
+/**
+ * Whether [packageName] is a home screen (#181): the launcher set's OWN rule
+ * ([NudgeAccessibilityService.sanitizeLauncherPackages]) lets it be one at all, AND a HOME intent
+ * scoped to it resolves ([resolvesHome]).
+ *
+ * The raw query alone is wrong: AOSP Settings declares `Settings$FallbackHome` with CATEGORY_HOME,
+ * so it resolves on every stock phone, and Settings would never count as an app while reading as
+ * "went home". One shared rule, not a copied list, so the launcher set and this fact can never
+ * disagree about what a home screen is. The rule runs first, so an excluded package never costs the
+ * binder query.
+ */
+internal fun isHomeScreenPackage(
+    packageName: String,
+    ownPackageName: String,
+    resolvesHome: (String) -> Boolean
+): Boolean = packageName in
+    NudgeAccessibilityService.sanitizeLauncherPackages(listOf(packageName), ownPackageName) &&
+    resolvesHome(packageName)
 
 /** A HOME intent scoped to [packageName]: it resolves only if that package is a launcher. */
 internal fun homeIntentFor(packageName: String): Intent =

@@ -13,9 +13,11 @@ enum class AppCategory { GAME, AUDIO, VIDEO, IMAGE, SOCIAL, NEWS, MAPS, PRODUCTI
 /**
  * What the engine needs to know about one installed package.
  *
- * [homeScreen] is true when the package handles `CATEGORY_HOME` (any launcher, the default or
- * not). The bounce check-in reads it so a launcher never counts as an app even when the cached
- * launcher set is empty or stale (#181).
+ * [homeScreen] is true when the package is a launcher (the default or not): it handles
+ * `CATEGORY_HOME` AND passes the same rule as the service's launcher set, so Settings (whose
+ * `FallbackHome` also handles it), System UI, a keyboard or Nudge never is one. The bounce check-in
+ * reads it so a launcher never counts as an app even when the cached launcher set is empty or stale
+ * (#181).
  */
 data class PackageFact(
     val category: AppCategory,

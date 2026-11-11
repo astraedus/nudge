@@ -349,7 +349,7 @@ class NudgeAccessibilityService : AccessibilityService() {
          * settings excursion. The rest are defence in depth against an OEM declaring a home filter
          * on a system-surface package.
          */
-        private val NEVER_LAUNCHER_PACKAGES = setOf(
+        internal val NEVER_LAUNCHER_PACKAGES = setOf(
             "com.android.settings",
             "com.android.systemui",
             "com.android.packageinstaller",

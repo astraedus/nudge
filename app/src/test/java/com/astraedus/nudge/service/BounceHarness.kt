@@ -36,6 +36,12 @@ class BounceHarness(
 ) {
     val nudge: String = BuildConfig.APPLICATION_ID
 
+    init {
+        // The device answers the raw HOME query; what a home screen IS comes from production's rule,
+        // as AndroidPackageFacts applies it (so Settings' FallbackHome is not one).
+        facts.homeScreenRule = { pkg, resolvesHome -> isHomeScreenPackage(pkg, nudge) { resolvesHome } }
+    }
+
     var now = 9_000_000L
     var snapshot: WindowSnapshot? = null
     val posted = mutableListOf<BounceAlert>()

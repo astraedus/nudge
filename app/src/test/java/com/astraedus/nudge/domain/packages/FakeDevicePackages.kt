@@ -24,8 +24,10 @@ class FakeEssentialPackages(var packages: Set<String> = emptySet()) : EssentialP
 
 /**
  * Launchable = in [launchable]; everything else reads as not installed. A launchable app's category
- * is its entry in [categories], UNDEFINED when it has none. A package in [home] is a launcher
- * (`homeScreen`), installed whether or not it is also launchable.
+ * is its entry in [categories], UNDEFINED when it has none. A package in [home] answers a scoped
+ * `CATEGORY_HOME` query on this device (installed whether or not it is also launchable), and its
+ * `homeScreen` fact is [homeScreenRule] of that: by default the raw answer, and the production rule
+ * (`isHomeScreenPackage`) wherever a test installs it, as `BounceHarness` does.
  *
  * By default [cachedOrNull] is always null (the port's no-cache default). With [caches] on, it
  * behaves like the real implementation: a fact appears only once [factsFor] has read it, and
@@ -38,6 +40,9 @@ class FakePackageFacts(
     var caches: Boolean = false,
     var failing: Set<String> = emptySet()
 ) : PackageFacts {
+    /** `(package, its scoped HOME query resolves) -> homeScreen`. */
+    var homeScreenRule: (String, Boolean) -> Boolean = { _, resolvesHome -> resolvesHome }
+
     var reads = 0
         private set
 
@@ -68,7 +73,7 @@ class FakePackageFacts(
         packageName in launchable || packageName in home -> PackageFact(
             category = categories[packageName] ?: AppCategory.UNDEFINED,
             launchable = packageName in launchable,
-            homeScreen = packageName in home
+            homeScreen = homeScreenRule(packageName, packageName in home)
         )
         else -> PackageFact.NOT_INSTALLED
     }
