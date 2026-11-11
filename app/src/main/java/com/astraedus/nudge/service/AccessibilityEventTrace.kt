@@ -1,5 +1,7 @@
 package com.astraedus.nudge.service
 
+import com.astraedus.nudge.domain.bounce.BounceAlert
+import com.astraedus.nudge.domain.bounce.Countability
 import com.astraedus.nudge.domain.events.AccessibilityEventCodec
 import com.astraedus.nudge.domain.events.AccessibilityEventRecord
 import com.astraedus.nudge.util.NudgeLogger
@@ -61,6 +63,36 @@ class AccessibilityEventTrace(
         )
     }
 
+    /**
+     * The bounce check-in fired (#181): what it counted, so a capture shows WHICH packages made the
+     * number. An APPS alert lists its packages; a SITES alert lists none, and no domain is ever
+     * written (domains are never logged).
+     */
+    fun bounce(alert: BounceAlert) {
+        if (!isEnabled()) return
+        val unit = if (alert.unit == BounceAlert.Unit.SITES) "sites" else "apps"
+        val apps = alert.packages.joinToString(",", "[", "]") { jsonString(it) }
+        emit(
+            BOUNCE_PREFIX + "{\"unit\":\"$unit\",\"count\":${alert.count}," +
+                "\"minutes\":${alert.minutes},\"walls\":${alert.walls},\"apps\":$apps}"
+        )
+    }
+
+    /** The bounce detector left [packageName] out of the count, and why (#181). Once per streak. */
+    fun bounceSkip(packageName: String, why: Countability) {
+        if (!isEnabled()) return
+        val reason = when (why) {
+            Countability.NOT_AN_APP -> "not_launchable"
+            Countability.HOME -> "home"
+            Countability.UNKNOWN -> "unknown"
+            Countability.COUNTS -> "counts"
+        }
+        emit(BOUNCE_SKIP_PREFIX + "{\"pkg\":${jsonString(packageName)},\"why\":\"$reason\"}")
+    }
+
+    private fun jsonString(value: String): String =
+        "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+
     companion object {
         /** Dedicated tag so a capture is one `logcat -s` away, never a grep through service noise. */
         const val TAG = "NudgeA11yTrace"
@@ -70,6 +102,12 @@ class AccessibilityEventTrace(
 
         /** Marker for the periodic source-read cost summary. Not part of a capture's event stream. */
         const val COST_PREFIX = "COST "
+
+        /** Marker for a fired bounce check-in. Not part of a capture's event stream. */
+        const val BOUNCE_PREFIX = "BOUNCE "
+
+        /** Marker for a package the bounce count left out. Not part of a capture's event stream. */
+        const val BOUNCE_SKIP_PREFIX = "BOUNCE-SKIP "
 
         /**
          * How many reads between cost summaries. Low enough that a 30-second capture of ordinary

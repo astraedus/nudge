@@ -94,12 +94,17 @@ class AndroidPackageFacts @Inject constructor(
     private fun resolve(packageName: String): PackageFact = try {
         PackageFact(
             category = categoryOf(pm.getApplicationInfo(packageName, 0).category),
-            launchable = pm.getLaunchIntentForPackage(packageName) != null
+            launchable = pm.getLaunchIntentForPackage(packageName) != null,
+            homeScreen = pm.queryIntentActivities(homeIntentFor(packageName), 0).isNotEmpty()
         )
     } catch (_: PackageManager.NameNotFoundException) {
         PackageFact.NOT_INSTALLED
     }
 }
+
+/** A HOME intent scoped to [packageName]: it resolves only if that package is a launcher. */
+internal fun homeIntentFor(packageName: String): Intent =
+    Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).setPackage(packageName)
 
 /** Maps `ApplicationInfo.category` to [AppCategory]; anything unlisted (incl. API 31+ ACCESSIBILITY) is UNDEFINED. */
 internal fun categoryOf(androidCategory: Int): AppCategory = when (androidCategory) {

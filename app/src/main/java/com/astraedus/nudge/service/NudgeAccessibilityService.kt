@@ -28,6 +28,7 @@ import com.astraedus.nudge.domain.engine.FirstUnlockWindow
 import com.astraedus.nudge.domain.engine.WholeAppCoverage
 import com.astraedus.nudge.domain.block.BlockLaunchGate
 import com.astraedus.nudge.domain.autokick.UseReminder
+import com.astraedus.nudge.domain.bounce.AppCountability
 import com.astraedus.nudge.domain.bounce.BounceAlert
 import com.astraedus.nudge.domain.bounce.BounceDetector
 import com.astraedus.nudge.domain.block.CooldownGate
@@ -564,20 +565,44 @@ class NudgeAccessibilityService : AccessibilityService() {
      * two "Nudge stopped this app" points, [launchBlockOverlay] and the auto-kick. Its on/off switch
      * is cached inside it, collected in [onServiceConnected]; while off, neither feed does any work.
      * In memory only: a process death forgets a streak, which is the right direction for a nudge.
+     *
+     * Only an app counts (#181): [bounceCountability] answers from cached package facts, and a miss
+     * is read on [serviceScope] (IO), never here on the event thread, then re-checked.
      */
     private val bounceCheckIn = BounceCheckIn(
         detector = BounceDetector(
-            excludedPackages = BounceDetector.neverCountedPackages(BuildConfig.APPLICATION_ID)
+            excludedPackages = BounceDetector.neverCountedPackages(BuildConfig.APPLICATION_ID),
+            countability = { pkg -> bounceCountability(pkg) },
+            onNotCounted = { pkg, why -> eventTrace.bounceSkip(pkg, why) }
         ),
         notify = { alert ->
             val unit = if (alert.unit == BounceAlert.Unit.SITES) "sites" else "apps"
             log.i(
                 "bounce check-in posted $unit=${alert.count} minutes=${alert.minutes}"
             )
+            eventTrace.bounce(alert)
             BounceCheckInNotifier.notify(applicationContext, alert)
         },
         clock = { android.os.SystemClock.elapsedRealtime() }
     )
+
+    /**
+     * "Is this an app the user opened?" for the bounce count (#181): launchable and not a home
+     * screen, from the cached facts plus [launcherPackagesCached]. A cache miss answers "not known
+     * yet" and reads the facts here on IO; when they land, the streak is re-checked.
+     */
+    private val bounceCountability: AppCountability by lazy {
+        AppCountability(
+            facts = entryPoint.packageFacts(),
+            homePackages = { launcherPackagesCached },
+            requestLookup = { pkg ->
+                serviceScope.launch {
+                    entryPoint.packageFacts().factsFor(pkg)
+                    if (bounceCountability.lookupFinished(pkg)) bounceCheckIn.onFactsLanded()
+                }
+            }
+        )
+    }
 
     /**
      * The whole-phone pause (issue #123). A Handler, not an alarm or WorkManager: the pause only

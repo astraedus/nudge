@@ -1,19 +1,19 @@
 package com.astraedus.nudge.service
 
-import com.astraedus.nudge.BuildConfig
 import com.astraedus.nudge.domain.block.BlockLaunchGate
 import com.astraedus.nudge.domain.bounce.BounceAlert
 import com.astraedus.nudge.domain.bounce.BounceDetector
+import com.astraedus.nudge.domain.bounce.Countability
 import com.astraedus.nudge.domain.events.A11yCapture
-import com.astraedus.nudge.domain.events.A11yEventType
-import com.astraedus.nudge.domain.events.AccessibilityEventRecord
-import com.astraedus.nudge.domain.events.EventClassifier
 import com.astraedus.nudge.domain.events.ForegroundSignal
+import com.astraedus.nudge.domain.packages.FakePackageFacts
 import com.astraedus.nudge.domain.windows.ScreenWindow
 import com.astraedus.nudge.domain.windows.WindowBounds
 import com.astraedus.nudge.domain.windows.WindowKind
 import com.astraedus.nudge.domain.windows.WindowSnapshot
+import com.astraedus.nudge.service.BounceHarness.Companion.PIXEL_LAUNCHER
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -23,29 +23,30 @@ import org.junit.Test
  *
  * The check-in needs [BounceDetector.MIN_APPS] distinct packages, so two packages that are not apps
  * the user opened reached `BounceDetector.onAppOpened`. The only door in is a
- * [ForegroundSignal.AppWindow] from the one [EventClassifier], and the classifier cannot tell a
+ * [ForegroundSignal.AppWindow] from the one `EventClassifier`, and the classifier cannot tell a
  * system sheet from an app: a share sheet, an account picker, the photo picker or a credential
  * prompt is a translucent ACTIVITY in its own package, and its window is a focused APPLICATION
- * window like any app's. Its package is on no list, and no list could hold them all.
+ * window like any app's. Its package is on no list, and no list could hold them all. A launcher
+ * the service has not resolved (an empty or stale launcher set, a launcher outside
+ * `SYSTEM_PACKAGES`) comes through the same door.
  *
- * Everything that decides is real: the classifier built from the production constants, the
- * [BounceCheckIn] adapter and the [BounceDetector] with its production exclusions. Walls go through
- * the same entry points the service calls (`onBlockLaunched` for an overlay, `onKicked` for an
- * auto-kick). The clock is injected.
+ * The fix: only an app counts, and an app is a package with a launcher entry that is not a home
+ * screen (`AppCountability` over the package facts). None of the sheets has a launcher entry.
  *
- * Layer L2 (classified-event replay). The photo-picker case replays a committed device capture;
- * the other sheet packages are Pixel device data (research for #181, no capture of them yet).
+ * Everything that decides is real ([BounceHarness]); the device is a [FakePackageFacts] and the
+ * clock is injected. Layer L2 (classified-event replay). The photo-picker case replays a committed
+ * device capture; the other sheet packages are Pixel device data (research for #181, no capture of
+ * them yet). The bench captures are replayed in [BounceCaptureReplayTest].
  */
 class BounceNonAppWindowTest {
-
-    private val nudge = BuildConfig.APPLICATION_ID
-    private val launcher = "com.google.android.apps.nexuslauncher"
 
     // Real apps a user opens. These are just names, so any distinct launchable app would do.
     private val instagram = "com.instagram.android"
     private val youtube = "com.google.android.youtube"
     private val reddit = "com.reddit.frontpage"
     private val discord = "com.discord"
+    private val keep = "com.google.android.keep"
+    private val realApps = listOf(instagram, youtube, reddit, discord)
 
     /**
      * Surfaces that arrive as their own package, in an activity window, without being an app the
@@ -67,157 +68,134 @@ class BounceNonAppWindowTest {
         "com.google.android.markup" to "com.google.android.markup.AnnotateActivity",
     )
 
-    private var now = 9_000_000L
-    private var snapshot: WindowSnapshot? = null
-    private val posted = mutableListOf<BounceAlert>()
-
-    /** Every AppWindow the classifier handed the check-in while it was tracking, for the message. */
-    private val fedWhileArmed = mutableListOf<String>()
-
-    private val classifier = EventClassifier(
-        ownPackageName = nudge,
-        systemPackages = NudgeAccessibilityService.SYSTEM_PACKAGES,
-        imePackages = { NudgeAccessibilityService.IME_PACKAGES },
-        frameworkPackage = NudgeAccessibilityService.FRAMEWORK_PACKAGE,
-        awarenessOverlayClassNames = AwarenessOverlayWindow.CLASS_NAMES,
-        windows = { snapshot }
+    private fun device() = FakePackageFacts(
+        launchable = realApps.toSet() + keep,
+        home = setOf(PIXEL_LAUNCHER, THIRD_PARTY_LAUNCHER),
+        caches = true
     )
 
-    private val checkIn = BounceCheckIn(
-        detector = BounceDetector(excludedPackages = BounceDetector.neverCountedPackages(nudge)),
-        notify = { posted += it },
-        clock = { now }
-    ).also { it.setEnabled(true) }
+    private val h = BounceHarness(device())
 
-    // ---- The one path a window event takes in the service: record -> classify -> check-in. ----
+    private fun BounceHarness.sheet(pkg: String) = surface(pkg, sheets.getValue(pkg))
 
-    private fun classify(record: AccessibilityEventRecord): ForegroundSignal = classifier.classify(
-        record,
-        currentImePackage = null,
-        launcherPackages = setOf(launcher),
-        pipOnlyPackages = emptySet()
-    )
-
-    private fun feed(record: AccessibilityEventRecord) {
-        val signal = classify(record)
-        if (checkIn.isTracking && signal is ForegroundSignal.AppWindow) fedWhileArmed += signal.packageName
-        checkIn.onForegroundSignal(signal)
+    /** The reporter's shape: two Delay-walled apps, let through, with [picked] sheets in between. */
+    private fun BounceHarness.twoWalledAppsWith(picked: List<String>) {
+        open(instagram)
+        delayWall(instagram)
+        open(instagram) // let through
+        sheet(picked[0]) // e.g. "share to..." from inside Instagram
+        open(instagram)
+        home()
+        open(youtube)
+        delayWall(youtube) // wall 2
+        open(youtube)
+        picked.drop(1).forEach { sheet(it); open(youtube) }
     }
 
-    private var nextWindowId = 100
-
-    private fun stateChanged(pkg: String, className: String, windowId: Int = nextWindowId++) =
-        AccessibilityEventRecord(
-            type = A11yEventType.WINDOW_STATE_CHANGED,
-            packageName = pkg,
-            className = className,
-            windowId = windowId,
-            eventTimeMs = now
-        )
-
-    private fun open(pkg: String) {
-        now += STEP_MS
-        feed(stateChanged(pkg, "$pkg.MainActivity"))
+    /** Every combination of [size] sheets, so a fix that works for one name only is caught. */
+    private fun sheetSets(size: Int): List<List<String>> {
+        val all = sheets.keys.toList()
+        fun from(start: Int, left: Int): List<List<String>> =
+            if (left == 0) {
+                listOf(emptyList())
+            } else {
+                (start..all.size - left).flatMap { i -> from(i + 1, left - 1).map { listOf(all[i]) + it } }
+            }
+        return from(0, size)
     }
 
-    private fun sheet(pkg: String) {
-        now += STEP_MS
-        feed(stateChanged(pkg, sheets.getValue(pkg)))
-    }
-
-    private fun home() {
-        now += STEP_MS
-        feed(stateChanged(launcher, "$launcher.NexusLauncherActivity"))
-    }
-
-    /** A Delay overlay goes up over [pkg]: the gate launched it, and its own window arrives. */
-    private fun delayWall(pkg: String) {
-        now += 200L
-        checkIn.onBlockLaunched(BlockLaunchGate.Decision.LAUNCH, pkg)
-        feed(stateChanged(nudge, "com.astraedus.nudge.ui.overlay.BlockOverlayActivity"))
-    }
-
-    /** The delay finished and the user is let through: the walled app is back in front. */
-    private fun letThrough(pkg: String) {
-        now += STEP_MS
-        feed(stateChanged(pkg, "$pkg.MainActivity"))
-    }
-
-    private fun failureMessage() =
-        "fired ${posted.map { "${it.unit}=${it.count}" }}; AppWindow signals counted while armed: $fedWhileArmed"
-
-    // ---- #181 ----
+    // ---- #181: sheets ----
 
     @Test
-    fun `two delay-walled apps plus system sheets never fire the check-in`() {
-        // Enough sheets to make up MIN_APPS with the two real apps, from the class, not one name.
+    fun `two delay-walled apps plus system sheets never fire, for every set of sheets`() {
         val needed = BounceDetector.MIN_APPS - 2
-        assertTrue("fixture needs $needed sheets", sheets.size >= needed)
+        val sets = sheetSets(needed)
+        assertTrue("fixture needs $needed sheets", sets.isNotEmpty())
 
-        sheets.keys.windowed(needed).forEach { picked ->
-            reset()
-            open(instagram)
-            delayWall(instagram)
-            letThrough(instagram)
-            sheet(picked[0]) // e.g. "share to..." from inside Instagram
-            letThrough(instagram)
-            home()
-            open(youtube)
-            delayWall(youtube) // wall 2
-            letThrough(youtube)
-            picked.drop(1).forEach { sheet(it); letThrough(youtube) }
-
-            assertEquals("sheets $picked: ${failureMessage()}", emptyList<BounceAlert>(), posted)
+        // Every combination, and every failure reported, not just the first.
+        val failures = sets.mapNotNull { picked ->
+            h.reset()
+            h.twoWalledAppsWith(picked)
+            if (h.posted.isEmpty()) null else "sheets $picked: ${h.failureMessage()}"
         }
+        assertEquals(failures.joinToString("\n"), emptyList<String>(), failures)
+    }
+
+    @Test
+    fun `the pre-181 rule really would have fired on every set of sheets`() {
+        // The counterfactual inside the suite: count every AppWindow, as 1.29.0 did, and the same
+        // sequences fire. If this ever stops holding, the test above proves nothing.
+        val missed = sheetSets(BounceDetector.MIN_APPS - 2).mapNotNull { picked ->
+            val old = BounceHarness(device(), countEverything = true)
+            old.twoWalledAppsWith(picked)
+            if (old.posted.size == 1) null else "sheets $picked did not fire under the old rule"
+        }
+        assertEquals(missed.joinToString("\n"), emptyList<String>(), missed)
+    }
+
+    @Test
+    fun `every sheet is answered NOT_AN_APP once its facts land`() {
+        val wrong = sheets.keys.mapNotNull { pkg ->
+            assertEquals("$pkg before its lookup", Countability.UNKNOWN, h.countability(pkg))
+            h.drainLookups()
+            h.countability(pkg).takeIf { it != Countability.NOT_AN_APP }?.let { "$pkg -> $it" }
+        }
+        assertEquals(emptyList<String>(), wrong)
     }
 
     @Test
     fun `one walled app with auto-kick and a cooldown re-open plus sheets never fires`() {
         // The reporter's "a cooldown of 60 seconds": the kick takes them home, the re-open inside the
         // cooldown is a fresh overlay for the same app, and a Home in between makes it wall 2.
-        open(instagram)
-        delayWall(instagram) // wall 1
-        letThrough(instagram)
-        sheet("com.google.android.gms") // an account or sign-in sheet over Instagram
-        letThrough(instagram)
-        now += STEP_MS
-        checkIn.onKicked(instagram, browserPackage = null) // same app, not left: not a new wall
-        home() // AutoKickExecutor.goHome
-        open(youtube) // the second real app, not walled
-        sheet("com.android.intentresolver")
-        open(instagram)
-        delayWall(instagram) // the cooldown overlay: wall 2
+        h.open(instagram)
+        h.delayWall(instagram) // wall 1
+        h.open(instagram)
+        h.sheet("com.google.android.gms") // an account or sign-in sheet over Instagram
+        h.open(instagram)
+        h.now += BounceHarness.STEP_MS
+        h.checkIn.onKicked(instagram, browserPackage = null) // same app, not left: not a new wall
+        h.home() // AutoKickExecutor.goHome
+        h.open(youtube) // the second real app, not walled
+        h.sheet("com.android.intentresolver")
+        h.open(instagram)
+        h.delayWall(instagram) // the cooldown overlay: wall 2
 
-        assertEquals(failureMessage(), emptyList<BounceAlert>(), posted)
+        assertEquals(h.failureMessage(), emptyList<BounceAlert>(), h.posted)
     }
 
     @Test
     fun `the photo picker from a device capture is not counted as an app`() {
         // picker-subflow-keeps-sitting.jsonl: Google Keep under a DELAY rule, then the system photo
         // picker over it, then Keep again. Replayed with its own timestamps as the clock.
-        val keep = "com.google.android.keep"
         val records = A11yCapture.load("picker-subflow-keeps-sitting")
         val firstOverlay = records.first {
-            it.packageName == nudge && it.className?.endsWith(".BlockOverlayActivity") == true
+            it.packageName == h.nudge && it.className?.endsWith(".BlockOverlayActivity") == true
         }
         records.forEach { record ->
-            now = record.eventTimeMs
-            if (record === firstOverlay) checkIn.onBlockLaunched(BlockLaunchGate.Decision.LAUNCH, keep)
-            feed(record)
+            h.now = record.eventTimeMs
+            if (record === firstOverlay) {
+                h.checkIn.onBlockLaunched(BlockLaunchGate.Decision.LAUNCH, keep)
+                h.drainLookups()
+            }
+            h.feed(record)
         }
-        assertTrue("the capture must arm the check-in", checkIn.isTracking)
+        assertTrue("the capture must arm the check-in", h.checkIn.isTracking)
+        assertTrue(
+            "the picker must have reached the check-in as an app window: ${h.fedWhileArmed}",
+            "com.google.android.providers.media.module" in h.fedWhileArmed
+        )
 
         // Then the user goes on to two more real apps, one of them walled: three apps in all.
-        home()
-        open(instagram)
-        delayWall(instagram) // wall 2
-        letThrough(instagram)
-        open(reddit)
+        h.home()
+        h.open(instagram)
+        h.delayWall(instagram) // wall 2
+        h.open(instagram)
+        h.open(reddit)
 
         assertEquals(
-            "Keep, Instagram and Reddit are three apps. ${failureMessage()}",
+            "Keep, Instagram and Reddit are three apps. ${h.failureMessage()}",
             emptyList<BounceAlert>(),
-            posted
+            h.posted
         )
     }
 
@@ -227,7 +205,7 @@ class BounceNonAppWindowTest {
         // focused APPLICATION window and the app it was opened from is unfocused behind it. Every
         // piece of window evidence the classifier has says "this is the app in front".
         val share = "com.android.intentresolver"
-        snapshot = WindowSnapshot(
+        h.snapshot = WindowSnapshot(
             windows = listOf(
                 window(id = 1, pkg = instagram, focused = false),
                 window(id = 2, pkg = share, focused = true),
@@ -240,41 +218,199 @@ class BounceNonAppWindowTest {
             displayWidth = DISPLAY_W,
             displayHeight = DISPLAY_H
         )
-        val signal = classify(stateChanged(share, sheets.getValue(share), windowId = 2))
+        val signal = h.classify(h.stateChanged(share, sheets.getValue(share), windowId = 2))
         assertEquals(ForegroundSignal.AppWindow(share), signal)
     }
 
+    // ---- What counts as leaving ----
+
     @Test
-    fun `positive control - four real apps across two walls fire exactly once`() {
-        val realApps = listOf(instagram, youtube, reddit, discord)
-        assertEquals("fixture is MIN_APPS real apps", BounceDetector.MIN_APPS, realApps.size)
+    fun `a sheet over the walled app is not leaving it, so the overlay coming back is not a new wall`() {
+        // Four real apps, but only ONE wall: the second Instagram overlay follows a sheet, not a trip
+        // anywhere. Counting the sheet as leaving would make it wall 2 and fire.
+        h.open(instagram)
+        h.delayWall(instagram)
+        h.sheet("com.google.android.gms")
+        h.delayWall(instagram) // the overlay re-launched over the same app: not a new wall
+        h.open(reddit)
+        h.open(discord)
+        h.open(youtube)
 
-        open(instagram)
-        delayWall(instagram)
-        letThrough(instagram)
-        home()
-        open(reddit)
-        open(discord)
-        open(youtube)
-        delayWall(youtube)
-
-        assertEquals(failureMessage(), 1, posted.size)
-        assertEquals(BounceDetector.MIN_APPS, posted.single().count)
-        assertEquals(BounceAlert.Unit.APPS, posted.single().unit)
-
-        // And once only: the cooldown holds it.
-        letThrough(youtube)
-        home()
-        open(instagram)
-        delayWall(instagram)
-        assertEquals(1, posted.size)
+        assertEquals(h.failureMessage(), emptyList<BounceAlert>(), h.posted)
     }
 
-    private fun reset() {
-        checkIn.reset()
-        posted.clear()
-        fedWhileArmed.clear()
-        now += BounceDetector.WINDOW_MS * 10
+    @Test
+    fun `positive half - going home in between does make it a new wall`() {
+        h.open(instagram)
+        h.delayWall(instagram)
+        h.home()
+        h.delayWall(instagram) // wall 2: they left and came back
+        h.open(reddit)
+        h.open(discord)
+        h.open(youtube)
+
+        assertEquals(h.failureMessage(), 1, h.posted.size)
+        assertEquals(BounceDetector.MIN_APPS, h.posted.single().count)
+    }
+
+    @Test
+    fun `an app whose facts were not cached on the way in still counts as leaving`() {
+        // Every app is a cache miss the first time (a Delay-only user has no category rule that
+        // would have read them). Leaving is judged when the next wall arrives, by which time the
+        // facts have landed, so Instagram -> other apps -> back to Instagram is a second wall.
+        h.open(instagram)
+        h.delayWall(instagram)
+        h.open(reddit)
+        h.open(discord)
+        h.open(youtube)
+        h.open(instagram)
+        h.delayWall(instagram) // wall 2, same app, after leaving through three uncached apps
+
+        assertEquals(h.failureMessage(), 1, h.posted.size)
+        assertEquals(BounceDetector.MIN_APPS, h.posted.single().count)
+        assertEquals(setOf(instagram, reddit, discord, youtube), h.posted.single().packages.toSet())
+    }
+
+    // ---- Lookups ----
+
+    @Test
+    fun `positive control - four real apps across two walls fire exactly once, from a cold cache`() {
+        assertEquals("fixture is MIN_APPS real apps", BounceDetector.MIN_APPS, realApps.size)
+        assertTrue("the cache starts cold", realApps.all { h.facts.cachedOrNull(it) == null })
+
+        h.open(instagram)
+        h.delayWall(instagram)
+        h.open(instagram)
+        h.home()
+        h.open(reddit)
+        h.open(discord)
+        h.open(youtube)
+        h.delayWall(youtube)
+
+        assertEquals(h.failureMessage(), 1, h.posted.size)
+        assertEquals(BounceDetector.MIN_APPS, h.posted.single().count)
+        assertEquals(BounceAlert.Unit.APPS, h.posted.single().unit)
+        assertEquals(2, h.posted.single().walls)
+
+        // And once only: the cooldown holds it.
+        h.open(youtube)
+        h.home()
+        h.open(instagram)
+        h.delayWall(instagram)
+        assertEquals(1, h.posted.size)
+    }
+
+    @Test
+    fun `a lookup that lands after the last event still fires, through the re-check`() {
+        h.lookupsLand = false
+        h.open(instagram)
+        h.delayWall(instagram)
+        h.home()
+        h.delayWall(instagram) // wall 2: home in between, so known without any facts
+        h.open(reddit)
+        h.open(discord)
+        h.open(youtube)
+        assertEquals("nothing is known yet, so nothing counts", emptyList<BounceAlert>(), h.posted)
+
+        h.drainLookups() // the IO reads complete
+
+        assertEquals(h.failureMessage(), 1, h.posted.size)
+        assertEquals(BounceDetector.MIN_APPS, h.posted.single().count)
+    }
+
+    @Test
+    fun `lookups that never land never fire, and each package is asked for once`() {
+        h.lookupsLand = false
+        repeat(3) {
+            h.open(instagram)
+            h.delayWall(instagram)
+            h.home()
+            realApps.forEach { h.open(it) }
+            h.delayWall(youtube)
+        }
+        assertEquals(h.failureMessage(), emptyList<BounceAlert>(), h.posted)
+        assertEquals("one lookup per package, not one per event", realApps.size, h.lookupsRequested)
+    }
+
+    @Test
+    fun `a failed lookup is not retried and never counts`() {
+        val broken = "com.example.unreadable"
+        val facts = device().apply {
+            launchable = launchable + broken
+            failing = setOf(broken)
+        }
+        val b = BounceHarness(facts)
+        b.open(instagram)
+        b.delayWall(instagram)
+        b.home()
+        b.delayWall(instagram) // wall 2
+        b.open(reddit)
+        repeat(5) {
+            b.open(broken)
+            b.open(reddit)
+        }
+        b.open(discord) // Instagram, Reddit, Discord known; the unreadable one would be the 4th
+
+        assertEquals(b.failureMessage(), emptyList<BounceAlert>(), b.posted)
+        assertEquals(Countability.UNKNOWN, b.countability(broken))
+        assertEquals("asked once, never again: no retry loop", 1, facts.readsOf(broken))
+    }
+
+    // ---- #181: the launcher (the 2 apps + Nudge + launcher = 4 arithmetic) ----
+
+    @Test
+    fun `a launcher outside SYSTEM_PACKAGES arriving as an app window while armed does not count`() {
+        assertFalse(
+            "fixture: the launcher must not be a known system package",
+            THIRD_PARTY_LAUNCHER in NudgeAccessibilityService.SYSTEM_PACKAGES
+        )
+        // The service has not resolved its launcher set yet (empty): the classifier lets it through.
+        h.launcherSet = emptySet()
+        assertEquals(
+            ForegroundSignal.AppWindow(THIRD_PARTY_LAUNCHER),
+            h.classify(h.stateChanged(THIRD_PARTY_LAUNCHER, "$THIRD_PARTY_LAUNCHER.Launcher"))
+        )
+
+        h.open(instagram)
+        h.delayWall(instagram)
+        h.surface(THIRD_PARTY_LAUNCHER, "$THIRD_PARTY_LAUNCHER.Launcher")
+        h.open(youtube)
+        h.delayWall(youtube) // wall 2
+        h.surface(THIRD_PARTY_LAUNCHER, "$THIRD_PARTY_LAUNCHER.Launcher")
+        h.open(reddit) // three real apps and the launcher
+
+        assertEquals(h.failureMessage(), emptyList<BounceAlert>(), h.posted)
+        assertTrue(
+            "the trace says why: ${h.skipped}",
+            (THIRD_PARTY_LAUNCHER to Countability.HOME) in h.skipped
+        )
+    }
+
+    @Test
+    fun `a launcher is not counted even before its facts land`() {
+        h.launcherSet = emptySet()
+        h.lookupsLand = false
+        h.open(instagram)
+        h.delayWall(instagram)
+        h.surface(THIRD_PARTY_LAUNCHER, "$THIRD_PARTY_LAUNCHER.Launcher")
+        h.open(youtube)
+        h.delayWall(youtube)
+        h.open(reddit)
+
+        assertEquals(h.failureMessage(), emptyList<BounceAlert>(), h.posted)
+        assertEquals(Countability.UNKNOWN, h.countability(THIRD_PARTY_LAUNCHER))
+    }
+
+    @Test
+    fun `a stale launcher set still knows a newly chosen launcher is home`() {
+        // The service resolved the Pixel launcher minutes ago; the user has since switched to another.
+        h.launcherSet = setOf(PIXEL_LAUNCHER)
+        h.countability(THIRD_PARTY_LAUNCHER)
+        h.drainLookups()
+        assertEquals(Countability.HOME, h.countability(THIRD_PARTY_LAUNCHER))
+        // And the resolved set alone answers too, with no facts read at all.
+        assertEquals(Countability.HOME, h.countability(PIXEL_LAUNCHER))
+        assertEquals(0, h.facts.readsOf(PIXEL_LAUNCHER))
     }
 
     private fun window(id: Int, pkg: String, focused: Boolean) = ScreenWindow(
@@ -288,8 +424,8 @@ class BounceNonAppWindowTest {
     )
 
     private companion object {
-        /** Well inside [BounceDetector.WINDOW_MS] for every sequence in this file. */
-        const val STEP_MS = 5_000L
+        /** A launcher a user installs (Nova's package): not in SYSTEM_PACKAGES, a home screen. */
+        const val THIRD_PARTY_LAUNCHER = "com.teslacoilsw.launcher"
         const val DISPLAY_W = 1280
         const val DISPLAY_H = 2856
     }

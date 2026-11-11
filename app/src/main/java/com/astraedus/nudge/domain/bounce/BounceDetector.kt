@@ -19,6 +19,15 @@ import com.astraedus.nudge.domain.web.WebSessionKey
  * - The first wall **arms** a streak. While armed, every foreground switch to a real app is
  *   reported through [onAppOpened] and recorded as a distinct package. The walled app counts too:
  *   the user opened it, that is what the wall was in front of.
+ * - Only an **app** counts, and what is an app is [countability]'s answer, not the window's (#181).
+ *   A share sheet, an account picker, the photo picker or a passkey prompt is an activity in its
+ *   own package with a focused application window, so the classifier rightly calls it the app in
+ *   front; it is still not an app the user opened. In production the answer is "it has a launcher
+ *   entry and is not the home screen" ([AppCountability]). A package that is not an app neither
+ *   counts nor counts as LEAVING the walled app, exactly like an [excludedPackages] entry; a home
+ *   screen that arrives as an app window does not count either, but it is going home. One whose
+ *   answer is not known yet is recorded but not counted until it is ([reevaluate]), and whether
+ *   it was a way out of the walled app is decided at the next wall, on the answer known by then.
  * - The streak stays armed while walls keep coming: it lapses [Config.windowMs] after the MOST
  *   RECENT wall, so ongoing bouncing keeps being tracked rather than being cut off at a fixed
  *   deadline from the first one. When it lapses with no new wall, every piece of state is dropped.
@@ -62,10 +71,18 @@ import com.astraedus.nudge.domain.web.WebSessionKey
  *
  * @param excludedPackages packages that are never "an app the user opened", even if a caller feeds
  *   them. See [neverCountedPackages] for the defaults and why they exist despite the classifier.
+ * @param countability whether a package is an app the user opens (#181). Asked on every
+ *   [onAppOpened] and, for each recorded package, on every evaluation, so it must be a constant-time
+ *   cache read that never blocks (see [AppCountability]). The default counts everything, which is
+ *   only for tests about the streak itself; production always passes [AppCountability].
+ * @param onNotCounted told, once per package per streak, that a recorded or opened package was
+ *   left out and why ([Countability.NOT_AN_APP] or [Countability.HOME]). For the debug trace.
  */
 class BounceDetector(
     private val config: Config = Config(),
-    private val excludedPackages: Set<String> = emptySet()
+    private val excludedPackages: Set<String> = emptySet(),
+    private val countability: (String) -> Countability = { Countability.COUNTS },
+    private val onNotCounted: (String, Countability) -> Unit = { _, _ -> }
 ) {
 
     /** The thresholds, all in one place. */
@@ -96,10 +113,25 @@ class BounceDetector(
     private var lastWallAtMs: Long = 0L
     private var lastWallPackage: String? = null
     private var lastWallKey: String? = null
-    private var leftSinceLastWall: Boolean = false
+    /** The user went to the home screen since the last wall. */
+    private var wentHomeSinceLastWall: Boolean = false
+    /**
+     * Packages that came to the front since the last wall and might be apps. Whether the user LEFT
+     * the walled app is decided from these when the next wall arrives, with the answers known by
+     * then, so an app whose facts were not cached on the way in still counts as leaving (#181).
+     */
+    private val openedSinceLastWall = LinkedHashSet<String>()
     private var walls: Int = 0
+    /**
+     * Every package recorded in this streak, apps or not yet known to be. Only the ones
+     * [countability] answers [Countability.COUNTS] for are counted, at evaluation time, so a
+     * package whose answer lands later counts from then on ([reevaluate]).
+     */
     private val apps = LinkedHashSet<String>()
     private val sites = LinkedHashSet<String>()
+
+    /** Packages already reported through [onNotCounted] in this streak. */
+    private val reportedNotCounted = HashSet<String>()
 
     /** Firing is followed by a quiet period; null when not cooling down. */
     private var cooldownUntilMs: Long? = null
@@ -135,7 +167,8 @@ class BounceDetector(
         lastWallAtMs = nowMs
         lastWallPackage = packageName
         lastWallKey = key
-        leftSinceLastWall = false
+        wentHomeSinceLastWall = false
+        openedSinceLastWall.clear()
         record(packageName, site)
         return evaluate(nowMs)
     }
@@ -151,8 +184,36 @@ class BounceDetector(
         if (coolingDown(nowMs)) return null
         if (lapseIfExpired(nowMs)) return null
         if (packageName in excludedPackages) return null
-        if (packageName != lastWallPackage) leftSinceLastWall = true
+        when (countabilityOf(packageName)) {
+            // Not an app: a sheet over the walled app is not leaving it, and adds nothing (#181).
+            Countability.NOT_AN_APP -> return null
+            // A home screen that reached us as an app window: not an app, but it IS going home.
+            Countability.HOME -> {
+                wentHomeSinceLastWall = true
+                return null
+            }
+            // An app, or not known yet: recorded, and remembered as a possible leave. Both are
+            // judged on the answer known when it matters (evaluation, the next wall).
+            Countability.UNKNOWN, Countability.COUNTS -> Unit
+        }
+        if (packageName != lastWallPackage && openedSinceLastWall.size < config.maxTrackedApps) {
+            openedSinceLastWall.add(packageName)
+        }
         record(packageName, site = null)
+        return evaluate(nowMs)
+    }
+
+    /**
+     * Re-check the streak now, because an answer [countability] did not have before has arrived: a
+     * package already recorded may count from now on. Changes nothing but the decision, so it obeys
+     * the same cooldown and window as every other entry point.
+     *
+     * @return the alert to show, or null.
+     */
+    fun reevaluate(nowMs: Long): BounceAlert? {
+        if (streakStartedAtMs == null) return null
+        if (coolingDown(nowMs)) return null
+        if (lapseIfExpired(nowMs)) return null
         return evaluate(nowMs)
     }
 
@@ -163,7 +224,7 @@ class BounceDetector(
     fun onWentHome(nowMs: Long) {
         if (streakStartedAtMs == null) return
         if (lapseIfExpired(nowMs)) return
-        leftSinceLastWall = true
+        wentHomeSinceLastWall = true
     }
 
     /** Forget everything, including a cooldown. Used when the feature or Nudge is switched off. */
@@ -174,9 +235,15 @@ class BounceDetector(
 
     /**
      * Is this wall a new confrontation? The same identity (site, or app) only counts once the user
-     * has been somewhere else in between (see the class docs).
+     * has been somewhere else in between (see the class docs): home, or an app. A package not known
+     * to be an app (or a home screen) by now is not leaving; under-reading a leave can only miss a
+     * wall, never invent one.
      */
-    private fun isNewWall(key: String): Boolean = key != lastWallKey || leftSinceLastWall
+    private fun isNewWall(key: String): Boolean = key != lastWallKey || wentHomeSinceLastWall ||
+        openedSinceLastWall.any {
+            val answer = countabilityOf(it)
+            answer == Countability.COUNTS || answer == Countability.HOME
+        }
 
     private fun record(packageName: String, site: String?) {
         if (packageName !in excludedPackages && apps.size < config.maxTrackedApps) {
@@ -189,17 +256,39 @@ class BounceDetector(
     private fun evaluate(nowMs: Long): BounceAlert? {
         val started = streakStartedAtMs ?: return null
         val minutes = BounceAlert.minutesFor(nowMs - started)
+        val counted = apps.filter { countabilityOf(it) == Countability.COUNTS }
         // The app rule first, so a streak that reaches both reads the way it always has.
         val alert = when {
-            walls >= config.minWalls && apps.size >= config.minApps ->
-                BounceAlert(count = apps.size, minutes = minutes, unit = BounceAlert.Unit.APPS)
-            sites.size >= config.minSites ->
-                BounceAlert(count = sites.size, minutes = minutes, unit = BounceAlert.Unit.SITES)
+            walls >= config.minWalls && counted.size >= config.minApps -> BounceAlert(
+                count = counted.size,
+                minutes = minutes,
+                unit = BounceAlert.Unit.APPS,
+                walls = walls,
+                packages = counted
+            )
+            // A site alert names no package and no domain: domains are never logged.
+            sites.size >= config.minSites -> BounceAlert(
+                count = sites.size,
+                minutes = minutes,
+                unit = BounceAlert.Unit.SITES,
+                walls = walls
+            )
             else -> return null
         }
         clearStreak()
         cooldownUntilMs = nowMs + config.cooldownMs
         return alert
+    }
+
+    /** [countability], reporting each left-out package once per streak. */
+    private fun countabilityOf(packageName: String): Countability {
+        val answer = countability(packageName)
+        if ((answer == Countability.NOT_AN_APP || answer == Countability.HOME) &&
+            reportedNotCounted.add(packageName)
+        ) {
+            onNotCounted(packageName, answer)
+        }
+        return answer
     }
 
     /** True while the post-fire quiet period runs; clears it once it has passed. */
@@ -227,10 +316,12 @@ class BounceDetector(
         lastWallAtMs = 0L
         lastWallPackage = null
         lastWallKey = null
-        leftSinceLastWall = false
+        wentHomeSinceLastWall = false
+        openedSinceLastWall.clear()
         walls = 0
         apps.clear()
         sites.clear()
+        reportedNotCounted.clear()
     }
 
     companion object {
@@ -240,7 +331,10 @@ class BounceDetector(
         /** The first wall plus at least one more: "they came back and hit a wall again". */
         const val MIN_WALLS: Int = 2
 
-        /** Distinct real apps opened inside the streak, the walled ones included. */
+        /**
+         * Distinct real apps opened inside the streak, the walled ones included. "Real app" is
+         * [countability]'s answer: a system sheet is never one (#181).
+         */
         const val MIN_APPS: Int = 4
 
         /**
@@ -291,11 +385,16 @@ class BounceDetector(
  * Both numbers are real: [count] is the distinct apps (or distinct blocked sites) opened in the
  * streak (the walled ones included) and [minutes] is the time from the first wall to the moment it
  * fired, rounded UP so a 40-second bounce reads "1 minute" rather than "0 minutes".
+ *
+ * [walls] and [packages] are for the debug trace only, never the notification. [packages] is the
+ * apps that were counted, for an APPS alert; a SITES alert carries none, and no domain ever.
  */
 data class BounceAlert(
     val count: Int,
     val minutes: Int,
-    val unit: Unit = Unit.APPS
+    val unit: Unit = Unit.APPS,
+    val walls: Int = 0,
+    val packages: List<String> = emptyList()
 ) {
 
     enum class Unit { APPS, SITES }
