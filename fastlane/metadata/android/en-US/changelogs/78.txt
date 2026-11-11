@@ -1,0 +1,2 @@
+• Fixed: the "Bro. wtf." check-in could count system screens, like the share sheet, a photo picker or a sign-in prompt, as apps you opened, so two apps could read as four. Now only real apps count.
+• With debug logging on, the check-in also writes which apps it counted to the log, so a wrong count is easy to report.
