@@ -89,7 +89,14 @@ belongs here. What the check-in asks is a different question: is this an app the
 - **Home is known twice.** `launcherPackagesCached` is empty until it first resolves and can be
   minutes stale after the user picks a new launcher, so a home screen is also recognised by its own
   per-package `CATEGORY_HOME` fact. Neither has to be right on its own; an unresolved package is
-  UNKNOWN, never countable.
+  UNKNOWN, never countable. The fact goes through the launcher set's own rule
+  (`sanitizeLauncherPackages`, via `isHomeScreenPackage` in `AndroidPackageFacts.kt`) before the
+  query: AOSP Settings declares `Settings$FallbackHome` with `CATEGORY_HOME`, so a raw query reads
+  Settings as a home screen on every stock phone. (Settings is also in `SYSTEM_PACKAGES`, so today
+  it reaches the check-in as a `SystemSurface`, but the fact must not depend on that.) Cost: one
+  extra package-scoped `queryIntentActivities` on the first read of each package (cached until that
+  package changes), skipped for every excluded package; estimated well under a millisecond each,
+  not measured.
 - **The arithmetic candidate.** The Android 12 bench did not reproduce #181 in any variant
   (captures below), and the only packages that came to the front in all three were the two apps, the
   Nudge overlay and the Pixel launcher: 2 + 1 + 1 = 4, the reporter's number. Nudge was already
