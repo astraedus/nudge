@@ -61,11 +61,12 @@
 # `all` takes ~30 minutes (setup 107s · delay-block 14s · home-reopen 140s · walkaway-count 55s ·
 # daily-limit-refresh 177s · daily-limit-midsession 258s · notif-idle 338s, measured; the three
 # clock cases group-limit-midsession, schedule-start-open-app and schedule-end-overlay are each an
-# unmeasured ~3.5-4.5 min of real-clock waiting; plus ~45s of lock /
+# unmeasured ~3.5-4.5 min of real-clock waiting, and bounce-non-apps (#181) an unmeasured ~3-3.5 min
+# of two backup imports and a dozen app switches; plus ~45s of lock /
 # connect / install / grants per invocation), which no 10-minute foreground call can finish — and a
 # run cut off mid-way restores the bench but proves nothing. A group is a slice of `all` sized to
-# fit one such call (the longest, group2, is ~8 minutes). Membership: GROUP*_CASES below, and
-# `--help` prints it.
+# fit one such call (the longest, group3 with bounce-non-apps, is an estimated ~8.75 minutes, the
+# first number to re-measure). Membership: GROUP*_CASES below, and `--help` prints it.
 #
 #   scripts/device-qa.sh group1
 #   APK=installed scripts/device-qa.sh group2
@@ -76,8 +77,8 @@
 # Run them IN THAT ORDER: group1 carries `setup`, which every later case assumes. Give every later
 # group APK=installed so the series tests the ONE build group1 put on the bench (APK=main would
 # re-download whatever main-latest has become and reinstall it between chunks). The series passes
-# only if all five exit 0. group3 (#146) and group4 (#169/#170) are the clock chunks, added when
-# group2 had no room left; group5 is the old group3 unchanged, so `crash-check` still runs last. No case
+# only if all five exit 0. group3 (#146, plus #181's bounce-non-apps) and group4 (#169/#170) are the
+# clock chunks, added when group2 had no room left; group5 is the old group3 unchanged, so `crash-check` still runs last. No case
 # asserts anything different from `all`:
 #   · `crash-check` still means "no app crash since the SERIES started". group1 records the
 #     dropbox count in ~/.cache/nudge-qa/crash-baseline and every later group reuses it (when it is
@@ -103,6 +104,8 @@
 #   BOUNDARY_LEAD_MIN=3            minutes between seeding and the schedule STARTING (the import
 #                                  through the UI takes ~40s of that)
 #   BOUNDARY_WAIT_SLACK_SECS=90    how long past the real boundary the cases wait for the app to react
+#   BOUNCE_APP_CANDIDATES="<pkg> …" the ordinary apps bounce-non-apps (#181) may bounce through; it
+#                                  takes the first three that are installed, launchable and ruleless
 #   QA_LOCK_OWNER=<name>           reuse a Pixel lock the caller already holds. ONLY works when
 #                                  this script runs in the caller's own process tree:
 #                                  `device-lock.sh` keys a holder on owner AND pid, and under
@@ -172,6 +175,10 @@ MIDSESSION_WAIT_SECS="${MIDSESSION_WAIT_SECS:-240}"
 BOUNDARY_PKG="${BOUNDARY_PKG:-com.google.android.keep}"
 BOUNDARY_LEAD_MIN="${BOUNDARY_LEAD_MIN:-3}"
 BOUNDARY_WAIT_SLACK_SECS="${BOUNDARY_WAIT_SLACK_SECS:-90}"
+# bounce-non-apps (#181): ordinary stock Google apps, in preference order. The case takes the first
+# BOUNCE_REAL_APPS of them that are installed, have a launcher entry ON THE DEVICE and carry no rule
+# (and are none of the packages other cases own), so a missing one is skipped rather than fatal.
+BOUNCE_APP_CANDIDATES="${BOUNCE_APP_CANDIDATES:-com.google.android.calendar com.google.android.apps.photos com.google.android.apps.maps com.google.android.gm com.google.android.apps.messaging com.android.vending com.google.android.dialer}"
 MAESTRO_BIN="${MAESTRO_BIN:-${HOME}/.maestro/bin/maestro}"
 GH_REPO="${GH_REPO:-astraedus/nudge}"
 
@@ -208,6 +215,7 @@ ALL_CASES=(
   daily-limit-refresh
   daily-limit-midsession
   group-limit-midsession
+  bounce-non-apps
   schedule-start-open-app
   schedule-end-overlay
   notif-idle
@@ -221,10 +229,11 @@ ALL_CASES=(
 # concatenating to ALL_CASES. The schedule-boundary cases wait on the REAL clock for a minute
 # boundary (~3.5-4 min each, plus up to ~1 min for schedule-end-overlay to wait out schedule-start-open-app's
 # 1-minute window, so group4 stays under ~10 min), so they get a chunk of their own: group-limit-midsession (~4.5 min)
-# and the two of them would not fit one call.
+# and the two of them would not fit one call. bounce-non-apps (#181, ~3-3.5 min) shares group3 with
+# group-limit-midsession: group5 already holds notif-idle's 338s, and group3 had the most room.
 GROUP1_CASES=(setup delay-block home-reopen walkaway-count)
 GROUP2_CASES=(daily-limit-refresh daily-limit-midsession)
-GROUP3_CASES=(group-limit-midsession)
+GROUP3_CASES=(group-limit-midsession bounce-non-apps)
 GROUP4_CASES=(schedule-start-open-app schedule-end-overlay)
 GROUP5_CASES=(notif-idle crash-check refusal-alert)
 
@@ -1048,11 +1057,25 @@ nudge_notif_records() { # prints "<count> <mUpdateTimeMs of id=1>"
   local d count upd
   d="$(ash dumpsys notification --noredact 2>/dev/null | tr -d '\r')"
   count="$(grep -c "NotificationRecord.*pkg=${APP_ID} " <<<"$d")"
-  upd="$(awk -v pkg="$APP_ID" '
-      /NotificationRecord\(/ { want = ($0 ~ ("pkg=" pkg " user=[^ ]* id=1 ")) }
-      want && /mUpdateTimeMs=/ { sub(/.*mUpdateTimeMs=/, ""); print $1; exit }
-    ' <<<"$d")"
+  upd="$(notif_update_ms_in "$d" 1)"
   echo "${count:-0} ${upd:-0}"
+}
+
+# mUpdateTimeMs of Nudge's notification <id> in a `dumpsys notification --noredact` text, or nothing.
+# One parser for every id (see nudge_notif_records for why the header's own id decides, and why
+# `id=1 ` keeps its trailing space: id=10 / id=11 are not id=1).
+notif_update_ms_in() { # <dump text> <id>
+  awk -v pkg="$APP_ID" -v id="$2" '
+      /NotificationRecord\(/ { want = ($0 ~ ("pkg=" pkg " user=[^ ]* id=" id " ")) }
+      want && /mUpdateTimeMs=/ { sub(/.*mUpdateTimeMs=/, ""); print $1; exit }
+    ' <<<"$1"
+}
+
+nudge_notif_update_ms() { # <id> -> its mUpdateTimeMs, 0 when Nudge has no such notification
+  local d upd
+  d="$(ash dumpsys notification --noredact 2>/dev/null | tr -d '\r')"
+  upd="$(notif_update_ms_in "$d" "$1")"
+  echo "${upd:-0}"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -2090,6 +2113,363 @@ group_limit_midsession_body() {
   return $rc
 }
 
+# ── bounce-non-apps (#181): a system sheet is not an app the user bounced through ──
+#
+# The report: Delay mode, two apps opened, "Bro. wtf. bounced through 4 apps". A sheet (photo
+# picker, document picker, sound picker, account chooser) is an activity of its own package with a
+# focused app window, so the classifier reports it as the app in front, and before #181 the check-in
+# counted it. Since #181 only a package with a launcher entry that is not a home screen counts.
+#
+# Two halves on ONE streak, and the order is the proof:
+#   NEGATIVE  wall YouTube · sheet 1 · YouTube · app a · sheet 2 · app a · Home · wall YouTube.
+#             Two walls, and YouTube + a + two sheets = MIN_APPS, so the pre-#181 rule posts here.
+#             The fix posts nothing, and logs each sheet as BOUNCE-SKIP why=not_launchable.
+#   POSITIVE  app b (still silent: three apps) · app c: posts once, the BOUNCE line names exactly
+#             YouTube, a, b, c with two walls, and notification id 3 is updated. Without this half a
+#             check-in that never fires at all would pass the negative.
+#   COOLDOWN  app a again: still one post.
+#
+# Fixture honesty, on the device itself: every app must have a launcher entry and every sheet must
+# not (`cmd package resolve-activity`, the same MAIN+INFO then MAIN+LAUNCHER lookup the app's
+# getLaunchIntentForPackage does). An answer the script cannot read is a FIXTURE failure, never a
+# guess: an "app" that is really not launchable would fail the positive for the wrong reason, a
+# "sheet" that is launchable would make the negative a test of nothing. MIN_APPS / MIN_WALLS and the
+# notification id are read out of the Kotlin sources, not retyped.
+#
+# From the moment the check-in is on until the verdicts, NOTHING here takes a UI dump: a
+# `uiautomator dump` can rebind the accessibility service, and a rebind forgets the streak
+# (docs/architecture/bounce-check-in.md, "Process death, or any accessibility-service rebind").
+# Only am / monkey / `dumpsys activity` / logcat, as group-limit-midsession does mid-session.
+#
+# Needs debug logging (setup turns it on): the oracle is the service's own lines.
+BOUNCE_DETECTOR_KT="${REPO_ROOT}/app/src/main/java/com/astraedus/nudge/domain/bounce/BounceDetector.kt"
+BOUNCE_NOTIFIER_KT="${REPO_ROOT}/app/src/main/java/com/astraedus/nudge/service/BounceCheckInNotifier.kt"
+# BounceDetector.neverCountedPackages minus Nudge itself: these return before the countability is
+# asked, so they log no BOUNCE-SKIP and a "sheet" in one of them would exercise nothing (the Android
+# 12 share sheet lives in `android`). test-device-qa.sh compares this list with the Kotlin one.
+BOUNCE_NEVER_COUNTED="android com.android.systemui com.android.permissioncontroller com.google.android.permissioncontroller"
+# Candidate sheets, tried in order until two different non-launchable packages come up. Each is ONE
+# string for the device shell (the quotes keep `image/*` from being globbed there; see device_clock
+# for why `ash` must get one argument). Whichever two the device has are what the case uses.
+BOUNCE_SHEET_INTENTS=(
+  "-a android.intent.action.GET_CONTENT -t 'image/*'"
+  "-a android.intent.action.OPEN_DOCUMENT -c android.intent.category.OPENABLE -t '*/*'"
+  "-a android.intent.action.RINGTONE_PICKER"
+  "-a com.google.android.gms.common.account.CHOOSE_ACCOUNT"
+)
+
+# `const val <NAME>: Int = <n>` out of a Kotlin file; prints nothing if it is not there.
+kotlin_int_const() { # file name
+  sed -n "s/^ *\(private \)\{0,1\}const val $2\(: Int\)\{0,1\} = \([0-9][0-9]*\).*/\3/p" "$1" 2>/dev/null | head -1
+}
+
+# yes | no | unknown: does <pkg> have a launcher entry on the device? "no" only when BOTH lookups
+# answer "No activity found"; anything else unreadable (an empty answer, a component of another
+# package) is "unknown", which every caller turns into a FIXTURE failure.
+launchable_state() { # pkg
+  local pkg="$1" cat out line nos=0
+  for cat in android.intent.category.INFO android.intent.category.LAUNCHER; do
+    out="$(ash "cmd package resolve-activity --brief -a android.intent.action.MAIN -c ${cat} ${pkg}" 2>/dev/null | tr -d '\r')"
+    while IFS= read -r line; do
+      [[ "$line" == "${pkg}/"* ]] && { echo yes; return 0; }
+    done <<<"$out"
+    [[ "$out" == *"No activity found"* ]] && nos=$((nos + 1))
+  done
+  (( nos == 2 )) && echo no || echo unknown
+}
+
+# The <n> apps to bounce through, one per line: from BOUNCE_APP_CANDIDATES, installed, launchable,
+# with no fixture rule, and none of the packages another case owns (a rule on one would wall it).
+pick_bounce_apps() { # n
+  local want="$1" installed pkg state picked=()
+  installed="$(ash pm list packages 2>/dev/null | tr -d '\r')"
+  for pkg in $BOUNCE_APP_CANDIDATES; do
+    (( ${#picked[@]} >= want )) && break
+    case " ${YOUTUBE_PKG} ${LIMIT_PKG} ${GROUP_LIMIT_PKG} ${BOUNDARY_PKG} ${LAUNCHER_PKG} ${APP_ID} " in
+      *" ${pkg} "*) continue ;;
+    esac
+    grep -qF "\"${pkg}\"" "${REPO_ROOT}/.maestro/fixtures/rules.json" && continue
+    grep -qFx "package:${pkg}" <<<"$installed" || continue
+    state="$(launchable_state "$pkg")"
+    case "$state" in
+      yes) picked+=("$pkg") ;;
+      no)  warn "bounce: ${pkg} has no launcher entry on this device, so it is not an app here; skipped" ;;
+      *)   fail "FIXTURE: could not read whether ${pkg} is launchable (resolve-activity gave no usable answer)"; return 1 ;;
+    esac
+  done
+  if (( ${#picked[@]} < want )); then
+    fail "FIXTURE: only ${#picked[@]} of ${want} launchable, ruleless apps among BOUNCE_APP_CANDIDATES"
+    return 1
+  fi
+  printf '%s\n' "${picked[@]}"
+}
+
+# Prints the new foreground package once it is no longer <pkg>; rc 1 if it never changes.
+wait_fg_not() { # package timeout_secs
+  local not="$1" timeout="${2:-10}" i fg
+  for ((i = 0; i < timeout; i++)); do
+    fg="$(foreground_package)"
+    [[ -n "$fg" && "$fg" != "$not" ]] && { printf '%s\n' "$fg"; return 0; }
+    sleep 1
+  done
+  return 1
+}
+
+# Before anything is armed: which package does each candidate sheet open as, and is it a sheet by
+# #181's rule? Prints "<pkg><TAB><intent>" for the first <n> distinct non-launchable ones.
+probe_bounce_sheets() { # n [packages the case bounces through, which a sheet must not be]
+  local want="$1"; shift
+  local intent fg state found=0 seen=" $* ${APP_ID} ${LAUNCHER_PKG} ${YOUTUBE_PKG} "
+  for intent in "${BOUNCE_SHEET_INTENTS[@]}"; do
+    (( found >= want )) && break
+    go_home
+    wait_fg "$LAUNCHER_PKG" 10 || { fail "Home did not reach the launcher before the sheet probe"; return 1; }
+    ash "am start ${intent}" >/dev/null 2>&1
+    if ! fg="$(wait_fg_not "$LAUNCHER_PKG" 8)"; then
+      warn "bounce: nothing came up for '${intent}' on this device"
+      continue
+    fi
+    go_home
+    case "$seen" in *" ${fg} "*) continue ;; esac
+    seen+="${fg} "
+    case " ${BOUNCE_NEVER_COUNTED} " in
+      *" ${fg} "*) warn "bounce: '${intent}' opened ${fg}, which the check-in never counts anyway; not a test of #181"; continue ;;
+    esac
+    state="$(launchable_state "$fg")"
+    case "$state" in
+      no)  printf '%s\t%s\n' "$fg" "$intent"; found=$((found + 1)) ;;
+      yes) warn "bounce: '${intent}' opened ${fg}, which HAS a launcher entry, so it counts by design (#181's known gap); not a sheet for this case" ;;
+      *)   fail "FIXTURE: could not read whether the sheet ${fg} is launchable"; return 1 ;;
+    esac
+  done
+  if (( found < want )); then
+    fail "FIXTURE: only ${found} of ${want} non-launchable sheets came up from BOUNCE_SHEET_INTENTS"
+    return 1
+  fi
+}
+
+# Reads the trace lines in the case's logcat capture:
+#   skip <pkg>  the `why` of the LAST BOUNCE-SKIP for that package (nothing if none)
+#   fire        "unit=<u> count=<n> walls=<w> apps=<sorted,comma-joined>" of the LAST BOUNCE line
+# The regex anchors on the marker after whitespace and takes the JSON to the end of the line, so a
+# BOUNCE-SKIP line is never read as a fire and the logcat prefix (`-v time`) does not matter.
+bounce_trace() { # skip <pkg> | fire
+  python3 -I -c '
+import json, re, sys
+path, what = sys.argv[1], sys.argv[2]
+pat = re.compile(r"(?:^|\s)(BOUNCE-SKIP|BOUNCE) (\{.*\})\s*$")
+last = None
+try:
+    lines = open(path, errors="replace").read().splitlines()
+except OSError:
+    lines = []
+for line in lines:
+    m = pat.search(line)
+    if not m:
+        continue
+    try:
+        o = json.loads(m.group(2))
+    except ValueError:
+        continue
+    if what == "skip" and m.group(1) == "BOUNCE-SKIP" and o.get("pkg") == sys.argv[3]:
+        last = o.get("why")
+    elif what == "fire" and m.group(1) == "BOUNCE":
+        last = "unit=%s count=%s walls=%s apps=%s" % (
+            o.get("unit"), o.get("count"), o.get("walls"), ",".join(sorted(o.get("apps") or [])))
+if last is not None:
+    print(last)
+' "$LOGCAT_FILE" "$@"
+}
+
+# The backup file that sets ONLY the check-in switch: no rules, groups or history, so importing it
+# changes nothing else (the import merges, and an absent setting is left alone).
+bounce_settings_json() { # true|false
+  case "$1" in true|false) ;; *) fail "bounce_settings_json: '$1' is not true or false"; return 1 ;; esac
+  printf '{"version":1,"exportedAt":1759000000000,"rules":[],"groups":[],"history":[],"settings":{"bounceCheckInEnabled":%s}}\n' "$1"
+}
+
+# Sets the switch to a VALUE through Settings > Import backup, the path the user has. Not a tap on the
+# Settings row: a tap TOGGLES, so its result depends on a state the script would have to read first.
+set_bounce_checkin() { # true|false
+  local local_file="${WORK}/bounce-$1.json" device_file="/sdcard/Download/nudge-qa-bounce-$1.json"
+  bounce_settings_json "$1" >"$local_file" || return 1
+  push_to_download "$local_file" "$device_file" || { fail "could not push ${device_file##*/} to the device"; return 1; }
+  import_backup_file "$device_file"
+}
+
+# Waits until the capture holds at least <n> lines containing <fixed text>.
+wait_log_count() { # fixed n timeout_secs
+  local i
+  for ((i = 0; i < $3; i++)); do
+    (( $(log_count "$1") >= $2 )) && return 0
+    sleep 1
+  done
+  (( $(log_count "$1") >= $2 ))
+}
+
+# Foreground is <pkg>, and still is a moment later: a Delay overlay that lands after the app
+# resumed is waited out instead of being raced by the next launch.
+bounce_settle() { # pkg
+  wait_fg "$1" 30 || return 1
+  sleep 3
+  wait_fg "$1" 30
+}
+
+bounce_open() { # pkg
+  ash monkey -p "$1" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
+  bounce_settle "$1" || { fail "${1} did not come to the foreground (got '$(foreground_package)')"; return 1; }
+}
+
+bounce_visit_sheet() { # pkg intent
+  ash "am start ${2}" >/dev/null 2>&1
+  wait_fg "$1" 10 || { fail "the sheet ${1} did not come up again (got '$(foreground_package)')"; return 1; }
+  sleep 2
+}
+
+# The negative half's verdict. Every check is made and reported, not just the first that fails.
+bounce_negative_verdict() { # posts notif_before notif_after why_sheet1 why_sheet2 sheet1 sheet2
+  local bad=0 why sheet i
+  (( $1 == 0 )) || { fail "the check-in POSTED ($1x) on two apps and two sheets: #181 is back"; bad=1; }
+  [[ "$3" == "$2" ]] || { fail "notification ${BOUNCE_NOTIF_ID:-?} was updated (${2} -> ${3}) on two apps and two sheets"; bad=1; }
+  for i in 0 1; do
+    why=$([[ $i == 0 ]] && echo "$4" || echo "$5"); sheet=$([[ $i == 0 ]] && echo "$6" || echo "$7")
+    case "$why" in
+      not_launchable) ;;
+      "") fail "no BOUNCE-SKIP for ${sheet}: it never reached the count as an app, so this run did not exercise #181 (FIXTURE)"; bad=1 ;;
+      *)  fail "${sheet} was left out as '${why}', expected not_launchable"; bad=1 ;;
+    esac
+  done
+  return $bad
+}
+
+# The positive half's verdict: exactly one post, the notification updated, and the BOUNCE line
+# naming exactly the expected apps and walls.
+bounce_positive_verdict() { # posts notif_before notif_after fire_summary expected_summary
+  local bad=0
+  (( $1 == 1 )) || { fail "expected exactly one check-in on ${5}, got $1"; bad=1; }
+  (( $3 > $2 )) || { fail "notification ${BOUNCE_NOTIF_ID:-?} was not updated (${2} -> ${3})"; bad=1; }
+  [[ "$4" == "$5" ]] || { fail "the check-in counted '${4:-nothing}', expected '${5}'"; bad=1; }
+  return $bad
+}
+
+case_bounce_non_apps() {
+  local rc=0
+  youtube_pip_off
+  bounce_non_apps_body || rc=$?
+  stop_logcat
+  cp -f "$LOGCAT_FILE" "${ALBUM}/logcat-bounce-non-apps.txt" 2>/dev/null || true
+  go_home
+  # The check-in is off by default and later cases assume it: a failed switch-back fails the case.
+  set_bounce_checkin false ||
+    { fail "could not switch the bounce check-in back off: turn it off in Settings > Check-ins by hand"; rc=1; }
+  youtube_pip_restore
+  return $rc
+}
+
+bounce_non_apps_body() {
+  local min_apps min_walls
+  min_apps="$(kotlin_int_const "$BOUNCE_DETECTOR_KT" MIN_APPS)"
+  min_walls="$(kotlin_int_const "$BOUNCE_DETECTOR_KT" MIN_WALLS)"
+  BOUNCE_NOTIF_ID="$(kotlin_int_const "$BOUNCE_NOTIFIER_KT" BOUNCE_NOTIFICATION_ID)"
+  if [[ -z "$min_apps" || -z "$min_walls" || -z "$BOUNCE_NOTIF_ID" ]]; then
+    fail "FIXTURE: could not read MIN_APPS / MIN_WALLS / BOUNCE_NOTIFICATION_ID from the Kotlin sources"
+    return 1
+  fi
+  # The sequence below is built on the detector's numbers: exactly two walls (YouTube, Home,
+  # YouTube); before the fix it counts YouTube + one app + two sheets (= MIN_APPS); the positive half
+  # needs MIN_APPS - 1 apps besides YouTube. A detector change must revisit the sequence, so a
+  # mismatch fails here instead of passing or failing for a reason nobody designed.
+  (( min_walls == 2 && min_apps == 4 )) ||
+    { fail "FIXTURE: the sequence is built for MIN_WALLS=2 and MIN_APPS=4, the detector has ${min_walls} / ${min_apps}"; return 1; }
+  local n_apps=$(( min_apps - 1 )) n_sheets=$(( min_apps - 2 ))
+
+  local out apps=() sheets=() intents=() p i
+  out="$(pick_bounce_apps "$n_apps")" || return 1
+  mapfile -t apps <<<"$out"
+  out="$(probe_bounce_sheets "$n_sheets" "${apps[@]}")" || return 1
+  while IFS=$'\t' read -r p i; do sheets+=("$p"); intents+=("$i"); done <<<"$out"
+  info "bounce: apps ${apps[*]}; sheets ${sheets[*]}"
+
+  # Switch it on FROM OFF, with the capture started in between: the service logs
+  # `bounce check-in enabled=` on every change and every reconnect, so only a line written after
+  # the `true` import (and the last one) proves the switch is on now. Off also clears any cooldown
+  # an earlier check-in left.
+  set_bounce_checkin false || return 1
+  start_logcat
+  set_bounce_checkin true || return 1
+  local last=""
+  for ((i = 0; i < 20; i++)); do
+    last="$(grep -F "bounce check-in enabled=" "$LOGCAT_FILE" 2>/dev/null | tail -1)"
+    [[ "$last" == *"enabled=true"* ]] && break
+    sleep 1
+  done
+  [[ "$last" == *"enabled=true"* ]] ||
+    { fail "no 'bounce check-in enabled=true' after the import (last: '${last}'); is debug logging on? run 'setup'"; return 1; }
+  sleep 3
+  a11y_is_bound || { fail "Nudge's accessibility service is not bound after the import"; return 1; }
+  # NO UI DUMPS FROM HERE TO THE VERDICTS (see the header).
+
+  local u0 walls
+  u0="$(nudge_notif_update_ms "$BOUNCE_NOTIF_ID")"
+  local delay="block package=${YOUTUBE_PKG} reason=delay_rule"
+
+  # Wall 1.
+  go_home
+  wait_fg "$LAUNCHER_PKG" 10 || { fail "Home did not reach the launcher"; return 1; }
+  ash am force-stop "$YOUTUBE_PKG" >/dev/null 2>&1
+  sleep 1
+  walls="$(log_count "$delay")"
+  ash monkey -p "$YOUTUBE_PKG" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
+  wait_log_count "$delay" $(( walls + 1 )) 20 || { fail "wall 1: ${YOUTUBE_PKG} was not gated (no delay_rule decision)"; return 1; }
+  bounce_settle "$YOUTUBE_PKG" || { fail "wall 1: the countdown never let ${YOUTUBE_PKG} through"; return 1; }
+
+  # Sheet 1 over YouTube, back to YouTube; app a, sheet 2 over it, back to a.
+  bounce_visit_sheet "${sheets[0]}" "${intents[0]}" || return 1
+  bounce_open "$YOUTUBE_PKG" || return 1
+  bounce_open "${apps[0]}" || return 1
+  bounce_visit_sheet "${sheets[1]}" "${intents[1]}" || return 1
+  bounce_open "${apps[0]}" || return 1
+
+  # Wall 2: Home revokes the pass, so YouTube is walled again, and it is a new wall (they went home).
+  go_home
+  wait_fg "$LAUNCHER_PKG" 10 || { fail "Home did not reach the launcher"; return 1; }
+  walls="$(log_count "$delay")"
+  ash monkey -p "$YOUTUBE_PKG" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
+  wait_log_count "$delay" $(( walls + 1 )) 20 || { fail "wall 2: ${YOUTUBE_PKG} was not gated after Home"; return 1; }
+  bounce_settle "$YOUTUBE_PKG" || { fail "wall 2: the countdown never let ${YOUTUBE_PKG} through"; return 1; }
+  # A sheet's facts are read off the event thread and the streak re-checked when they land.
+  sleep 5
+
+  # NEGATIVE: before #181 this exact sequence posted (YouTube, a and the two sheets, two walls).
+  bounce_negative_verdict "$(log_count "bounce check-in posted ")" "$u0" "$(nudge_notif_update_ms "$BOUNCE_NOTIF_ID")" \
+    "$(bounce_trace skip "${sheets[0]}")" "$(bounce_trace skip "${sheets[1]}")" "${sheets[0]}" "${sheets[1]}" || return 1
+  info "negative: no check-in on YouTube, ${apps[0]} and two sheets; both sheets logged not_launchable"
+
+  # POSITIVE: the same streak, real apps. One short of MIN_APPS stays silent; the last one posts.
+  local k
+  for ((k = 1; k < n_apps - 1; k++)); do
+    bounce_open "${apps[$k]}" || return 1
+  done
+  (( $(log_count "bounce check-in posted ") == 0 )) ||
+    { fail "the check-in posted with only $(( min_apps - 1 )) apps"; return 1; }
+  ash monkey -p "${apps[$((n_apps - 1))]}" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
+  wait_log_count "bounce check-in posted " 1 15 || true
+  sleep 2
+  local expected
+  expected="$(printf '%s\n' "$YOUTUBE_PKG" "${apps[@]}" | LC_ALL=C sort | paste -sd, -)"
+  bounce_positive_verdict "$(log_count "bounce check-in posted ")" "$u0" "$(nudge_notif_update_ms "$BOUNCE_NOTIF_ID")" \
+    "$(bounce_trace fire)" "unit=apps count=${min_apps} walls=${min_walls} apps=${expected}" || return 1
+
+  # COOLDOWN: one more app inside the 30 minutes posts nothing new.
+  bounce_open "${apps[0]}" || return 1
+  sleep 3
+  (( $(log_count "bounce check-in posted ") == 1 )) ||
+    { fail "a second check-in posted inside the cooldown"; return 1; }
+
+  CASE_NOTE="sheets ${sheets[*]} not counted (no post on 2 apps + 2 sheets, 2 walls); posted once on ${min_apps} apps; cooldown held"
+  return 0
+}
+
 # ── notif-idle (#63): the ongoing notification is posted on CHANGE, never on a timer ──
 #
 # Two halves, and the ORDER matters.
@@ -2525,10 +2905,16 @@ seed_boundary_rule() { # offset_min length_min
   push_to_download "${WORK}/boundary-rules.json" "$BOUNDARY_FIXTURE_DEVICE_PATH" ||
     { fail "could not push the boundary rule file to the device"; return 1; }
 
-  # Settings > Import backup > the file > Import > Import Complete > OK: the same path
-  # .maestro/nudge-setup.yaml walks, driven here by element-located taps because a Maestro session
-  # would hold the accessibility service off (and this case must not need to re-establish it).
-  local name="${BOUNDARY_FIXTURE_DEVICE_PATH##*/}"
+  import_backup_file "$BOUNDARY_FIXTURE_DEVICE_PATH"
+}
+
+# Settings > Import backup > the file > Import > Import Complete > OK: the same path
+# .maestro/nudge-setup.yaml walks, driven here by element-located taps because a Maestro session
+# would hold the accessibility service off (and the caller must not need to re-establish it).
+# The file must already be in Download via push_to_download, which also makes the picker list it
+# first. Shared by the schedule-boundary seed and bounce-non-apps' settings switch.
+import_backup_file() { # device_path
+  local name="${1##*/}"
   nudge_route_home
   scroll_to_text "Settings" 8 && ui_tap_text "Settings" 10 || { fail "could not open Settings from the dashboard"; return 1; }
   scroll_to_text "Import backup" 8 && ui_tap_text "Import backup" 10 || { fail "no 'Import backup' row in Settings"; return 1; }
