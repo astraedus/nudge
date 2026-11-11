@@ -59,9 +59,61 @@ classifier). Excluded packages neither count nor count as LEAVING, so a permissi
 walled app does not turn the next re-launch into a second wall.
 
 A package list is the wrong answer to "has the user left the app" (`tasks/lessons.md`, 2026-09-11)
-and it is not being asked that here. It only bounds what an over-count costs, and the cost of a miss
-(a share sheet or a photo picker counting as an app) is one extra toward a soft notification. That
-failure direction is what makes a short list acceptable here and nowhere near enforcement.
+and it is not being asked that here: the list only holds packages that are never an app anywhere.
+
+### Only an app counts (#181, after v1.30.0)
+
+Up to 1.30.0 every `AppWindow` counted, and this doc called a share sheet or photo picker counting
+as an app an accepted miss. It is not a miss the user accepts: issue #181 (1.29.0, Android 17,
+Pixel 10 Pro, Delay mode) got "bounced through 4 apps" after opening two. A system sheet (the share
+sheet `com.android.intentresolver`, the photo picker, an account picker or passkey prompt in
+`com.google.android.gms`, the documents UI) is an activity in its own package with a focused
+application window, so the classifier is RIGHT to call it the app in front, and no classifier fix
+belongs here. What the check-in asks is a different question: is this an app the user opened?
+
+`AppCountability` (`domain/bounce/`) answers it from facts, never a list:
+
+| Answer | When | Counts? | Leaving the walled app? |
+|---|---|---|---|
+| `COUNTS` | cached `PackageFact.launchable` (a launcher entry) and not a home screen | yes | yes |
+| `NOT_AN_APP` | installed, no launcher entry: a sheet, picker or prompt host | no | no (like an excluded package) |
+| `HOME` | in the service's launcher set, OR the package's own `homeScreen` fact (it handles `CATEGORY_HOME`) | no | yes, it is going home |
+| `UNKNOWN` | facts not cached yet | not until they land | judged at the next wall, on the answer known then |
+
+- **Never a binder call on the event thread.** Every answer is a cache read under the check-in's
+  lock. A miss answers UNKNOWN, records the package, and asks the service to read its facts on
+  `serviceScope` (IO) once; when the read lands, `BounceCheckIn.onFactsLanded()` re-checks the
+  streak through `BounceDetector.reevaluate`, which obeys the same window and cooldown. A failed
+  read leaves the package UNKNOWN for good (no retry loop): under-counting is the safe direction for
+  a nudge, and the read takes milliseconds while the user's next switch takes seconds.
+- **Home is known twice.** `launcherPackagesCached` is empty until it first resolves and can be
+  minutes stale after the user picks a new launcher, so a home screen is also recognised by its own
+  per-package `CATEGORY_HOME` fact. Neither has to be right on its own; an unresolved package is
+  UNKNOWN, never countable. The fact goes through the launcher set's own rule
+  (`sanitizeLauncherPackages`, via `isHomeScreenPackage` in `AndroidPackageFacts.kt`) before the
+  query: AOSP Settings declares `Settings$FallbackHome` with `CATEGORY_HOME`, so a raw query reads
+  Settings as a home screen on every stock phone. (Settings is also in `SYSTEM_PACKAGES`, so today
+  it reaches the check-in as a `SystemSurface`, but the fact must not depend on that.) Cost: one
+  extra package-scoped `queryIntentActivities` on the first read of each package (cached until that
+  package changes), skipped for every excluded package; estimated well under a millisecond each,
+  not measured.
+- **The arithmetic candidate.** The Android 12 bench did not reproduce #181 in any variant
+  (captures below), and the only packages that came to the front in all three were the two apps, the
+  Nudge overlay and the Pixel launcher: 2 + 1 + 1 = 4, the reporter's number. Nudge was already
+  excluded, so the remaining way to that count is a launcher reaching the check-in as an
+  `AppWindow` (for example a launcher outside `SYSTEM_PACKAGES` with the launcher set empty or
+  stale). The `HOME` answer closes that one too, whichever of the two it was on the Pixel 10 Pro.
+
+**Debug trace** (tag `NudgeA11yTrace`, written only with debug logging on, never a domain):
+`BOUNCE {"unit":"apps","count":N,"minutes":M,"walls":W,"apps":[...]}` when a check-in fires (the
+packages it counted; a sites check-in has `"apps":[]`), and `BOUNCE-SKIP {"pkg":"..","why":".."}`
+once per package per streak for each package left out (`not_launchable` or `home`). These lines are
+not part of a capture's event stream.
+
+**Not covered (H2):** a surface that is launchable but incidental still counts: Chrome Custom Tabs
+(it is Chrome), an in-app Play review sheet (Play Store), the Google app's overlays (Gemini, Circle
+to Search). None appeared on the bench, and no dwell-time rule was added without a capture that
+demands one. If a report names one, capture it first.
 
 ## Where it is fed (and why only there)
 
@@ -139,6 +191,34 @@ it blocks. The export set is pinned by `ImportedSettingsWriteContractTest`.
   feeds nothing; default off; switch-off mid-streak drops it; only `AppWindow` counts; cooldown across
   the adapter; the master-toggle reset; the auto-kick reports its key; three blocked sites through
   the adapter post one site check-in.
+- `BounceDetectorCountabilityTest` (L1): NOT_AN_APP neither counts nor is leaving; HOME is going
+  home; UNKNOWN counts once its answer lands, through `reevaluate`; `reevaluate` is a no-op disarmed
+  or lapsed; a left-out package is reported once per streak.
+- `BounceNonAppWindowTest` (L2, #181): events go through the real `EventClassifier`, `BounceCheckIn`,
+  `BounceDetector` and `AppCountability` (`BounceHarness`, injected clock, fake device packages).
+  Every set of sheets around two Delay walls stays silent, every pair asserted rather than the first
+  failure, with the pre-#181 rule shown to fire on the same sets; the photo picker from a device
+  capture; sheets do not turn the overlay's return into a new wall, Home does; a cold cache, a late
+  lookup that fires through the re-check, lookups that never land, a failed lookup not retried; a
+  launcher outside `SYSTEM_PACKAGES` with an empty launcher set, before its facts land, and a stale
+  launcher set.
+- `BounceCaptureReplayTest` (L2): the three Android 12 bench captures
+  (`a11y-captures/bounce-181-{delay-walkaway,delay-letthrough,autokick-cooldown}.jsonl`, walls from
+  their `# WALL` headers) never fire; each plus two more apps and a wall fires with `MIN_APPS`; the
+  arithmetic candidate (the launcher renamed out of the launcher set) stays silent, and the pre-#181
+  rule fires on it.
+- `AccessibilityEventTraceBounceTest`: the BOUNCE / BOUNCE-SKIP lines, no domain, nothing with debug
+  logging off.
 - `BounceCheckInWiringContractTest` (source level, the residue no value test can see).
 - `BounceCheckInRowCopyTest`: the row is never ON-and-silent.
 - **L6 (device), 2026-10-05, v1.21.0 vc60 release APK on the bench Pixel 3:** YouTube DELAY wall, Home, three apps, YouTube wall posted `apps=4 minutes=1` (notification id 3 on `nudge_bounce_checkins` with the exact copy); an immediate repeat inside the cooldown posted nothing; switched off, the same sequence posted nothing; switched back on, it fired again; the 1.20.0 redirect bubble and picker still worked; no crashes. Screenshots `~/Pictures/screenshots/nudge-browtf-*.png`.
+- **L6 `bounce-non-apps` (`scripts/device-qa.sh`, group3, #181):** a YouTube Delay wall, two system
+  sheets and one app around a second wall (`MIN_APPS` packages on `MIN_WALLS` walls, which pre-#181
+  code would post on) must post nothing and log `not_launchable` for each sheet; then YouTube + 3
+  apps on two walls must post once with exactly that set and `walls=2`, and one more app inside the
+  cooldown must not post again. Constants come from the Kotlin sources; the apps and sheets are
+  picked on the device and their launcher entries checked there; an unreadable answer is a FIXTURE
+  failure. The switch is set by importing a settings-only backup and is turned back off after every
+  outcome, and nothing dumps the UI once the streak is live (a dump can rebind the service).
+  Device-free coverage in `scripts/test-device-qa.sh`. Only the Android 12 bench runs it; Android 17
+  has not been run.

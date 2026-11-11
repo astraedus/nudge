@@ -10,8 +10,20 @@ import java.util.concurrent.ConcurrentHashMap
  */
 enum class AppCategory { GAME, AUDIO, VIDEO, IMAGE, SOCIAL, NEWS, MAPS, PRODUCTIVITY, UNDEFINED }
 
-/** What the engine needs to know about one installed package. */
-data class PackageFact(val category: AppCategory, val launchable: Boolean) {
+/**
+ * What the engine needs to know about one installed package.
+ *
+ * [homeScreen] is true when the package is a launcher (the default or not): it handles
+ * `CATEGORY_HOME` AND passes the same rule as the service's launcher set, so Settings (whose
+ * `FallbackHome` also handles it), System UI, a keyboard or Nudge never is one. The bounce check-in
+ * reads it so a launcher never counts as an app even when the cached launcher set is empty or stale
+ * (#181).
+ */
+data class PackageFact(
+    val category: AppCategory,
+    val launchable: Boolean,
+    val homeScreen: Boolean = false
+) {
     companion object {
         /** A package that is not installed (or could not be read): uncategorised, not launchable. */
         val NOT_INSTALLED = PackageFact(AppCategory.UNDEFINED, launchable = false)

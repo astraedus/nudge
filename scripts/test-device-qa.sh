@@ -149,7 +149,8 @@ cases_of() { run_qa "$OUT" -- "target_cases $1" && tr '\n' ' ' <"$OUT"; }
 all_cases="$(run_qa "$OUT" -- 'printf "%s " "${ALL_CASES[@]}"' && cat "$OUT")"
 check "group1 is the setup chunk" test "$(cases_of group1)" = "setup delay-block home-reopen walkaway-count "
 check "group2 is the daily-limit chunk" test "$(cases_of group2)" = "daily-limit-refresh daily-limit-midsession "
-check "group3 is the mid-session clock chunk" test "$(cases_of group3)" = "group-limit-midsession "
+check "group3 is the mid-session clock chunk, then bounce-non-apps (#181)" \
+  test "$(cases_of group3)" = "group-limit-midsession bounce-non-apps "
 check "group4 is the schedule-boundary chunk" test "$(cases_of group4)" = "schedule-start-open-app schedule-end-overlay "
 check "group5 is the idle / crash chunk (refusal-alert last: it needs the cert switch)" \
   test "$(cases_of group5)" = "notif-idle crash-check refusal-alert "
@@ -186,7 +187,7 @@ check "list is unchanged: one case per line, in order" \
   test "$(bash "$QA" list | tr '\n' ' ')" = "$all_cases"
 bash "$QA" --help >"$OUT" 2>&1
 check "--help documents the chunks (group1-group5 and the APK=installed hand-off)" \
-  bash -c "grep -q group1 '$OUT' && grep -q group2 '$OUT' && grep -q '^group3: group-limit-midsession' '$OUT' && grep -q '^group4: schedule-start-open-app' '$OUT' && grep -q '^group5: notif-idle' '$OUT' && grep -q 'APK=installed' '$OUT'"
+  bash -c "grep -q group1 '$OUT' && grep -q group2 '$OUT' && grep -q '^group3: group-limit-midsession bounce-non-apps$' '$OUT' && grep -q '^group4: schedule-start-open-app' '$OUT' && grep -q '^group5: notif-idle' '$OUT' && grep -q 'APK=installed' '$OUT'"
 rc=0; bash "$QA" no-such-case >"$OUT" 2>&1 || rc=$?
 check "an unknown target dies (exit 2) before the lock or the phone, and names the groups" \
   bash -c "[[ $rc == 2 ]] && grep -q 'group1' '$OUT'"
@@ -521,6 +522,245 @@ done
 for fn in case_schedule_start_open_app case_schedule_end_overlay; do
   check "$fn is defined" run_qa "$OUT" -- "declare -F $fn"
 done
+
+# ─── 10. bounce-non-apps (#181): a system sheet is not an app ────────────────
+echo "bounce-non-apps:"
+DET_KT="$ROOT/app/src/main/java/com/astraedus/nudge/domain/bounce/BounceDetector.kt"
+NOTIFIER_KT="$ROOT/app/src/main/java/com/astraedus/nudge/service/BounceCheckInNotifier.kt"
+kconst() { run_qa "$OUT" -- "kotlin_int_const '$1' $2" && tr -d '\n' <"$OUT"; }
+pyconst() { python3 -I -c "
+import re, sys
+m = re.search(r'const val $2(?::\s*Int)?\s*=\s*(\d+)', open('$1').read())
+print(m.group(1) if m else '')"; }
+check "kotlin_int_const reads MIN_APPS as the Kotlin source has it" test "$(kconst "$DET_KT" MIN_APPS)" = "$(pyconst "$DET_KT" MIN_APPS)"
+check "kotlin_int_const reads MIN_WALLS as the Kotlin source has it" test "$(kconst "$DET_KT" MIN_WALLS)" = "$(pyconst "$DET_KT" MIN_WALLS)"
+check "kotlin_int_const reads a private const (BOUNCE_NOTIFICATION_ID)" \
+  test "$(kconst "$NOTIFIER_KT" BOUNCE_NOTIFICATION_ID)" = "$(pyconst "$NOTIFIER_KT" BOUNCE_NOTIFICATION_ID)"
+check "  ...and the values are real numbers (4 / 2 / 3 today)" \
+  bash -c "[[ '$(kconst "$DET_KT" MIN_APPS)' =~ ^[0-9]+$ && '$(kconst "$DET_KT" MIN_WALLS)' =~ ^[0-9]+$ && '$(kconst "$NOTIFIER_KT" BOUNCE_NOTIFICATION_ID)' =~ ^[0-9]+$ ]]"
+# Every "prints nothing" check below also requires the function to exist: an empty output from a
+# missing function would pass it vacuously (it did, against the pre-#181 script).
+check "kotlin_int_const: an absent const prints nothing (the case then fails FIXTURE)" \
+  run_qa "$OUT" -- "declare -F kotlin_int_const >/dev/null && [[ -z \$(kotlin_int_const '$DET_KT' NO_SUCH_CONST) ]]"
+# The sequence's arithmetic: YouTube + 1 app + 2 sheets, and YouTube + 3 apps, each == MIN_APPS, on 2
+# walls. A detector change fails HERE, on CI, instead of on the bench.
+check "the case's sequence matches the detector: 1 + 1 + 2 sheets == 1 + 3 apps == MIN_APPS, MIN_WALLS == 2" \
+  bash -c "a=$(kconst "$DET_KT" MIN_APPS); w=$(kconst "$DET_KT" MIN_WALLS); (( 1 + 1 + 2 == a && 1 + 3 == a && w == 2 ))"
+run_qa "$OUT" -- 'printf "%s\n" $BOUNCE_NEVER_COUNTED | sort' || true
+check "BOUNCE_NEVER_COUNTED is BounceDetector.neverCountedPackages minus Nudge itself" \
+  python3 -I -c "
+import re
+src = open('$DET_KT').read()
+body = re.search(r'fun neverCountedPackages\(ownPackage: String\)[^=]*=\s*setOf\((.*?)\)', src, re.S).group(1)
+kt = sorted(re.findall(r'\"([^\"]+)\"', body))
+mine = open('$OUT').read().split()
+assert 'ownPackage' in body and kt == mine, (kt, mine)"
+
+# Notification id selection for the check-in's id 3 (ids 30 / 31 are not 3), through the shared parser.
+rec "$N" 30 300 >"$TMP/n3";  rec "$N" 31 310 >>"$TMP/n3"; rec "$N" 3 333 >>"$TMP/n3"; rec "$N" 1 100 >>"$TMP/n3"
+rec "$N" 30 300 >"$TMP/n3_absent"; rec "$N" 1 100 >>"$TMP/n3_absent"
+upd3() { run_qa "$OUT" NOTIF_FIXTURE="$1" -- "nudge_notif_update_ms $2" && tr -d '\n' <"$OUT"; }
+check "nudge_notif_update_ms 3: id=3's time, not id=30 / id=31 listed before it" test "$(upd3 "$TMP/n3" 3)" = 333
+check "nudge_notif_update_ms 1: the same parser still picks id=1" test "$(upd3 "$TMP/n3" 1)" = 100
+check "nudge_notif_update_ms 3 with no id=3: 0" test "$(upd3 "$TMP/n3_absent" 3)" = 0
+check "nudge_notif_records still reads id=1 after the refactor" test "$(notif "$TMP/n3")" = "4 100"
+
+# launchable_state against a fake device: what `cmd package resolve-activity --brief` prints.
+lstate() { # <pkg> <INFO answer> <LAUNCHER answer>  (printf %b escapes)
+  run_qa "$OUT" P="$1" IO="$2" LO="$3" ARGC_FILE="$TMP/largc" -- '
+ash() { echo "ARGC=$#" >>"$ARGC_FILE"; case "$*" in
+  *"category.INFO $P") printf "%b" "$IO" ;;
+  *"category.LAUNCHER $P") printf "%b" "$LO" ;; esac; }
+launchable_state "$P"' && tr -d '\n' <"$OUT"
+}
+HIT='priority=0 preferredOrder=0 match=0x108000 specificIndex=-1 isDefault=false\r\ncom.x.app/com.x.app.Main\r\n'
+NONE='No activity found\r\n'
+: >"$TMP/largc"
+check "launchable_state: a LAUNCHER entry is yes" test "$(lstate com.x.app "$NONE" "$HIT")" = yes
+check "  ...and the lookup reaches the device as ONE argument" bash -c "! grep -qv '^ARGC=1$' '$TMP/largc' && [[ -s '$TMP/largc' ]]"
+check "launchable_state: an INFO entry alone is yes (getLaunchIntentForPackage asks INFO first)" \
+  test "$(lstate com.x.app "$HIT" "$NONE")" = yes
+check "launchable_state: 'No activity found' twice is no" test "$(lstate com.x.app "$NONE" "$NONE")" = no
+check "launchable_state: empty answers are unknown, never no" test "$(lstate com.x.app "" "")" = unknown
+check "launchable_state: one empty answer is unknown" test "$(lstate com.x.app "$NONE" "")" = unknown
+check "launchable_state: a component of ANOTHER package is not this one's (unknown)" \
+  test "$(lstate com.x "$NONE" 'priority=0\r\ncom.x.app/com.x.app.Main\r\n')" = unknown
+
+# pick_bounce_apps against a fake package list and fake launchable answers.
+pick() { # <candidates> <installed, comma> <"pkg:state ..."> [snippet before] -> output + "rc=N"
+  run_qa "$OUT" BOUNCE_APP_CANDIDATES="$1" INST="$2" ST="$3" -- "
+ash() { [[ \"\$*\" == 'pm list packages' ]] && for p in \${INST//,/ }; do printf 'package:%s\r\n' \"\$p\"; done; return 0; }
+launchable_state() { local kv; for kv in \$ST; do [[ \"\${kv%%:*}\" == \"\$1\" ]] && { echo \"\${kv#*:}\"; return; }; done; echo unknown; }
+${4:-}
+pick_bounce_apps 3; echo rc=\$?" || true
+}
+pick "com.a com.b com.c com.d" com.a,com.b,com.c,com.d "com.a:yes com.b:yes com.c:yes com.d:yes"
+check "pick_bounce_apps: the first three launchable candidates, in order" \
+  test "$(tr '\n' ' ' <"$OUT")" = "com.a com.b com.c rc=0 "
+pick "com.google.android.youtube com.google.android.contacts com.google.android.keep com.google.android.apps.nexuslauncher dev.astraedus.nudge com.a com.b com.c" \
+  com.google.android.youtube,com.google.android.contacts,com.google.android.keep,com.google.android.apps.nexuslauncher,dev.astraedus.nudge,com.a,com.b,com.c \
+  "com.google.android.youtube:yes com.google.android.contacts:yes com.google.android.keep:yes com.google.android.apps.nexuslauncher:yes dev.astraedus.nudge:yes com.a:yes com.b:yes com.c:yes"
+check "pick_bounce_apps: never YouTube, the group/boundary apps, the launcher or Nudge" \
+  test "$(grep -v '^\[qa\]' "$OUT" | tr '\n' ' ')" = "com.a com.b com.c rc=0 "
+pick "com.google.android.youtube com.a com.b com.c" com.google.android.youtube,com.a,com.b,com.c \
+  "com.google.android.youtube:yes com.a:yes com.b:yes com.c:yes" "YOUTUBE_PKG=com.example.renamed"
+check "pick_bounce_apps: a package with a rule in .maestro/fixtures/rules.json is skipped on that ground alone" \
+  test "$(grep -v '^\[qa\]' "$OUT" | tr '\n' ' ')" = "com.a com.b com.c rc=0 "
+pick "com.a com.gone com.b com.c" com.a,com.b,com.c "com.a:yes com.b:yes com.c:yes"
+check "pick_bounce_apps: an uninstalled candidate is skipped (and never looked up)" \
+  test "$(grep -v '^\[qa\]' "$OUT" | tr '\n' ' ')" = "com.a com.b com.c rc=0 "
+pick "com.a com.nolauncher com.b com.c" com.a,com.nolauncher,com.b,com.c "com.a:yes com.nolauncher:no com.b:yes com.c:yes"
+check "pick_bounce_apps: a candidate with no launcher entry is skipped with a warning" \
+  bash -c "[[ \"\$(grep -v '^\[qa\]' '$OUT' | tr '\n' ' ')\" == 'com.a com.b com.c rc=0 ' ]] && grep -q 'no launcher entry' '$OUT'"
+pick "com.a com.what com.b com.c" com.a,com.what,com.b,com.c "com.a:yes com.what:unknown com.b:yes com.c:yes"
+check "pick_bounce_apps: an unreadable answer is a FIXTURE failure, not a skip" \
+  bash -c "grep -qx 'rc=1' '$OUT' && grep -q 'FIXTURE' '$OUT' && ! grep -qx 'com.a' '$OUT'"
+pick "com.a com.b" com.a,com.b "com.a:yes com.b:yes"
+check "pick_bounce_apps: fewer than three is a FIXTURE failure" bash -c "grep -qx 'rc=1' '$OUT' && grep -q 'FIXTURE' '$OUT'"
+
+# probe_bounce_sheets: each intent opens <pkg> (MAP lines "intent|pkg"), launchable answers in ST.
+probe() { # <MAP> <"pkg:state ..."> [packages the case bounces through] -> output + "rc=N"; starts in $TMP/pl
+  : >"$TMP/pl"
+  run_qa "$OUT" MAP="$1" ST="$2" PL="$TMP/pl" FGF="$TMP/fg" -- "
+BOUNCE_SHEET_INTENTS=(i1 i2 i3 i4)
+go_home() { :; }; wait_fg() { return 0; }; sleep() { :; }
+ash() { echo \"ARGC=\$# \$*\" >>\"\$PL\"; local s=\"\${*#am start }\" intent pkg; : >\"\$FGF\"
+  while IFS='|' read -r intent pkg; do [[ \"\$intent\" == \"\$s\" ]] && echo \"\$pkg\" >\"\$FGF\"; done <<<\"\$MAP\"; }
+wait_fg_not() { local f; f=\"\$(cat \"\$FGF\")\"; [[ -n \"\$f\" ]] && echo \"\$f\"; }
+launchable_state() { local kv; for kv in \$ST; do [[ \"\${kv%%:*}\" == \"\$1\" ]] && { echo \"\${kv#*:}\"; return; }; done; echo unknown; }
+probe_bounce_sheets 2 ${3:-}; echo rc=\$?" || true
+}
+sheets_of() { grep -v '^\[qa\]' "$OUT" | grep -v '^rc=' | cut -f1 | tr '\n' ' '; }
+probe $'i1|com.media\ni2|com.docs\ni3|com.sound' "com.media:no com.docs:no com.sound:no"
+check "probe_bounce_sheets: the first two non-launchable sheets, with their intents" \
+  bash -c "[[ \"\$(grep -v '^\[qa\]' '$OUT' | tr '\t\n' '| ')\" == 'com.media|i1 com.docs|i2 rc=0 ' ]]"
+check "  ...stops once it has two (i3 is never started)" test "$(grep -c 'am start' "$TMP/pl")" = 2
+check "  ...and each am start reaches the device as ONE argument" bash -c "grep -q 'am start' '$TMP/pl' && ! grep -v '^ARGC=1 ' '$TMP/pl' | grep -q ."
+probe $'i1|android\ni2|com.google.android.gms\ni3|com.media\ni4|com.sound' "android:no com.google.android.gms:yes com.media:no com.sound:no"
+check "probe_bounce_sheets: skips a never-counted package and a launchable one (warned)" \
+  bash -c "[[ \"$(sheets_of)\" == 'com.media com.sound ' ]] && grep -q 'never counts' '$OUT' && grep -q 'HAS a launcher entry' '$OUT'"
+probe $'i1|com.media\ni2|com.media\ni4|com.docs' "com.media:no com.docs:no"
+check "probe_bounce_sheets: one surface from two intents is one sheet; nothing coming up is skipped" \
+  bash -c "[[ \"$(sheets_of)\" == 'com.media com.docs ' ]] && grep -q 'nothing came up' '$OUT'"
+probe $'i1|com.a\ni2|com.media\ni3|com.docs' "com.a:no com.media:no com.docs:no" "com.a com.b com.c"
+check "probe_bounce_sheets: never one of the apps the case bounces through" test "$(sheets_of)" = "com.media com.docs "
+probe $'i1|com.media\ni2|com.what' "com.media:no"
+check "probe_bounce_sheets: an unreadable launchable answer is a FIXTURE failure" \
+  bash -c "grep -qx 'rc=1' '$OUT' && grep -q 'FIXTURE' '$OUT'"
+probe $'i1|com.media' "com.media:no"
+check "probe_bounce_sheets: only one sheet is a FIXTURE failure" bash -c "grep -qx 'rc=1' '$OUT' && grep -q 'FIXTURE' '$OUT'"
+
+# bounce_trace over a logcat capture shaped like `logcat -v time`.
+TRACE_KT="$ROOT/app/src/main/java/com/astraedus/nudge/service/AccessibilityEventTrace.kt"
+check "the markers bounce_trace reads are the Kotlin ones" \
+  bash -c "grep -qF 'BOUNCE_PREFIX = \"BOUNCE \"' '$TRACE_KT' && grep -qF 'BOUNCE_SKIP_PREFIX = \"BOUNCE-SKIP \"' '$TRACE_KT' && grep -qF 'TAG = \"NudgeA11yTrace\"' '$TRACE_KT'"
+SVC_KT="$ROOT/app/src/main/java/com/astraedus/nudge/service/NudgeAccessibilityService.kt"
+check "the service lines the case waits on exist ('bounce check-in posted ', 'bounce check-in enabled=')" \
+  bash -c "grep -qF '\"bounce check-in posted \$unit=' '$SVC_KT' && grep -qF 'log.i(\"bounce check-in enabled=\$enabled\")' '$SVC_KT'"
+LCB="$TMP/bounce-logcat.txt"
+cat >"$LCB" <<'EOF'
+11-11 23:00:00.100 D/NudgeA11yTrace(12345): BOUNCE-SKIP {"pkg":"com.s1","why":"unknown"}
+11-11 23:00:00.200 D/NudgeA11yTrace(12345): BOUNCE-SKIP {"pkg":"com.s1","why":"not_launchable"}
+11-11 23:00:00.300 D/NudgeA11yTrace(12345): BOUNCE-SKIP {"pkg":"com.home","why":"home"}
+11-11 23:00:00.400 D/NudgeA11yTrace(12345): EV {"t":"STATE","pkg":"com.s2"}
+11-11 23:00:01.000 I/Nudge(12345): bounce check-in posted apps=4 minutes=1
+11-11 23:00:01.001 D/NudgeA11yTrace(12345): BOUNCE {"unit":"sites","count":3,"minutes":2,"walls":3,"apps":[]}
+11-11 23:00:01.002 D/NudgeA11yTrace(12345): BOUNCE {"unit":"apps","count":4,"minutes":1,"walls":2,"apps":["com.z","com.a","com.m","com.google.android.youtube"]}
+EOF
+trace() { run_qa "$OUT" -- "LOGCAT_FILE='$1'; bounce_trace ${*:2}" && tr -d '\n' <"$OUT"; }
+check "bounce_trace skip: the LAST why for that package" test "$(trace "$LCB" skip com.s1)" = not_launchable
+check "bounce_trace skip: home is read as home" test "$(trace "$LCB" skip com.home)" = home
+check "bounce_trace skip: a package with only an EV line has no skip" \
+  run_qa "$OUT" -- "declare -F bounce_trace >/dev/null && LOGCAT_FILE='$LCB' && [[ -z \$(bounce_trace skip com.s2) ]]"
+check "bounce_trace fire: the LAST BOUNCE line, apps sorted (byte order)" \
+  test "$(trace "$LCB" fire)" = "unit=apps count=4 walls=2 apps=com.a,com.google.android.youtube,com.m,com.z"
+grep -v '"apps":\["com.z' "$LCB" >"$TMP/lc-sites"
+check "bounce_trace fire: a sites line names no app" test "$(trace "$TMP/lc-sites" fire)" = "unit=sites count=3 walls=3 apps="
+grep 'BOUNCE-SKIP' "$LCB" >"$TMP/lc-skips"
+check "bounce_trace fire: BOUNCE-SKIP lines are never a fire" \
+  run_qa "$OUT" -- "declare -F bounce_trace >/dev/null && LOGCAT_FILE='$TMP/lc-skips' && [[ -z \$(bounce_trace fire) ]]"
+check "bounce_trace: no capture file is empty, not an error" \
+  run_qa "$OUT" -- "declare -F bounce_trace >/dev/null && LOGCAT_FILE='$TMP/none' && [[ -z \$(bounce_trace fire) ]]"
+
+# The settings-only backup: valid, sets ONLY the check-in, shaped like the shipped fixture.
+run_qa "$OUT" -- "bounce_settings_json true" || true
+cp "$OUT" "$TMP/bounce-true.json"
+check "bounce_settings_json true: rules/groups/history empty, settings is only bounceCheckInEnabled=true" \
+  python3 -I -c "
+import json
+d = json.load(open('$TMP/bounce-true.json'))
+ship = json.load(open('$ROOT/.maestro/fixtures/rules.json'))
+assert d['settings'] == {'bounceCheckInEnabled': True}, d
+assert d['rules'] == d['groups'] == d['history'] == [], d
+assert set(d) == set(ship) | {'settings'}, set(d) ^ set(ship)
+assert d['version'] == ship['version'], d['version']"
+run_qa "$OUT" -- "bounce_settings_json false" || true
+check "bounce_settings_json false: bounceCheckInEnabled=false" \
+  python3 -I -c "import json; assert json.load(open('$OUT'))['settings'] == {'bounceCheckInEnabled': False}"
+rc=0; run_qa "$OUT" -- "declare -F bounce_settings_json >/dev/null || exit 0; bounce_settings_json yes" || rc=$?
+check "bounce_settings_json: anything but true/false is refused, and nothing is written" \
+  bash -c "[[ $rc != 0 ]] && ! grep -q '{' '$OUT'"
+check "the importer reads the 'settings' object and the bounceCheckInEnabled key" \
+  bash -c "grep -qF 'objectOrNull(\"settings\")' '$ROOT/app/src/main/java/com/astraedus/nudge/data/export/RuleExporter.kt' && grep -qF 'setting(\"bounceCheckInEnabled\", ' '$ROOT/app/src/main/java/com/astraedus/nudge/data/export/RuleExporter.kt'"
+
+# set_bounce_checkin walks the same import as the boundary seed, with its own file.
+: >"$TMP/seed.log"; rm -f "$TMP/seed.json"
+rc=0; run_qa "$OUT" SEED_LOG="$TMP/seed.log" SEED_PUSHED="$TMP/seed.json" SEED_FAIL= -- \
+  "$SEED_FAKES set_bounce_checkin true" || rc=$?
+check "set_bounce_checkin true: succeeds" test "$rc" = 0
+check "  ...walks Settings > Import backup > nudge-qa-bounce-true.json > Import > Import Complete > OK" \
+  test "$(grep -v '^scroll' "$TMP/seed.log" | tr '\n' ' ')" = \
+  "home tap:Settings tap:Import backup tap:nudge-qa-bounce-true.json tap:Import wait:Import Complete tap:OK home "
+check "  ...and pushes exactly bounce_settings_json true" cmp -s "$TMP/seed.json" "$TMP/bounce-true.json"
+rc=0; run_qa "$OUT" SEED_LOG="$TMP/seed.log" SEED_PUSHED="$TMP/seed.json" SEED_FAIL="Import Complete" -- \
+  "$SEED_FAKES declare -F set_bounce_checkin >/dev/null || exit 0; set_bounce_checkin false" || rc=$?
+check "set_bounce_checkin: a failed import fails" test "$rc" != 0
+
+# The verdicts: every problem is reported, not just the first.
+neg() { run_qa "$OUT" -- "bounce_negative_verdict $*; echo rc=\$?" || true; sed -n 's/^rc=//p' "$OUT"; }
+check "negative verdict: no post, notification untouched, both sheets not_launchable -> pass" \
+  test "$(neg 0 5 5 not_launchable not_launchable com.s1 com.s2)" = 0
+check "negative verdict: a post fails" test "$(neg 1 5 5 not_launchable not_launchable com.s1 com.s2)" = 1
+check "negative verdict: the notification moving fails" test "$(neg 0 5 9 not_launchable not_launchable com.s1 com.s2)" = 1
+nv="$(neg 0 5 5 not_launchable '""' com.s1 com.s2)"
+check "negative verdict: a sheet with no BOUNCE-SKIP is a FIXTURE failure" \
+  bash -c "[[ '$nv' == 1 ]] && grep -q FIXTURE '$OUT'"
+check "negative verdict: a sheet left out as home is not not_launchable" test "$(neg 0 5 5 home not_launchable com.s1 com.s2)" = 1
+neg 1 5 9 home '""' com.s1 com.s2 >/dev/null
+check "negative verdict: four problems, four ERROR lines (all sheet pairs, not first-failure)" \
+  test "$(grep -c 'ERROR' "$OUT")" = 4
+pos() { run_qa "$OUT" -- "bounce_positive_verdict $*; echo rc=\$?" || true; sed -n 's/^rc=//p' "$OUT"; }
+X="unit=apps count=4 walls=2 apps=a,b,c,d"
+check "positive verdict: one post, notification updated, the expected set -> pass" test "$(pos 1 5 9 "'$X'" "'$X'")" = 0
+check "positive verdict: no previous notification (0) and now one -> pass" test "$(pos 1 0 9 "'$X'" "'$X'")" = 0
+check "positive verdict: no post fails" test "$(pos 0 5 9 "'$X'" "'$X'")" = 1
+check "positive verdict: two posts fail" test "$(pos 2 5 9 "'$X'" "'$X'")" = 1
+check "positive verdict: the notification not updated fails" test "$(pos 1 5 5 "'$X'" "'$X'")" = 1
+check "positive verdict: a different counted set fails" test "$(pos 1 5 9 "'unit=apps count=4 walls=2 apps=a,b,c,s1'" "'$X'")" = 1
+check "positive verdict: three walls (a sheet read as leaving) fails" test "$(pos 1 5 9 "'unit=apps count=4 walls=3 apps=a,b,c,d'" "'$X'")" = 1
+
+# The case = body + teardown: the switch goes back off after EVERY outcome, and a failed switch-off fails.
+# (`trap - EXIT`: the script's own exit trap restores PiP again, which is not the case's call.)
+BLOG="$TMP/bounce-case.log"
+bcase() { # <body rc> <switch-off rc> -> "<case rc>|<calls>"
+  : >"$BLOG"
+  run_qa "$OUT" BLOG="$BLOG" -- "youtube_pip_off() { echo pipoff >>\"\$BLOG\"; }; youtube_pip_restore() { echo piprestore >>\"\$BLOG\"; }; stop_logcat() { :; }; go_home() { :; }; bounce_non_apps_body() { echo body >>\"\$BLOG\"; return $1; }; set_bounce_checkin() { echo \"SET \$*\" >>\"\$BLOG\"; return $2; }; case_bounce_non_apps; echo \"rc=\$?\"; trap - EXIT" || true
+  printf '%s|%s' "$(sed -n 's/^rc=//p' "$OUT")" "$(tr '\n' ',' <"$BLOG")"
+}
+check "bounce case: body passes -> switched off, PiP restored, pass" test "$(bcase 0 0)" = "0|pipoff,body,SET false,piprestore,"
+check "bounce case: body FAILS -> still switched off and restored, failure kept" test "$(bcase 1 0)" = "1|pipoff,body,SET false,piprestore,"
+check "bounce case: body passes but the switch-off fails -> the case fails" test "$(bcase 0 1)" = "1|pipoff,body,SET false,piprestore,"
+
+# No UI dump while the streak is live: from the bound check to the end of the body, and inside every
+# helper it calls there, nothing that runs `uiautomator dump` (a dump can rebind the service).
+UI_RE='(^|[^a-z_])(ui_[a-z_]+|scroll_to_text|nudge_route_home|import_backup_file|set_bounce_checkin|read_blocked_counts|run_flow)([^a-z_]|$)'
+run_qa "$OUT" -- 'declare -f bounce_non_apps_body' || true
+sed -n '/a11y_is_bound/,$p' "$OUT" >"$TMP/streak.txt"
+check "bounce body: the streak part exists (fixture for the next check)" grep -q 'bounce_positive_verdict' "$TMP/streak.txt"
+check "bounce body: no UI dump after the service is checked bound" bash -c "[[ -s '$TMP/streak.txt' ]] && ! grep -Eq '$UI_RE' '$TMP/streak.txt'"
+run_qa "$OUT" -- 'for f in bounce_open bounce_visit_sheet bounce_settle wait_log_count bounce_trace bounce_negative_verdict bounce_positive_verdict nudge_notif_update_ms notif_update_ms_in log_count wait_fg foreground_package go_home; do declare -f "$f" || echo "MISSING $f"; done' || true
+check "  ...nor in any helper the streak calls" bash -c "! grep -q MISSING '$OUT' && ! grep -Eq '$UI_RE' '$OUT'"
+check "case_bounce_non_apps is defined" run_qa "$OUT" -- "declare -F case_bounce_non_apps"
 
 echo
 echo "$pass passed, $fail failed"

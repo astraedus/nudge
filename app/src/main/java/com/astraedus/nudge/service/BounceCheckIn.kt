@@ -98,6 +98,20 @@ class BounceCheckIn(
     }
 
     /**
+     * A package-facts lookup the detector's countability asked for has landed (#181): a package
+     * already recorded in the streak may count from now on, so re-check it. Called from the IO
+     * scope that did the lookup, never the event thread.
+     */
+    fun onFactsLanded() {
+        if (!enabled) return
+        val alert = synchronized(this) {
+            if (!enabled) return
+            detector.reevaluate(clock())
+        }
+        alert?.let(notify)
+    }
+
+    /**
      * The overlay launch for [targetPackage] was settled by the launch gate as [decision]. Only a
      * genuinely NEW launch is a wall: a refusal never put anything in front of the user, and a
      * re-show of a buried overlay is a wall already reported (#143). Counting either would fire the

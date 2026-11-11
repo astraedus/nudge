@@ -4,6 +4,9 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+### Fixed
+- **"Bro. wtf." now counts only apps you opened.** A share sheet, a photo or account picker, a passkey prompt or the home screen no longer counts as an app, so opening two apps can't read "bounced through 4 apps". Opening a sheet over a blocked app is not leaving it either, so the block screen coming back doesn't count as a second wall. An app Nudge hasn't looked up yet counts as soon as the lookup lands. (#181)
+
 ## [1.30.0] - 2026-11-10
 
 ### Added
