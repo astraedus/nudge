@@ -2,6 +2,12 @@
 
 Privacy-first app blocker with delay-to-open (breathing exercises before opening distracting apps), per-app daily time budgets, app groups, schedule-based rules (days and times, or a first-unlock + N minutes window), "all apps except a few" rules (everything but the apps and groups you allow, never your essentials), in-app feature blocking (YouTube Shorts, Instagram Reels, TikTok), Tab Vanish (covering Instagram's Reels tab outright while it is blocked), grayscale mode, Nuke Mode (a second, separate list of apps that simply do not open while Nuke is on: toggled by scanning a QR/barcode key the user keeps somewhere inconvenient, with a typed 64-character emergency exit and no daily pass), and a redirect app (one user-chosen better app, offered as a bubble on every block screen, that a tap walks you away into). Zero internet permission. All data local.
 
+## Features go through Anti; bug fixes do not (Anti, 2026-11-13)
+
+- **Bug fixes** (ours, or a community PR/issue): judge it, fix it, merge, release. No ask needed.
+- **Anything feature-like** (a new feature, setting, screen or option, a deliberate behaviour change, a feature-request issue, a community PR or spec that adds one, or our own idea): **never build or merge it without Anti's yes.** Send him a Telegram the same session (`~/bin/astra-telegram-send.py`): "Potential feature request for Nudge", one line on what it adds, and the PR/issue links. Log it in `~/ops/WAITING.md` and leave it open.
+- Reviewing, running CI and telling the contributor the owner is deciding are fine. Unsure whether it is a bug or a feature: treat it as a feature.
+
 - GitHub: https://github.com/astraedus/nudge
 - F-Droid MR: https://gitlab.com/fdroid/fdroiddata/-/merge_requests/38398
 - Current version and full release history: see `CHANGELOG.md`
