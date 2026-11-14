@@ -31,6 +31,7 @@
 
 ---
 ## Play Store Download: [Play Store Here](https://play.google.com/store/apps/details?id=dev.astraedus.nudge&hl=en_AU)
+## F-Droid Download: [F-Droid Here](https://f-droid.org/packages/dev.astraedus.nudge/)
 
 <a href="https://www.saashub.com/nudge-adhd-app-blocker?utm_source=badge"><img src="https://cdn-b.saashub.com/img/badges/approved-color.png?v=1" alt="Nudge - ADHD App Blocker | Featured on SaaSHub" width="150"></a>
 
@@ -108,6 +109,10 @@ Uses Accessibility Service to detect in-app navigation to these screens.
 ## Install
 
 **Android:** Nudge is on the [Google Play Store](https://play.google.com/store/apps/details?id=dev.astraedus.nudge&hl=en_AU). No account, no sign-in, no internet permission.
+
+**F-Droid:** Nudge is also on [F-Droid](https://f-droid.org/packages/dev.astraedus.nudge/), built by F-Droid from this source. A new release reaches F-Droid a few days after it lands here.
+
+<a href="https://f-droid.org/packages/dev.astraedus.nudge/"><img src="https://f-droid.org/badge/get-it-on.png" alt="Get it on F-Droid" height="80"></a>
 
 ### Download APK
 Prefer installing outside Play? Download the latest APK from [**Releases**](https://github.com/astraedus/nudge/releases) and sideload it.
