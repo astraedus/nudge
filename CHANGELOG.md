@@ -4,6 +4,8 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+## [1.31.0] - 2026-11-17
+
 ### Added
 - **Nuke profiles.** Save your Nuke list under a name ("Save as profile" next to "Apps to nuke") and switch between saved lists with one tap while Nuke is off, with Undo. Profiles show as chips; tap the one in use to rename or delete it. A profile is only a saved copy of the list: editing or deleting one never changes a Nuke that is running, switching is refused while Nuke is on, and your essential apps stay unblockable whatever a profile holds. Up to 10 profiles, names up to 30 characters. Profiles stay on this phone and are not part of backups. (#183)
 - **Timed Nuke.** "Lock code for" before you start (None, 15, 30 or 45 minutes, 1 or 2 hours). Until it has run, your key does not end Nuke or take apps off, change or remove the key, or turn Nudge off; the card says "Code locked" and how long is left. Adding apps still works, and the 64-character emergency code works at any time. When the lock runs out nothing unlocks by itself: scan your key as usual. The timer counts phone-on time and ignores the date, time and time-zone settings, and a restart keeps the time already counted. (#184)
