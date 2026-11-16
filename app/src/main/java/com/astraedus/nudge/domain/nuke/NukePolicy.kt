@@ -118,4 +118,14 @@ object NukePolicy {
      * gated.
      */
     fun masterToggleOffRequiresUnlock(state: NukeState): Boolean = state.active
+
+    /**
+     * How long the paired key must still wait before it unlocks anything, or 0 when it works now.
+     *
+     * Non-zero only while Nuke is on with a timer that has not run out (#184). It applies to EVERY
+     * key-gated weakening, not only ending Nuke: otherwise "take every app off the list with the
+     * key" would beat the timer. The emergency code never asks this.
+     */
+    fun keyWaitMs(state: NukeState, now: NukeClockReading): Long =
+        if (state.active) state.timer?.remainingMs(now) ?: 0 else 0
 }

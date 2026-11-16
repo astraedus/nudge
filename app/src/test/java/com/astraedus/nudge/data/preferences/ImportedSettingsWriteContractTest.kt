@@ -105,7 +105,16 @@ class ImportedSettingsWriteContractTest {
             "NUKE_PACKAGES",
             "NUKE_KEY_HASH",
             "NUKE_KEY_KIND",
-            "NUKE_INTRO_SEEN"
+            "NUKE_INTRO_SEEN",
+            // Profiles (#183) and the timer (#184) are this phone's too: a timer restored from a
+            // file would be a timer this phone never started, and profiles are presets of THIS
+            // phone's apps.
+            "NUKE_PROFILES",
+            "NUKE_TIMER_DURATION_MS",
+            "NUKE_TIMER_CONSUMED_MS",
+            "NUKE_TIMER_BOOT_COUNT",
+            "NUKE_TIMER_SEGMENT_START_MS",
+            "NUKE_TIMER_CHOICE_MINUTES"
         ).forEach { key ->
             assertTrue(
                 "$key must not be restorable from a backup file",

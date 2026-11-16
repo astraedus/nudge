@@ -9,7 +9,7 @@
 #   (b) nudge_notif_records read the FIRST Nudge notification record instead of id=1, so a
 #       lingering usage reminder (id 4, listed first) made `notif-idle` read a timestamp that
 #       never moves;
-#   (c) `all` runs ~30 minutes, more than a bounded call can hold, so there are now group1-5
+#   (c) `all` runs ~30 minutes, more than a bounded call can hold, so there are now group1-6
 #       chunks: they must cover `all` exactly, and a chunked series must keep crash-check's
 #       whole-series meaning.
 # Later: home-reopen turns YouTube's picture-in-picture off for its own duration (its PiP
@@ -144,7 +144,7 @@ check "a preset limit (2h: the chip says 'Custom'): sets and saves 5"          t
 check "the 15m preset: sets and saves 1"                                       test "$(limit_from 15 1)"  = "rc=0 saved=1"
 
 # ─── 3. (c) the chunks cover `all`, exactly and in order ──────────────────────
-echo "group1 / group2 / group3 / group4 / group5:"
+echo "group1 / group2 / group3 / group4 / group5 / group6:"
 cases_of() { run_qa "$OUT" -- "target_cases $1" && tr '\n' ' ' <"$OUT"; }
 all_cases="$(run_qa "$OUT" -- 'printf "%s " "${ALL_CASES[@]}"' && cat "$OUT")"
 check "group1 is the setup chunk" test "$(cases_of group1)" = "setup delay-block home-reopen walkaway-count "
@@ -154,9 +154,11 @@ check "group3 is the mid-session clock chunk, then bounce-non-apps (#181)" \
 check "group4 is the schedule-boundary chunk" test "$(cases_of group4)" = "schedule-start-open-app schedule-end-overlay "
 check "group5 is the idle / crash chunk (refusal-alert last: it needs the cert switch)" \
   test "$(cases_of group5)" = "notif-idle crash-check refusal-alert "
+check "group6 is the Nuke profiles + timer chunk (after the five, so their lists never moved)" \
+  test "$(cases_of group6)" = "nuke-profiles nuke-timer "
 check "all is every case, in the run order" test "$(cases_of all)" = "$all_cases"
-check "group1 + group2 + group3 + group4 + group5 == ALL_CASES, in order" \
-  test "$(cases_of group1)$(cases_of group2)$(cases_of group3)$(cases_of group4)$(cases_of group5)" = "$all_cases"
+check "group1 + group2 + group3 + group4 + group5 + group6 == ALL_CASES, in order" \
+  test "$(cases_of group1)$(cases_of group2)$(cases_of group3)$(cases_of group4)$(cases_of group5)$(cases_of group6)" = "$all_cases"
 rc=0; run_qa "$OUT" -- 'target_cases delay-block' || rc=$?
 check "a single case is not a multi-case target (nonzero, prints nothing)" bash -c "[[ $rc != 0 && ! -s '$OUT' ]]"
 check "check_groups passes on the real lists" run_qa "$OUT" -- "check_groups"
@@ -172,6 +174,10 @@ rc=0; run_qa "$OUT" -- 'GROUP4_CASES=(); check_groups' || rc=$?
 check "group4 is part of the concatenation (emptying it): exits 2" test "$rc" = 2
 rc=0; run_qa "$OUT" -- 'GROUP5_CASES=(); check_groups' || rc=$?
 check "group5 is part of the concatenation (emptying it): exits 2" test "$rc" = 2
+rc=0; run_qa "$OUT" -- 'GROUP6_CASES=(); check_groups' || rc=$?
+check "group6 is part of the concatenation (emptying it): exits 2" test "$rc" = 2
+rc=0; run_qa "$OUT" -- 'GROUP6_CASES=(nuke-timer nuke-profiles); check_groups' || rc=$?
+check "the nuke cases swapped inside group6: exits 2" test "$rc" = 2
 # A case named in ALL_CASES with no case_<name> function only fails when the chunk reaches it on the
 # bench ("unknown case"), minutes into a gate run. Checked here for every case, so registering a
 # case and writing it cannot drift apart.
@@ -186,8 +192,8 @@ check "every case in ALL_CASES has a case_<name> function" bash -c "! grep -q MI
 check "list is unchanged: one case per line, in order" \
   test "$(bash "$QA" list | tr '\n' ' ')" = "$all_cases"
 bash "$QA" --help >"$OUT" 2>&1
-check "--help documents the chunks (group1-group5 and the APK=installed hand-off)" \
-  bash -c "grep -q group1 '$OUT' && grep -q group2 '$OUT' && grep -q '^group3: group-limit-midsession bounce-non-apps$' '$OUT' && grep -q '^group4: schedule-start-open-app' '$OUT' && grep -q '^group5: notif-idle' '$OUT' && grep -q 'APK=installed' '$OUT'"
+check "--help documents the chunks (group1-group6, NUKE_TIMER_WAIT and the APK=installed hand-off)" \
+  bash -c "grep -q group1 '$OUT' && grep -q group2 '$OUT' && grep -q '^group3: group-limit-midsession bounce-non-apps$' '$OUT' && grep -q '^group4: schedule-start-open-app' '$OUT' && grep -q '^group5: notif-idle' '$OUT' && grep -q '^group6: nuke-profiles nuke-timer$' '$OUT' && grep -q 'NUKE_TIMER_WAIT' '$OUT' && grep -q 'APK=installed' '$OUT'"
 rc=0; bash "$QA" no-such-case >"$OUT" 2>&1 || rc=$?
 check "an unknown target dies (exit 2) before the lock or the phone, and names the groups" \
   bash -c "[[ $rc == 2 ]] && grep -q 'group1' '$OUT'"
@@ -761,6 +767,164 @@ check "bounce body: no UI dump after the service is checked bound" bash -c "[[ -
 run_qa "$OUT" -- 'for f in bounce_open bounce_visit_sheet bounce_settle wait_log_count bounce_trace bounce_negative_verdict bounce_positive_verdict nudge_notif_update_ms notif_update_ms_in log_count wait_fg foreground_package go_home; do declare -f "$f" || echo "MISSING $f"; done' || true
 check "  ...nor in any helper the streak calls" bash -c "! grep -q MISSING '$OUT' && ! grep -Eq '$UI_RE' '$OUT'"
 check "case_bounce_non_apps is defined" run_qa "$OUT" -- "declare -F case_bounce_non_apps"
+
+# ─── 8. group6: nuke-profiles + nuke-timer (Nuke profiles and timer) ───────────
+echo "group6 (nuke-profiles, nuke-timer):"
+NLOG="$TMP/nuke.log"
+# The two cases with their UI parts stubbed (those need the device); the build detection, the SKIP
+# path, the fakescan property handling and the cleanup are the real functions, over a shim `ash`
+# that answers the dumpsys package queries from $PKGFLAGS and logs every other call.
+ncase() { # <case fn> <flags: debug|release|qa> [part rc] [nokey] -> "<case rc>|<ash calls>"
+  : >"$NLOG"
+  run_qa "$OUT" NLOG="$NLOG" -- "
+    nuke_preflight() { return 0; }; nuke_ensure_off() { return 0; }; go_home() { :; }; sleep() { :; }
+    nuke_profiles_part_a() { echo partA >>\"\$NLOG\"; return ${3:-0}; }
+    nuke_profiles_part_b() { echo partB >>\"\$NLOG\"; return 0; }
+    nuke_timer_dropdown() { echo dropdown >>\"\$NLOG\"; return ${3:-0}; }
+    nuke_timer_scan_flow() { echo scanflow >>\"\$NLOG\"; nuke_fakescan_set payload-1; return 0; }
+    ui_tap_text() { :; }; nuke_open_screen() { return 0; }; nuke_is_on() { [[ '$2' == qa ]]; }
+    nuke_pair_key() { :; }; nuke_scroll_top() { :; }; ui_snapshot() { :; }; ui_has_re() { return 1; }
+    ui_has() { [[ '${4:-}' == nokey && \"\$1\" == 'Pair a Nuke code first.' ]]; }
+    ash() {
+      if [[ \"\$1 \$2\" == 'dumpsys package' ]]; then
+        case '$2' in
+          release) echo '    flags=[ HAS_CODE ALLOW_CLEAR_USER_DATA ]' ;;
+          debug)   echo '    flags=[ DEBUGGABLE HAS_CODE ]' ;;
+          qa)      echo '    flags=[ DEBUGGABLE HAS_CODE ]'; echo '    dev.astraedus.nudge/com.astraedus.nudge.qa.QaControlReceiver' ;;
+        esac
+      else echo \"ash \$*\" >>\"\$NLOG\"; fi
+    }
+    $1; echo \"rc=\$?\"; trap - EXIT" || true
+  printf '%s|%s' "$(sed -n 's/^rc=//p' "$OUT")" "$(tr '\n' ',' <"$NLOG")"
+}
+check "nuke-profiles on a RELEASE build: part A runs, part B is skipped (rc 77, SKIP) and no setprop is ever sent" \
+  test "$(ncase case_nuke_profiles release)" = "77|partA,"
+check "nuke-timer on a RELEASE build: dropdown asserted, scan flow skipped (rc 77) and no setprop is ever sent" \
+  test "$(ncase case_nuke_timer release)" = "77|dropdown,"
+check "nuke-timer on a RELEASE install with NO code paired: SKIP (rc 77) before the dropdown, no setprop" \
+  test "$(ncase case_nuke_timer release 0 nokey)" = "77|"
+check "nuke-profiles on a DEBUG build: both parts run, rc 0" test "$(ncase case_nuke_profiles debug)" = "0|partA,partB,"
+check "a part A failure on a RELEASE build is a FAIL, not a SKIP" test "$(ncase case_nuke_profiles release 1)" = "1|partA,"
+check "a dropdown failure on a RELEASE build is a FAIL, not a SKIP" test "$(ncase case_nuke_timer release 1)" = "1|dropdown,"
+check "nuke-timer on a DEBUG build: the fakescan property is cleared at the end (setprop '')" \
+  test "$(ncase case_nuke_timer debug)" = "0|dropdown,scanflow,ash setprop debug.nudge.fakescan 'payload-1',ash setprop debug.nudge.fakescan '',"
+check "nuke-timer on a QA build ends Nuke via the reset command after the scan flow" \
+  bash -c "r='$(ncase case_nuke_timer qa)'; [[ \"\$r\" == 0\|* && \"\$r\" == *'qa.QaControlReceiver -a dev.astraedus.nudge.qa.CMD --es cmd reset'* ]]"
+check "nuke-timer on a plain DEBUG build never sends the reset command (it leaves Nuke on and says so)" \
+  bash -c "! grep -q 'cmd reset' '$NLOG' || true; r='$(ncase case_nuke_timer debug)'; [[ \"\$r\" != *'cmd reset'* ]]"
+
+# A real `dumpsys` keeps writing long after the line that matters. Piped into `grep -q` under
+# pipefail, the writer is SIGPIPEd and a MATCH reads as a miss: on the bench that made a debug build
+# read as release (every scan step skipped) and a shown keyboard read as hidden. The shim prints the
+# matching line FIRST and then 200k more lines, so a `| grep -q` version fails these checks.
+bigdump() { # <first line> -> an ash shim body
+  printf '%s' "ash() { if [[ \"\$1\" == dumpsys ]]; then echo '$1'; seq 1 200000; else echo \"ash \$*\" >>\"\$NLOG\"; fi; }"
+}
+run_qa "$OUT" -- "$(bigdump '    flags=[ DEBUGGABLE HAS_CODE ]'); nuke_scan_available && echo yes || echo no" || true
+check "nuke_scan_available reads a DEBUGGABLE build as debug even when dumpsys keeps writing (no pipefail SIGPIPE)" \
+  test "$(cat "$OUT")" = "yes"
+run_qa "$OUT" -- "$(bigdump '    flags=[ HAS_CODE ALLOW_CLEAR_USER_DATA ]'); nuke_scan_available && echo yes || echo no" || true
+check "nuke_scan_available still reads a release build as release" test "$(cat "$OUT")" = "no"
+run_qa "$OUT" -- "$(bigdump '    dev.astraedus.nudge/com.astraedus.nudge.qa.QaControlReceiver'); nuke_has_qa_receiver && echo yes || echo no" || true
+check "nuke_has_qa_receiver finds the receiver in a long dump" test "$(cat "$OUT")" = "yes"
+: >"$NLOG"; run_qa "$OUT" NLOG="$NLOG" -- "$(bigdump '  mInputShown=true'); sleep() { :; }; nuke_hide_keyboard" || true
+check "nuke_hide_keyboard presses Back when the keyboard is shown, even in a long dump" \
+  grep -qx 'ash input keyevent KEYCODE_BACK' "$NLOG"
+: >"$NLOG"; run_qa "$OUT" NLOG="$NLOG" -- "$(bigdump '  mInputShown=false'); sleep() { :; }; nuke_hide_keyboard" || true
+check "nuke_hide_keyboard sends nothing when the keyboard is hidden" test ! -s "$NLOG"
+
+# The dashboard keeps its scroll position, and the card search only scrolls DOWN: on the bench a case
+# that left Home at the bottom made "no Nuke card on the dashboard". The first swipes must go UP.
+: >"$NLOG"
+run_qa "$OUT" NLOG="$NLOG" -- "
+  ash() { echo \"ash \$*\" >>\"\$NLOG\"; }; sleep() { :; }; nudge_route_home() { :; }; ui_snapshot() { :; }
+  ui_xy() { echo '540 400'; }; scroll_to_text() { return 0; }
+  nuke_open_screen; echo rc=\$?" || true
+first_swipe="$(grep -m1 'input swipe' "$NLOG" || true)"
+check "nuke_open_screen scrolls the dashboard back UP before searching down for the card" \
+  bash -c "read -r _ _ _ _ y1 _ y2 _ <<<'$first_swipe'; [[ -n \"\$y1\" && \$y1 -lt \$y2 ]] && grep -q 'rc=0' '$OUT'"
+
+# The profile-name reader behind nuke_clear_profiles: both chip shapes, nothing else.
+cat >"$TMP/nuke-chips.xml" <<'XML'
+<hierarchy><node content-desc="Profile Focus, in use" /><node content-desc="Profile Notes only" /><node content-desc="Lock code for: None" /></hierarchy>
+XML
+run_qa "$OUT" -- "nuke_profile_names '$TMP/nuke-chips.xml'" || true
+check "nuke_profile_names lists every chip, selected or not, and only chips" \
+  test "$(tr '\n' '|' <"$OUT")" = "Focus|Notes only|"
+
+# The REAL chip shape from a bench dump: the clickable parent is checkable+checked, nothing is selected.
+cat >"$TMP/nuke-realchips.xml" <<'XML'
+<?xml version='1.0' encoding='UTF-8' standalone='yes' ?><hierarchy rotation="0">
+<node text="" class="android.view.View" checkable="true" checked="true" clickable="true" selected="false" bounds="[44,1848][238,1980]"><node text="" class="android.view.View" content-desc="Profile Focus, in use" checkable="false" checked="false" clickable="false" selected="false" bounds="[44,1870][238,1958]"><node text="Focus" class="android.widget.TextView" checkable="false" checked="false" clickable="false" selected="false" bounds="[88,1887][194,1942]" /></node></node>
+<node text="" class="android.view.View" checkable="true" checked="false" clickable="true" selected="false" bounds="[260,1848][535,1980]"><node text="" class="android.view.View" content-desc="Profile Notes only" checkable="false" checked="false" clickable="false" selected="false" bounds="[260,1870][535,1958]"><node text="Notes only" class="android.widget.TextView" checkable="false" checked="false" clickable="false" selected="false" bounds="[304,1887][491,1942]" /></node></node>
+</hierarchy>
+XML
+run_qa "$OUT" -- "WORK='$TMP'; write_ui_state; python3 '$TMP/uistate.py' selected '$TMP/nuke-realchips.xml' Focus; python3 '$TMP/uistate.py' selected '$TMP/nuke-realchips.xml' 'Notes only'" || true
+check "uistate selected reads the REAL FilterChip shape (checkable+checked parent): Focus in use, Notes only not" \
+  test "$(tr '\n' '|' <"$OUT")" = "true|false|"
+
+# nuke_type_field checks what landed: a scrambled field is retried, then FAILS loudly, never passes.
+mkfield() { printf '%s' "<hierarchy><node class=\"android.widget.EditText\" text=\"$1\" bounds=\"[0,0][10,10]\" /></hierarchy>"; }
+run_qa "$OUT" -- "ash() { :; }; sleep() { :; }; ui_snapshot() { UI_XML='$TMP/f.xml'; printf '%s' '$(mkfield Keenotesp)' >\"\$UI_XML\"; }; nuke_type_field Keep && echo ok || echo failed" || true
+check "nuke_type_field fails when the field never reads what was typed" grep -q '^failed$' "$OUT"
+run_qa "$OUT" -- "ash() { :; }; sleep() { :; }; ui_snapshot() { UI_XML='$TMP/f.xml'; printf '%s' '$(mkfield Keep)' >\"\$UI_XML\"; }; nuke_type_field Keep && echo ok || echo failed" || true
+check "nuke_type_field passes when the field reads the typed text" grep -q '^ok$' "$OUT"
+
+# The REAL app row from a bench dump: icon (desc = label), CheckBox (the only clickable node), label.
+cat >"$TMP/nuke-realrow.xml" <<'XML'
+<?xml version='1.0' encoding='UTF-8' standalone='yes' ?><hierarchy rotation="0">
+<node text="Calendar" class="android.widget.EditText" clickable="true" checkable="false" checked="false" bounds="[44,1566][1036,1720]" />
+<node text="" class="android.view.View" clickable="false" checkable="false" checked="false" bounds="[44,1780][1036,1930]">
+<node text="" class="android.view.View" content-desc="Calendar" clickable="false" checkable="false" checked="false" bounds="[88,1797][198,1907]" />
+<node text="" class="android.widget.CheckBox" clickable="true" checkable="true" checked="false" bounds="[861,1787][993,1919]" />
+<node text="Calendar" class="android.widget.TextView" clickable="false" checkable="false" checked="false" bounds="[242,1819][429,1885]" />
+</node></hierarchy>
+XML
+run_qa "$OUT" -- "WORK='$TMP'; write_ui_state; python3 '$TMP/uistate.py' boxxy '$TMP/nuke-realrow.xml' Calendar; python3 '$TMP/uistate.py' checked '$TMP/nuke-realrow.xml' Calendar" || true
+check "uistate boxxy taps the row's CheckBox (not the icon labelxy finds), and checked reads it" \
+  test "$(tr '\n' '|' <"$OUT")" = "927 1853|false|"
+
+# The fakescan helpers send exactly one quoted payload and exactly one empty clear, and clear is a
+# no-op when nothing was ever set (a release run must not touch the property at all).
+nfs() { : >"$NLOG"; run_qa "$OUT" NLOG="$NLOG" -- "ash() { echo \"\$*\" >>\"\$NLOG\"; }; $1" || true; tr '\n' '|' <"$NLOG"; }
+check "nuke_fakescan_set quotes the payload" test "$(nfs 'nuke_fakescan_set qa-nuke-key-183')" = "setprop debug.nudge.fakescan 'qa-nuke-key-183'|"
+check "nuke_fakescan_clear restores the camera after a set" \
+  test "$(nfs 'nuke_fakescan_set k >/dev/null; nuke_fakescan_clear')" = "setprop debug.nudge.fakescan 'k'|setprop debug.nudge.fakescan ''|"
+check "nuke_fakescan_clear with nothing set sends nothing" test -z "$(nfs 'nuke_fakescan_clear')"
+
+# The dump readers, against a canned Nuke screen: a chip row (Two selected), a search box that holds
+# the same words as a row, two app rows with checkboxes, and the "Lock code for" row.
+cat >"$TMP/nuke-ui.xml" <<'XML'
+<?xml version='1.0' encoding='UTF-8' standalone='yes' ?><hierarchy rotation="0">
+<node text="" class="android.view.View" clickable="true" content-desc="Nuke is off. 2 apps ready." bounds="[0,100][1080,300]" />
+<node text="" class="android.widget.Button" clickable="true" content-desc="Lock code for: 15 min" bounds="[600,400][1000,500]" />
+<node text="Two" class="android.view.View" clickable="true" selected="true" bounds="[0,600][200,700]" />
+<node text="One" class="android.view.View" clickable="true" selected="false" bounds="[250,600][450,700]" />
+<node text="Keep Notes" class="android.widget.EditText" bounds="[0,800][1080,900]" />
+<node class="android.view.View" clickable="true" bounds="[0,950][1080,1050]">
+  <node text="Keep Notes" class="android.widget.TextView" bounds="[100,950][600,1050]" />
+  <node text="" class="android.widget.CheckBox" checkable="true" checked="true" bounds="[900,950][1000,1050]" />
+</node>
+<node class="android.view.View" clickable="true" bounds="[0,1100][1080,1200]">
+  <node text="Calendar" class="android.widget.TextView" bounds="[100,1100][600,1200]" />
+  <node text="" class="android.widget.CheckBox" checkable="true" checked="false" bounds="[900,1100][1000,1200]" />
+</node>
+</hierarchy>
+XML
+ui() { run_qa "$OUT" -- "write_ui_state; python3 \"\$WORK/uistate.py\" $1 '$TMP/nuke-ui.xml' '$2'" || true; tr -d '\n' <"$OUT"; }
+check "uistate prefix: the Home Nuke card (clickable, description starts with Nuke)" test "$(ui prefix Nuke)" = "540 200"
+check "uistate prefix: the Lock code for row" test "$(ui prefix 'Lock code for: ')" = "800 450"
+check "uistate checked: a ticked app row" test "$(ui checked 'Keep Notes')" = "true"
+check "uistate checked: an unticked app row (the search box with the same words is ignored)" test "$(ui checked 'Calendar')" = "false"
+check "uistate selected: the selected chip" test "$(ui selected Two)" = "true"
+check "uistate selected: an unselected chip" test "$(ui selected One)" = "false"
+check "uistate labelxy: the row label, never the search box holding the same words" test "$(ui labelxy 'Keep Notes')" = "350 1000"
+printf '%s' '<node text="Your code is locked for 15 more min. Scan again after that." />' >"$TMP/snack.xml"
+check "ui_has_re matches the refusal snackbar regex" \
+  run_qa "$OUT" -- "UI_XML='$TMP/snack.xml'; ui_has_re 'Your code is locked for .*\\. Scan again after that\\.'"
+rc=0; run_qa "$OUT" -- "UI_XML='$TMP/snack.xml'; ui_has_re 'Nuke is off\\.'" || rc=$?
+check "ui_has_re rejects a different message" test "$rc" = 1
+check "case_nuke_profiles and case_nuke_timer are defined" run_qa "$OUT" -- "declare -F case_nuke_profiles case_nuke_timer"
 
 echo
 echo "$pass passed, $fail failed"

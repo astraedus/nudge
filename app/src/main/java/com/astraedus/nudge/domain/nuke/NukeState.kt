@@ -7,9 +7,9 @@ package com.astraedus.nudge.domain.nuke
  * with no rule at all, and a nuked app's own rules are simply overridden while Nuke is on. See
  * `docs/architecture/nuke-mode.md`.
  *
- * v1 is ONE list and ONE key. The shape is kept so a later multi-profile version is additive: a
- * profile would be a named [NukeState] minus [active] (which stays global — only one Nuke can be on
- * at a time), and the current fields become "the default profile" without a migration.
+ * ONE list and ONE key. Profiles (#183) are presets stored beside this, never inside it: applying
+ * one copies its apps into [packages] while Nuke is off, so the running Nuke only ever reads
+ * [packages] and no profile edit can reach it ([NukeProfile]).
  *
  * @property active whether Nuke is on right now. Survives reboot (it is persisted), and is only ever
  *   true while a key is paired — [com.astraedus.nudge.data.preferences.NudgePreferences] clears it
@@ -20,12 +20,15 @@ package com.astraedus.nudge.domain.nuke
  * @property keyHash lowercase hex SHA-256 of the paired key's payload, or null when no key is
  *   paired. The payload itself is never stored ([NukeKey]).
  * @property keyKind how the key was paired, for the screen's copy only. Never consulted by a gate.
+ * @property timer the timer this Nuke was started with (#184), or null. Only ever set while [active];
+ *   ending Nuke clears it. While it runs, the key is refused ([NukePolicy.keyWaitMs]).
  */
 data class NukeState(
     val active: Boolean = false,
     val packages: Set<String> = emptySet(),
     val keyHash: String? = null,
-    val keyKind: NukeKeyKind? = null
+    val keyKind: NukeKeyKind? = null,
+    val timer: NukeTimer? = null
 ) {
     val hasKey: Boolean get() = !keyHash.isNullOrBlank()
 

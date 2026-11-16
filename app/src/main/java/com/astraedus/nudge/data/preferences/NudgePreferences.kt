@@ -2,6 +2,7 @@ package com.astraedus.nudge.data.preferences
 
 import android.content.Context
 import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
@@ -15,7 +16,11 @@ import com.astraedus.nudge.domain.engine.FirstUnlockWindow
 import com.astraedus.nudge.domain.ContentFilterAllowlist
 import com.astraedus.nudge.domain.ContentFilterBlocklist
 import com.astraedus.nudge.domain.ContentFilterUserList
+import com.astraedus.nudge.domain.nuke.NukeClockReading
 import com.astraedus.nudge.domain.nuke.NukeKeyKind
+import com.astraedus.nudge.domain.nuke.NukeProfile
+import com.astraedus.nudge.domain.nuke.NukeProfiles
+import com.astraedus.nudge.domain.nuke.NukeTimer
 import com.astraedus.nudge.domain.nuke.NukeState
 import com.astraedus.nudge.domain.nudge.PhoneNudge
 import com.astraedus.nudge.service.GlobalEnabledProvider
@@ -82,6 +87,14 @@ class NudgePreferences internal constructor(
         val NUKE_KEY_HASH = stringPreferencesKey("nuke_key_hash")
         val NUKE_KEY_KIND = stringPreferencesKey("nuke_key_kind")
         val NUKE_INTRO_SEEN = booleanPreferencesKey("nuke_intro_seen")
+
+        // Nuke profiles (#183) and the timer (#184). Same rule: device-local, never in a backup.
+        val NUKE_PROFILES = stringPreferencesKey("nuke_profiles")
+        val NUKE_TIMER_DURATION_MS = longPreferencesKey("nuke_timer_duration_ms")
+        val NUKE_TIMER_CONSUMED_MS = longPreferencesKey("nuke_timer_consumed_ms")
+        val NUKE_TIMER_BOOT_COUNT = intPreferencesKey("nuke_timer_boot_count")
+        val NUKE_TIMER_SEGMENT_START_MS = longPreferencesKey("nuke_timer_segment_start_ms")
+        val NUKE_TIMER_CHOICE_MINUTES = intPreferencesKey("nuke_timer_choice_minutes")
     }
 
     /**
@@ -472,20 +485,129 @@ class NudgePreferences internal constructor(
     val nukeState: Flow<NukeState> = dataStore.data
         .map { prefs ->
             val hash = prefs[Keys.NUKE_KEY_HASH]?.takeIf { it.isNotBlank() }
+            val active = (prefs[Keys.NUKE_ACTIVE] ?: false) && hash != null
             NukeState(
-                active = (prefs[Keys.NUKE_ACTIVE] ?: false) && hash != null,
+                active = active,
                 packages = prefs[Keys.NUKE_PACKAGES] ?: emptySet(),
                 keyHash = hash,
-                keyKind = NukeKeyKind.fromNameOrNull(prefs[Keys.NUKE_KEY_KIND])
+                keyKind = NukeKeyKind.fromNameOrNull(prefs[Keys.NUKE_KEY_KIND]),
+                // A timer only means anything while Nuke is on. Absent keys (every phone upgrading
+                // from before #184) and corrupt ones read as no timer.
+                timer = if (active) readNukeTimer(prefs) else null
             )
         }
         .distinctUntilChanged()
 
-    /** Turn Nuke on or off. Refuses to turn it ON with no key paired (it stays off). */
-    suspend fun setNukeActive(active: Boolean) {
-        dataStore.edit { prefs ->
-            prefs[Keys.NUKE_ACTIVE] = active && !prefs[Keys.NUKE_KEY_HASH].isNullOrBlank()
+    private fun readNukeTimer(prefs: Preferences): NukeTimer? = NukeTimer.fromStored(
+        durationMs = prefs[Keys.NUKE_TIMER_DURATION_MS],
+        consumedMs = prefs[Keys.NUKE_TIMER_CONSUMED_MS],
+        bootCount = prefs[Keys.NUKE_TIMER_BOOT_COUNT],
+        segmentStartElapsedMs = prefs[Keys.NUKE_TIMER_SEGMENT_START_MS]
+    )
+
+    private fun writeNukeTimer(prefs: MutablePreferences, timer: NukeTimer?) {
+        if (timer == null) {
+            prefs.remove(Keys.NUKE_TIMER_DURATION_MS)
+            prefs.remove(Keys.NUKE_TIMER_CONSUMED_MS)
+            prefs.remove(Keys.NUKE_TIMER_BOOT_COUNT)
+            prefs.remove(Keys.NUKE_TIMER_SEGMENT_START_MS)
+            return
         }
+        prefs[Keys.NUKE_TIMER_DURATION_MS] = timer.durationMs
+        prefs[Keys.NUKE_TIMER_CONSUMED_MS] = timer.consumedMs
+        timer.bootCount?.let { prefs[Keys.NUKE_TIMER_BOOT_COUNT] = it } ?: prefs.remove(Keys.NUKE_TIMER_BOOT_COUNT)
+        prefs[Keys.NUKE_TIMER_SEGMENT_START_MS] = timer.segmentStartElapsedMs
+    }
+
+    /**
+     * Turn Nuke on (with no timer) or off. Refuses to turn it ON with no key paired (it stays off).
+     * Turning it OFF also clears its timer, in the same transaction: ending Nuke ends the timer.
+     */
+    suspend fun setNukeActive(active: Boolean) {
+        if (active) {
+            armNuke(timer = null)
+            return
+        }
+        dataStore.edit { prefs ->
+            prefs[Keys.NUKE_ACTIVE] = false
+            writeNukeTimer(prefs, null)
+        }
+    }
+
+    /**
+     * Turn Nuke ON, with [timer] or none, in one transaction. Still never on without a key. Arming a
+     * Nuke that is ALREADY on changes nothing: in particular it can never replace a running timer
+     * with a shorter one (or none), which would be a way around the timer.
+     */
+    suspend fun armNuke(timer: NukeTimer?) {
+        dataStore.edit { prefs ->
+            if (prefs[Keys.NUKE_KEY_HASH].isNullOrBlank()) {
+                prefs[Keys.NUKE_ACTIVE] = false
+                return@edit
+            }
+            if (prefs[Keys.NUKE_ACTIVE] == true) return@edit
+            prefs[Keys.NUKE_ACTIVE] = true
+            writeNukeTimer(prefs, timer)
+        }
+    }
+
+    /**
+     * Fold the running timer's segment into its stored count (see [NukeTimer.checkpoint]), so a crash
+     * or a hard power-off loses at most the time since now. A no-op with no timer running.
+     */
+    suspend fun checkpointNukeTimer(now: NukeClockReading) {
+        dataStore.edit { prefs ->
+            if (prefs[Keys.NUKE_ACTIVE] != true) return@edit
+            val timer = readNukeTimer(prefs) ?: return@edit
+            writeNukeTimer(prefs, timer.checkpoint(now))
+        }
+    }
+
+    /** The timer picker's last choice in minutes, 0 for none. Remembered so a routine is one tap. */
+    val nukeTimerChoiceMinutes: Flow<Int> = dataStore.data
+        .map { prefs -> NukeTimer.choiceOrNone(prefs[Keys.NUKE_TIMER_CHOICE_MINUTES]) }
+        .distinctUntilChanged()
+
+    suspend fun setNukeTimerChoice(minutes: Int) {
+        dataStore.edit { prefs -> prefs[Keys.NUKE_TIMER_CHOICE_MINUTES] = NukeTimer.choiceOrNone(minutes) }
+    }
+
+    /** Saved Nuke profiles (#183), in the order saved. A corrupt value reads as none, never a crash. */
+    val nukeProfiles: Flow<List<NukeProfile>> = dataStore.data
+        .map { prefs -> NukeProfilesCodec.decode(prefs[Keys.NUKE_PROFILES]) }
+        .distinctUntilChanged()
+
+    /**
+     * Apply [edit] to the saved profiles under one `edit`, and store the result when it is
+     * [NukeProfiles.Edit.Done]. Touches ONLY the profiles key: no profile write can reach the
+     * working list or a running Nuke.
+     */
+    suspend fun editNukeProfiles(edit: (List<NukeProfile>) -> NukeProfiles.Edit): NukeProfiles.Edit {
+        var result: NukeProfiles.Edit = NukeProfiles.Edit.Refused(NukeProfiles.Refusal.NOT_FOUND)
+        dataStore.edit { prefs ->
+            result = edit(NukeProfilesCodec.decode(prefs[Keys.NUKE_PROFILES]))
+            val done = result as? NukeProfiles.Edit.Done ?: return@edit
+            prefs[Keys.NUKE_PROFILES] = NukeProfilesCodec.encode(done.profiles)
+        }
+        return result
+    }
+
+    /**
+     * Replace the working list with [packages] (applying a profile), but ONLY while Nuke is off:
+     * swapping the list of a running Nuke could take apps off it, which is weakening. The check is
+     * inside the same transaction as the write, so a Nuke started a moment earlier is never touched.
+     *
+     * @return true when the list was replaced.
+     */
+    suspend fun replaceNukePackagesWhileOff(packages: Set<String>): Boolean {
+        var replaced = false
+        dataStore.edit { prefs ->
+            val active = prefs[Keys.NUKE_ACTIVE] == true && !prefs[Keys.NUKE_KEY_HASH].isNullOrBlank()
+            if (active) return@edit
+            prefs[Keys.NUKE_PACKAGES] = packages.filterTo(mutableSetOf()) { it.isNotBlank() }
+            replaced = true
+        }
+        return replaced
     }
 
     /** Add [packages] to the Nuke list. Read-modify-write under one `edit`. */
@@ -518,6 +640,7 @@ class NudgePreferences internal constructor(
             prefs.remove(Keys.NUKE_KEY_HASH)
             prefs.remove(Keys.NUKE_KEY_KIND)
             prefs[Keys.NUKE_ACTIVE] = false
+            writeNukeTimer(prefs, null)
         }
     }
 

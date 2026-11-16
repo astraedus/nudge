@@ -144,4 +144,63 @@ class NukeWiringContractTest {
         assertFalse(nukeContent.contains("finish()"))
         assertTrue(overlayActivity.contains("BlockMode.HARD_BLOCK -> if (nuke) {"))
     }
+
+    // --- the timer's checkpoints and clock (#184) -------------------------------------------------
+    // The time math is L1 (`NukeTimerTest`); what it cannot see is whether the moments that bank
+    // the running segment are wired. A missing checkpoint compiles and passes every value test, and
+    // costs the user the time since the last one on a hard power-off (never an early end).
+
+    @Test
+    fun `screen-off and shutdown bank the timer, and the shutdown receiver is registered and torn down`() {
+        val screenOff = body(service, "private val screenOffReceiver by lazy {", "private val nukeTimerCheckpoint by lazy")
+        assertTrue("screen-off must checkpoint the timer", screenOff.contains("nukeTimerCheckpoint.checkpoint()"))
+
+        val shutdown = body(service, "private val shutdownReceiver by lazy {", "private val unlockReceiver")
+        assertTrue(shutdown.contains("Intent.ACTION_SHUTDOWN"))
+        assertTrue("the write must finish before power-off", shutdown.contains("goAsync()"))
+        assertTrue(shutdown.contains("nukeTimerCheckpoint.checkpoint()"))
+        assertTrue("pending.finish() must run even if the write throws", Regex("""finally\s*\{\s*pending\.finish\(\)""").containsMatchIn(shutdown))
+
+        assertEquals(
+            "registered exactly once",
+            1,
+            Regex("""(?<!un)registerReceiver\(\s*shutdownReceiver""").findAll(service).count()
+        )
+        assertTrue(service.contains("teardown.step(\"unregister_shutdown_receiver\") { unregisterReceiver(shutdownReceiver) }"))
+    }
+
+    @Test
+    fun `opening the Nuke screen banks the timer`() {
+        val vm = code(read("com/astraedus/nudge/ui/screens/nuke/NukeViewModel.kt"))
+        val init = vm.substring(vm.indexOf("init {"))
+        assertTrue(init.substringBefore("\n    }").contains("preferences.checkpointNukeTimer(clock.now())"))
+    }
+
+    /**
+     * The timer must not move when the user changes the date, time or zone, so nothing on its path
+     * may read a wall clock. Only the port's Android side reads time, and only the monotonic clock.
+     */
+    @Test
+    fun `nothing the timer decides with reads a wall clock`() {
+        val wallClock = listOf(
+            "System.currentTimeMillis", "Instant.", "LocalDateTime", "ZonedDateTime", "java.util.Date",
+            "Calendar.", "Clock.system", "SystemClock.uptimeMillis", "SystemClock.currentThreadTimeMillis"
+        )
+        listOf(
+            "com/astraedus/nudge/domain/nuke/NukeTimer.kt",
+            "com/astraedus/nudge/domain/nuke/NukePolicy.kt",
+            "com/astraedus/nudge/domain/nuke/NukeScan.kt",
+            "com/astraedus/nudge/ui/nuke/NukeGate.kt",
+            "com/astraedus/nudge/service/AndroidNukeClock.kt",
+            "com/astraedus/nudge/service/NukeTimerCheckpoint.kt"
+        ).forEach { path ->
+            val source = code(read(path))
+            wallClock.forEach { read ->
+                assertFalse("$path must not read the wall clock ($read): the timer is monotonic", source.contains(read))
+            }
+        }
+        val android = code(read("com/astraedus/nudge/service/AndroidNukeClock.kt"))
+        assertTrue(android.contains("SystemClock.elapsedRealtime()"))
+        assertTrue(android.contains("Settings.Global.BOOT_COUNT"))
+    }
 }

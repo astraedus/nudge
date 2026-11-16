@@ -1,0 +1,3 @@
+• Nuke profiles: save the apps on your Nuke list under a name, then switch between saved lists with one tap.
+• Lock code: before you start Nuke, pick a time (15 minutes to 2 hours). Until it is up, scanning your code won't end Nuke. Time with the phone switched off doesn't count, and nothing unlocks by itself after.
+• The typed emergency code still ends Nuke at any time, even while your code is locked.

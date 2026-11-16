@@ -27,7 +27,9 @@ So Nuke is three things:
 
 | Piece | Where | Notes |
 |---|---|---|
-| `NukeState(active, packages, keyHash, keyKind)` | `domain/nuke/NukeState.kt` | The whole persisted state as one value. `packages` is RAW: it may hold a floor package, so nothing enforces off it directly. v1 is one list; a multi-profile version would make this "the default profile" additively. |
+| `NukeState(active, packages, keyHash, keyKind)` | `domain/nuke/NukeState.kt` | The whole persisted state as one value. `packages` is RAW: it may hold a floor package, so nothing enforces off it directly. It is the ONE list a running Nuke reads; profiles (below) only ever copy into it while Nuke is off. `timer` is the running timer, read only while `active`. |
+| Profiles (#183) | `domain/nuke/NukeProfile.kt` (`NukeProfiles`), `data/preferences/NukeProfilesCodec.kt` | Named presets of the list. Pure edits (`save` updates a same-named profile in place, `rename`, `delete`, `sanitize`, `matching`) returning `Done` or a `Refusal`; names trimmed, case-insensitively unique, at most 30 chars, at most 10 profiles, never an empty list. Stored as one JSON string under `NUKE_PROFILES`; a corrupt value (or entry) is dropped, never a crash. |
+| Timer (#184) | `domain/nuke/NukeTimer.kt`, `NukeClock` port → `service/AndroidNukeClock.kt` | See "The timer" below. `NukePolicy.keyWaitMs(state, now)` is the one question every gate asks. |
 | Key generation, hashing, matching | `domain/nuke/NukeKey.kt` | Only the lowercase-hex SHA-256 of the trimmed payload is stored. Constant-time compare (`MessageDigest.isEqual`). Blank and >4096-char payloads are never keys. |
 | Every decision | `domain/nuke/NukePolicy.kt` | `isNuked`, the safety floor, `armBlocker`/`canArm`, `isWeakening(old, new)`, `masterToggleOffRequiresUnlock`. |
 | Scan meaning | `domain/nuke/NukeScan.kt` | `resolveToggle` → Arm / Disarm / WrongKey / NoKey / CannotArm / Cancelled. `NukeEmergencyCode` (length 64, `SecureRandom`) reuses `StrictModeChallenge` wholesale. |
@@ -116,6 +118,10 @@ dialog (scan, or type a fresh 64-char code via the reused `ChallengeDialog`).
 | Master toggle OFF (Home) | Strict Mode's gate only | Nuke's gate, THEN Strict Mode's |
 | Master toggle OFF (Protection widget) | allowed unless Strict Mode | refused in the widget; opens the app |
 | Import a backup | cannot touch Nuke | cannot touch Nuke |
+| Save / rename / delete a profile (#183) | free | free (writes only `NUKE_PROFILES`; the running list is untouched) |
+| Switch the list to a profile, or its Undo (#183) | free (replaces the list) | refused: "End Nuke to switch profiles." |
+| Pick "Lock code for" (#184) | free (used by the next start) | not offered |
+| Any "key or code" row above, while the timer runs (#184) | — | the key is refused with the time left; the emergency code works |
 
 Every unlock re-reads the LIVE key (a re-pair between opening the dialog and scanning counts), and
 every trip into typing mode generates a NEW code.
@@ -178,12 +184,65 @@ but stays in storage, so it counts again if this phone stops treating it as esse
 the card used only the static floor and said "3 apps" next to a screen that said "1 app" (found on
 the bench in spec PR 1; pinned by `NukeCountParityTest`).
 
+## Profiles (#183)
+
+A profile is a saved copy of the list, nothing more. The screen shows them as a row of FilterChips
+under the "never on this list" caption (nothing at all until the first "Save as profile", so with no
+profiles the section looks exactly as it did before #183); the chip whose apps equal the current list
+shows as selected, by fill alone (no check mark, so a chip never changes width). Tapping another chip
+while Nuke is off makes the list exactly that profile's apps, with an "Undo" snackbar holding the list
+from before. Tapping the selected chip, or any chip while Nuke is on, opens Rename / Delete. "Save as
+profile" is a text link on the header row (`NukeUiState.canSaveProfile`): offered only when the list
+is non-empty and is not already exactly a saved profile, since saving then would only duplicate it.
+It is a clickable Text rather than a TextButton so the header keeps its height; Compose's hit testing
+still gives it a 48dp touch target.
+
+Why a preset and not a live link: the running Nuke reads `NUKE_PACKAGES` and nothing else, so no
+profile edit can weaken a running Nuke (deleting the profile it came from changes nothing), and the
+safety floor applies exactly as before (`NukePolicy.enforceable`), since a profile only ever lands in
+the same raw list. Switching profiles while Nuke is on would be "remove apps" in disguise, so
+`replaceNukePackagesWhileOff` refuses it inside the same DataStore transaction that reads `active`
+(an Undo that lands after Nuke started is refused too).
+
+## The timer (#184)
+
+Before starting, the user may lock the code for a while: the "Lock code for" row in the off card
+(None, 15, 30, 45 min, 1 or 2 hours; remembered, offered only when a key is paired and only while Nuke
+is off). The words are about the CODE on purpose: on the bench "Timer" read as "Nuke turns off after
+15 min", which is the opposite of what it does. The ON card says "Code locked · X left" while it runs
+and nothing once it has run out (the plain ON card). While it runs, the key unlocks nothing: every
+"key or code" row in the gate table answers "Your code is locked for X more min. Scan again after
+that." from
+`NukeGate` (and `NukeScan.resolveToggle` → `TimerRunning` for scan-to-toggle). Adding apps stays free.
+The emergency code ignores the timer, always. When the timer runs out NOTHING happens by itself: no
+auto-unlock, Nuke stays on until the key or the code ends it, and ending Nuke clears the timer.
+Starting again while on never replaces a running timer (`armNuke` is a no-op when already active).
+
+**The clock model.** Time is phone-on time on the monotonic clock (`SystemClock.elapsedRealtime`)
+plus `Settings.Global.BOOT_COUNT`, counted in one segment per boot: counted = banked + (now − segment
+start) on the same boot. The wall clock is never read, so changing the date, time or zone (Settings is
+reachable during Nuke) moves nothing. The app banks the running segment on screen-off, on
+`ACTION_SHUTDOWN` (`goAsync`) and when the Nuke screen opens.
+- **A reboot** carries the banked time forward and counts the new boot's uptime; the old boot's
+  unbanked tail is lost, so the timer can only run LONGER than asked, never end early.
+- **Time with the phone off does not count.** A timer is "N minutes of phone time", by design:
+  otherwise switching the phone off would be the way to wait it out.
+- **No boot count** (a phone that will not say): a clock behind the segment start means a reboot, one
+  ahead is treated as the same boot. Both can only under-count.
+- **A corrupt stored timer** (impossible duration, longer than 24 h, missing start) reads as no timer:
+  Nuke stays on and the key works, so a bad value can never trap the key.
+
+Limits: a hard power-off or crash loses the time since the last checkpoint (the timer runs longer);
+the timer is enforced by the app, so safe mode, `adb` or a reset bypass it like everything else here;
+and the emergency code always works, by the product rule.
+
 ## Export / import
 
 Nuke state is DEVICE-LOCAL, like the emergency-pass ledger. `ExportedSettings` has no Nuke field, an
 export never mentions it, and `applyImportedSettings` cannot write a `NUKE_*` key: a hand-edited
 backup saying `"nukeActive": false` would otherwise end Nuke without the key, and one carrying a
-`nukeKeyHash` would swap it. Pinned by `NukeExportExclusionTest` (the real exporter over a hostile
+`nukeKeyHash` would swap it. Profiles, the timer and the timer choice are device-local too (a
+backup carrying a short timer must not replace a running one). Pinned by `NukeExportExclusionTest` (the real exporter over a hostile
 file) and `ImportedSettingsWriteContractTest`'s device-local list.
 
 ## Threat model, and its honest limits
@@ -218,8 +277,14 @@ What it cannot close, and does not pretend to:
 | L3 | `EvaluateBlockAllAppsTest` | a nuked app that an All apps rule allows is still nuked |
 | L1 | `NukeViewModelTest` | arm needs key + list, key toggles, wrong key does not disarm, emergency disarms, remove/replace/unpair gated only while on, add free, QR saved only after the same code is scanned back, the picker never offers the floor |
 | L1 | `NukeCountParityTest` | the dashboard card and the Nuke screen show the same count through both real ViewModels: stored essentials left out of both, an app that stops being essential counts again on both, the static floor left out of both |
-| L1 | `HomeNukeToggleGateTest` | master toggle OFF waits for the key or the code while Nuke is on |
-| L4 | `NukeExportExclusionTest`, `ImportedSettingsWriteContractTest` | nothing about Nuke leaves or enters through a backup |
-| contract | `NukeWiringContractTest` | every grant sits in `grantLetsThrough`, a nuked app never consults it, nuked browser, content-change + feature paths, re-evaluate on arm, overlay flag + fingerprint, escape guard, the Nuke overlay has no pass and walks away through `navigateHome` |
+| L1 | `HomeNukeToggleGateTest` | master toggle OFF waits for the key or the code while Nuke is on; during a timer the key is refused and the code still works |
+| L1 | `NukeTimerTest` | the clock model: same boot, reboot carries banked time, a reboot never ends it early, a power cut only lengthens it, no boot count either way, a clock that went backwards, clamps, choices, `fromStored` fails soft, `keyWaitMs` |
+| L1 | `NukeProfilesTest`, `NukeProfilesCodecTest` | name rules and bounds, update-in-place, rename/delete, `matching`, `sanitize`; the stored JSON round-trips and every corrupt shape reads as nothing (same on Android's and the desktop org.json) |
+| L1 | `NukeTimerCopyTest` | every code-lock line: rounds up, refusal (minutes and hours), status line gone once run out, picker labels, and no line calls it a "timer" |
+| L1 | `NukeGateTest`, `NukeScanTest` (timer cases) | the right key refused with the time left (flagged `errorIsCodeLock`, so the dialog shows it as plain text, not the error colour), works after; wrong key still wrong (and an error again); the emergency code at any time; a leftover timer on an off Nuke holds nothing |
+| L1 | `NukeViewModelTimerProfilesTest` | through the real VM + gate + preferences: the picked timer starts with both starts; EVERY key-gated weakening refused during the timer; adding free; emergency ends and clears; reboot never ends early; time zone moves nothing; upgrade from the old keys; profile save/apply/Undo/refusals; a running Nuke's list survives every profile edit |
+| L4 | `NukePreferencesTimerProfilesTest` | the real preferences: upgrade from old on-disk keys, arm never without a key, never replaces a running timer, end/unpair clear it, checkpoint writes only when it should, corrupt timer/profiles fail soft, profile edits touch only `NUKE_PROFILES`, switch only while off |
+| L4 | `NukeExportExclusionTest`, `ImportedSettingsWriteContractTest` | nothing about Nuke (profiles and timer included) leaves or enters through a backup; every `NUKE_*` key is absent from the export/import code |
+| contract | `NukeWiringContractTest` | every grant sits in `grantLetsThrough`, a nuked app never consults it, nuked browser, content-change + feature paths, re-evaluate on arm, overlay flag + fingerprint, escape guard, the Nuke overlay has no pass and walks away through `navigateHome`; the timer's checkpoints (screen-off, shutdown receiver registered/torn down, screen open) and no wall-clock read on its path |
 | contract | `WidgetStrictModeContractTest`, `WidgetSnapshotMapperTest` | the widget cannot turn Nudge off during Nuke |
 | L6 | device case list in the Nuke PR | the overlay on a real app, no pass, reboot persistence, the Settings guard, the camera flows |

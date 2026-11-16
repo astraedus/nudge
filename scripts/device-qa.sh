@@ -11,7 +11,8 @@
 #   scripts/device-qa.sh group1 && APK=installed scripts/device-qa.sh group2 \
 #     && APK=installed scripts/device-qa.sh group3 \
 #     && APK=installed scripts/device-qa.sh group4 \
-#     && APK=installed scripts/device-qa.sh group5    # `all` in five bounded chunks (below)
+#     && APK=installed scripts/device-qa.sh group5 \
+#     && APK=installed scripts/device-qa.sh group6    # `all` in six bounded chunks (below)
 #
 # ── WHY MOST OF THIS IS NOT MAESTRO (the central design fact) ─────────────────
 # Maestro — and every other UiAutomator-based driver — connects a `UiAutomation` session, and
@@ -57,7 +58,7 @@
 #                                    APK=debug ALLOW_CERT_SWITCH=1 scripts/device-qa.sh refusal-alert
 #                                    APK=main  ALLOW_CERT_SWITCH=1 scripts/device-qa.sh setup
 #
-# ── Running the gate in bounded chunks: group1 · group2 · group3 · group4 · group5 ─
+# ── Running the gate in bounded chunks: group1 · group2 · group3 · group4 · group5 · group6 ─
 # `all` takes ~30 minutes (setup 107s · delay-block 14s · home-reopen 140s · walkaway-count 55s ·
 # daily-limit-refresh 177s · daily-limit-midsession 258s · notif-idle 338s, measured; the three
 # clock cases group-limit-midsession, schedule-start-open-app and schedule-end-overlay are each an
@@ -73,11 +74,12 @@
 #   APK=installed scripts/device-qa.sh group3
 #   APK=installed scripts/device-qa.sh group4
 #   APK=installed scripts/device-qa.sh group5
+#   APK=installed scripts/device-qa.sh group6   # nuke-profiles + nuke-timer, ~5 min (see below)
 #
 # Run them IN THAT ORDER: group1 carries `setup`, which every later case assumes. Give every later
 # group APK=installed so the series tests the ONE build group1 put on the bench (APK=main would
 # re-download whatever main-latest has become and reinstall it between chunks). The series passes
-# only if all five exit 0. group3 (#146, plus #181's bounce-non-apps) and group4 (#169/#170) are the
+# only if all six exit 0. group3 (#146, plus #181's bounce-non-apps) and group4 (#169/#170) are the
 # clock chunks, added when group2 had no room left; group5 is the old group3 unchanged, so `crash-check` still runs last. No case
 # asserts anything different from `all`:
 #   · `crash-check` still means "no app crash since the SERIES started". group1 records the
@@ -87,11 +89,17 @@
 #   · like `all`, a group skips the ~40s restore of the 1-minute Calculator limit after the
 #     daily-limit cases (the next `setup` re-imports it), so a lone group2 leaves the limit wherever
 #     the last case ended.
-#   · the five groups are asserted at startup to concatenate to ALL_CASES, so a case added to
+#   · the six groups are asserted at startup to concatenate to ALL_CASES, so a case added to
 #     `all` cannot silently drop out of the chunked gate.
 #
 # ── Other knobs ───────────────────────────────────────────────────────────────
 #   ADB_SERIAL=192.168.1.68:5555   bench Pixel 3 (auto-reconnects)
+#   NUKE_TIMER_WAIT=1              nuke-timer (group6) also waits out the real 15-minute timer and scans the
+#                                  key to end Nuke. OPT-IN: it cannot fit one 10-minute chunk, so run
+#                                  `NUKE_TIMER_WAIT=1 APK=installed scripts/device-qa.sh nuke-timer` on its own.
+#   NUKE_APP_A_PKG/_LABEL, NUKE_APP_B_PKG/_LABEL   the two ordinary apps group6 ticks (default Keep notes
+#                                  and Calendar; the label is what the Nuke list shows)
+#   NUKE_QA_KEY=qa-nuke-key-183    payload group6 pairs and scans via debug.nudge.fakescan
 #   NOTIF_IDLE_SECS=300            idle window for the notif-idle case (#63)
 #   HOME_REOPEN_TRIALS=5           repeats inside the home-reopen case (#58)
 #   LIMIT_BURN_SECS=70             foreground time spent exhausting the 1-minute daily limit
@@ -122,6 +130,18 @@
 #   screen_off_timeout · svc power stayon · enabled_accessibility_services ·
 #   accessibility_enabled · SYSTEM_ALERT_WINDOW + GET_USAGE_STATS appops ·
 #   the shared Pixel device lock (only if this run acquired it) · logcat + sampler pids.
+#
+# ── group6: Nuke profiles + timer (DEBUG build for the scan steps) ─────────────
+#   nuke-profiles  save two profiles, switch between them (any build); on a DEBUG build also pair a key
+#                  with `setprop debug.nudge.fakescan`, Nuke now, delete the selected profile while Nuke
+#                  is on, and check the app only in that profile is still blocked.
+#   nuke-timer     the timer dropdown lists six options (any build); on a DEBUG build also start a
+#                  15-minute timer and check scanning the key is refused while it runs.
+#   On the release-signed APK the scan steps are SKIPPED with the reason (status SKIP, exit stays 0),
+#   never failed: BuildConfig.DEBUG is false there so the property does nothing. The property is
+#   cleared on every exit. nuke-timer leaves Nuke ON for the rest of its 15 minutes unless the build
+#   is a `qa` build (then it ends via the `reset` command: that also clears rules/groups/history); on a
+#   plain debug build the operator ends it by scanning the key after the timer (or NUKE_TIMER_WAIT=1).
 #
 # Everything is idempotent and re-runnable: `setup` starts from `pm clear`, so no case
 # depends on state a previous run left behind.
@@ -221,11 +241,13 @@ ALL_CASES=(
   notif-idle
   crash-check
   refusal-alert
+  nuke-profiles
+  nuke-timer
 )
 
 # The chunked gate (header: "Running the gate in bounded chunks"): `all`, cut so each slice fits one
 # 10-minute call. Explicit lists, not index slices of ALL_CASES, so that adding a case forces a
-# decision about which chunk has the time for it; check_groups() fails the run when the five stop
+# decision about which chunk has the time for it; check_groups() fails the run when the six stop
 # concatenating to ALL_CASES. The schedule-boundary cases wait on the REAL clock for a minute
 # boundary (~3.5-4 min each, plus up to ~1 min for schedule-end-overlay to wait out schedule-start-open-app's
 # 1-minute window, so group4 stays under ~10 min), so they get a chunk of their own: group-limit-midsession (~4.5 min)
@@ -236,6 +258,8 @@ GROUP2_CASES=(daily-limit-refresh daily-limit-midsession)
 GROUP3_CASES=(group-limit-midsession bounce-non-apps)
 GROUP4_CASES=(schedule-start-open-app schedule-end-overlay)
 GROUP5_CASES=(notif-idle crash-check refusal-alert)
+# group6 (Nuke profiles + timer, ~5 min): appended after the other five so none of their lists or timings move.
+GROUP6_CASES=(nuke-profiles nuke-timer)
 
 # ─── Output helpers ───────────────────────────────────────────────────────────
 info() { printf '[qa] %s\n' "$*"; }
@@ -286,6 +310,10 @@ cleanup() {
   local code=$?
   stop_logcat
   [[ -n "$SAMPLER_PID" ]] && kill "$SAMPLER_PID" 2>/dev/null
+  # group6: never leave the debug scan override set on the bench, even on an interrupted run.
+  if [[ "${NUKE_FAKESCAN_SET:-0}" -eq 1 ]]; then
+    adb -s "$ADB_SERIAL" shell setprop debug.nudge.fakescan "''" >/dev/null 2>&1
+  fi
   if [[ "$STATE_SAVED" -eq 1 ]]; then
     info "Restoring device state …"
     ash svc power stayon false >/dev/null 2>&1
@@ -3149,6 +3177,664 @@ case_schedule_end_overlay() {
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# group6: Nuke profiles + timer (nuke-profiles, nuke-timer)
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# Two cases on Nudge's own Nuke screen. Everything here is UI the app draws, so the dump-and-tap
+# style of the rest of the file applies unchanged; the one blocking check is "launch a nuked app and
+# see 'Nuked.'", a dump of Nudge's own overlay.
+#
+# DEBUG-ONLY STEPS. Pairing a key and scanning it need a QR scan, and the bench camera faces a desk.
+# `adb shell setprop debug.nudge.fakescan '<payload>'` makes the next scan return that payload, but
+# only when BuildConfig.DEBUG is true (ui/qr/DebugScanOverride.kt); on the release-signed `main-latest`
+# APK the property is ignored. So each case DETECTS a debuggable build (nuke_scan_available) and, when
+# there is none, SKIPs its scan steps with the reason instead of failing. The scan-free steps (profile
+# save / apply, the timer dropdown) run on every build. The property is cleared on every exit path
+# (nuke_fakescan_clear at the end of each case, and in cleanup() for an interrupted run).
+#
+# ENDING NUKE. nuke-profiles ends Nuke itself (no timer: scanning the key ends it). nuke-timer arms a
+# 15-minute timer, so a scan cannot end Nuke for 15 minutes and the emergency code is 64 characters
+# (covered by NukeViewModelTest / NukeGateTest, not typed here). It therefore ends via the qa control
+# channel's `reset` (nuke_qa_reset) when the installed build is a qa build; on a plain debug build it
+# LEAVES NUKE ON and says how to end it (scan the key after the timer, or NUKE_TIMER_WAIT=1). `reset`
+# is the bench baseline: it also clears rules, groups and history.
+
+NUKE_QA_KEY="${NUKE_QA_KEY:-qa-nuke-key-183}"
+NUKE_APP_A_PKG="${NUKE_APP_A_PKG:-$BOUNDARY_PKG}"
+# The label exactly as the Nuke list prints it (the launcher label, case-sensitive): Keep's is "Keep
+# notes" with a small n on the bench. "Keep Notes" matched nothing and both cases failed on it.
+NUKE_APP_A_LABEL="${NUKE_APP_A_LABEL:-Keep notes}"
+NUKE_APP_B_PKG="${NUKE_APP_B_PKG:-com.google.android.calendar}"
+NUKE_APP_B_LABEL="${NUKE_APP_B_LABEL:-Calendar}"
+NUKE_TIMER_WAIT="${NUKE_TIMER_WAIT:-0}"
+NUKE_FAKESCAN_SET=0
+
+# Is the installed build debuggable, i.e. does debug.nudge.fakescan do anything? A release APK never
+# carries DEBUGGABLE in its package flags.
+# Read into a variable, never `| grep -q` (pipefail + SIGPIPE, see screen_is_usable): piped, a debug
+# build that DOES match read as "release" and every scan step was silently skipped.
+nuke_scan_available() {
+  local pkg
+  pkg="$(ash dumpsys package "$APP_ID" 2>/dev/null | tr -d '\r')"
+  [[ "$pkg" =~ flags=[^$'\n']*DEBUGGABLE ]]
+}
+
+# Is the QA control channel (src/qa only) in the installed build?
+nuke_has_qa_receiver() {
+  local pkg
+  pkg="$(ash dumpsys package "$APP_ID" 2>/dev/null | tr -d '\r')"
+  [[ "$pkg" == *QaControlReceiver* ]]
+}
+
+nuke_fakescan_set() { # payload: the next scan returns it
+  NUKE_FAKESCAN_SET=1
+  ash setprop debug.nudge.fakescan "'$1'" >/dev/null 2>&1
+}
+
+nuke_fakescan_clear() { # idempotent; only touches the device when a payload was ever set
+  [[ "$NUKE_FAKESCAN_SET" -eq 1 ]] || return 0
+  ash setprop debug.nudge.fakescan "''" >/dev/null 2>&1
+  NUKE_FAKESCAN_SET=0
+}
+
+# The bench baseline through the qa control channel: Nuke off, timer cleared (and rules/groups/history).
+nuke_qa_reset() {
+  ash am broadcast -n "${APP_ID}/${NAMESPACE}.qa.QaControlReceiver" \
+    -a dev.astraedus.nudge.qa.CMD --es cmd reset >/dev/null 2>&1
+  sleep 2
+}
+
+# Extra locator modes on the same dump (written next to locate.py by write_ui_state).
+#   prefix <needle>    centre of the first CLICKABLE node whose text/content-desc STARTS with it
+#   labelxy <label>    centre of the node with that text that is not a text field (an app row's label,
+#                      not the search box that now holds the same words)
+#   checked <label>    "true"/"false": the checkbox in the row of that label
+#   boxxy <label>      centre of that checkbox (the row's only clickable node)
+#   selected <needle>  "true"/"false": whether the chip with that text/desc is selected
+write_ui_state() {
+  cat >"${WORK}/uistate.py" <<'PYEOF'
+import re
+import sys
+import xml.etree.ElementTree as ET
+
+mode, path, needle = sys.argv[1], sys.argv[2], sys.argv[3]
+try:
+    root = ET.parse(path).getroot()
+except ET.ParseError:
+    sys.exit(0)
+parent = {c: p for p in root.iter() for c in p}
+
+
+def centre(n):
+    b = re.match(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", n.get("bounds") or "")
+    if not b:
+        return None
+    x1, y1, x2, y2 = (int(g) for g in b.groups())
+    return "%d %d" % ((x1 + x2) // 2, (y1 + y2) // 2)
+
+
+def names(n):
+    return (n.get("text") or "", n.get("content-desc") or "")
+
+
+nodes = list(root.iter("node"))
+if mode == "prefix":
+    # A Compose card or row is often a clickable container whose TEXT sits on a child node, so a
+    # matching node that is not clickable itself is tapped through its nearest clickable ancestor.
+    for n in nodes:
+        if not any(s.startswith(needle) for s in names(n)):
+            continue
+        cur = n
+        while cur is not None and cur.get("clickable") != "true":
+            cur = parent.get(cur)
+        c = centre(cur) if cur is not None else None
+        if c:
+            print(c)
+            break
+elif mode == "labelxy":
+    for n in nodes:
+        if n.get("class") != "android.widget.EditText" and needle in names(n):
+            c = centre(n)
+            if c:
+                print(c)
+                break
+elif mode == "checked":
+    for n in nodes:
+        if n.get("class") == "android.widget.EditText" or needle not in names(n):
+            continue
+        cur = n
+        while cur is not None:
+            boxes = [d for d in cur.iter("node") if d.get("checkable") == "true"]
+            if boxes:
+                print(boxes[0].get("checked"))
+                sys.exit(0)
+            cur = parent.get(cur)
+        break
+elif mode == "boxxy":
+    # Centre of the checkbox in the row of that label. On the Nuke list the CheckBox is the row's only
+    # clickable node: tapping the label or the icon (what labelxy finds) does nothing.
+    for n in nodes:
+        if n.get("class") == "android.widget.EditText" or needle not in names(n):
+            continue
+        cur = n
+        while cur is not None:
+            boxes = [d for d in cur.iter("node") if d.get("checkable") == "true"]
+            if boxes:
+                c = centre(boxes[0])
+                if c:
+                    print(c)
+                sys.exit(0)
+            cur = parent.get(cur)
+        break
+elif mode == "selected":
+    for n in nodes:
+        if needle not in names(n):
+            continue
+        kin = [n] + list(n.iter("node"))
+        p1 = parent.get(n)
+        if p1 is not None:
+            kin.append(p1)
+            p2 = parent.get(p1)
+            if p2 is not None:
+                kin.append(p2)
+        # A Compose FilterChip reaches the dump as checkable="true" checked="true" on its clickable
+        # parent, NOT selected="true" (measured on the bench): reading only `selected` called every
+        # chip unselected, and the extra tap opened the chip's menu instead of applying it.
+        print("true" if any(k.get("selected") == "true" or
+                            (k.get("checkable") == "true" and k.get("checked") == "true")
+                            for k in kin) else "false")
+        break
+PYEOF
+}
+
+ui_has_re() { grep -aEq "(text|content-desc)=\"[^\"]*(${1})" "$UI_XML" 2>/dev/null; } # ERE, last snapshot
+
+ui_wait_re() { # ERE timeout_secs: snackbars live ~4s, so this polls as fast as a dump allows
+  local timeout="${2:-15}" i
+  for ((i = 0; i < timeout; i++)); do
+    ui_snapshot
+    ui_has_re "$1" && return 0
+    sleep 1
+  done
+  return 1
+}
+
+ui_xy() { python3 "${WORK}/uistate.py" "$1" "$UI_XML" "$2"; } # mode needle
+
+ui_tap_xy_mode() { # mode needle [timeout_secs]
+  local mode="$1" needle="$2" timeout="${3:-10}" xy i
+  for ((i = 0; i < timeout; i++)); do
+    ui_snapshot
+    xy="$(ui_xy "$mode" "$needle")"
+    if [[ -n "$xy" ]]; then
+      # shellcheck disable=SC2086
+      ash input tap $xy >/dev/null 2>&1
+      sleep 1
+      return 0
+    fi
+    sleep 1
+  done
+  fail "cannot tap (${mode}) '${needle}': not on screen within ${timeout}s"
+  return 1
+}
+
+nuke_scroll_top() {
+  local i
+  for ((i = 0; i < 4; i++)); do ash input swipe 540 600 540 1700 250 >/dev/null 2>&1; done
+  sleep 1
+}
+
+nuke_hide_keyboard() {
+  local ime
+  # A variable, not `| grep -q` (pipefail + SIGPIPE, see screen_is_usable): piped, a SHOWN keyboard
+  # read as hidden and stayed up over the app list.
+  ime="$(ash dumpsys input_method 2>/dev/null | tr -d '\r')"
+  [[ "$ime" == *mInputShown=true* ]] &&
+    ash input keyevent KEYCODE_BACK >/dev/null 2>&1
+  sleep 1
+}
+
+# Taps $1 (exact text/desc) wherever it is on the Nuke screen: as it is, then from the top, then
+# scrolling down a page at a time.
+nuke_tap() { # text
+  local needle="$1" xy i
+  for ((i = 0; i < 9; i++)); do
+    ui_snapshot
+    xy="$(python3 "${WORK}/locate.py" "$UI_XML" "$needle")"
+    if [[ -n "$xy" ]]; then
+      # shellcheck disable=SC2086
+      ash input tap $xy >/dev/null 2>&1
+      sleep 1
+      return 0
+    fi
+    if (( i == 0 )); then
+      nuke_scroll_top
+    elif (( i >= 2 )); then
+      ash input swipe 540 1500 540 700 300 >/dev/null 2>&1
+      sleep 1
+    fi
+  done
+  fail "cannot tap '${needle}' on the Nuke screen"
+  return 1
+}
+
+# Home -> Nuke screen via the dashboard's Nuke card (its description starts with "Nuke").
+nuke_open_screen() {
+  local i xy
+  nudge_route_home
+  # The dashboard keeps its scroll position between visits (a previous case may have left it at the
+  # bottom, below the card), and the search below only scrolls DOWN: start from the top.
+  nuke_scroll_top
+  for ((i = 0; i < 8; i++)); do
+    ui_snapshot
+    xy="$(ui_xy prefix Nuke)"
+    if [[ -n "$xy" ]]; then
+      # shellcheck disable=SC2086
+      ash input tap $xy >/dev/null 2>&1
+      sleep 2
+      # A fresh install shows the first-run intro card on top; it pushes the header, chips and
+      # "Save as profile" below where the cases look (the release gate run failed on exactly that).
+      ui_snapshot
+      if ui_has "Got it"; then ui_tap_text "Got it" 4 >/dev/null 2>&1 || true; sleep 1; fi
+      scroll_to_text "Apps to nuke" 6 && return 0
+      fail "tapped the Nuke card but 'Apps to nuke' never appeared"
+      return 1
+    fi
+    ash input swipe 540 1500 540 700 300 >/dev/null 2>&1
+    sleep 1
+  done
+  fail "no Nuke card on the dashboard"
+  return 1
+}
+
+nuke_is_on() { ui_snapshot; ui_has_re 'Nuke is on · '; }
+
+# Filter the app list to $1 (types into the search box, the one EditText on the screen).
+nuke_search() { # label
+  local i y
+  # Bring the search box into the top half first. Reaching "Apps to nuke" leaves the box at or below
+  # the fold (the header, caption and chip row sit above it), and Compose puts no off-screen node in
+  # the dump: the box was either missing or the filtered rows under it were, so the row read as "not
+  # in the Nuke app list" on the bench.
+  for ((i = 0; i < 8; i++)); do
+    ui_snapshot
+    y="$(python3 - "$UI_XML" <<'PYEOF'
+import re
+import sys
+
+xml = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+for attrs in re.findall(r"<node([^>]*)>", xml):
+    if 'class="android.widget.EditText"' in attrs:
+        b = re.search(r'bounds="\[\d+,(\d+)\]\[\d+,(\d+)\]', attrs)
+        if b:
+            print((int(b.group(1)) + int(b.group(2))) // 2)
+            break
+PYEOF
+)"
+    [[ -n "$y" && "$y" -lt 1100 ]] && break
+    ash input swipe 540 1500 540 900 300 >/dev/null 2>&1
+    sleep 1
+  done
+  ui_tap_edittext 10 || { fail "no search field on the Nuke screen"; return 1; }
+  # The first word only ("Keep" for "Keep notes"): it is enough to filter the list, and a typed space
+  # is where the bench keyboard scrambled the text ("Keep notes" landed as "Keenotesp", which matched
+  # no app, emptied the list and clamped the scroll back up).
+  nuke_type_field "${1%% *}" || return 1
+  nuke_hide_keyboard
+}
+
+# The text of the first EditText in the last snapshot.
+nuke_field_text() {
+  python3 - "$UI_XML" <<'PYEOF'
+import re
+import sys
+
+xml = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+for attrs in re.findall(r"<node([^>]*)>", xml):
+    if 'class="android.widget.EditText"' in attrs:
+        t = re.search(r' text="([^"]*)"', attrs)
+        print(t.group(1) if t else "")
+        break
+PYEOF
+}
+
+# Types $1 into the focused field and CHECKS what landed, retrying up to 3 times. `adb input text`
+# goes through the keyboard, which can reorder characters on the bench; an unchecked typo turned into
+# a misleading "not in the list" failure two steps later.
+nuke_type_field() { # text
+  local want="$1" try i got=""
+  for ((try = 0; try < 3; try++)); do
+    ash input keyevent KEYCODE_MOVE_END >/dev/null 2>&1
+    for ((i = 0; i < 30; i++)); do ash input keyevent KEYCODE_DEL >/dev/null 2>&1; done
+    # One character per `input` call, not the whole string: sent in one burst the bench keyboard
+    # dropped and swapped letters ("Calendar" landed as "Calaren", "Keep notes" as "Keenotesp").
+    for ((i = 0; i < ${#want}; i++)); do
+      if [[ "${want:i:1}" == " " ]]; then
+        ash input keyevent KEYCODE_SPACE >/dev/null 2>&1
+      else
+        ash input text "${want:i:1}" >/dev/null 2>&1
+      fi
+    done
+    sleep 1
+    ui_snapshot
+    got="$(nuke_field_text)"
+    [[ "$got" == "$want" ]] && return 0
+  done
+  fail "typed '${want}' but the field reads '${got}'"
+  return 1
+}
+
+# Makes the row of $1 ticked (true) or unticked (false), and checks the dump agrees.
+nuke_set_ticked() { # label true|false
+  local label="$1" want="$2" now
+  nuke_search "$label" || return 1
+  ui_wait_text "$label" 8 || { fail "'${label}' is not in the Nuke app list"; return 1; }
+  now="$(python3 "${WORK}/uistate.py" checked "$UI_XML" "$label")"
+  if [[ "$now" != "$want" ]]; then
+    ui_tap_xy_mode boxxy "$label" 8 || return 1
+    sleep 1
+    ui_snapshot
+    now="$(python3 "${WORK}/uistate.py" checked "$UI_XML" "$label")"
+  fi
+  [[ "$now" == "$want" ]] || { fail "'${label}' should be ticked=${want} but the dump reads '${now}'"; return 1; }
+}
+
+nuke_read_ticked() { # label -> true|false|""
+  nuke_search "$1" || return 1
+  ui_wait_text "$1" 8 || return 1
+  python3 "${WORK}/uistate.py" checked "$UI_XML" "$1"
+}
+
+nuke_chip_selected() { # name -> true|false|""
+  nuke_scroll_top
+  ui_snapshot
+  python3 "${WORK}/uistate.py" selected "$UI_XML" "$1"
+}
+
+# "Save as profile" -> name -> Save (or Update when the name already exists). The link is hidden
+# while the list already IS a saved profile (round 1: saving would only duplicate it), which a re-run
+# meets when an earlier run left the same profile behind: that counts as saved.
+nuke_save_profile() { # name
+  local name="$1" i
+  nuke_scroll_top
+  ui_snapshot
+  if ! ui_has "Save as profile" && [[ "$(nuke_chip_selected "$name")" == true ]]; then
+    info "the list already is profile '${name}'"
+    return 0
+  fi
+  ui_tap_text "Save as profile" 10 || return 1
+  ui_tap_edittext 10 || { fail "no Name field in the save dialog"; return 1; }
+  nuke_type_field "$name" || return 1
+  nuke_hide_keyboard
+  ui_snapshot
+  if ui_has "Update"; then ui_tap_text "Update" 8 || return 1; else ui_tap_text "Save" 8 || return 1; fi
+  sleep 1
+}
+
+nuke_pair_key() { # pairs the QA key via fakescan when the Nuke screen offers it; no-op if a key exists
+  nuke_scroll_top
+  ui_snapshot
+  ui_has "Use a barcode I already have" || { info "a key is already paired; using it"; return 0; }
+  nuke_fakescan_set "$NUKE_QA_KEY"
+  ui_tap_text "Use a barcode I already have" 10 || return 1
+  ui_wait_re 'Paired\. Keep that code somewhere inconvenient\.' 20 || { fail "no 'Paired.' snackbar after the fake scan"; return 1; }
+  nuke_fakescan_clear
+}
+
+# Presses the scan button $1 ("Scan to end") with the QA key as the next scan result.
+nuke_scan_key() { # button
+  nuke_fakescan_set "$NUKE_QA_KEY"
+  nuke_tap "$1"
+}
+
+# Launch app $1 and wait for the Nuke overlay copy.
+nuke_assert_blocked() { # pkg
+  go_home
+  ash monkey -p "$1" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
+  if ui_wait_text "Nuked." 12; then
+    shot "nuke-overlay-$1"
+    go_home
+    return 0
+  fi
+  shot "nuke-overlay-MISSING-$1"
+  fail "launched ${1} but the 'Nuked.' overlay is not showing"
+  go_home
+  return 1
+}
+
+nuke_preflight() {
+  local p
+  for p in "$NUKE_APP_A_PKG" "$NUKE_APP_B_PKG"; do
+    [[ "$(launchable_state "$p")" == yes ]] || { fail "FIXTURE: ${p} is not a launchable app on this device (set NUKE_APP_A_PKG/_LABEL, NUKE_APP_B_PKG/_LABEL)"; return 1; }
+  done
+}
+
+# Nuke must be OFF before a case starts. qa build: reset. Debug: scan the key (works when no timer
+# is running). Otherwise there is nothing safe to do from here.
+nuke_ensure_off() {
+  nuke_open_screen || return 1
+  nuke_is_on || return 0
+  warn "Nuke is already ON entering the case"
+  if nuke_has_qa_receiver; then
+    nuke_qa_reset
+    nuke_open_screen || return 1
+  elif nuke_scan_available; then
+    nuke_scan_key "Scan to end"
+    ui_wait_re 'Nuke is off\.' 12 || true
+    nuke_fakescan_clear
+  fi
+  if nuke_is_on; then
+    fail "PRECONDITION: Nuke is on and could not be ended from here (timer running or a foreign key); end it in the app and re-run"
+    return 1
+  fi
+  return 0
+}
+
+# The saved profile names on the Nuke screen, one per line, read from each chip's content-desc
+# ("Profile <name>" or "Profile <name>, in use").
+nuke_profile_names() { # [xml]
+  grep -aoE 'content-desc="Profile [^"]*"' "${1:-$UI_XML}" | sed -E 's/^content-desc="Profile //; s/"$//; s/, in use$//'
+}
+
+# Deletes every saved profile (Nuke must be off). Part A needs a clean slate: "Save as profile" is
+# hidden while the list matches a saved profile, so a bench that already had a profile with the same
+# apps (pass 2 left "Focus" = Keep notes + Calendar) failed on "cannot tap 'Save as profile'".
+nuke_clear_profiles() {
+  local name i
+  for ((i = 0; i < 12; i++)); do       # 10 is the app's profile cap; 2 spare tries
+    nuke_scroll_top
+    ui_snapshot
+    name="$(nuke_profile_names | head -1)"
+    [[ -z "$name" ]] && return 0
+    if [[ "$(nuke_chip_selected "$name")" != true ]]; then
+      ui_tap_text "$name" 10 || return 1            # an unselected chip applies the profile first
+      sleep 1
+    fi
+    ui_tap_text "$name" 10 || return 1              # the selected chip opens Rename / Delete
+    ui_tap_text "Delete" 8 || return 1              # menu item
+    ui_wait_text "Cancel" 8 || { fail "no Delete dialog for profile '${name}'"; return 1; }
+    ui_tap_text "Delete" 8 || return 1              # dialog confirm
+    sleep 1
+  done
+  fail "profiles still on the Nuke screen after 12 deletes"
+  return 1
+}
+
+# ── nuke-profiles: save, switch and delete profiles; an edit during Nuke changes nothing blocked ──
+nuke_profiles_part_a() {
+  local a="$NUKE_APP_A_LABEL" b="$NUKE_APP_B_LABEL" v rc=0
+  nuke_clear_profiles || return 1
+  nuke_set_ticked "$a" true || return 1
+  nuke_set_ticked "$b" true || return 1
+  nuke_save_profile "Two" || return 1
+  nuke_set_ticked "$b" false || return 1
+  nuke_save_profile "One" || return 1
+  shot "nuke-profiles-saved"
+  nuke_scroll_top
+  ui_tap_text "Two" 10 || return 1
+  # shellcheck disable=SC1111  # curly quotes are the app's literal copy
+  ui_wait_re 'Switched to “Two”\.' 6 || { fail "no 'Switched to “Two”.' snackbar"; rc=1; }
+  v="$(nuke_read_ticked "$a")"; [[ "$v" == true ]] || { fail "after chip Two: '${a}' should be ticked (got '${v}')"; rc=1; }
+  v="$(nuke_read_ticked "$b")"; [[ "$v" == true ]] || { fail "after chip Two: '${b}' should be ticked (got '${v}')"; rc=1; }
+  v="$(nuke_chip_selected "Two")"; [[ "$v" == true ]] || { fail "chip Two should be selected (got '${v}')"; rc=1; }
+  ui_tap_text "One" 10 || return 1
+  v="$(nuke_read_ticked "$a")"; [[ "$v" == true ]] || { fail "after chip One: '${a}' should be ticked (got '${v}')"; rc=1; }
+  v="$(nuke_read_ticked "$b")"; [[ "$v" == false ]] || { fail "after chip One: '${b}' should be unticked (got '${v}')"; rc=1; }
+  v="$(nuke_chip_selected "One")"; [[ "$v" == true ]] || { fail "chip One should be selected (got '${v}')"; rc=1; }
+  return $rc
+}
+
+nuke_profiles_part_b() {
+  local rc=0
+  nuke_open_screen || return 1
+  nuke_pair_key || return 1
+  nuke_scroll_top
+  ui_tap_text "Two" 10 || return 1
+  # The lock choice is remembered across Nukes, so a bench left on "15 min" (by nuke-timer or by hand)
+  # made the key at the end of this part be refused, and the run hung there. This part ends with the
+  # key, so it starts with no lock.
+  nuke_scroll_top
+  nuke_timer_pick "None" || return 1
+  ui_tap_text "Nuke now" 10 || nuke_tap "Nuke now" || return 1
+  ui_wait_re 'Nuke is on · ' 12 || { fail "Nuke did not turn on"; return 1; }
+  nuke_scroll_top
+  ui_tap_text "Two" 10 || return 1                 # the SELECTED chip: opens Rename / Delete
+  ui_tap_text "Delete" 8 || return 1               # menu item
+  ui_wait_text "Cancel" 8 || { fail "no Delete dialog"; return 1; }
+  ui_tap_text "Delete" 8 || return 1               # dialog confirm
+  sleep 1
+  nuke_scroll_top
+  ui_snapshot
+  if ui_has "Two"; then fail "chip Two is still there after Delete"; rc=1; fi
+  nuke_assert_blocked "$NUKE_APP_B_PKG" || rc=1    # only in the deleted profile; still blocked
+  # Nuke has no timer here, so the key ends it.
+  nuke_open_screen || return 1
+  nuke_scan_key "Scan to end"
+  ui_wait_re 'Nuke is off\.' 12 || { fail "no 'Nuke is off.' after scanning the key"; rc=1; }
+  nuke_fakescan_clear
+  return $rc
+}
+
+case_nuke_profiles() {
+  local rc=0 scan=0
+  nuke_preflight || return 1
+  nuke_ensure_off || { nuke_fakescan_clear; return 1; }
+  nuke_profiles_part_a || rc=1
+  if nuke_scan_available; then
+    scan=1
+    nuke_profiles_part_b || rc=1
+  fi
+  nuke_fakescan_clear
+  go_home
+  if (( rc != 0 )); then CASE_NOTE="see the failures above"; return 1; fi
+  if (( scan == 0 )); then
+    CASE_NOTE="part A (save/switch profiles) passed; part B (delete during Nuke) SKIPPED: release build, debug.nudge.fakescan does nothing. Run with APK=debug to cover it"
+    return 77
+  fi
+  CASE_NOTE="profiles saved/switched; deleting the selected profile during Nuke left ${NUKE_APP_B_LABEL} blocked; Nuke ended with the key"
+  return 0
+}
+
+# ── nuke-timer: the "Lock code for" picker, and the key is refused while the code is locked ──────────────────────────
+nuke_timer_dropdown() { # opens the picker and checks the six options
+  local o rc=0
+  nuke_scroll_top
+  ui_snapshot
+  ui_has_re 'Lock code for: ' || { fail "no 'Lock code for' row on the Nuke screen"; return 1; }
+  ui_tap_xy_mode prefix "Lock code for: " 8 || return 1
+  ui_snapshot
+  for o in "None" "15 min" "30 min" "45 min" "1 hour" "2 hours"; do
+    ui_has "$o" || { fail "timer option '${o}' missing from the dropdown"; rc=1; }
+  done
+  shot "nuke-timer-dropdown"
+  return $rc
+}
+
+nuke_timer_choice() { ui_snapshot; grep -aoE 'content-desc="Lock code for: [^"]*"' "$UI_XML" | head -1 | sed 's/.*Lock code for: //; s/"$//'; }
+
+nuke_timer_pick() { # option; the dropdown must be closed
+  [[ "$(nuke_timer_choice)" == "$1" ]] && return 0
+  ui_tap_xy_mode prefix "Lock code for: " 8 || return 1
+  ui_tap_text "$1" 8 || return 1
+  [[ "$(nuke_timer_choice)" == "$1" ]] || { fail "timer did not change to '${1}'"; return 1; }
+}
+
+nuke_timer_scan_flow() {
+  local rc=0 a="$NUKE_APP_A_LABEL" waited=0
+  nuke_pair_key || return 1
+  nuke_set_ticked "$a" true || return 1
+  nuke_scroll_top
+  nuke_timer_pick "15 min" || return 1
+  ui_tap_text "Nuke now" 10 || nuke_tap "Nuke now" || return 1
+  ui_wait_re 'Nuke is on · ' 12 || { fail "Nuke did not turn on"; return 1; }
+  ui_has_re 'Code locked · .* left' || { fail "no 'Code locked · … left' line on the status card"; rc=1; }
+  nuke_scan_key "Scan to end" || rc=1
+  ui_wait_re 'Your code is locked for .*\. Scan again after that\.' 12 || { fail "the key was not refused while the code is locked"; rc=1; }
+  nuke_fakescan_clear
+  nuke_is_on || { fail "Nuke is no longer on after the refused scan"; rc=1; }
+  nuke_assert_blocked "$NUKE_APP_A_PKG" || rc=1
+  info "emergency-code path: not driven here (64 characters); covered by NukeViewModelTest / NukeGateTest"
+  if [[ "$NUKE_TIMER_WAIT" == 1 ]]; then
+    info "NUKE_TIMER_WAIT=1: waiting for the real 15-minute timer (up to 17 min)"
+    while (( waited < 1020 )); do
+      sleep 30; waited=$(( waited + 30 ))
+      nuke_open_screen || continue
+      # Once the lock runs out the card drops its "Code locked" line (no "done" line, round 1).
+      ui_has_re 'Code locked' || break
+    done
+    nuke_scan_key "Scan to end"
+    ui_wait_re 'Nuke is off\.' 12 || { fail "no 'Nuke is off.' after the timer ended and the key was scanned"; rc=1; }
+    nuke_fakescan_clear
+  fi
+  return $rc
+}
+
+case_nuke_timer() {
+  local rc=0 scan=0 left_on=0 how=""
+  nuke_preflight || return 1
+  nuke_ensure_off || { nuke_fakescan_clear; return 1; }
+  # The "Lock code for" row only shows once a code is paired. A debug build pairs the QA key; a fresh
+  # RELEASE install has no code and no scripted way to pair one (no fakescan), so it is a SKIP there,
+  # never a FAIL and never a silent pass.
+  if nuke_scan_available; then
+    nuke_open_screen || return 1
+    nuke_pair_key || { nuke_fakescan_clear; return 1; }
+  fi
+  nuke_scroll_top
+  ui_snapshot
+  if ! ui_has_re 'Lock code for: ' && ui_has "Pair a Nuke code first." && ! nuke_scan_available; then
+    go_home
+    CASE_NOTE="SKIPPED: no Nuke code paired on this release install, and a release build cannot pair one by script (the Lock code for row needs a code). Run with APK=debug"
+    return 77
+  fi
+  nuke_timer_dropdown || rc=1
+  ui_tap_text "None" 6 >/dev/null 2>&1 || true      # close the open menu on a known choice
+  if nuke_scan_available; then
+    scan=1
+    nuke_timer_scan_flow || rc=1
+    nuke_open_screen && nuke_is_on && left_on=1
+  fi
+  nuke_fakescan_clear
+  if (( left_on )); then
+    if nuke_has_qa_receiver; then
+      nuke_qa_reset
+      how="; ended via qa reset (also cleared rules/groups/history)"
+    else
+      warn "NUKE IS STILL ON (15-minute timer): wait it out, then scan the key (debug.nudge.fakescan=${NUKE_QA_KEY}, Scan to end), or use the emergency code in the app. NUKE_TIMER_WAIT=1 does this for you."
+      how="; NUKE LEFT ON (see warning)"
+    fi
+  fi
+  go_home
+  if (( rc != 0 )); then CASE_NOTE="see the failures above"; return 1; fi
+  if (( scan == 0 )); then
+    CASE_NOTE="timer dropdown (six options) passed; scan steps (key refused while the timer runs) SKIPPED: release build, debug.nudge.fakescan does nothing. Run with APK=debug to cover them"
+    return 77
+  fi
+  CASE_NOTE="key refused while the 15-minute timer ran, Nuke stayed on and ${NUKE_APP_A_LABEL} stayed blocked${how}"
+  return 0
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Driver
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -3217,19 +3903,20 @@ usage() {
   printf 'cases:  %s\n' "${ALL_CASES[*]}"
   printf 'group1: %s\ngroup2: %s\ngroup3: %s\ngroup4: %s\ngroup5: %s\n' \
     "${GROUP1_CASES[*]}" "${GROUP2_CASES[*]}" "${GROUP3_CASES[*]}" "${GROUP4_CASES[*]}" "${GROUP5_CASES[*]}"
+  printf 'group6: %s\n' "${GROUP6_CASES[*]}"
 }
 
-# Fails (exit 2) unless group1+group2+group3+group4+group5 are exactly ALL_CASES, in order, before
+# Fails (exit 2) unless group1+group2+group3+group4+group5+group6 are exactly ALL_CASES, in order, before
 # the lock is taken or the phone touched, so a case added to `all` and forgotten here costs one line, not a
 # chunked gate that quietly stops running it.
 check_groups() {
-  local joined="${GROUP1_CASES[*]} ${GROUP2_CASES[*]} ${GROUP3_CASES[*]} ${GROUP4_CASES[*]} ${GROUP5_CASES[*]}"
+  local joined="${GROUP1_CASES[*]} ${GROUP2_CASES[*]} ${GROUP3_CASES[*]} ${GROUP4_CASES[*]} ${GROUP5_CASES[*]} ${GROUP6_CASES[*]}"
   [[ "$joined" == "${ALL_CASES[*]}" ]] ||
-    die "group1+group2+group3+group4+group5 [${joined}] must concatenate to ALL_CASES [${ALL_CASES[*]}]: a case was added or moved without placing it in a group"
+    die "group1+group2+group3+group4+group5+group6 [${joined}] must concatenate to ALL_CASES [${ALL_CASES[*]}]: a case was added or moved without placing it in a group"
 }
 
 # The cases a multi-case target runs, one per line; nonzero for anything else (a single case).
-target_cases() { # all | group1 | group2 | group3 | group4 | group5
+target_cases() { # all | group1 ... group6
   case "$1" in
     all)    printf '%s\n' "${ALL_CASES[@]}" ;;
     group1) printf '%s\n' "${GROUP1_CASES[@]}" ;;
@@ -3237,6 +3924,7 @@ target_cases() { # all | group1 | group2 | group3 | group4 | group5
     group3) printf '%s\n' "${GROUP3_CASES[@]}" ;;
     group4) printf '%s\n' "${GROUP4_CASES[@]}" ;;
     group5) printf '%s\n' "${GROUP5_CASES[@]}" ;;
+    group6) printf '%s\n' "${GROUP6_CASES[@]}" ;;
     *)      return 1 ;;
   esac
 }
@@ -3263,7 +3951,7 @@ main() {
   else
     # shellcheck disable=SC2076
     [[ " ${ALL_CASES[*]} " == *" ${target} "* ]] ||
-      die "unknown case '${target}'. Try: ${ALL_CASES[*]} — or all, group1, group2, group3, group4, group5"
+      die "unknown case '${target}'. Try: ${ALL_CASES[*]} — or all, group1, group2, group3, group4, group5, group6"
     cases=("$target")
     # Every case but `setup` assumes the fixtures `setup` creates, so a single case
     # runs against whatever is on the phone. That is deliberate (it is how you iterate
@@ -3279,6 +3967,7 @@ main() {
   crash_baseline "$series"
   mkdir -p "$ALBUM"
   write_locator
+  write_ui_state
   start_sampler
   info "album: ${ALBUM}"
   info "work:  ${WORK}"

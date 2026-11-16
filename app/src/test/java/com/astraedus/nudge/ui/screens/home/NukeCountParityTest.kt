@@ -8,6 +8,7 @@ import com.astraedus.nudge.domain.nuke.NukeKeyKind
 import com.astraedus.nudge.service.EssentialApps
 import com.astraedus.nudge.testing.FakeInstalledAppsRepository
 import com.astraedus.nudge.testing.FakeNudgePreferences
+import com.astraedus.nudge.testing.FakeNukeClock
 import com.astraedus.nudge.testing.FakeRuleDatabase
 import com.astraedus.nudge.testing.FakeUsageRepository
 import com.astraedus.nudge.ui.screens.nuke.NukeViewModel
@@ -73,12 +74,13 @@ class NukeCountParityTest {
             insightsCalculator = InsightsCalculator(),
             essentialApps = essentials,
             scheduleEvaluator = com.astraedus.nudge.domain.engine.ScheduleEvaluator(com.astraedus.nudge.domain.engine.FirstUnlockState.NONE),
+            nukeClock = FakeNukeClock(),
             ioDispatcher = dispatcher
         )
     }
 
     private fun nukeScreen(essentials: EssentialApps): NukeViewModel {
-        return NukeViewModel(preferences, FakeInstalledAppsRepository(), essentials, dispatcher)
+        return NukeViewModel(preferences, FakeInstalledAppsRepository(), essentials, FakeNukeClock(), dispatcher)
     }
 
     /** (dashboard card count, Nuke screen header count), both read live. */

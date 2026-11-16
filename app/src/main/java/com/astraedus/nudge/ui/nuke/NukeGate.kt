@@ -1,7 +1,9 @@
 package com.astraedus.nudge.ui.nuke
 
+import com.astraedus.nudge.domain.nuke.NukeClock
 import com.astraedus.nudge.domain.nuke.NukeEmergencyCode
 import com.astraedus.nudge.domain.nuke.NukeKey
+import com.astraedus.nudge.domain.nuke.NukePolicy
 import com.astraedus.nudge.domain.nuke.NukeState
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -15,11 +17,15 @@ import kotlinx.coroutines.flow.asStateFlow
  *   choosing between scanning and typing. A FRESH code per attempt: every entry into typing mode
  *   generates a new one, so a code seen once is worth nothing the next time.
  * @property error the last thing that went wrong ("That's not your Nuke code"), or null.
+ * @property errorIsCodeLock [error] is the timer's refusal (the RIGHT code, still locked), not a
+ *   mistake: the dialog shows it as plain body text, never in the error colour, which on a dynamic
+ *   theme reads like the pink link under it (round 1).
  */
 data class NukeUnlockState(
     val prompt: String,
     val emergencyTarget: String? = null,
-    val error: String? = null
+    val error: String? = null,
+    val errorIsCodeLock: Boolean = false
 )
 
 /**
@@ -33,11 +39,17 @@ data class NukeUnlockState(
  * [com.astraedus.nudge.domain.nuke.NukePolicy] and passes the answer, so the policy has one home and
  * a JVM test.
  *
+ * A Nuke started with a timer (#184) refuses the paired key, for EVERY action here, until the timer
+ * has run out ([NukePolicy.keyWaitMs]): the right key just says how long is left. The emergency code
+ * is never affected; it is the way out that always exists.
+ *
  * @param currentState reads the LIVE persisted state at unlock time (never a snapshot from when the
  *   dialog opened: the key could have been re-paired in between).
+ * @param clock the timer's clock, read at scan time.
  */
 class NukeGate(
     private val currentState: suspend () -> NukeState,
+    private val clock: NukeClock,
     private val newEmergencyCode: () -> String = { NukeEmergencyCode.generate() }
 ) {
     private val _unlock = MutableStateFlow<NukeUnlockState?>(null)
@@ -76,8 +88,14 @@ class NukeGate(
     suspend fun onScanned(payload: String?): Boolean {
         val active = _unlock.value ?: return false
         if (payload.isNullOrBlank()) return false
-        if (!NukeKey.matches(payload, currentState().keyHash)) {
-            _unlock.value = active.copy(error = WRONG_KEY_MESSAGE)
+        val state = currentState()
+        if (!NukeKey.matches(payload, state.keyHash)) {
+            _unlock.value = active.copy(error = WRONG_KEY_MESSAGE, errorIsCodeLock = false)
+            return false
+        }
+        val waitMs = NukePolicy.keyWaitMs(state, clock.now())
+        if (waitMs > 0) {
+            _unlock.value = active.copy(error = NukeTimerCopy.refusal(waitMs), errorIsCodeLock = true)
             return false
         }
         return release()
@@ -86,13 +104,13 @@ class NukeGate(
     /** Switch the open dialog to typing a fresh emergency code. */
     fun useEmergencyCode() {
         val active = _unlock.value ?: return
-        _unlock.value = active.copy(emergencyTarget = newEmergencyCode(), error = null)
+        _unlock.value = active.copy(emergencyTarget = newEmergencyCode(), error = null, errorIsCodeLock = false)
     }
 
     /** Back from typing to the scan-or-type choice (the code is discarded; the next one is new). */
     fun backToChoice() {
         val active = _unlock.value ?: return
-        _unlock.value = active.copy(emergencyTarget = null, error = null)
+        _unlock.value = active.copy(emergencyTarget = null, error = null, errorIsCodeLock = false)
     }
 
     /**

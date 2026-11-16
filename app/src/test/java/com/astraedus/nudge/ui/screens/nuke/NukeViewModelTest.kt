@@ -8,6 +8,7 @@ import com.astraedus.nudge.domain.nuke.NukeState
 import com.astraedus.nudge.service.EssentialApps
 import com.astraedus.nudge.testing.FakeInstalledAppsRepository
 import com.astraedus.nudge.testing.FakeNudgePreferences
+import com.astraedus.nudge.testing.FakeNukeClock
 import com.astraedus.nudge.testing.anApp
 import com.astraedus.nudge.ui.nuke.NukeGate
 import io.mockk.every
@@ -57,7 +58,7 @@ class NukeViewModelTest {
         val floor: EssentialApps = mockk()
         every { floor.packages(any()) } returns setOf("com.oem.home")
 
-        vm = NukeViewModel(preferences, apps, floor, dispatcher)
+        vm = NukeViewModel(preferences, apps, floor, FakeNukeClock(), dispatcher)
     }
 
     /** The stored Nuke state, as the screen reads it back. */

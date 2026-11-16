@@ -85,4 +85,64 @@ class NukeExportExclusionTest {
         val exportBody = source.substring(exportStart, start)
         assertFalse("an export must never read Nuke state", exportBody.lowercase().contains("nuke"))
     }
+
+    /**
+     * Profiles (#183) and the timer (#184) are Nuke state too. A file carrying a timer could restore
+     * "a timer that has already run out" over a running one, and profiles name THIS phone's apps.
+     */
+    @Test
+    fun `a hand-edited file carrying Nuke profiles or a timer changes nothing an import can apply`() {
+        val file = JSONObject()
+            .put("version", 1)
+            .put("rules", org.json.JSONArray())
+            .put(
+                "settings",
+                JSONObject()
+                    .put("emergencyPassEnabled", false)
+                    .put("nukeProfiles", org.json.JSONArray().put(JSONObject().put("name", "x")))
+                    .put("nuke_profiles", "[]")
+                    .put("nukeTimerDurationMs", 0)
+                    .put("nuke_timer_consumed_ms", Long.MAX_VALUE)
+                    .put("nukeTimerChoiceMinutes", 120)
+            )
+            .toString()
+
+        val result = exporter.importRules(file)
+
+        assertEquals(null, result.error)
+        assertEquals(ExportedSettings(emergencyPassEnabled = false), result.settings)
+    }
+
+    /**
+     * Every Nuke key, including ones added after this test, stays out of both halves of a backup.
+     * The key list is read from the `Keys` object itself, and must include the profile and timer
+     * keys, so the scan can never pass by finding no keys at all.
+     */
+    @Test
+    fun `no Nuke key, present or future, is read by an export or written by an import`() {
+        val source =
+            SourceScan.kotlinFile("com/astraedus/nudge/data/preferences/NudgePreferences.kt").readText()
+        val keysStart = source.indexOf("private object Keys {")
+        assertTrue("the Keys object must exist", keysStart >= 0)
+        val keysBlock = source.substring(keysStart, source.indexOf("\n    }\n", keysStart))
+        val nukeKeys = Regex("""val (NUKE_[A-Z_]+) =""").findAll(keysBlock).map { it.groupValues[1] }.toSet()
+        assertTrue(
+            "the profile and timer keys must be among them: $nukeKeys",
+            nukeKeys.containsAll(
+                setOf(
+                    "NUKE_ACTIVE", "NUKE_PACKAGES", "NUKE_KEY_HASH", "NUKE_PROFILES",
+                    "NUKE_TIMER_DURATION_MS", "NUKE_TIMER_CONSUMED_MS", "NUKE_TIMER_BOOT_COUNT",
+                    "NUKE_TIMER_SEGMENT_START_MS", "NUKE_TIMER_CHOICE_MINUTES"
+                )
+            )
+        )
+
+        val exportStart = source.indexOf("suspend fun exportableSettings()")
+        val importStart = source.indexOf("suspend fun applyImportedSettings(")
+        val backupCode = source.substring(exportStart, importStart) +
+            source.substring(importStart, source.indexOf("\n    }\n", importStart))
+        nukeKeys.forEach { key ->
+            assertFalse("$key must never ride in a backup", backupCode.contains("Keys.$key"))
+        }
+    }
 }
