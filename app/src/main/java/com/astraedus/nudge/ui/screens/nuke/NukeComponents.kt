@@ -107,7 +107,8 @@ fun NukeStatusCard(
                 fontWeight = FontWeight.SemiBold,
                 color = contentColor
             )
-            // Only with a timer running (#184); a Nuke without one shows exactly what it did.
+            // Only while the code is locked (#184). With no lock, or once it has run out, the card
+            // is exactly the plain ON card.
             NukeTimerCopy.statusLine(timerLeftMs)?.let { line ->
                 Spacer(Modifier.height(4.dp))
                 Text(line, style = MaterialTheme.typography.bodyMedium, color = contentColor)

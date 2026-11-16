@@ -129,6 +129,7 @@ class NukeGateTest {
         assertFalse(gate.onScanned(token))
         assertEquals(0, ran)
         assertEquals(NukeTimerCopy.refusal(24 * 60_000L), gate.unlock.value?.error)
+        assertTrue("shown as a lock notice, not an error", gate.unlock.value!!.errorIsCodeLock)
         assertNotNull("the dialog stays open for the emergency code", gate.unlock.value)
     }
 
@@ -148,6 +149,22 @@ class NukeGateTest {
         stash()
         assertFalse(gate.onScanned("4006381333931"))
         assertEquals(NukeGate.WRONG_KEY_MESSAGE, gate.unlock.value?.error)
+        assertFalse("a wrong code is a real error", gate.unlock.value!!.errorIsCodeLock)
+    }
+
+    @Test
+    fun `a wrong scan after a lock refusal is an error again, and leaving the choice clears both`() = runTest {
+        withTimer(30)
+        stash()
+        assertFalse(gate.onScanned(token))
+        assertTrue(gate.unlock.value!!.errorIsCodeLock)
+        assertFalse(gate.onScanned("4006381333931"))
+        assertEquals(NukeGate.WRONG_KEY_MESSAGE, gate.unlock.value?.error)
+        assertFalse(gate.unlock.value!!.errorIsCodeLock)
+        assertFalse(gate.onScanned(token))
+        gate.useEmergencyCode()
+        assertNull(gate.unlock.value?.error)
+        assertFalse(gate.unlock.value!!.errorIsCodeLock)
     }
 
     @Test

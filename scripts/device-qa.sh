@@ -3439,10 +3439,17 @@ nuke_chip_selected() { # name -> true|false|""
   python3 "${WORK}/uistate.py" selected "$UI_XML" "$1"
 }
 
-# "Save as profile" -> name -> Save (or Update when the name already exists).
+# "Save as profile" -> name -> Save (or Update when the name already exists). The link is hidden
+# while the list already IS a saved profile (round 1: saving would only duplicate it), which a re-run
+# meets when an earlier run left the same profile behind: that counts as saved.
 nuke_save_profile() { # name
   local name="$1" i
   nuke_scroll_top
+  ui_snapshot
+  if ! ui_has "Save as profile" && [[ "$(nuke_chip_selected "$name")" == true ]]; then
+    info "the list already is profile '${name}'"
+    return 0
+  fi
   ui_tap_text "Save as profile" 10 || return 1
   ui_tap_edittext 10 || { fail "no Name field in the save dialog"; return 1; }
   ash input keyevent KEYCODE_MOVE_END >/dev/null 2>&1
@@ -3582,13 +3589,13 @@ case_nuke_profiles() {
   return 0
 }
 
-# ── nuke-timer: the timer picker, and the key is refused while it runs ──────────────────────────
+# ── nuke-timer: the "Lock code for" picker, and the key is refused while the code is locked ──────────────────────────
 nuke_timer_dropdown() { # opens the picker and checks the six options
   local o rc=0
   nuke_scroll_top
   ui_snapshot
-  ui_has_re 'Timer: ' || { fail "no Timer row on the Nuke screen"; return 1; }
-  ui_tap_xy_mode prefix "Timer: " 8 || return 1
+  ui_has_re 'Lock code for: ' || { fail "no 'Lock code for' row on the Nuke screen"; return 1; }
+  ui_tap_xy_mode prefix "Lock code for: " 8 || return 1
   ui_snapshot
   for o in "None" "15 min" "30 min" "45 min" "1 hour" "2 hours"; do
     ui_has "$o" || { fail "timer option '${o}' missing from the dropdown"; rc=1; }
@@ -3597,11 +3604,11 @@ nuke_timer_dropdown() { # opens the picker and checks the six options
   return $rc
 }
 
-nuke_timer_choice() { ui_snapshot; grep -aoE 'content-desc="Timer: [^"]*"' "$UI_XML" | head -1 | sed 's/.*Timer: //; s/"$//'; }
+nuke_timer_choice() { ui_snapshot; grep -aoE 'content-desc="Lock code for: [^"]*"' "$UI_XML" | head -1 | sed 's/.*Lock code for: //; s/"$//'; }
 
 nuke_timer_pick() { # option; the dropdown must be closed
   [[ "$(nuke_timer_choice)" == "$1" ]] && return 0
-  ui_tap_xy_mode prefix "Timer: " 8 || return 1
+  ui_tap_xy_mode prefix "Lock code for: " 8 || return 1
   ui_tap_text "$1" 8 || return 1
   [[ "$(nuke_timer_choice)" == "$1" ]] || { fail "timer did not change to '${1}'"; return 1; }
 }
@@ -3614,9 +3621,9 @@ nuke_timer_scan_flow() {
   nuke_timer_pick "15 min" || return 1
   ui_tap_text "Nuke now" 10 || nuke_tap "Nuke now" || return 1
   ui_wait_re 'Nuke is on · ' 12 || { fail "Nuke did not turn on"; return 1; }
-  ui_has_re 'min left' || { fail "no '… min left' line on the status card"; rc=1; }
+  ui_has_re 'Code locked · .* left' || { fail "no 'Code locked · … left' line on the status card"; rc=1; }
   nuke_scan_key "Scan to end" || rc=1
-  ui_wait_re 'Your timer has .* left\. Scan again when it ends\.' 12 || { fail "the key was not refused while the timer runs"; rc=1; }
+  ui_wait_re 'Your code is locked for .*\. Scan again after that\.' 12 || { fail "the key was not refused while the code is locked"; rc=1; }
   nuke_fakescan_clear
   nuke_is_on || { fail "Nuke is no longer on after the refused scan"; rc=1; }
   nuke_assert_blocked "$NUKE_APP_A_PKG" || rc=1
@@ -3626,7 +3633,8 @@ nuke_timer_scan_flow() {
     while (( waited < 1020 )); do
       sleep 30; waited=$(( waited + 30 ))
       nuke_open_screen || continue
-      ui_has_re 'Timer done' && break
+      # Once the lock runs out the card drops its "Code locked" line (no "done" line, round 1).
+      ui_has_re 'Code locked' || break
     done
     nuke_scan_key "Scan to end"
     ui_wait_re 'Nuke is off\.' 12 || { fail "no 'Nuke is off.' after the timer ended and the key was scanned"; rc=1; }

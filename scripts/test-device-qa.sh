@@ -818,11 +818,11 @@ check "nuke_fakescan_clear restores the camera after a set" \
 check "nuke_fakescan_clear with nothing set sends nothing" test -z "$(nfs 'nuke_fakescan_clear')"
 
 # The dump readers, against a canned Nuke screen: a chip row (Two selected), a search box that holds
-# the same words as a row, two app rows with checkboxes, and the Timer button.
+# the same words as a row, two app rows with checkboxes, and the "Lock code for" row.
 cat >"$TMP/nuke-ui.xml" <<'XML'
 <?xml version='1.0' encoding='UTF-8' standalone='yes' ?><hierarchy rotation="0">
 <node text="" class="android.view.View" clickable="true" content-desc="Nuke is off. 2 apps ready." bounds="[0,100][1080,300]" />
-<node text="" class="android.widget.Button" clickable="true" content-desc="Timer: 15 min" bounds="[600,400][1000,500]" />
+<node text="" class="android.widget.Button" clickable="true" content-desc="Lock code for: 15 min" bounds="[600,400][1000,500]" />
 <node text="Two" class="android.view.View" clickable="true" selected="true" bounds="[0,600][200,700]" />
 <node text="One" class="android.view.View" clickable="true" selected="false" bounds="[250,600][450,700]" />
 <node text="Keep Notes" class="android.widget.EditText" bounds="[0,800][1080,900]" />
@@ -838,15 +838,15 @@ cat >"$TMP/nuke-ui.xml" <<'XML'
 XML
 ui() { run_qa "$OUT" -- "write_ui_state; python3 \"\$WORK/uistate.py\" $1 '$TMP/nuke-ui.xml' '$2'" || true; tr -d '\n' <"$OUT"; }
 check "uistate prefix: the Home Nuke card (clickable, description starts with Nuke)" test "$(ui prefix Nuke)" = "540 200"
-check "uistate prefix: the Timer button" test "$(ui prefix 'Timer: ')" = "800 450"
+check "uistate prefix: the Lock code for row" test "$(ui prefix 'Lock code for: ')" = "800 450"
 check "uistate checked: a ticked app row" test "$(ui checked 'Keep Notes')" = "true"
 check "uistate checked: an unticked app row (the search box with the same words is ignored)" test "$(ui checked 'Calendar')" = "false"
 check "uistate selected: the selected chip" test "$(ui selected Two)" = "true"
 check "uistate selected: an unselected chip" test "$(ui selected One)" = "false"
 check "uistate labelxy: the row label, never the search box holding the same words" test "$(ui labelxy 'Keep Notes')" = "350 1000"
-printf '%s' '<node text="Your timer has 15 min left. Scan again when it ends." />' >"$TMP/snack.xml"
+printf '%s' '<node text="Your code is locked for 15 more min. Scan again after that." />' >"$TMP/snack.xml"
 check "ui_has_re matches the refusal snackbar regex" \
-  run_qa "$OUT" -- "UI_XML='$TMP/snack.xml'; ui_has_re 'Your timer has .* left\\. Scan again when it ends\\.'"
+  run_qa "$OUT" -- "UI_XML='$TMP/snack.xml'; ui_has_re 'Your code is locked for .*\\. Scan again after that\\.'"
 rc=0; run_qa "$OUT" -- "UI_XML='$TMP/snack.xml'; ui_has_re 'Nuke is off\\.'" || rc=$?
 check "ui_has_re rejects a different message" test "$rc" = 1
 check "case_nuke_profiles and case_nuke_timer are defined" run_qa "$OUT" -- "declare -F case_nuke_profiles case_nuke_timer"

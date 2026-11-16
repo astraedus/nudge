@@ -82,7 +82,17 @@ fun NukeUnlockHost(
                 )
                 active.error?.let {
                     Spacer(Modifier.height(12.dp))
-                    Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
+                    // A locked code is not a mistake: plain body text, so it never reads like the
+                    // link below it. A wrong code keeps the error colour.
+                    Text(
+                        it,
+                        color = if (active.errorIsCodeLock) {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        } else {
+                            MaterialTheme.colorScheme.error
+                        },
+                        style = MaterialTheme.typography.bodyMedium
+                    )
                 }
                 Spacer(Modifier.height(12.dp))
                 TextButton(onClick = onUseEmergencyCode) {

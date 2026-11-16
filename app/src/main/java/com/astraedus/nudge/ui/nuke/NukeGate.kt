@@ -17,11 +17,15 @@ import kotlinx.coroutines.flow.asStateFlow
  *   choosing between scanning and typing. A FRESH code per attempt: every entry into typing mode
  *   generates a new one, so a code seen once is worth nothing the next time.
  * @property error the last thing that went wrong ("That's not your Nuke code"), or null.
+ * @property errorIsCodeLock [error] is the timer's refusal (the RIGHT code, still locked), not a
+ *   mistake: the dialog shows it as plain body text, never in the error colour, which on a dynamic
+ *   theme reads like the pink link under it (round 1).
  */
 data class NukeUnlockState(
     val prompt: String,
     val emergencyTarget: String? = null,
-    val error: String? = null
+    val error: String? = null,
+    val errorIsCodeLock: Boolean = false
 )
 
 /**
@@ -86,12 +90,12 @@ class NukeGate(
         if (payload.isNullOrBlank()) return false
         val state = currentState()
         if (!NukeKey.matches(payload, state.keyHash)) {
-            _unlock.value = active.copy(error = WRONG_KEY_MESSAGE)
+            _unlock.value = active.copy(error = WRONG_KEY_MESSAGE, errorIsCodeLock = false)
             return false
         }
         val waitMs = NukePolicy.keyWaitMs(state, clock.now())
         if (waitMs > 0) {
-            _unlock.value = active.copy(error = NukeTimerCopy.refusal(waitMs))
+            _unlock.value = active.copy(error = NukeTimerCopy.refusal(waitMs), errorIsCodeLock = true)
             return false
         }
         return release()
@@ -100,13 +104,13 @@ class NukeGate(
     /** Switch the open dialog to typing a fresh emergency code. */
     fun useEmergencyCode() {
         val active = _unlock.value ?: return
-        _unlock.value = active.copy(emergencyTarget = newEmergencyCode(), error = null)
+        _unlock.value = active.copy(emergencyTarget = newEmergencyCode(), error = null, errorIsCodeLock = false)
     }
 
     /** Back from typing to the scan-or-type choice (the code is discarded; the next one is new). */
     fun backToChoice() {
         val active = _unlock.value ?: return
-        _unlock.value = active.copy(emergencyTarget = null, error = null)
+        _unlock.value = active.copy(emergencyTarget = null, error = null, errorIsCodeLock = false)
     }
 
     /**

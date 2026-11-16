@@ -292,13 +292,15 @@ class NukeViewModelTimerProfilesTest {
 
     // --- profiles --------------------------------------------------------------------------------
 
-    /** The chips the screen would show now (collected the way the screen collects). */
-    private fun TestScope.chips(): List<NukeProfileChip> {
+    /** What the screen would show now (collected the way the screen collects). */
+    private fun TestScope.ui(): NukeUiState {
         val seen = mutableListOf<NukeUiState>()
         val job = backgroundScope.launch { vm.uiState.collect { seen += it } }
         job.cancel()
-        return seen.last().profiles
+        return seen.last()
     }
+
+    private fun TestScope.chips(): List<NukeProfileChip> = ui().profiles
 
     @Test
     fun `saving a profile stores the list, and its chip shows as the one in use`() = runTest(dispatcher) {
@@ -309,6 +311,17 @@ class NukeViewModelTimerProfilesTest {
 
         vm.toggleApp(chrome)
         assertEquals("a different list is no profile", listOf(NukeProfileChip("Social", false)), chips())
+    }
+
+    @Test
+    fun `Save as profile is offered only for a list that is not already a saved profile`() = runTest(dispatcher) {
+        paired(setOf(instagram, tiktok))
+        assertTrue("a list and no profiles", ui().canSaveProfile)
+        assertNull(vm.saveProfile("Social"))
+        assertFalse("the list IS Social: saving it again would only duplicate it", ui().canSaveProfile)
+        vm.toggleApp(chrome)
+        assertTrue("an edited list is new again", ui().canSaveProfile)
+        assertFalse("nothing to save with an empty list", NukeUiState(nukedCount = 0).canSaveProfile)
     }
 
     @Test

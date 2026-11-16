@@ -72,6 +72,12 @@ data class NukeUiState(
     val timerChoiceMinutes: Int = 0
 ) {
     val canArm: Boolean get() = !active && armBlocker == null
+
+    /**
+     * "Save as profile" is offered: there is a list, and it is not already exactly a saved profile
+     * (saving that would only duplicate it or change nothing).
+     */
+    val canSaveProfile: Boolean get() = nukedCount > 0 && profiles.none { it.selected }
 }
 
 /** One profile chip. [selected] when the working list is exactly this profile's apps. */
@@ -202,7 +208,7 @@ class NukeViewModel @Inject constructor(
 
     /**
      * Time left on the running timer, or null when Nuke is off or has no timer. Ticks only when the
-     * shown minute would change (the copy rounds up), and stops at 0 ("Timer done"). Display only:
+     * shown minute would change (the copy rounds up), and stops at 0 (the card's line goes away). Display only:
      * the gate reads the clock itself at scan time, never this value.
      */
     @OptIn(ExperimentalCoroutinesApi::class)

@@ -172,11 +172,20 @@ fun NukeScreen(
 
             item {
                 NukeListHeader(
-                    canSave = state.nukedCount > 0,
+                    canSave = state.canSaveProfile,
                     onSaveAsProfile = { savingProfile = true }
                 )
             }
 
+            item {
+                Text(
+                    "Your phone, messages, clock, launcher, keyboard and Settings are never on this list.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            // Under the caption, so with no profiles the top of this section is exactly as before.
             if (state.profiles.isNotEmpty()) {
                 item {
                     NukeProfileChips(
@@ -187,14 +196,6 @@ fun NukeScreen(
                         onDelete = { deletingProfile = it }
                     )
                 }
-            }
-
-            item {
-                Text(
-                    "Your phone, messages, clock, launcher, keyboard and Settings are never on this list.",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
             }
 
             item {
@@ -251,11 +252,11 @@ fun NukeScreen(
     }
 
     if (savingProfile) {
-        // Pre-filled with the chip in use, so re-saving an edited profile is one tap ("Update").
-        val inUse = state.profiles.firstOrNull { it.selected }?.name.orEmpty()
+        // Starts empty: the link is only offered when the list is not already a saved profile.
+        // Typing an existing name saves over it ("Update").
         NukeProfileNameDialog(
             title = "Save as profile",
-            initialName = inUse,
+            initialName = "",
             confirmLabel = { name ->
                 if (state.profiles.any { it.name.equals(NukeProfiles.normalizeName(name), ignoreCase = true) }) "Update" else "Save"
             },

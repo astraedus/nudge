@@ -120,7 +120,7 @@ dialog (scan, or type a fresh 64-char code via the reused `ChallengeDialog`).
 | Import a backup | cannot touch Nuke | cannot touch Nuke |
 | Save / rename / delete a profile (#183) | free | free (writes only `NUKE_PROFILES`; the running list is untouched) |
 | Switch the list to a profile, or its Undo (#183) | free (replaces the list) | refused: "End Nuke to switch profiles." |
-| Pick a timer (#184) | free (used by the next start) | not offered |
+| Pick "Lock code for" (#184) | free (used by the next start) | not offered |
 | Any "key or code" row above, while the timer runs (#184) | — | the key is refused with the time left; the emergency code works |
 
 Every unlock re-reads the LIVE key (a re-pair between opening the dialog and scanning counts), and
@@ -187,10 +187,15 @@ the bench in spec PR 1; pinned by `NukeCountParityTest`).
 ## Profiles (#183)
 
 A profile is a saved copy of the list, nothing more. The screen shows them as a row of FilterChips
-under "Apps to nuke" (nothing at all until the first "Save as profile"); the chip whose apps equal
-the current list shows as selected. Tapping another chip while Nuke is off makes the list exactly that
-profile's apps, with an "Undo" snackbar holding the list from before. Tapping the selected chip, or
-any chip while Nuke is on, opens Rename / Delete.
+under the "never on this list" caption (nothing at all until the first "Save as profile", so with no
+profiles the section looks exactly as it did before #183); the chip whose apps equal the current list
+shows as selected, by fill alone (no check mark, so a chip never changes width). Tapping another chip
+while Nuke is off makes the list exactly that profile's apps, with an "Undo" snackbar holding the list
+from before. Tapping the selected chip, or any chip while Nuke is on, opens Rename / Delete. "Save as
+profile" is a text link on the header row (`NukeUiState.canSaveProfile`): offered only when the list
+is non-empty and is not already exactly a saved profile, since saving then would only duplicate it.
+It is a clickable Text rather than a TextButton so the header keeps its height; Compose's hit testing
+still gives it a 48dp touch target.
 
 Why a preset and not a live link: the running Nuke reads `NUKE_PACKAGES` and nothing else, so no
 profile edit can weaken a running Nuke (deleting the profile it came from changes nothing), and the
@@ -201,9 +206,13 @@ the same raw list. Switching profiles while Nuke is on would be "remove apps" in
 
 ## The timer (#184)
 
-Before starting, the user may pick a timer (None, 15, 30, 45 min, 1 or 2 hours; remembered, offered
-only when a key is paired and only while Nuke is off). While it runs, the key unlocks nothing: every
-"key or code" row in the gate table answers "Your timer has X left. Scan again when it ends." from
+Before starting, the user may lock the code for a while: the "Lock code for" row in the off card
+(None, 15, 30, 45 min, 1 or 2 hours; remembered, offered only when a key is paired and only while Nuke
+is off). The words are about the CODE on purpose: on the bench "Timer" read as "Nuke turns off after
+15 min", which is the opposite of what it does. The ON card says "Code locked · X left" while it runs
+and nothing once it has run out (the plain ON card). While it runs, the key unlocks nothing: every
+"key or code" row in the gate table answers "Your code is locked for X more min. Scan again after
+that." from
 `NukeGate` (and `NukeScan.resolveToggle` → `TimerRunning` for scan-to-toggle). Adding apps stays free.
 The emergency code ignores the timer, always. When the timer runs out NOTHING happens by itself: no
 auto-unlock, Nuke stays on until the key or the code ends it, and ending Nuke clears the timer.
@@ -271,8 +280,8 @@ What it cannot close, and does not pretend to:
 | L1 | `HomeNukeToggleGateTest` | master toggle OFF waits for the key or the code while Nuke is on; during a timer the key is refused and the code still works |
 | L1 | `NukeTimerTest` | the clock model: same boot, reboot carries banked time, a reboot never ends it early, a power cut only lengthens it, no boot count either way, a clock that went backwards, clamps, choices, `fromStored` fails soft, `keyWaitMs` |
 | L1 | `NukeProfilesTest`, `NukeProfilesCodecTest` | name rules and bounds, update-in-place, rename/delete, `matching`, `sanitize`; the stored JSON round-trips and every corrupt shape reads as nothing (same on Android's and the desktop org.json) |
-| L1 | `NukeTimerCopyTest` | every timer line: rounds up, refusal, status, picker labels |
-| L1 | `NukeGateTest`, `NukeScanTest` (timer cases) | the right key refused with the time left, works after; wrong key still wrong; the emergency code at any time; a leftover timer on an off Nuke holds nothing |
+| L1 | `NukeTimerCopyTest` | every code-lock line: rounds up, refusal (minutes and hours), status line gone once run out, picker labels, and no line calls it a "timer" |
+| L1 | `NukeGateTest`, `NukeScanTest` (timer cases) | the right key refused with the time left (flagged `errorIsCodeLock`, so the dialog shows it as plain text, not the error colour), works after; wrong key still wrong (and an error again); the emergency code at any time; a leftover timer on an off Nuke holds nothing |
 | L1 | `NukeViewModelTimerProfilesTest` | through the real VM + gate + preferences: the picked timer starts with both starts; EVERY key-gated weakening refused during the timer; adding free; emergency ends and clears; reboot never ends early; time zone moves nothing; upgrade from the old keys; profile save/apply/Undo/refusals; a running Nuke's list survives every profile edit |
 | L4 | `NukePreferencesTimerProfilesTest` | the real preferences: upgrade from old on-disk keys, arm never without a key, never replaces a running timer, end/unpair clear it, checkpoint writes only when it should, corrupt timer/profiles fail soft, profile edits touch only `NUKE_PROFILES`, switch only while off |
 | L4 | `NukeExportExclusionTest`, `ImportedSettingsWriteContractTest` | nothing about Nuke (profiles and timer included) leaves or enters through a backup; every `NUKE_*` key is absent from the export/import code |
