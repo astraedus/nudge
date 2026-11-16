@@ -3432,6 +3432,10 @@ nuke_open_screen() {
       # shellcheck disable=SC2086
       ash input tap $xy >/dev/null 2>&1
       sleep 2
+      # A fresh install shows the first-run intro card on top; it pushes the header, chips and
+      # "Save as profile" below where the cases look (the release gate run failed on exactly that).
+      ui_snapshot
+      if ui_has "Got it"; then ui_tap_text "Got it" 4 >/dev/null 2>&1 || true; sleep 1; fi
       scroll_to_text "Apps to nuke" 6 && return 0
       fail "tapped the Nuke card but 'Apps to nuke' never appeared"
       return 1
@@ -3789,6 +3793,20 @@ case_nuke_timer() {
   local rc=0 scan=0 left_on=0 how=""
   nuke_preflight || return 1
   nuke_ensure_off || { nuke_fakescan_clear; return 1; }
+  # The "Lock code for" row only shows once a code is paired. A debug build pairs the QA key; a fresh
+  # RELEASE install has no code and no scripted way to pair one (no fakescan), so it is a SKIP there,
+  # never a FAIL and never a silent pass.
+  if nuke_scan_available; then
+    nuke_open_screen || return 1
+    nuke_pair_key || { nuke_fakescan_clear; return 1; }
+  fi
+  nuke_scroll_top
+  ui_snapshot
+  if ! ui_has_re 'Lock code for: ' && ui_has "Pair a Nuke code first." && ! nuke_scan_available; then
+    go_home
+    CASE_NOTE="SKIPPED: no Nuke code paired on this release install, and a release build cannot pair one by script (the Lock code for row needs a code). Run with APK=debug"
+    return 77
+  fi
   nuke_timer_dropdown || rc=1
   ui_tap_text "None" 6 >/dev/null 2>&1 || true      # close the open menu on a known choice
   if nuke_scan_available; then

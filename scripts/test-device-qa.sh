@@ -774,7 +774,7 @@ NLOG="$TMP/nuke.log"
 # The two cases with their UI parts stubbed (those need the device); the build detection, the SKIP
 # path, the fakescan property handling and the cleanup are the real functions, over a shim `ash`
 # that answers the dumpsys package queries from $PKGFLAGS and logs every other call.
-ncase() { # <case fn> <flags: debug|release|qa> [part rc] -> "<case rc>|<ash calls>"
+ncase() { # <case fn> <flags: debug|release|qa> [part rc] [nokey] -> "<case rc>|<ash calls>"
   : >"$NLOG"
   run_qa "$OUT" NLOG="$NLOG" -- "
     nuke_preflight() { return 0; }; nuke_ensure_off() { return 0; }; go_home() { :; }; sleep() { :; }
@@ -783,6 +783,8 @@ ncase() { # <case fn> <flags: debug|release|qa> [part rc] -> "<case rc>|<ash cal
     nuke_timer_dropdown() { echo dropdown >>\"\$NLOG\"; return ${3:-0}; }
     nuke_timer_scan_flow() { echo scanflow >>\"\$NLOG\"; nuke_fakescan_set payload-1; return 0; }
     ui_tap_text() { :; }; nuke_open_screen() { return 0; }; nuke_is_on() { [[ '$2' == qa ]]; }
+    nuke_pair_key() { :; }; nuke_scroll_top() { :; }; ui_snapshot() { :; }; ui_has_re() { return 1; }
+    ui_has() { [[ '${4:-}' == nokey && \"\$1\" == 'Pair a Nuke code first.' ]]; }
     ash() {
       if [[ \"\$1 \$2\" == 'dumpsys package' ]]; then
         case '$2' in
@@ -799,6 +801,8 @@ check "nuke-profiles on a RELEASE build: part A runs, part B is skipped (rc 77, 
   test "$(ncase case_nuke_profiles release)" = "77|partA,"
 check "nuke-timer on a RELEASE build: dropdown asserted, scan flow skipped (rc 77) and no setprop is ever sent" \
   test "$(ncase case_nuke_timer release)" = "77|dropdown,"
+check "nuke-timer on a RELEASE install with NO code paired: SKIP (rc 77) before the dropdown, no setprop" \
+  test "$(ncase case_nuke_timer release 0 nokey)" = "77|"
 check "nuke-profiles on a DEBUG build: both parts run, rc 0" test "$(ncase case_nuke_profiles debug)" = "0|partA,partB,"
 check "a part A failure on a RELEASE build is a FAIL, not a SKIP" test "$(ncase case_nuke_profiles release 1)" = "1|partA,"
 check "a dropdown failure on a RELEASE build is a FAIL, not a SKIP" test "$(ncase case_nuke_timer release 1)" = "1|dropdown,"
