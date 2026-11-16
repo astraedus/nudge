@@ -3249,6 +3249,7 @@ nuke_qa_reset() {
 #   labelxy <label>    centre of the node with that text that is not a text field (an app row's label,
 #                      not the search box that now holds the same words)
 #   checked <label>    "true"/"false": the checkbox in the row of that label
+#   boxxy <label>      centre of that checkbox (the row's only clickable node)
 #   selected <needle>  "true"/"false": whether the chip with that text/desc is selected
 write_ui_state() {
   cat >"${WORK}/uistate.py" <<'PYEOF'
@@ -3309,6 +3310,22 @@ elif mode == "checked":
                 sys.exit(0)
             cur = parent.get(cur)
         break
+elif mode == "boxxy":
+    # Centre of the checkbox in the row of that label. On the Nuke list the CheckBox is the row's only
+    # clickable node: tapping the label or the icon (what labelxy finds) does nothing.
+    for n in nodes:
+        if n.get("class") == "android.widget.EditText" or needle not in names(n):
+            continue
+        cur = n
+        while cur is not None:
+            boxes = [d for d in cur.iter("node") if d.get("checkable") == "true"]
+            if boxes:
+                c = centre(boxes[0])
+                if c:
+                    print(c)
+                sys.exit(0)
+            cur = parent.get(cur)
+        break
 elif mode == "selected":
     for n in nodes:
         if needle not in names(n):
@@ -3320,7 +3337,12 @@ elif mode == "selected":
             p2 = parent.get(p1)
             if p2 is not None:
                 kin.append(p2)
-        print("true" if any(k.get("selected") == "true" for k in kin) else "false")
+        # A Compose FilterChip reaches the dump as checkable="true" checked="true" on its clickable
+        # parent, NOT selected="true" (measured on the bench): reading only `selected` called every
+        # chip unselected, and the extra tap opened the chip's menu instead of applying it.
+        print("true" if any(k.get("selected") == "true" or
+                            (k.get("checkable") == "true" and k.get("checked") == "true")
+                            for k in kin) else "false")
         break
 PYEOF
 }
@@ -3450,11 +3472,52 @@ PYEOF
     sleep 1
   done
   ui_tap_edittext 10 || { fail "no search field on the Nuke screen"; return 1; }
-  ash input keyevent KEYCODE_MOVE_END >/dev/null 2>&1
-  for ((i = 0; i < 30; i++)); do ash input keyevent KEYCODE_DEL >/dev/null 2>&1; done
-  ash input text "${1// /%s}" >/dev/null 2>&1
-  sleep 1
+  # The first word only ("Keep" for "Keep notes"): it is enough to filter the list, and a typed space
+  # is where the bench keyboard scrambled the text ("Keep notes" landed as "Keenotesp", which matched
+  # no app, emptied the list and clamped the scroll back up).
+  nuke_type_field "${1%% *}" || return 1
   nuke_hide_keyboard
+}
+
+# The text of the first EditText in the last snapshot.
+nuke_field_text() {
+  python3 - "$UI_XML" <<'PYEOF'
+import re
+import sys
+
+xml = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+for attrs in re.findall(r"<node([^>]*)>", xml):
+    if 'class="android.widget.EditText"' in attrs:
+        t = re.search(r' text="([^"]*)"', attrs)
+        print(t.group(1) if t else "")
+        break
+PYEOF
+}
+
+# Types $1 into the focused field and CHECKS what landed, retrying up to 3 times. `adb input text`
+# goes through the keyboard, which can reorder characters on the bench; an unchecked typo turned into
+# a misleading "not in the list" failure two steps later.
+nuke_type_field() { # text
+  local want="$1" try i got=""
+  for ((try = 0; try < 3; try++)); do
+    ash input keyevent KEYCODE_MOVE_END >/dev/null 2>&1
+    for ((i = 0; i < 30; i++)); do ash input keyevent KEYCODE_DEL >/dev/null 2>&1; done
+    # One character per `input` call, not the whole string: sent in one burst the bench keyboard
+    # dropped and swapped letters ("Calendar" landed as "Calaren", "Keep notes" as "Keenotesp").
+    for ((i = 0; i < ${#want}; i++)); do
+      if [[ "${want:i:1}" == " " ]]; then
+        ash input keyevent KEYCODE_SPACE >/dev/null 2>&1
+      else
+        ash input text "${want:i:1}" >/dev/null 2>&1
+      fi
+    done
+    sleep 1
+    ui_snapshot
+    got="$(nuke_field_text)"
+    [[ "$got" == "$want" ]] && return 0
+  done
+  fail "typed '${want}' but the field reads '${got}'"
+  return 1
 }
 
 # Makes the row of $1 ticked (true) or unticked (false), and checks the dump agrees.
@@ -3464,7 +3527,8 @@ nuke_set_ticked() { # label true|false
   ui_wait_text "$label" 8 || { fail "'${label}' is not in the Nuke app list"; return 1; }
   now="$(python3 "${WORK}/uistate.py" checked "$UI_XML" "$label")"
   if [[ "$now" != "$want" ]]; then
-    ui_tap_xy_mode labelxy "$label" 8 || return 1
+    ui_tap_xy_mode boxxy "$label" 8 || return 1
+    sleep 1
     ui_snapshot
     now="$(python3 "${WORK}/uistate.py" checked "$UI_XML" "$label")"
   fi
@@ -3496,9 +3560,7 @@ nuke_save_profile() { # name
   fi
   ui_tap_text "Save as profile" 10 || return 1
   ui_tap_edittext 10 || { fail "no Name field in the save dialog"; return 1; }
-  ash input keyevent KEYCODE_MOVE_END >/dev/null 2>&1
-  for ((i = 0; i < 30; i++)); do ash input keyevent KEYCODE_DEL >/dev/null 2>&1; done
-  ash input text "${name// /%s}" >/dev/null 2>&1
+  nuke_type_field "$name" || return 1
   nuke_hide_keyboard
   ui_snapshot
   if ui_has "Update"; then ui_tap_text "Update" 8 || return 1; else ui_tap_text "Save" 8 || return 1; fi
@@ -3624,6 +3686,11 @@ nuke_profiles_part_b() {
   nuke_pair_key || return 1
   nuke_scroll_top
   ui_tap_text "Two" 10 || return 1
+  # The lock choice is remembered across Nukes, so a bench left on "15 min" (by nuke-timer or by hand)
+  # made the key at the end of this part be refused, and the run hung there. This part ends with the
+  # key, so it starts with no lock.
+  nuke_scroll_top
+  nuke_timer_pick "None" || return 1
   ui_tap_text "Nuke now" 10 || nuke_tap "Nuke now" || return 1
   ui_wait_re 'Nuke is on · ' 12 || { fail "Nuke did not turn on"; return 1; }
   nuke_scroll_top

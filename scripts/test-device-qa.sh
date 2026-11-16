@@ -848,6 +848,38 @@ run_qa "$OUT" -- "nuke_profile_names '$TMP/nuke-chips.xml'" || true
 check "nuke_profile_names lists every chip, selected or not, and only chips" \
   test "$(tr '\n' '|' <"$OUT")" = "Focus|Notes only|"
 
+# The REAL chip shape from a bench dump: the clickable parent is checkable+checked, nothing is selected.
+cat >"$TMP/nuke-realchips.xml" <<'XML'
+<?xml version='1.0' encoding='UTF-8' standalone='yes' ?><hierarchy rotation="0">
+<node text="" class="android.view.View" checkable="true" checked="true" clickable="true" selected="false" bounds="[44,1848][238,1980]"><node text="" class="android.view.View" content-desc="Profile Focus, in use" checkable="false" checked="false" clickable="false" selected="false" bounds="[44,1870][238,1958]"><node text="Focus" class="android.widget.TextView" checkable="false" checked="false" clickable="false" selected="false" bounds="[88,1887][194,1942]" /></node></node>
+<node text="" class="android.view.View" checkable="true" checked="false" clickable="true" selected="false" bounds="[260,1848][535,1980]"><node text="" class="android.view.View" content-desc="Profile Notes only" checkable="false" checked="false" clickable="false" selected="false" bounds="[260,1870][535,1958]"><node text="Notes only" class="android.widget.TextView" checkable="false" checked="false" clickable="false" selected="false" bounds="[304,1887][491,1942]" /></node></node>
+</hierarchy>
+XML
+run_qa "$OUT" -- "WORK='$TMP'; write_ui_state; python3 '$TMP/uistate.py' selected '$TMP/nuke-realchips.xml' Focus; python3 '$TMP/uistate.py' selected '$TMP/nuke-realchips.xml' 'Notes only'" || true
+check "uistate selected reads the REAL FilterChip shape (checkable+checked parent): Focus in use, Notes only not" \
+  test "$(tr '\n' '|' <"$OUT")" = "true|false|"
+
+# nuke_type_field checks what landed: a scrambled field is retried, then FAILS loudly, never passes.
+mkfield() { printf '%s' "<hierarchy><node class=\"android.widget.EditText\" text=\"$1\" bounds=\"[0,0][10,10]\" /></hierarchy>"; }
+run_qa "$OUT" -- "ash() { :; }; sleep() { :; }; ui_snapshot() { UI_XML='$TMP/f.xml'; printf '%s' '$(mkfield Keenotesp)' >\"\$UI_XML\"; }; nuke_type_field Keep && echo ok || echo failed" || true
+check "nuke_type_field fails when the field never reads what was typed" grep -q '^failed$' "$OUT"
+run_qa "$OUT" -- "ash() { :; }; sleep() { :; }; ui_snapshot() { UI_XML='$TMP/f.xml'; printf '%s' '$(mkfield Keep)' >\"\$UI_XML\"; }; nuke_type_field Keep && echo ok || echo failed" || true
+check "nuke_type_field passes when the field reads the typed text" grep -q '^ok$' "$OUT"
+
+# The REAL app row from a bench dump: icon (desc = label), CheckBox (the only clickable node), label.
+cat >"$TMP/nuke-realrow.xml" <<'XML'
+<?xml version='1.0' encoding='UTF-8' standalone='yes' ?><hierarchy rotation="0">
+<node text="Calendar" class="android.widget.EditText" clickable="true" checkable="false" checked="false" bounds="[44,1566][1036,1720]" />
+<node text="" class="android.view.View" clickable="false" checkable="false" checked="false" bounds="[44,1780][1036,1930]">
+<node text="" class="android.view.View" content-desc="Calendar" clickable="false" checkable="false" checked="false" bounds="[88,1797][198,1907]" />
+<node text="" class="android.widget.CheckBox" clickable="true" checkable="true" checked="false" bounds="[861,1787][993,1919]" />
+<node text="Calendar" class="android.widget.TextView" clickable="false" checkable="false" checked="false" bounds="[242,1819][429,1885]" />
+</node></hierarchy>
+XML
+run_qa "$OUT" -- "WORK='$TMP'; write_ui_state; python3 '$TMP/uistate.py' boxxy '$TMP/nuke-realrow.xml' Calendar; python3 '$TMP/uistate.py' checked '$TMP/nuke-realrow.xml' Calendar" || true
+check "uistate boxxy taps the row's CheckBox (not the icon labelxy finds), and checked reads it" \
+  test "$(tr '\n' '|' <"$OUT")" = "927 1853|false|"
+
 # The fakescan helpers send exactly one quoted payload and exactly one empty clear, and clear is a
 # no-op when nothing was ever set (a release run must not touch the property at all).
 nfs() { : >"$NLOG"; run_qa "$OUT" NLOG="$NLOG" -- "ash() { echo \"\$*\" >>\"\$NLOG\"; }; $1" || true; tr '\n' '|' <"$NLOG"; }
