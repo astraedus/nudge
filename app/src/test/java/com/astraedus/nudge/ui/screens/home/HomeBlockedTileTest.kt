@@ -9,6 +9,7 @@ import com.astraedus.nudge.domain.engine.TimeTracker
 import com.astraedus.nudge.domain.usage.WeeklyUsage
 import com.astraedus.nudge.testing.FakeInstalledAppsRepository
 import com.astraedus.nudge.testing.FakeNudgePreferences
+import com.astraedus.nudge.testing.FakeNukeClock
 import com.astraedus.nudge.testing.FakeRuleDatabase
 import com.astraedus.nudge.testing.FakeUsageEventDao
 import com.astraedus.nudge.testing.FakeUsageRepository
@@ -108,6 +109,7 @@ class HomeBlockedTileTest {
         insightsCalculator = InsightsCalculator(),
         essentialApps = mockk(relaxed = true),
         scheduleEvaluator = com.astraedus.nudge.domain.engine.ScheduleEvaluator(com.astraedus.nudge.domain.engine.FirstUnlockState.NONE),
+        nukeClock = FakeNukeClock(),
         ioDispatcher = dispatcher
     )
 

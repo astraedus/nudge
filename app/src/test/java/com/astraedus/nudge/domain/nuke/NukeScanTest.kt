@@ -18,8 +18,20 @@ class NukeScanTest {
         keyHash = NukeKey.hashOrNull(token)
     )
 
-    private fun resolve(payload: String?, state: NukeState = paired) =
-        NukeScan.resolveToggle(payload, state, emptySet())
+    private fun resolve(payload: String?, state: NukeState = paired, now: NukeClockReading = NukeClockReading(0, 1)) =
+        NukeScan.resolveToggle(payload, state, emptySet(), now)
+
+    @Test
+    fun `while a timer runs the right key does not end Nuke, and says how long is left`() {
+        val start = NukeClockReading(1_000_000, 4)
+        val timed = paired.copy(active = true, timer = NukeTimer.start(30, start))
+        assertEquals(
+            ToggleOutcome.TimerRunning(20 * 60_000L),
+            resolve(token, timed, NukeClockReading(1_000_000 + 10 * 60_000L, 4))
+        )
+        assertEquals(ToggleOutcome.Disarm, resolve(token, timed, NukeClockReading(1_000_000 + 30 * 60_000L, 4)))
+        assertEquals("a wrong code is still wrong", ToggleOutcome.WrongKey, resolve("4006381333931", timed, start))
+    }
 
     @Test
     fun `the paired key arms Nuke when it is off`() {

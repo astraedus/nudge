@@ -19,6 +19,7 @@ import com.astraedus.nudge.di.IoDispatcher
 import com.astraedus.nudge.domain.engine.ScheduleEvaluator
 import com.astraedus.nudge.domain.engine.TimeTracker
 import com.astraedus.nudge.domain.lock.ChallengeState
+import com.astraedus.nudge.domain.nuke.NukeClock
 import com.astraedus.nudge.domain.nuke.NukePolicy
 import com.astraedus.nudge.domain.nuke.NukeState
 import com.astraedus.nudge.service.EssentialApps
@@ -125,6 +126,7 @@ class HomeViewModel @Inject constructor(
     private val insightsCalculator: InsightsCalculator,
     private val essentialApps: EssentialApps,
     private val scheduleEvaluator: ScheduleEvaluator,
+    private val nukeClock: NukeClock,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) : ViewModel() {
 
@@ -138,7 +140,7 @@ class HomeViewModel @Inject constructor(
      * way around it (every enforcement path sits behind `globalEnabled`), so turning it OFF costs
      * exactly what ending Nuke costs: the key, or the 64-character code.
      */
-    val nukeGate = NukeGate(currentState = { nudgePreferences.nukeState.first() })
+    val nukeGate = NukeGate(currentState = { nudgePreferences.nukeState.first() }, clock = nukeClock)
     val nukeUnlock: StateFlow<NukeUnlockState?> = nukeGate.unlock
 
     /** The one essentials list, resolved off the main thread (it reads PackageManager and roles). */

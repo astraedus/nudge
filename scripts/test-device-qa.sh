@@ -9,7 +9,7 @@
 #   (b) nudge_notif_records read the FIRST Nudge notification record instead of id=1, so a
 #       lingering usage reminder (id 4, listed first) made `notif-idle` read a timestamp that
 #       never moves;
-#   (c) `all` runs ~30 minutes, more than a bounded call can hold, so there are now group1-5
+#   (c) `all` runs ~30 minutes, more than a bounded call can hold, so there are now group1-6
 #       chunks: they must cover `all` exactly, and a chunked series must keep crash-check's
 #       whole-series meaning.
 # Later: home-reopen turns YouTube's picture-in-picture off for its own duration (its PiP
@@ -144,7 +144,7 @@ check "a preset limit (2h: the chip says 'Custom'): sets and saves 5"          t
 check "the 15m preset: sets and saves 1"                                       test "$(limit_from 15 1)"  = "rc=0 saved=1"
 
 # ─── 3. (c) the chunks cover `all`, exactly and in order ──────────────────────
-echo "group1 / group2 / group3 / group4 / group5:"
+echo "group1 / group2 / group3 / group4 / group5 / group6:"
 cases_of() { run_qa "$OUT" -- "target_cases $1" && tr '\n' ' ' <"$OUT"; }
 all_cases="$(run_qa "$OUT" -- 'printf "%s " "${ALL_CASES[@]}"' && cat "$OUT")"
 check "group1 is the setup chunk" test "$(cases_of group1)" = "setup delay-block home-reopen walkaway-count "
@@ -154,9 +154,11 @@ check "group3 is the mid-session clock chunk, then bounce-non-apps (#181)" \
 check "group4 is the schedule-boundary chunk" test "$(cases_of group4)" = "schedule-start-open-app schedule-end-overlay "
 check "group5 is the idle / crash chunk (refusal-alert last: it needs the cert switch)" \
   test "$(cases_of group5)" = "notif-idle crash-check refusal-alert "
+check "group6 is the Nuke profiles + timer chunk (after the five, so their lists never moved)" \
+  test "$(cases_of group6)" = "nuke-profiles nuke-timer "
 check "all is every case, in the run order" test "$(cases_of all)" = "$all_cases"
-check "group1 + group2 + group3 + group4 + group5 == ALL_CASES, in order" \
-  test "$(cases_of group1)$(cases_of group2)$(cases_of group3)$(cases_of group4)$(cases_of group5)" = "$all_cases"
+check "group1 + group2 + group3 + group4 + group5 + group6 == ALL_CASES, in order" \
+  test "$(cases_of group1)$(cases_of group2)$(cases_of group3)$(cases_of group4)$(cases_of group5)$(cases_of group6)" = "$all_cases"
 rc=0; run_qa "$OUT" -- 'target_cases delay-block' || rc=$?
 check "a single case is not a multi-case target (nonzero, prints nothing)" bash -c "[[ $rc != 0 && ! -s '$OUT' ]]"
 check "check_groups passes on the real lists" run_qa "$OUT" -- "check_groups"
@@ -172,6 +174,10 @@ rc=0; run_qa "$OUT" -- 'GROUP4_CASES=(); check_groups' || rc=$?
 check "group4 is part of the concatenation (emptying it): exits 2" test "$rc" = 2
 rc=0; run_qa "$OUT" -- 'GROUP5_CASES=(); check_groups' || rc=$?
 check "group5 is part of the concatenation (emptying it): exits 2" test "$rc" = 2
+rc=0; run_qa "$OUT" -- 'GROUP6_CASES=(); check_groups' || rc=$?
+check "group6 is part of the concatenation (emptying it): exits 2" test "$rc" = 2
+rc=0; run_qa "$OUT" -- 'GROUP6_CASES=(nuke-timer nuke-profiles); check_groups' || rc=$?
+check "the nuke cases swapped inside group6: exits 2" test "$rc" = 2
 # A case named in ALL_CASES with no case_<name> function only fails when the chunk reaches it on the
 # bench ("unknown case"), minutes into a gate run. Checked here for every case, so registering a
 # case and writing it cannot drift apart.
@@ -186,8 +192,8 @@ check "every case in ALL_CASES has a case_<name> function" bash -c "! grep -q MI
 check "list is unchanged: one case per line, in order" \
   test "$(bash "$QA" list | tr '\n' ' ')" = "$all_cases"
 bash "$QA" --help >"$OUT" 2>&1
-check "--help documents the chunks (group1-group5 and the APK=installed hand-off)" \
-  bash -c "grep -q group1 '$OUT' && grep -q group2 '$OUT' && grep -q '^group3: group-limit-midsession bounce-non-apps$' '$OUT' && grep -q '^group4: schedule-start-open-app' '$OUT' && grep -q '^group5: notif-idle' '$OUT' && grep -q 'APK=installed' '$OUT'"
+check "--help documents the chunks (group1-group6, NUKE_TIMER_WAIT and the APK=installed hand-off)" \
+  bash -c "grep -q group1 '$OUT' && grep -q group2 '$OUT' && grep -q '^group3: group-limit-midsession bounce-non-apps$' '$OUT' && grep -q '^group4: schedule-start-open-app' '$OUT' && grep -q '^group5: notif-idle' '$OUT' && grep -q '^group6: nuke-profiles nuke-timer$' '$OUT' && grep -q 'NUKE_TIMER_WAIT' '$OUT' && grep -q 'APK=installed' '$OUT'"
 rc=0; bash "$QA" no-such-case >"$OUT" 2>&1 || rc=$?
 check "an unknown target dies (exit 2) before the lock or the phone, and names the groups" \
   bash -c "[[ $rc == 2 ]] && grep -q 'group1' '$OUT'"
@@ -761,6 +767,89 @@ check "bounce body: no UI dump after the service is checked bound" bash -c "[[ -
 run_qa "$OUT" -- 'for f in bounce_open bounce_visit_sheet bounce_settle wait_log_count bounce_trace bounce_negative_verdict bounce_positive_verdict nudge_notif_update_ms notif_update_ms_in log_count wait_fg foreground_package go_home; do declare -f "$f" || echo "MISSING $f"; done' || true
 check "  ...nor in any helper the streak calls" bash -c "! grep -q MISSING '$OUT' && ! grep -Eq '$UI_RE' '$OUT'"
 check "case_bounce_non_apps is defined" run_qa "$OUT" -- "declare -F case_bounce_non_apps"
+
+# ─── 8. group6: nuke-profiles + nuke-timer (Nuke profiles and timer) ───────────
+echo "group6 (nuke-profiles, nuke-timer):"
+NLOG="$TMP/nuke.log"
+# The two cases with their UI parts stubbed (those need the device); the build detection, the SKIP
+# path, the fakescan property handling and the cleanup are the real functions, over a shim `ash`
+# that answers the dumpsys package queries from $PKGFLAGS and logs every other call.
+ncase() { # <case fn> <flags: debug|release|qa> [part rc] -> "<case rc>|<ash calls>"
+  : >"$NLOG"
+  run_qa "$OUT" NLOG="$NLOG" -- "
+    nuke_preflight() { return 0; }; nuke_ensure_off() { return 0; }; go_home() { :; }; sleep() { :; }
+    nuke_profiles_part_a() { echo partA >>\"\$NLOG\"; return ${3:-0}; }
+    nuke_profiles_part_b() { echo partB >>\"\$NLOG\"; return 0; }
+    nuke_timer_dropdown() { echo dropdown >>\"\$NLOG\"; return ${3:-0}; }
+    nuke_timer_scan_flow() { echo scanflow >>\"\$NLOG\"; nuke_fakescan_set payload-1; return 0; }
+    ui_tap_text() { :; }; nuke_open_screen() { return 0; }; nuke_is_on() { [[ '$2' == qa ]]; }
+    ash() {
+      if [[ \"\$1 \$2\" == 'dumpsys package' ]]; then
+        case '$2' in
+          release) echo '    flags=[ HAS_CODE ALLOW_CLEAR_USER_DATA ]' ;;
+          debug)   echo '    flags=[ DEBUGGABLE HAS_CODE ]' ;;
+          qa)      echo '    flags=[ DEBUGGABLE HAS_CODE ]'; echo '    dev.astraedus.nudge/com.astraedus.nudge.qa.QaControlReceiver' ;;
+        esac
+      else echo \"ash \$*\" >>\"\$NLOG\"; fi
+    }
+    $1; echo \"rc=\$?\"; trap - EXIT" || true
+  printf '%s|%s' "$(sed -n 's/^rc=//p' "$OUT")" "$(tr '\n' ',' <"$NLOG")"
+}
+check "nuke-profiles on a RELEASE build: part A runs, part B is skipped (rc 77, SKIP) and no setprop is ever sent" \
+  test "$(ncase case_nuke_profiles release)" = "77|partA,"
+check "nuke-timer on a RELEASE build: dropdown asserted, scan flow skipped (rc 77) and no setprop is ever sent" \
+  test "$(ncase case_nuke_timer release)" = "77|dropdown,"
+check "nuke-profiles on a DEBUG build: both parts run, rc 0" test "$(ncase case_nuke_profiles debug)" = "0|partA,partB,"
+check "a part A failure on a RELEASE build is a FAIL, not a SKIP" test "$(ncase case_nuke_profiles release 1)" = "1|partA,"
+check "a dropdown failure on a RELEASE build is a FAIL, not a SKIP" test "$(ncase case_nuke_timer release 1)" = "1|dropdown,"
+check "nuke-timer on a DEBUG build: the fakescan property is cleared at the end (setprop '')" \
+  test "$(ncase case_nuke_timer debug)" = "0|dropdown,scanflow,ash setprop debug.nudge.fakescan 'payload-1',ash setprop debug.nudge.fakescan '',"
+check "nuke-timer on a QA build ends Nuke via the reset command after the scan flow" \
+  bash -c "r='$(ncase case_nuke_timer qa)'; [[ \"\$r\" == 0\|* && \"\$r\" == *'qa.QaControlReceiver -a dev.astraedus.nudge.qa.CMD --es cmd reset'* ]]"
+check "nuke-timer on a plain DEBUG build never sends the reset command (it leaves Nuke on and says so)" \
+  bash -c "! grep -q 'cmd reset' '$NLOG' || true; r='$(ncase case_nuke_timer debug)'; [[ \"\$r\" != *'cmd reset'* ]]"
+
+# The fakescan helpers send exactly one quoted payload and exactly one empty clear, and clear is a
+# no-op when nothing was ever set (a release run must not touch the property at all).
+nfs() { : >"$NLOG"; run_qa "$OUT" NLOG="$NLOG" -- "ash() { echo \"\$*\" >>\"\$NLOG\"; }; $1" || true; tr '\n' '|' <"$NLOG"; }
+check "nuke_fakescan_set quotes the payload" test "$(nfs 'nuke_fakescan_set qa-nuke-key-183')" = "setprop debug.nudge.fakescan 'qa-nuke-key-183'|"
+check "nuke_fakescan_clear restores the camera after a set" \
+  test "$(nfs 'nuke_fakescan_set k >/dev/null; nuke_fakescan_clear')" = "setprop debug.nudge.fakescan 'k'|setprop debug.nudge.fakescan ''|"
+check "nuke_fakescan_clear with nothing set sends nothing" test -z "$(nfs 'nuke_fakescan_clear')"
+
+# The dump readers, against a canned Nuke screen: a chip row (Two selected), a search box that holds
+# the same words as a row, two app rows with checkboxes, and the Timer button.
+cat >"$TMP/nuke-ui.xml" <<'XML'
+<?xml version='1.0' encoding='UTF-8' standalone='yes' ?><hierarchy rotation="0">
+<node text="" class="android.view.View" clickable="true" content-desc="Nuke is off. 2 apps ready." bounds="[0,100][1080,300]" />
+<node text="" class="android.widget.Button" clickable="true" content-desc="Timer: 15 min" bounds="[600,400][1000,500]" />
+<node text="Two" class="android.view.View" clickable="true" selected="true" bounds="[0,600][200,700]" />
+<node text="One" class="android.view.View" clickable="true" selected="false" bounds="[250,600][450,700]" />
+<node text="Keep Notes" class="android.widget.EditText" bounds="[0,800][1080,900]" />
+<node class="android.view.View" clickable="true" bounds="[0,950][1080,1050]">
+  <node text="Keep Notes" class="android.widget.TextView" bounds="[100,950][600,1050]" />
+  <node text="" class="android.widget.CheckBox" checkable="true" checked="true" bounds="[900,950][1000,1050]" />
+</node>
+<node class="android.view.View" clickable="true" bounds="[0,1100][1080,1200]">
+  <node text="Calendar" class="android.widget.TextView" bounds="[100,1100][600,1200]" />
+  <node text="" class="android.widget.CheckBox" checkable="true" checked="false" bounds="[900,1100][1000,1200]" />
+</node>
+</hierarchy>
+XML
+ui() { run_qa "$OUT" -- "write_ui_state; python3 \"\$WORK/uistate.py\" $1 '$TMP/nuke-ui.xml' '$2'" || true; tr -d '\n' <"$OUT"; }
+check "uistate prefix: the Home Nuke card (clickable, description starts with Nuke)" test "$(ui prefix Nuke)" = "540 200"
+check "uistate prefix: the Timer button" test "$(ui prefix 'Timer: ')" = "800 450"
+check "uistate checked: a ticked app row" test "$(ui checked 'Keep Notes')" = "true"
+check "uistate checked: an unticked app row (the search box with the same words is ignored)" test "$(ui checked 'Calendar')" = "false"
+check "uistate selected: the selected chip" test "$(ui selected Two)" = "true"
+check "uistate selected: an unselected chip" test "$(ui selected One)" = "false"
+check "uistate labelxy: the row label, never the search box holding the same words" test "$(ui labelxy 'Keep Notes')" = "350 1000"
+printf '%s' '<node text="Your timer has 15 min left. Scan again when it ends." />' >"$TMP/snack.xml"
+check "ui_has_re matches the refusal snackbar regex" \
+  run_qa "$OUT" -- "UI_XML='$TMP/snack.xml'; ui_has_re 'Your timer has .* left\\. Scan again when it ends\\.'"
+rc=0; run_qa "$OUT" -- "UI_XML='$TMP/snack.xml'; ui_has_re 'Nuke is off\\.'" || rc=$?
+check "ui_has_re rejects a different message" test "$rc" = 1
+check "case_nuke_profiles and case_nuke_timer are defined" run_qa "$OUT" -- "declare -F case_nuke_profiles case_nuke_timer"
 
 echo
 echo "$pass passed, $fail failed"

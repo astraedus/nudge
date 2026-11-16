@@ -119,6 +119,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         fun scheduleBoundaries(): ScheduleBoundaries
         fun packageFacts(): PackageFacts
         fun firstUnlockStateCache(): FirstUnlockStateCache
+        fun nukeTimerCheckpoint(): NukeTimerCheckpoint
     }
 
     /**
@@ -937,6 +938,35 @@ class NudgeAccessibilityService : AccessibilityService() {
                 hideAllOverlays()
                 // The whole-phone session banks its screen-on time and stops its clock (#123).
                 phoneNudge.onScreenOff()
+                // A running Nuke timer banks its time too (#184), so a later hard power-off
+                // loses only what came after this.
+                serviceScope.launch { nukeTimerCheckpoint.checkpoint() }
+            }
+        }
+    }
+
+    private val nukeTimerCheckpoint by lazy { entryPoint.nukeTimerCheckpoint() }
+
+    /**
+     * A clean shutdown or reboot banks a running Nuke timer's time (#184): after a reboot only the
+     * banked time carries over ([com.astraedus.nudge.domain.nuke.NukeTimer]). Registered-only, like
+     * [screenOffReceiver]: the shutdown broadcast is sent to runtime receivers only.
+     *
+     * [goAsync] because the write is a DataStore edit on [serviceScope]; the system waits for a
+     * shutdown receiver to finish (for a few seconds at most) before powering off.
+     */
+    private val shutdownReceiver by lazy {
+        object : android.content.BroadcastReceiver() {
+            override fun onReceive(context: android.content.Context?, intent: Intent?) {
+                if (intent?.action != Intent.ACTION_SHUTDOWN) return
+                val pending = goAsync()
+                serviceScope.launch {
+                    try {
+                        nukeTimerCheckpoint.checkpoint()
+                    } finally {
+                        pending.finish()
+                    }
+                }
             }
         }
     }
@@ -1676,6 +1706,12 @@ class NudgeAccessibilityService : AccessibilityService() {
             // A failed registration degrades to the OLD behaviour (a grant survives screen-off) —
             // never to a false revoke. Same failure direction as an unresolvable launcher set.
             log.w("failed to register screen-off receiver", e)
+        }
+        try {
+            registerReceiver(shutdownReceiver, android.content.IntentFilter(Intent.ACTION_SHUTDOWN))
+        } catch (e: Exception) {
+            // Degrades to the screen-off checkpoint alone: a timer that runs longer, never shorter.
+            log.w("failed to register shutdown receiver", e)
         }
         try {
             registerReceiver(
@@ -4085,6 +4121,7 @@ class NudgeAccessibilityService : AccessibilityService() {
         }
         teardown.step("unregister_screen_off_receiver") { unregisterReceiver(screenOffReceiver) }
         teardown.step("unregister_unlock_receiver") { unregisterReceiver(unlockReceiver) }
+        teardown.step("unregister_shutdown_receiver") { unregisterReceiver(shutdownReceiver) }
         teardown.step("unregister_time_change_receiver") { unregisterReceiver(timeChangeReceiver) }
         teardown.step("cancel_schedule_boundary_watch") { boundaryWatch.cancel() }
         teardown.step("phone_nudge_stop") {

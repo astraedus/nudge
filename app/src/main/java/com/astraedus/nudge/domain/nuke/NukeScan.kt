@@ -24,6 +24,12 @@ object NukeScan {
         /** No key is paired yet, so no scan can mean anything. */
         data object NoKey : ToggleOutcome
 
+        /**
+         * It was the right key, Nuke is on, and its timer has [remainingMs] left: refused, nothing
+         * changes. The emergency code still works.
+         */
+        data class TimerRunning(val remainingMs: Long) : ToggleOutcome
+
         /** It was the right key but Nuke cannot be armed (the list is empty). */
         data class CannotArm(val reason: NukePolicy.ArmBlocker) : ToggleOutcome
 
@@ -34,17 +40,22 @@ object NukeScan {
     /**
      * Resolve a toggle scan. The key is the only thing consulted to decide Arm vs Disarm; the
      * direction comes from the current state, so one code both starts and ends Nuke, which is the
-     * whole interaction Anti asked for.
+     * whole interaction the owner asked for. While a timer runs ([NukePolicy.keyWaitMs]) the key is
+     * refused; [now] is the timer's clock, never wall time.
      */
     fun resolveToggle(
         payload: String?,
         state: NukeState,
-        deviceFloor: Set<String>
+        deviceFloor: Set<String>,
+        now: NukeClockReading
     ): ToggleOutcome {
         if (payload.isNullOrBlank()) return ToggleOutcome.Cancelled
         if (!state.hasKey) return ToggleOutcome.NoKey
         if (!NukeKey.matches(payload, state.keyHash)) return ToggleOutcome.WrongKey
-        if (state.active) return ToggleOutcome.Disarm
+        if (state.active) {
+            val wait = NukePolicy.keyWaitMs(state, now)
+            return if (wait > 0) ToggleOutcome.TimerRunning(wait) else ToggleOutcome.Disarm
+        }
         return NukePolicy.armBlocker(state, deviceFloor)
             ?.let { ToggleOutcome.CannotArm(it) }
             ?: ToggleOutcome.Arm

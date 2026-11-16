@@ -7,22 +7,34 @@ import androidx.lifecycle.viewModelScope
 import com.astraedus.nudge.data.preferences.NudgePreferences
 import com.astraedus.nudge.data.repository.InstalledAppsRepository
 import com.astraedus.nudge.di.IoDispatcher
+import com.astraedus.nudge.domain.nuke.NukeClock
 import com.astraedus.nudge.domain.nuke.NukeKey
 import com.astraedus.nudge.domain.nuke.NukeKeyKind
 import com.astraedus.nudge.domain.nuke.NukePolicy
+import com.astraedus.nudge.domain.nuke.NukeProfiles
 import com.astraedus.nudge.domain.nuke.NukeScan
 import com.astraedus.nudge.domain.nuke.NukeState
+import com.astraedus.nudge.domain.nuke.NukeTimer
 import com.astraedus.nudge.service.EssentialApps
 import com.astraedus.nudge.ui.nuke.NukeGate
+import com.astraedus.nudge.ui.nuke.NukeTimerCopy
 import com.astraedus.nudge.ui.nuke.NukeUnlockState
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -53,9 +65,30 @@ data class NukeUiState(
     val apps: List<NukeAppRow> = emptyList(),
     val query: String = "",
     /** Whether the one-time explainer has been dismissed. */
-    val introSeen: Boolean = true
+    val introSeen: Boolean = true,
+    /** Saved profiles (#183), in the order saved. Empty for anyone who never saved one. */
+    val profiles: List<NukeProfileChip> = emptyList(),
+    /** The timer the next start will use (#184), in minutes; 0 is none. */
+    val timerChoiceMinutes: Int = 0
 ) {
     val canArm: Boolean get() = !active && armBlocker == null
+}
+
+/** One profile chip. [selected] when the working list is exactly this profile's apps. */
+@Immutable
+data class NukeProfileChip(val name: String, val selected: Boolean)
+
+/** A profile was just applied: the snackbar's Undo puts [previous] back. Held only in memory. */
+data class AppliedProfile(val name: String, val previous: Set<String>)
+
+/** Why a profile edit was refused, as the dialog says it. */
+fun profileRefusalMessage(reason: NukeProfiles.Refusal): String = when (reason) {
+    NukeProfiles.Refusal.BLANK_NAME -> "Give it a name."
+    NukeProfiles.Refusal.NAME_TOO_LONG -> "Keep it to ${NukeProfiles.MAX_NAME_LENGTH} characters."
+    NukeProfiles.Refusal.NAME_TAKEN -> "You already have a profile with that name."
+    NukeProfiles.Refusal.TOO_MANY -> "You can keep up to ${NukeProfiles.MAX_COUNT} profiles."
+    NukeProfiles.Refusal.EMPTY_LIST -> "Add at least one app to your Nuke list first."
+    NukeProfiles.Refusal.NOT_FOUND -> "That profile is gone."
 }
 
 /** What a scan the screen launches is FOR. The same camera, four different meanings. */
@@ -99,11 +132,12 @@ class NukeViewModel @Inject constructor(
     private val preferences: NudgePreferences,
     private val installedAppsRepository: InstalledAppsRepository,
     private val essentialApps: EssentialApps,
+    private val clock: NukeClock,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) : ViewModel() {
 
     /** The one weakening gate for this screen. Reads the LIVE state at unlock time. */
-    val gate = NukeGate(currentState = { preferences.nukeState.first() })
+    val gate = NukeGate(currentState = { preferences.nukeState.first() }, clock = clock)
     val unlock: StateFlow<NukeUnlockState?> = gate.unlock
 
     private val query = MutableStateFlow("")
@@ -121,7 +155,11 @@ class NukeViewModel @Inject constructor(
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message.asStateFlow()
 
-    val uiState: StateFlow<NukeUiState> = combine(
+    /** The last profile applied, for the snackbar's Undo. Consumed by the screen. */
+    private val _applied = MutableStateFlow<AppliedProfile?>(null)
+    val applied: StateFlow<AppliedProfile?> = _applied.asStateFlow()
+
+    private val baseState: Flow<NukeUiState> = combine(
         preferences.nukeState,
         preferences.nukeIntroSeen,
         installed,
@@ -147,12 +185,50 @@ class NukeViewModel @Inject constructor(
             query = q,
             introSeen = introSeen
         )
+    }
+
+    val uiState: StateFlow<NukeUiState> = combine(
+        baseState,
+        preferences.nukeState,
+        preferences.nukeProfiles,
+        preferences.nukeTimerChoiceMinutes
+    ) { base, state, profiles, timerChoice ->
+        val selected = NukeProfiles.matching(profiles, state.packages)
+        base.copy(
+            profiles = profiles.map { NukeProfileChip(it.name, selected = it === selected) },
+            timerChoiceMinutes = timerChoice
+        )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), NukeUiState())
+
+    /**
+     * Time left on the running timer, or null when Nuke is off or has no timer. Ticks only when the
+     * shown minute would change (the copy rounds up), and stops at 0 ("Timer done"). Display only:
+     * the gate reads the clock itself at scan time, never this value.
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val timerLeftMs: StateFlow<Long?> = preferences.nukeState
+        .map { state -> state.timer?.takeIf { state.active } }
+        .distinctUntilChanged()
+        .flatMapLatest { timer -> if (timer == null) flowOf(null) else countdown(timer) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    private fun countdown(timer: NukeTimer): Flow<Long?> = flow {
+        while (true) {
+            val left = timer.remainingMs(clock.now())
+            emit(left)
+            if (left <= 0) break
+            // Wake at the next moment the rounded-up minute changes.
+            delay((left - 1) % 60_000 + 1)
+        }
+    }
 
     init {
         viewModelScope.launch {
             installed.value = installedAppsRepository.getInstalledApps()
         }
+        // One of the timer's checkpoints (see NukeTimer): opening the screen folds the running
+        // segment into the stored count, so a later hard power-off loses less.
+        viewModelScope.launch { preferences.checkpointNukeTimer(clock.now()) }
         viewModelScope.launch {
             deviceFloor.value = withContext(ioDispatcher) { essentialApps.packages() }
         }
@@ -204,14 +280,26 @@ class NukeViewModel @Inject constructor(
     fun nukeNow() {
         viewModelScope.launch {
             when (NukePolicy.armBlocker(state(), deviceFloor.value)) {
-                null -> {
-                    preferences.setNukeActive(true)
-                    _message.value = ARMED_MESSAGE
-                }
+                null -> arm()
                 NukePolicy.ArmBlocker.NO_KEY -> _message.value = NO_KEY_MESSAGE
                 NukePolicy.ArmBlocker.EMPTY_LIST -> _message.value = EMPTY_LIST_MESSAGE
             }
         }
+    }
+
+    /**
+     * Turn Nuke on with the picked timer. Both "Nuke now" and "Scan to start" come through here, so
+     * they can never disagree about the timer.
+     */
+    private suspend fun arm() {
+        val minutes = preferences.nukeTimerChoiceMinutes.first()
+        preferences.armNuke(NukeTimer.start(minutes, clock.now()))
+        _message.value = ARMED_MESSAGE
+    }
+
+    /** Pick the timer the next start will use. Only offered while Nuke is off. */
+    fun setTimerChoice(minutes: Int) {
+        viewModelScope.launch { preferences.setNukeTimerChoice(minutes) }
     }
 
     /** "End Nuke" with the choice of scanning or typing. */
@@ -231,6 +319,56 @@ class NukeViewModel @Inject constructor(
             preferences.setNukeActive(false)
             _message.value = DISARMED_MESSAGE
         }
+    }
+
+    // --- profiles (#183) ------------------------------------------------------------------------
+    // A profile is a preset: these write ONLY the profiles key, except apply, which copies a
+    // profile into the working list and only while Nuke is off. None of them needs the key.
+
+    /**
+     * Save the working list as [name] (an existing name is updated). Returns why it was refused, or
+     * null when it was saved, so the dialog can stay open and say why.
+     */
+    suspend fun saveProfile(name: String): String? {
+        val packages = state().packages
+        val result = preferences.editNukeProfiles { NukeProfiles.save(it, name, packages) }
+        return (result as? NukeProfiles.Edit.Refused)?.let { profileRefusalMessage(it.reason) }
+    }
+
+    /** Rename a profile. Same contract as [saveProfile]. */
+    suspend fun renameProfile(oldName: String, newName: String): String? {
+        val result = preferences.editNukeProfiles { NukeProfiles.rename(it, oldName, newName) }
+        return (result as? NukeProfiles.Edit.Refused)?.let { profileRefusalMessage(it.reason) }
+    }
+
+    fun deleteProfile(name: String) {
+        viewModelScope.launch { preferences.editNukeProfiles { NukeProfiles.delete(it, name) } }
+    }
+
+    /** Make the working list exactly [name]'s apps. Refused while Nuke is on. */
+    fun applyProfile(name: String) {
+        viewModelScope.launch {
+            val before = state()
+            val profile = NukeProfiles.find(preferences.nukeProfiles.first(), name) ?: return@launch
+            if (preferences.replaceNukePackagesWhileOff(profile.packages)) {
+                _applied.value = AppliedProfile(profile.name, previous = before.packages)
+            } else {
+                _message.value = PROFILE_WHILE_ON_MESSAGE
+            }
+        }
+    }
+
+    /** The snackbar's Undo: put back the list from before [applied], if Nuke is still off. */
+    fun undoApplyProfile(applied: AppliedProfile) {
+        viewModelScope.launch {
+            if (!preferences.replaceNukePackagesWhileOff(applied.previous)) {
+                _message.value = PROFILE_WHILE_ON_MESSAGE
+            }
+        }
+    }
+
+    fun consumeApplied() {
+        _applied.value = null
     }
 
     // --- the key -------------------------------------------------------------------------------
@@ -307,15 +445,13 @@ class NukeViewModel @Inject constructor(
     }
 
     private suspend fun onToggleScan(payload: String?) {
-        when (val outcome = NukeScan.resolveToggle(payload, state(), deviceFloor.value)) {
-            NukeScan.ToggleOutcome.Arm -> {
-                preferences.setNukeActive(true)
-                _message.value = ARMED_MESSAGE
-            }
+        when (val outcome = NukeScan.resolveToggle(payload, state(), deviceFloor.value, clock.now())) {
+            NukeScan.ToggleOutcome.Arm -> arm()
             NukeScan.ToggleOutcome.Disarm -> {
                 preferences.setNukeActive(false)
                 _message.value = DISARMED_MESSAGE
             }
+            is NukeScan.ToggleOutcome.TimerRunning -> _message.value = NukeTimerCopy.refusal(outcome.remainingMs)
             NukeScan.ToggleOutcome.WrongKey -> _message.value = NukeGate.WRONG_KEY_MESSAGE
             NukeScan.ToggleOutcome.NoKey -> _message.value = NO_KEY_MESSAGE
             is NukeScan.ToggleOutcome.CannotArm -> _message.value = when (outcome.reason) {
@@ -351,5 +487,6 @@ class NukeViewModel @Inject constructor(
         const val NO_KEY_MESSAGE = "Pair a Nuke code first."
         const val EMPTY_LIST_MESSAGE = "Add at least one app to your Nuke list first."
         const val PAIRED_MESSAGE = "Paired. Keep that code somewhere inconvenient."
+        const val PROFILE_WHILE_ON_MESSAGE = "End Nuke to switch profiles."
     }
 }
