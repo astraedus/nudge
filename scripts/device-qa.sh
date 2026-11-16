@@ -97,7 +97,7 @@
 #   NUKE_TIMER_WAIT=1              nuke-timer (group6) also waits out the real 15-minute timer and scans the
 #                                  key to end Nuke. OPT-IN: it cannot fit one 10-minute chunk, so run
 #                                  `NUKE_TIMER_WAIT=1 APK=installed scripts/device-qa.sh nuke-timer` on its own.
-#   NUKE_APP_A_PKG/_LABEL, NUKE_APP_B_PKG/_LABEL   the two ordinary apps group6 ticks (default Keep Notes
+#   NUKE_APP_A_PKG/_LABEL, NUKE_APP_B_PKG/_LABEL   the two ordinary apps group6 ticks (default Keep notes
 #                                  and Calendar; the label is what the Nuke list shows)
 #   NUKE_QA_KEY=qa-nuke-key-183    payload group6 pairs and scans via debug.nudge.fakescan
 #   NOTIF_IDLE_SECS=300            idle window for the notif-idle case (#63)
@@ -3201,7 +3201,9 @@ case_schedule_end_overlay() {
 
 NUKE_QA_KEY="${NUKE_QA_KEY:-qa-nuke-key-183}"
 NUKE_APP_A_PKG="${NUKE_APP_A_PKG:-$BOUNDARY_PKG}"
-NUKE_APP_A_LABEL="${NUKE_APP_A_LABEL:-Keep Notes}"
+# The label exactly as the Nuke list prints it (the launcher label, case-sensitive): Keep's is "Keep
+# notes" with a small n on the bench. "Keep Notes" matched nothing and both cases failed on it.
+NUKE_APP_A_LABEL="${NUKE_APP_A_LABEL:-Keep notes}"
 NUKE_APP_B_PKG="${NUKE_APP_B_PKG:-com.google.android.calendar}"
 NUKE_APP_B_LABEL="${NUKE_APP_B_LABEL:-Calendar}"
 NUKE_TIMER_WAIT="${NUKE_TIMER_WAIT:-0}"
@@ -3209,13 +3211,19 @@ NUKE_FAKESCAN_SET=0
 
 # Is the installed build debuggable, i.e. does debug.nudge.fakescan do anything? A release APK never
 # carries DEBUGGABLE in its package flags.
+# Read into a variable, never `| grep -q` (pipefail + SIGPIPE, see screen_is_usable): piped, a debug
+# build that DOES match read as "release" and every scan step was silently skipped.
 nuke_scan_available() {
-  ash dumpsys package "$APP_ID" 2>/dev/null | tr -d '\r' | grep -q 'flags=.*DEBUGGABLE'
+  local pkg
+  pkg="$(ash dumpsys package "$APP_ID" 2>/dev/null | tr -d '\r')"
+  [[ "$pkg" =~ flags=[^$'\n']*DEBUGGABLE ]]
 }
 
 # Is the QA control channel (src/qa only) in the installed build?
 nuke_has_qa_receiver() {
-  ash dumpsys package "$APP_ID" 2>/dev/null | tr -d '\r' | grep -q 'QaControlReceiver'
+  local pkg
+  pkg="$(ash dumpsys package "$APP_ID" 2>/dev/null | tr -d '\r')"
+  [[ "$pkg" == *QaControlReceiver* ]]
 }
 
 nuke_fakescan_set() { # payload: the next scan returns it
@@ -3270,12 +3278,18 @@ def names(n):
 
 nodes = list(root.iter("node"))
 if mode == "prefix":
+    # A Compose card or row is often a clickable container whose TEXT sits on a child node, so a
+    # matching node that is not clickable itself is tapped through its nearest clickable ancestor.
     for n in nodes:
-        if n.get("clickable") == "true" and any(s.startswith(needle) for s in names(n)):
-            c = centre(n)
-            if c:
-                print(c)
-                break
+        if not any(s.startswith(needle) for s in names(n)):
+            continue
+        cur = n
+        while cur is not None and cur.get("clickable") != "true":
+            cur = parent.get(cur)
+        c = centre(cur) if cur is not None else None
+        if c:
+            print(c)
+            break
 elif mode == "labelxy":
     for n in nodes:
         if n.get("class") != "android.widget.EditText" and needle in names(n):
@@ -3349,7 +3363,11 @@ nuke_scroll_top() {
 }
 
 nuke_hide_keyboard() {
-  ash dumpsys input_method 2>/dev/null | tr -d '\r' | grep -q 'mInputShown=true' &&
+  local ime
+  # A variable, not `| grep -q` (pipefail + SIGPIPE, see screen_is_usable): piped, a SHOWN keyboard
+  # read as hidden and stayed up over the app list.
+  ime="$(ash dumpsys input_method 2>/dev/null | tr -d '\r')"
+  [[ "$ime" == *mInputShown=true* ]] &&
     ash input keyevent KEYCODE_BACK >/dev/null 2>&1
   sleep 1
 }
@@ -3382,6 +3400,9 @@ nuke_tap() { # text
 nuke_open_screen() {
   local i xy
   nudge_route_home
+  # The dashboard keeps its scroll position between visits (a previous case may have left it at the
+  # bottom, below the card), and the search below only scrolls DOWN: start from the top.
+  nuke_scroll_top
   for ((i = 0; i < 8; i++)); do
     ui_snapshot
     xy="$(ui_xy prefix Nuke)"
@@ -3404,7 +3425,30 @@ nuke_is_on() { ui_snapshot; ui_has_re 'Nuke is on · '; }
 
 # Filter the app list to $1 (types into the search box, the one EditText on the screen).
 nuke_search() { # label
-  local i
+  local i y
+  # Bring the search box into the top half first. Reaching "Apps to nuke" leaves the box at or below
+  # the fold (the header, caption and chip row sit above it), and Compose puts no off-screen node in
+  # the dump: the box was either missing or the filtered rows under it were, so the row read as "not
+  # in the Nuke app list" on the bench.
+  for ((i = 0; i < 8; i++)); do
+    ui_snapshot
+    y="$(python3 - "$UI_XML" <<'PYEOF'
+import re
+import sys
+
+xml = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+for attrs in re.findall(r"<node([^>]*)>", xml):
+    if 'class="android.widget.EditText"' in attrs:
+        b = re.search(r'bounds="\[\d+,(\d+)\]\[\d+,(\d+)\]', attrs)
+        if b:
+            print((int(b.group(1)) + int(b.group(2))) // 2)
+            break
+PYEOF
+)"
+    [[ -n "$y" && "$y" -lt 1100 ]] && break
+    ash input swipe 540 1500 540 900 300 >/dev/null 2>&1
+    sleep 1
+  done
   ui_tap_edittext 10 || { fail "no search field on the Nuke screen"; return 1; }
   ash input keyevent KEYCODE_MOVE_END >/dev/null 2>&1
   for ((i = 0; i < 30; i++)); do ash input keyevent KEYCODE_DEL >/dev/null 2>&1; done
@@ -3520,9 +3564,40 @@ nuke_ensure_off() {
   return 0
 }
 
+# The saved profile names on the Nuke screen, one per line, read from each chip's content-desc
+# ("Profile <name>" or "Profile <name>, in use").
+nuke_profile_names() { # [xml]
+  grep -aoE 'content-desc="Profile [^"]*"' "${1:-$UI_XML}" | sed -E 's/^content-desc="Profile //; s/"$//; s/, in use$//'
+}
+
+# Deletes every saved profile (Nuke must be off). Part A needs a clean slate: "Save as profile" is
+# hidden while the list matches a saved profile, so a bench that already had a profile with the same
+# apps (pass 2 left "Focus" = Keep notes + Calendar) failed on "cannot tap 'Save as profile'".
+nuke_clear_profiles() {
+  local name i
+  for ((i = 0; i < 12; i++)); do       # 10 is the app's profile cap; 2 spare tries
+    nuke_scroll_top
+    ui_snapshot
+    name="$(nuke_profile_names | head -1)"
+    [[ -z "$name" ]] && return 0
+    if [[ "$(nuke_chip_selected "$name")" != true ]]; then
+      ui_tap_text "$name" 10 || return 1            # an unselected chip applies the profile first
+      sleep 1
+    fi
+    ui_tap_text "$name" 10 || return 1              # the selected chip opens Rename / Delete
+    ui_tap_text "Delete" 8 || return 1              # menu item
+    ui_wait_text "Cancel" 8 || { fail "no Delete dialog for profile '${name}'"; return 1; }
+    ui_tap_text "Delete" 8 || return 1              # dialog confirm
+    sleep 1
+  done
+  fail "profiles still on the Nuke screen after 12 deletes"
+  return 1
+}
+
 # ── nuke-profiles: save, switch and delete profiles; an edit during Nuke changes nothing blocked ──
 nuke_profiles_part_a() {
   local a="$NUKE_APP_A_LABEL" b="$NUKE_APP_B_LABEL" v rc=0
+  nuke_clear_profiles || return 1
   nuke_set_ticked "$a" true || return 1
   nuke_set_ticked "$b" true || return 1
   nuke_save_profile "Two" || return 1

@@ -809,6 +809,45 @@ check "nuke-timer on a QA build ends Nuke via the reset command after the scan f
 check "nuke-timer on a plain DEBUG build never sends the reset command (it leaves Nuke on and says so)" \
   bash -c "! grep -q 'cmd reset' '$NLOG' || true; r='$(ncase case_nuke_timer debug)'; [[ \"\$r\" != *'cmd reset'* ]]"
 
+# A real `dumpsys` keeps writing long after the line that matters. Piped into `grep -q` under
+# pipefail, the writer is SIGPIPEd and a MATCH reads as a miss: on the bench that made a debug build
+# read as release (every scan step skipped) and a shown keyboard read as hidden. The shim prints the
+# matching line FIRST and then 200k more lines, so a `| grep -q` version fails these checks.
+bigdump() { # <first line> -> an ash shim body
+  printf '%s' "ash() { if [[ \"\$1\" == dumpsys ]]; then echo '$1'; seq 1 200000; else echo \"ash \$*\" >>\"\$NLOG\"; fi; }"
+}
+run_qa "$OUT" -- "$(bigdump '    flags=[ DEBUGGABLE HAS_CODE ]'); nuke_scan_available && echo yes || echo no" || true
+check "nuke_scan_available reads a DEBUGGABLE build as debug even when dumpsys keeps writing (no pipefail SIGPIPE)" \
+  test "$(cat "$OUT")" = "yes"
+run_qa "$OUT" -- "$(bigdump '    flags=[ HAS_CODE ALLOW_CLEAR_USER_DATA ]'); nuke_scan_available && echo yes || echo no" || true
+check "nuke_scan_available still reads a release build as release" test "$(cat "$OUT")" = "no"
+run_qa "$OUT" -- "$(bigdump '    dev.astraedus.nudge/com.astraedus.nudge.qa.QaControlReceiver'); nuke_has_qa_receiver && echo yes || echo no" || true
+check "nuke_has_qa_receiver finds the receiver in a long dump" test "$(cat "$OUT")" = "yes"
+: >"$NLOG"; run_qa "$OUT" NLOG="$NLOG" -- "$(bigdump '  mInputShown=true'); sleep() { :; }; nuke_hide_keyboard" || true
+check "nuke_hide_keyboard presses Back when the keyboard is shown, even in a long dump" \
+  grep -qx 'ash input keyevent KEYCODE_BACK' "$NLOG"
+: >"$NLOG"; run_qa "$OUT" NLOG="$NLOG" -- "$(bigdump '  mInputShown=false'); sleep() { :; }; nuke_hide_keyboard" || true
+check "nuke_hide_keyboard sends nothing when the keyboard is hidden" test ! -s "$NLOG"
+
+# The dashboard keeps its scroll position, and the card search only scrolls DOWN: on the bench a case
+# that left Home at the bottom made "no Nuke card on the dashboard". The first swipes must go UP.
+: >"$NLOG"
+run_qa "$OUT" NLOG="$NLOG" -- "
+  ash() { echo \"ash \$*\" >>\"\$NLOG\"; }; sleep() { :; }; nudge_route_home() { :; }; ui_snapshot() { :; }
+  ui_xy() { echo '540 400'; }; scroll_to_text() { return 0; }
+  nuke_open_screen; echo rc=\$?" || true
+first_swipe="$(grep -m1 'input swipe' "$NLOG" || true)"
+check "nuke_open_screen scrolls the dashboard back UP before searching down for the card" \
+  bash -c "read -r _ _ _ _ y1 _ y2 _ <<<'$first_swipe'; [[ -n \"\$y1\" && \$y1 -lt \$y2 ]] && grep -q 'rc=0' '$OUT'"
+
+# The profile-name reader behind nuke_clear_profiles: both chip shapes, nothing else.
+cat >"$TMP/nuke-chips.xml" <<'XML'
+<hierarchy><node content-desc="Profile Focus, in use" /><node content-desc="Profile Notes only" /><node content-desc="Lock code for: None" /></hierarchy>
+XML
+run_qa "$OUT" -- "nuke_profile_names '$TMP/nuke-chips.xml'" || true
+check "nuke_profile_names lists every chip, selected or not, and only chips" \
+  test "$(tr '\n' '|' <"$OUT")" = "Focus|Notes only|"
+
 # The fakescan helpers send exactly one quoted payload and exactly one empty clear, and clear is a
 # no-op when nothing was ever set (a release run must not touch the property at all).
 nfs() { : >"$NLOG"; run_qa "$OUT" NLOG="$NLOG" -- "ash() { echo \"\$*\" >>\"\$NLOG\"; }; $1" || true; tr '\n' '|' <"$NLOG"; }
