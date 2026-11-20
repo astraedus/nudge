@@ -154,8 +154,8 @@ check "group3 is the mid-session clock chunk, then bounce-non-apps (#181)" \
 check "group4 is the schedule-boundary chunk" test "$(cases_of group4)" = "schedule-start-open-app schedule-end-overlay "
 check "group5 is the idle / crash chunk (refusal-alert last: it needs the cert switch)" \
   test "$(cases_of group5)" = "notif-idle crash-check refusal-alert "
-check "group6 is the Nuke chunk: profiles, timer, then the 1.31.1 row-tap and keyboard cases" \
-  test "$(cases_of group6)" = "nuke-profiles nuke-timer nuke-row-tap challenge-ime "
+check "group6 is the Nuke chunk: profiles, the 1.31.1 row-tap and keyboard cases, then timer LAST (it may leave Nuke locked on)" \
+  test "$(cases_of group6)" = "nuke-profiles nuke-row-tap challenge-ime nuke-timer "
 check "all is every case, in the run order" test "$(cases_of all)" = "$all_cases"
 check "group1 + group2 + group3 + group4 + group5 + group6 == ALL_CASES, in order" \
   test "$(cases_of group1)$(cases_of group2)$(cases_of group3)$(cases_of group4)$(cases_of group5)$(cases_of group6)" = "$all_cases"
@@ -193,7 +193,7 @@ check "list is unchanged: one case per line, in order" \
   test "$(bash "$QA" list | tr '\n' ' ')" = "$all_cases"
 bash "$QA" --help >"$OUT" 2>&1
 check "--help documents the chunks (group1-group6, NUKE_TIMER_WAIT and the APK=installed hand-off)" \
-  bash -c "grep -q group1 '$OUT' && grep -q group2 '$OUT' && grep -q '^group3: group-limit-midsession bounce-non-apps$' '$OUT' && grep -q '^group4: schedule-start-open-app' '$OUT' && grep -q '^group5: notif-idle' '$OUT' && grep -q '^group6: nuke-profiles nuke-timer nuke-row-tap challenge-ime$' '$OUT' && grep -q 'NUKE_TIMER_WAIT' '$OUT' && grep -q 'APK=installed' '$OUT'"
+  bash -c "grep -q group1 '$OUT' && grep -q group2 '$OUT' && grep -q '^group3: group-limit-midsession bounce-non-apps$' '$OUT' && grep -q '^group4: schedule-start-open-app' '$OUT' && grep -q '^group5: notif-idle' '$OUT' && grep -q '^group6: nuke-profiles nuke-row-tap challenge-ime nuke-timer$' '$OUT' && grep -q 'NUKE_TIMER_WAIT' '$OUT' && grep -q 'APK=installed' '$OUT'"
 rc=0; bash "$QA" no-such-case >"$OUT" 2>&1 || rc=$?
 check "an unknown target dies (exit 2) before the lock or the phone, and names the groups" \
   bash -c "[[ $rc == 2 ]] && grep -q 'group1' '$OUT'"

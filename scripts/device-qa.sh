@@ -242,9 +242,9 @@ ALL_CASES=(
   crash-check
   refusal-alert
   nuke-profiles
-  nuke-timer
   nuke-row-tap
   challenge-ime
+  nuke-timer
 )
 
 # The chunked gate (header: "Running the gate in bounded chunks"): `all`, cut so each slice fits one
@@ -260,9 +260,11 @@ GROUP2_CASES=(daily-limit-refresh daily-limit-midsession)
 GROUP3_CASES=(group-limit-midsession bounce-non-apps)
 GROUP4_CASES=(schedule-start-open-app schedule-end-overlay)
 GROUP5_CASES=(notif-idle crash-check refusal-alert)
-# group6 (Nuke profiles + timer, ~5 min; plus the 1.31.1 nuke-row-tap and challenge-ime, ~1 + ~3 min
-# unmeasured): appended after the other five so none of their lists or timings move.
-GROUP6_CASES=(nuke-profiles nuke-timer nuke-row-tap challenge-ime)
+# group6 (Nuke profiles + timer, plus the 1.31.1 nuke-row-tap and challenge-ime; bench 2026-11-21:
+# release ~13 min, debug ~18 min): appended after the other five so none of their lists or timings
+# move. nuke-timer runs LAST: on a plain debug build it leaves Nuke on under its 15-minute lock
+# (by design, see case_nuke_timer), and every Nuke case after it then failed its precondition.
+GROUP6_CASES=(nuke-profiles nuke-row-tap challenge-ime nuke-timer)
 
 # ─── Output helpers ───────────────────────────────────────────────────────────
 info() { printf '[qa] %s\n' "$*"; }
