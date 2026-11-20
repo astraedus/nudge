@@ -4005,11 +4005,15 @@ for block in re.split(r"\n\s*Window #\d+ ", sys.stdin.read()):
 
 # Types $1 into the focused field one character per `input` call (bursts reorder letters on the
 # bench keyboard, see nuke_type_field) and checks the dialog's own counter reads $2.
-challenge_type() { # chars counter
+challenge_keys() { # chars, one `input text` per character (a typed run of them scrambles on the bench IME)
   local s="$1" i
   for ((i = 0; i < ${#s}; i++)); do ash input text "${s:i:1}" >/dev/null 2>&1; done
   sleep 1
-  ui_wait_text "$2" 6 || { qa_evidence "challenge-counter-miss"; fail "typed ${#s} characters but the counter never read '${2}'"; return 1; }
+}
+
+challenge_type() { # chars counter, the counter is read WITH the keyboard up (that is what is under test)
+  challenge_keys "$1"
+  ui_wait_text "$2" 6 || { qa_evidence "challenge-counter-miss"; fail "typed ${#1} characters but the counter never read '${2}'"; return 1; }
 }
 
 # With a typed-code dialog on screen: type $2 characters of its code, assert the geometry with the
@@ -4063,15 +4067,20 @@ strict_force_off() {
     ui_tap_text "I changed my mind" 6 || return 1   # a half-typed dialog: start clean
   fi
   scroll_to_text "Lock my settings (Strict Mode)" 10 || return 1
-  [[ "$(ui_xy checked "Lock my settings (Strict Mode)")" == true ]] || return 0
+  case "$(ui_xy checked "Lock my settings (Strict Mode)")" in
+    false) return 0 ;;
+    true) ;;
+    *) qa_evidence "strict-off-noread"; fail "cannot read the Strict Mode switch"; return 1 ;;   # unknown is not off
+  esac
   ui_tap_text "Lock my settings (Strict Mode)" 8 || return 1
   ui_wait_text "Strict Mode locked" 8 || { fail "no 'Strict Mode locked' dialog"; return 1; }
   ui_snapshot
   code="$(ui_xy code -)"
   [[ -n "$code" ]] || { fail "cannot read the Strict Mode code"; return 1; }
   ui_tap_edittext 10 || return 1
-  challenge_type "$code" "${#code}/${#code}" || return 1
-  nuke_hide_keyboard
+  challenge_keys "$code"
+  nuke_hide_keyboard     # the counter is read with the keyboard DOWN here: a build under test may scroll it off
+  ui_wait_text "${#code}/${#code}" 6 || { qa_evidence "strict-off-miss"; fail "typed the Strict code but the counter never read ${#code}/${#code}"; return 1; }
   ui_tap_text "Unlock" 6 || return 1
   ui_wait_text "Lock my settings (Strict Mode)" 8 || true
   [[ "$(ui_xy checked "Lock my settings (Strict Mode)")" == false ]] || { fail "Strict Mode would not turn off"; return 1; }

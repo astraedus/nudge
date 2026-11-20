@@ -1081,7 +1081,7 @@ strictcase() { # start(on|off) check(pass|fail) -> "<rc>|<final state>|<log>"
     ui_tap_text() { echo \"tap \$1\" >>\"\$NLOG\"
       if [[ \"\$1\" == 'Lock my settings (Strict Mode)' && \$(cat '$TMP/strict.state') == false ]]; then printf true >'$TMP/strict.state'; fi
       if [[ \"\$1\" == Unlock ]]; then printf false >'$TMP/strict.state'; fi; return 0; }
-    challenge_type() { echo \"typed \${#1}\" >>\"\$NLOG\"; }
+    challenge_type() { echo \"typed \${#1}\" >>\"\$NLOG\"; }; challenge_keys() { echo \"keys \${#1}\" >>\"\$NLOG\"; }
     challenge_ime_check() { echo check >>\"\$NLOG\"; CHALLENGE_NOTE=c
       [[ '$2' == pass ]] && { printf false >'$TMP/strict.state'; return 0; }; return 1; }
     challenge_ime_strict; echo \"rc=\$?\"; trap - EXIT" || true
@@ -1089,10 +1089,10 @@ strictcase() { # start(on|off) check(pass|fail) -> "<rc>|<final state>|<log>"
 }
 check "challenge-ime strict half PASS: ends with Strict off and the difficulty restored" \
   test "$(strictcase off pass)" = "0|false|tap Settings,tap Hard (48),tap Lock my settings (Strict Mode),tap Lock my settings (Strict Mode),check,tap Medium (24),"
-check "a failed Unlock (keyboard up) is a FAIL, and the clean-up still turns Strict off (whole code, keyboard down)" \
-  test "$(strictcase off fail)" = "1|false|tap Settings,tap Hard (48),tap Lock my settings (Strict Mode),tap Lock my settings (Strict Mode),check,tap Lock my settings (Strict Mode),typed 48,tap Unlock,tap Medium (24),"
+check "a failed Unlock (keyboard up) is a FAIL, and the clean-up still turns Strict off (whole code, counter read with the keyboard down)" \
+  test "$(strictcase off fail)" = "1|false|tap Settings,tap Hard (48),tap Lock my settings (Strict Mode),tap Lock my settings (Strict Mode),check,tap Lock my settings (Strict Mode),keys 48,tap Unlock,tap Medium (24),"
 check "a bench left in Strict Mode is unlocked FIRST, and is not re-locked at the end" \
-  test "$(strictcase on pass)" = "0|false|tap Settings,tap Lock my settings (Strict Mode),typed 48,tap Unlock,tap Hard (48),tap Lock my settings (Strict Mode),tap Lock my settings (Strict Mode),check,tap Medium (24),"
+  test "$(strictcase on pass)" = "0|false|tap Settings,tap Lock my settings (Strict Mode),keys 48,tap Unlock,tap Hard (48),tap Lock my settings (Strict Mode),tap Lock my settings (Strict Mode),check,tap Medium (24),"
 
 # An empty row read saves its evidence (screen + dump) instead of leaving only "got ''".
 readcase() { # checked-value -> "<printed>|<log>"
@@ -1107,6 +1107,12 @@ readcase() { # checked-value -> "<printed>|<log>"
 }
 check "nuke_read_ticked: a read value passes through with no evidence" test "$(readcase true)" = "true|"
 check "nuke_read_ticked: an EMPTY read saves evidence and still prints ''" test "$(readcase '')" = "|evidence nuke-read-empty,"
+
+# challenge_type's miss path runs under `set -u` (a stale variable name there aborted a bench run).
+run_qa "$OUT" -- "ash() { :; }; sleep() { :; }; ui_wait_text() { return 1; }; qa_evidence() { echo \"evidence \$1\"; }
+  challenge_type abc 3/48; echo \"rc=\$?\"; trap - EXIT" || true
+check "challenge_type: a counter miss is a clean FAIL (rc 1) with evidence, not a shell abort" \
+  bash -c "grep -qx 'rc=1' '$OUT' && grep -q 'evidence challenge-counter-miss' '$OUT' && grep -q 'typed 3 characters' '$OUT'"
 
 echo
 echo "$pass passed, $fail failed"
