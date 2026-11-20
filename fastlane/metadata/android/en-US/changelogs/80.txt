@@ -1,0 +1,2 @@
+• Nuke: tap anywhere on an app's row (its icon or name) to add it to the list or take it off, not just the small box.
+• The unlock and emergency-code screens keep their buttons above the keyboard while you type.
