@@ -1066,6 +1066,48 @@ run_qa "$OUT" -- 'for d in Easy Medium Hard; do challenge_chip "$d"; echo; done'
 check "challenge_chip: the Settings chip labels, lengths read from StrictModeChallenge's constants" \
   test "$(tr '\n' '|' <"$OUT")" = "Easy (12)|Medium (24)|Hard (48)|"
 
+# challenge_ime_strict leaves Strict Mode OFF whatever happens (the 2026-11-20 gate run that failed
+# mid-dialog left the bench locked on Hard). A stateful fake Settings screen: the row turns ON with a
+# plain tap, OFF only through "Unlock"; CHECK=pass makes the dialog check unlock it, CHECK=fail does not.
+strictcase() { # start(on|off) check(pass|fail) -> "<rc>|<final state>|<log>"
+  printf '%s' "$([[ $1 == on ]] && echo true || echo false)" >"$TMP/strict.state"
+  : >"$NLOG"
+  run_qa "$OUT" NLOG="$NLOG" -- "
+    nudge_route_home() { :; }; scroll_to_text() { return 0; }; ui_wait_text() { return 0; }
+    nuke_hide_keyboard() { :; }; ui_snapshot() { :; }; ui_has() { return 1; }; sleep() { :; }
+    ui_tap_edittext() { return 0; }; shot() { :; }
+    ui_xy() { case \"\$1\" in checked) cat '$TMP/strict.state' ;; selected) [[ \"\$2\" == 'Medium (24)' ]] && echo true || echo false ;;
+      code) echo BdDseCFsDekU8EJSD4dqk65vY3D6Rw7HNjJK7HVEZcNbjEBQ ;; esac; }
+    ui_tap_text() { echo \"tap \$1\" >>\"\$NLOG\"
+      if [[ \"\$1\" == 'Lock my settings (Strict Mode)' && \$(cat '$TMP/strict.state') == false ]]; then printf true >'$TMP/strict.state'; fi
+      if [[ \"\$1\" == Unlock ]]; then printf false >'$TMP/strict.state'; fi; return 0; }
+    challenge_type() { echo \"typed \${#1}\" >>\"\$NLOG\"; }
+    challenge_ime_check() { echo check >>\"\$NLOG\"; CHALLENGE_NOTE=c
+      [[ '$2' == pass ]] && { printf false >'$TMP/strict.state'; return 0; }; return 1; }
+    challenge_ime_strict; echo \"rc=\$?\"; trap - EXIT" || true
+  printf '%s|%s|%s' "$(sed -n 's/^rc=//p' "$OUT")" "$(cat "$TMP/strict.state")" "$(tr '\n' ',' <"$NLOG")"
+}
+check "challenge-ime strict half PASS: ends with Strict off and the difficulty restored" \
+  test "$(strictcase off pass)" = "0|false|tap Settings,tap Hard (48),tap Lock my settings (Strict Mode),tap Lock my settings (Strict Mode),check,tap Medium (24),"
+check "a failed Unlock (keyboard up) is a FAIL, and the clean-up still turns Strict off (whole code, keyboard down)" \
+  test "$(strictcase off fail)" = "1|false|tap Settings,tap Hard (48),tap Lock my settings (Strict Mode),tap Lock my settings (Strict Mode),check,tap Lock my settings (Strict Mode),typed 48,tap Unlock,tap Medium (24),"
+check "a bench left in Strict Mode is unlocked FIRST, and is not re-locked at the end" \
+  test "$(strictcase on pass)" = "0|false|tap Settings,tap Lock my settings (Strict Mode),typed 48,tap Unlock,tap Hard (48),tap Lock my settings (Strict Mode),tap Lock my settings (Strict Mode),check,tap Medium (24),"
+
+# An empty row read saves its evidence (screen + dump) instead of leaving only "got ''".
+readcase() { # checked-value -> "<printed>|<log>"
+  : >"$NLOG"
+  run_qa "$OUT" NLOG="$NLOG" -- "
+    nuke_search() { NUKE_LABEL='Keep Notes'; }; ui_wait_text() { return 0; }
+    qa_evidence() { echo \"evidence \$1\" >>\"\$NLOG\"; }
+    printf '%s' '$1' >'$TMP/read.val'
+    python3() { cat '$TMP/read.val'; }
+    printf 'v=%s\n' \"\$(nuke_read_ticked 'Keep notes')\"; trap - EXIT" || true
+  printf '%s|%s' "$(sed -n 's/^v=//p' "$OUT")" "$(tr '\n' ',' <"$NLOG")"
+}
+check "nuke_read_ticked: a read value passes through with no evidence" test "$(readcase true)" = "true|"
+check "nuke_read_ticked: an EMPTY read saves evidence and still prints ''" test "$(readcase '')" = "|evidence nuke-read-empty,"
+
 echo
 echo "$pass passed, $fail failed"
 [[ "$fail" -eq 0 ]]

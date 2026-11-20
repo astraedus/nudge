@@ -1,6 +1,7 @@
 package com.astraedus.nudge.ui.components
 
 import android.view.WindowManager
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -8,6 +9,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -21,6 +24,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -111,6 +115,7 @@ private fun ResizeDialogWindowForKeyboard() {
  * @param onUnlock invoked with the typed input once it exactly matches [target].
  * @param onCancel invoked when the user backs out ("I changed my mind"), or dismisses.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ChallengeDialog(
     target: String,
@@ -129,6 +134,12 @@ fun ChallengeDialog(
     val typedLength = StrictModeChallenge.rawLength(input)
     val matches = StrictModeChallenge.verify(input, target)
     val display = remember(target) { StrictModeChallenge.forDisplay(target) }
+    // With the keyboard up the dialog is resized (see challengeSoftInputMode) and its text column
+    // scrolls. The field's own bring-into-view only keeps the cursor on screen, which scrolled the
+    // x/y counter just under the field out of sight (bench, 1.31.1 gate). Each keystroke brings
+    // the field and its counter into view together.
+    val typingArea = remember { BringIntoViewRequester() }
+    LaunchedEffect(input) { if (input.isNotEmpty()) typingArea.bringIntoView() }
 
     AlertDialog(
         onDismissRequest = onCancel,
@@ -167,42 +178,45 @@ fun ChallengeDialog(
                 )
                 Spacer(Modifier.height(16.dp))
 
-                // Disable the paste/copy toolbar so the user can't shortcut the challenge.
-                CompositionLocalProvider(LocalTextToolbar provides NoOpTextToolbar) {
-                    OutlinedTextField(
-                        value = input,
-                        onValueChange = { input = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text("Unlock code") },
-                        singleLine = false,
-                        isError = input.isNotEmpty() && !matches && typedLength >= rawLength,
-                        textStyle = TextStyle(fontFamily = FontFamily.Monospace),
-                        keyboardOptions = KeyboardOptions(
-                            autoCorrectEnabled = false,
-                            capitalization = KeyboardCapitalization.None,
-                            imeAction = ImeAction.Done
-                        ),
-                        // Dismiss the keyboard (and its autocomplete bar) on Done so a stray
-                        // suggestion tap can't land between the field and the Unlock button.
-                        keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() })
-                    )
-                }
-                Spacer(Modifier.height(6.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text(
-                        "$typedLength/$rawLength",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    if (input.isNotEmpty() && !matches && typedLength >= rawLength) {
-                        Text(
-                            "Doesn't match",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.error
+                // The field and its counter, kept in view together while typing (typingArea).
+                Column(modifier = Modifier.fillMaxWidth().bringIntoViewRequester(typingArea)) {
+                    // Disable the paste/copy toolbar so the user can't shortcut the challenge.
+                    CompositionLocalProvider(LocalTextToolbar provides NoOpTextToolbar) {
+                        OutlinedTextField(
+                            value = input,
+                            onValueChange = { input = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("Unlock code") },
+                            singleLine = false,
+                            isError = input.isNotEmpty() && !matches && typedLength >= rawLength,
+                            textStyle = TextStyle(fontFamily = FontFamily.Monospace),
+                            keyboardOptions = KeyboardOptions(
+                                autoCorrectEnabled = false,
+                                capitalization = KeyboardCapitalization.None,
+                                imeAction = ImeAction.Done
+                            ),
+                            // Dismiss the keyboard (and its autocomplete bar) on Done so a stray
+                            // suggestion tap can't land between the field and the Unlock button.
+                            keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() })
                         )
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            "$typedLength/$rawLength",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        if (input.isNotEmpty() && !matches && typedLength >= rawLength) {
+                            Text(
+                                "Doesn't match",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
                     }
                 }
             }

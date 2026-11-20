@@ -977,6 +977,17 @@ shot() { # name — a screenshot straight into the album, no Maestro involved
   adbs pull /sdcard/nudge-qa-shot.png "${ALBUM}/$1.png" >/dev/null 2>&1
 }
 
+# For a read or wait that missed: the screen and the dump it was read from, side by side in the
+# album, so the miss can be diagnosed after the run instead of re-driven. Never fails the caller.
+qa_evidence() { # tag
+  local f
+  f="${1}-$(date +%H%M%S)"
+  shot "$f"
+  [[ -n "${UI_XML:-}" && -f "$UI_XML" ]] && cp "$UI_XML" "${ALBUM}/${f}.xml" 2>/dev/null
+  warn "evidence: ${ALBUM}/${f}.png (+ .xml)"
+  return 0
+}
+
 scroll_to_text() { # text max_swipes — swipe up until the text is on screen
   local needle="$1" tries="${2:-6}" i
   for ((i = 0; i < tries; i++)); do
@@ -3608,10 +3619,15 @@ nuke_set_ticked() { # label true|false
   [[ "$now" == "$want" ]] || { fail "'${label}' should be ticked=${want} but the dump reads '${now}'"; return 1; }
 }
 
+# A row read that comes back empty saves what the harness saw (qa_evidence): the 1.31.0 gate's
+# nuke-profiles reads after a profile switch came back '' with nothing to diagnose them from.
 nuke_read_ticked() { # label -> true|false|""
-  nuke_search "$1" || return 1
-  ui_wait_text "$NUKE_LABEL" 8 || return 1
-  python3 "${WORK}/uistate.py" checked "$UI_XML" "$NUKE_LABEL"
+  local v
+  nuke_search "$1" || { qa_evidence "nuke-read-nosearch"; return 1; }
+  ui_wait_text "$NUKE_LABEL" 8 || { qa_evidence "nuke-read-norow"; return 1; }
+  v="$(python3 "${WORK}/uistate.py" checked "$UI_XML" "$NUKE_LABEL")"
+  [[ -n "$v" ]] || qa_evidence "nuke-read-empty"
+  printf '%s\n' "$v"
 }
 
 nuke_chip_selected() { # name -> true|false|""
@@ -3993,7 +4009,7 @@ challenge_type() { # chars counter
   local s="$1" i
   for ((i = 0; i < ${#s}; i++)); do ash input text "${s:i:1}" >/dev/null 2>&1; done
   sleep 1
-  ui_wait_text "$2" 6 || { fail "typed ${#s} characters but the counter never read '${2}'"; return 1; }
+  ui_wait_text "$2" 6 || { qa_evidence "challenge-counter-miss"; fail "typed ${#s} characters but the counter never read '${2}'"; return 1; }
 }
 
 # With a typed-code dialog on screen: type $2 characters of its code, assert the geometry with the
@@ -4035,21 +4051,50 @@ challenge_chip() { # Easy|Medium|Hard
   printf '%s (%s)' "$1" "$n"
 }
 
+# Strict Mode off through its own dialog: the whole code typed with the keyboard DOWN, then Unlock.
+# A run that dies mid-dialog must not leave the bench locked (the 2026-11-20 gate run did: Strict on,
+# Hard, and the difficulty chips refused the restore tap), so the case calls this on entry and on
+# every failure after it turned Strict on. Its own typing is not under test here.
+strict_force_off() {
+  local code
+  nuke_hide_keyboard
+  ui_snapshot
+  if ui_has "Strict Mode locked"; then
+    ui_tap_text "I changed my mind" 6 || return 1   # a half-typed dialog: start clean
+  fi
+  scroll_to_text "Lock my settings (Strict Mode)" 10 || return 1
+  [[ "$(ui_xy checked "Lock my settings (Strict Mode)")" == true ]] || return 0
+  ui_tap_text "Lock my settings (Strict Mode)" 8 || return 1
+  ui_wait_text "Strict Mode locked" 8 || { fail "no 'Strict Mode locked' dialog"; return 1; }
+  ui_snapshot
+  code="$(ui_xy code -)"
+  [[ -n "$code" ]] || { fail "cannot read the Strict Mode code"; return 1; }
+  ui_tap_edittext 10 || return 1
+  challenge_type "$code" "${#code}/${#code}" || return 1
+  nuke_hide_keyboard
+  ui_tap_text "Unlock" 6 || return 1
+  ui_wait_text "Lock my settings (Strict Mode)" 8 || true
+  [[ "$(ui_xy checked "Lock my settings (Strict Mode)")" == false ]] || { fail "Strict Mode would not turn off"; return 1; }
+}
+
+# The case always starts AND ends with Strict Mode off (it used to restore "on" when it found it on,
+# which also re-armed a bench that an earlier failed run had left locked). Difficulty is restored.
 challenge_ime_strict() {
-  local was_on diff_was rc=0 d
+  local diff_was rc=0 d
   nudge_route_home
   scroll_to_text "Settings" 8 && ui_tap_text "Settings" 10 || { fail "could not open Settings from the dashboard"; return 1; }
   scroll_to_text "Lock my settings (Strict Mode)" 10 || { fail "no Strict Mode row in Settings"; return 1; }
   for d in Easy Medium Hard; do [[ "$(ui_xy selected "$(challenge_chip "$d")")" == true ]] && diff_was="$d"; done
   diff_was="${diff_was:-Medium}"
-  ui_tap_text "$(challenge_chip Hard)" 8 || return 1     # the longest code: the field wraps
-  was_on="$(ui_xy checked "Lock my settings (Strict Mode)")"
-  if [[ "$was_on" != true ]]; then
-    ui_tap_text "Lock my settings (Strict Mode)" 8 || return 1    # turning it ON is immediate
-    sleep 1
+  if [[ "$(ui_xy checked "Lock my settings (Strict Mode)")" == true ]]; then
+    warn "Strict Mode was left on (an earlier run?): turning it off first"
+    strict_force_off || { fail "could not turn the left-on Strict Mode off"; return 1; }
   fi
-  ui_tap_text "Lock my settings (Strict Mode)" 8 || return 1      # turning it OFF asks for the code
-  ui_wait_text "Strict Mode locked" 8 || { fail "no 'Strict Mode locked' dialog"; return 1; }
+  ui_tap_text "$(challenge_chip Hard)" 8 || return 1     # the longest code: the field wraps
+  ui_tap_text "Lock my settings (Strict Mode)" 8 || return 1    # turning it ON is immediate
+  sleep 1
+  ui_tap_text "Lock my settings (Strict Mode)" 8 || { strict_force_off; return 1; }   # OFF asks for the code
+  ui_wait_text "Strict Mode locked" 8 || { fail "no 'Strict Mode locked' dialog"; strict_force_off; return 1; }
   challenge_ime_check "Unlock" 36 strict || rc=1
   STRICT_NOTE="$CHALLENGE_NOTE"
   ui_wait_text "Lock my settings (Strict Mode)" 8 || true
@@ -4057,8 +4102,8 @@ challenge_ime_strict() {
   if [[ "$(ui_xy checked "Lock my settings (Strict Mode)")" != false ]]; then
     fail "Strict Mode is still on after Unlock (with the keyboard up)"
     rc=1
+    strict_force_off || fail "and the clean-up could not turn it off: the bench is left in Strict Mode"
   fi
-  if [[ "$was_on" == true ]]; then ui_tap_text "Lock my settings (Strict Mode)" 8 || rc=1; fi
   ui_tap_text "$(challenge_chip "$diff_was")" 8 || rc=1
   return $rc
 }
