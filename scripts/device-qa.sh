@@ -243,6 +243,8 @@ ALL_CASES=(
   refusal-alert
   nuke-profiles
   nuke-timer
+  nuke-row-tap
+  challenge-ime
 )
 
 # The chunked gate (header: "Running the gate in bounded chunks"): `all`, cut so each slice fits one
@@ -258,8 +260,9 @@ GROUP2_CASES=(daily-limit-refresh daily-limit-midsession)
 GROUP3_CASES=(group-limit-midsession bounce-non-apps)
 GROUP4_CASES=(schedule-start-open-app schedule-end-overlay)
 GROUP5_CASES=(notif-idle crash-check refusal-alert)
-# group6 (Nuke profiles + timer, ~5 min): appended after the other five so none of their lists or timings move.
-GROUP6_CASES=(nuke-profiles nuke-timer)
+# group6 (Nuke profiles + timer, ~5 min; plus the 1.31.1 nuke-row-tap and challenge-ime, ~1 + ~3 min
+# unmeasured): appended after the other five so none of their lists or timings move.
+GROUP6_CASES=(nuke-profiles nuke-timer nuke-row-tap challenge-ime)
 
 # ─── Output helpers ───────────────────────────────────────────────────────────
 info() { printf '[qa] %s\n' "$*"; }
@@ -3201,11 +3204,13 @@ case_schedule_end_overlay() {
 
 NUKE_QA_KEY="${NUKE_QA_KEY:-qa-nuke-key-183}"
 NUKE_APP_A_PKG="${NUKE_APP_A_PKG:-$BOUNDARY_PKG}"
-# The label exactly as the Nuke list prints it (the launcher label, case-sensitive): Keep's is "Keep
-# notes" with a small n on the bench. "Keep Notes" matched nothing and both cases failed on it.
+# The label as the Nuke list prints it, in ANY case: nuke_search reads the device's spelling off the
+# screen into NUKE_LABEL. Keep was "Keep notes" on the bench until its 2026-11-17 update and "Keep
+# Notes" after it; an exact hand-typed label broke the Nuke cases both times it changed.
 NUKE_APP_A_LABEL="${NUKE_APP_A_LABEL:-Keep notes}"
 NUKE_APP_B_PKG="${NUKE_APP_B_PKG:-com.google.android.calendar}"
 NUKE_APP_B_LABEL="${NUKE_APP_B_LABEL:-Calendar}"
+NUKE_LABEL=""   # set by nuke_search: the searched row's label as the device spells it
 NUKE_TIMER_WAIT="${NUKE_TIMER_WAIT:-0}"
 NUKE_FAKESCAN_SET=0
 
@@ -3248,9 +3253,14 @@ nuke_qa_reset() {
 #   prefix <needle>    centre of the first CLICKABLE node whose text/content-desc STARTS with it
 #   labelxy <label>    centre of the node with that text that is not a text field (an app row's label,
 #                      not the search box that now holds the same words)
+#   namexy <label>     a point on that row's NAME (a quarter across the node carrying it), never the box
 #   checked <label>    "true"/"false": the checkbox in the row of that label
-#   boxxy <label>      centre of that checkbox (the row's only clickable node)
+#   boxxy <label>      centre of that checkbox (since 1.31.1 the whole row is the toggle, so this is
+#                      the row; before, the box was the row's only clickable node)
 #   selected <needle>  "true"/"false": whether the chip with that text/desc is selected
+#   tapbottom <text>   bottom y of the touch target of the button labelled exactly <text>
+#   rootbottom -       bottom y of the dumped window (a dialog's own bottom edge)
+#   code -             the typed-code dialog's code, dashes removed
 write_ui_state() {
   cat >"${WORK}/uistate.py" <<'PYEOF'
 import re
@@ -3311,8 +3321,9 @@ elif mode == "checked":
             cur = parent.get(cur)
         break
 elif mode == "boxxy":
-    # Centre of the checkbox in the row of that label. On the Nuke list the CheckBox is the row's only
-    # clickable node: tapping the label or the icon (what labelxy finds) does nothing.
+    # Centre of the checkbox in the row of that label. Until 1.31.1 the Nuke list's CheckBox was the
+    # row's only clickable node (label and icon taps did nothing); now the merged row is the
+    # checkable node, so this finds the row itself, and a tap anywhere on it toggles.
     for n in nodes:
         if n.get("class") == "android.widget.EditText" or needle not in names(n):
             continue
@@ -3326,6 +3337,42 @@ elif mode == "boxxy":
                 sys.exit(0)
             cur = parent.get(cur)
         break
+elif mode == "namexy":
+    # A point on an app row's NAME, never on its checkbox (nuke-row-tap, 1.31.1). Before the fix the
+    # name is its own small node; after it the row is one merged toggleable node whose text is the
+    # name. Either way the name sits in the left part of that node, so a quarter of the way across.
+    for n in nodes:
+        if n.get("class") != "android.widget.EditText" and needle in names(n):
+            b = re.match(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", n.get("bounds") or "")
+            if b:
+                x1, y1, x2, y2 = (int(g) for g in b.groups())
+                print("%d %d" % (x1 + (x2 - x1) // 4, (y1 + y2) // 2))
+                break
+elif mode == "tapbottom":
+    # Bottom edge of what a tap on the button labelled exactly <needle> hits: its nearest clickable
+    # ancestor (the 48dp touch target, taller than the visible button), else the node itself.
+    for n in nodes:
+        if n.get("text") != needle:
+            continue
+        cur = n
+        while cur is not None and cur.get("clickable") != "true":
+            cur = parent.get(cur)
+        b = re.match(r"\[\d+,\d+\]\[\d+,(\d+)\]", ((cur if cur is not None else n).get("bounds")) or "")
+        if b:
+            print(b.group(1))
+        break
+elif mode == "rootbottom":
+    # Bottom edge of the dumped window's root: for a dialog, the dialog itself.
+    b = re.match(r"\[\d+,\d+\]\[\d+,(\d+)\]", (nodes[0].get("bounds") if nodes else "") or "")
+    if b:
+        print(b.group(1))
+elif mode == "code":
+    # The challenge code as shown (groups of 5 joined by dashes), printed without the dashes.
+    for n in nodes:
+        t = n.get("text") or ""
+        if re.fullmatch(r"[A-Za-z0-9]{5}(-[A-Za-z0-9]{1,5})+", t):
+            print(t.replace("-", ""))
+            break
 elif mode == "selected":
     for n in nodes:
         if needle not in names(n):
@@ -3481,6 +3528,27 @@ PYEOF
   # no app, emptied the list and clamped the scroll back up).
   nuke_type_field "${1%% *}" || return 1
   nuke_hide_keyboard
+  # The row's label as the device spells it, into NUKE_LABEL (the callers read rows by it). The
+  # label is the other app's, so it changes under us: Keep's update on 2026-11-17 renamed it from
+  # "Keep notes" to "Keep Notes", and every exact-text read of the hand-typed default then found
+  # "no such row". Matched case-insensitively here, once, so every read after it stays exact.
+  ui_snapshot
+  NUKE_LABEL="$(python3 - "$UI_XML" "$1" <<'PYEOF'
+import re
+import sys
+
+xml = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+want = sys.argv[2].lower()
+for attrs in re.findall(r"<node([^>]*)>", xml):
+    if 'class="android.widget.EditText"' in attrs:
+        continue
+    t = re.search(r' text="([^"]*)"', attrs)
+    if t and t.group(1).lower() == want:
+        print(t.group(1))
+        break
+PYEOF
+)"
+  NUKE_LABEL="${NUKE_LABEL:-$1}"
 }
 
 # The text of the first EditText in the last snapshot.
@@ -3528,6 +3596,7 @@ nuke_type_field() { # text
 nuke_set_ticked() { # label true|false
   local label="$1" want="$2" now
   nuke_search "$label" || return 1
+  label="$NUKE_LABEL"
   ui_wait_text "$label" 8 || { fail "'${label}' is not in the Nuke app list"; return 1; }
   now="$(python3 "${WORK}/uistate.py" checked "$UI_XML" "$label")"
   if [[ "$now" != "$want" ]]; then
@@ -3541,8 +3610,8 @@ nuke_set_ticked() { # label true|false
 
 nuke_read_ticked() { # label -> true|false|""
   nuke_search "$1" || return 1
-  ui_wait_text "$1" 8 || return 1
-  python3 "${WORK}/uistate.py" checked "$UI_XML" "$1"
+  ui_wait_text "$NUKE_LABEL" 8 || return 1
+  python3 "${WORK}/uistate.py" checked "$UI_XML" "$NUKE_LABEL"
 }
 
 nuke_chip_selected() { # name -> true|false|""
@@ -3837,6 +3906,201 @@ case_nuke_timer() {
 # ═══════════════════════════════════════════════════════════════════════════════
 # Driver
 # ═══════════════════════════════════════════════════════════════════════════════
+
+# ── nuke-row-tap: a tap on an app's NAME in the Nuke list ticks it (1.31.1) ──────────────────────
+# 1.31.0 shipped the Nuke list with only the checkbox clickable: the row's handler went to an
+# `onClick` parameter AppListItem never used, so tapping the icon or the name did nothing. The fix
+# makes the whole row the toggle (AppPicker's pattern). This taps the NAME, never the box, and reads
+# the box. Works on a release build (no scan needed): Nuke stays off, the row ends as it started.
+case_nuke_row_tap() {
+  local a="$NUKE_APP_A_LABEL" before after back rc=0
+  nuke_preflight || return 1
+  nuke_ensure_off || return 1
+  nuke_search "$a" || return 1
+  a="$NUKE_LABEL"
+  ui_wait_text "$a" 8 || { fail "'${a}' is not in the Nuke app list"; return 1; }
+  before="$(ui_xy checked "$a")"
+  [[ "$before" == true || "$before" == false ]] || { fail "cannot read the box on '${a}' (got '${before}')"; return 1; }
+  ui_tap_xy_mode namexy "$a" 8 || return 1
+  ui_snapshot
+  after="$(ui_xy checked "$a")"
+  shot "nuke-row-tap-name"
+  if [[ "$after" == "$before" ]]; then
+    fail "tapping the NAME of '${a}' left its box at ${before} (only the checkbox toggles: the 1.31.0 bug)"
+    CASE_NOTE="name tap did nothing (box stayed ${before})"
+    rc=1
+  else
+    # The second name tap is the way back, and itself a second check.
+    ui_tap_xy_mode namexy "$a" 8 || return 1
+    ui_snapshot
+    back="$(ui_xy checked "$a")"
+    [[ "$back" == "$before" ]] || { fail "a second name tap on '${a}' should restore ${before} (got '${back}')"; rc=1; }
+    CASE_NOTE="name tap: ${before} -> ${after}; second tap: -> ${back}"
+  fi
+  # Whatever happened above, leave the row as found.
+  [[ "$(ui_xy checked "$a")" == "$before" ]] || nuke_set_ticked "$a" "$before" || rc=1
+  go_home
+  return $rc
+}
+
+# ── challenge-ime: the typed-code dialogs keep their buttons above the keyboard (1.31.1) ─────────
+# The Strict Mode unlock and the Nuke emergency code share ui/components/ChallengeDialog. In 1.31.0
+# its window ran `adjust=pan` (bench `dumpsys window`: sim={adjust=pan}): with the keyboard up the
+# whole dialog slid up and its bottom, with Unlock / "End it" and "I changed my mind", went under the
+# keyboard (Hard, 32/48 typed: dialog bottom 1300, keyboard top 1224, the buttons' touch targets 10px
+# under it). The oracle is geometry from the window manager and the dump, not a screenshot: the
+# dialog's bottom and both buttons' touch targets must end at or above the keyboard's top. Then the
+# rest of the code is typed and the confirm button tapped WITH THE KEYBOARD STILL UP, which is the
+# thing a user could not do. The Strict half runs on any build; the Nuke half needs a scan to start
+# Nuke, so like nuke-profiles part B it runs on a debug build only (release: SKIP, rc 77).
+
+# Top edge of the keyboard in screen pixels, empty when no keyboard window is showing. The
+# InputMethod window fills the screen; its given content inset is where the keys start.
+ime_top() {
+  local dump
+  dump="$(ash dumpsys window windows 2>/dev/null | tr -d '\r')"
+  printf '%s' "$dump" | python3 -c '
+import re, sys
+for block in re.split(r"\n\s*Window #\d+ ", sys.stdin.read()):
+    head = block.split("\n", 1)[0]
+    if not re.search(r"\bInputMethod\}", head) or "isVisible=true" not in block:
+        continue
+    f = re.search(r"mFrame=\[\d+,(\d+)\]", block)
+    i = re.search(r"mGivenContentInsets=\[\d+,(\d+)\]", block)
+    if f and i and int(i.group(1)) > 0:
+        print(int(f.group(1)) + int(i.group(1)))
+    break
+'
+}
+
+# The soft-input mode of Nudge's dialog window (a wrap-content APPLICATION window), for the note.
+dialog_window_sim() {
+  local dump
+  dump="$(ash dumpsys window windows 2>/dev/null | tr -d '\r')"
+  printf '%s' "$dump" | python3 -c '
+import re, sys
+for block in re.split(r"\n\s*Window #\d+ ", sys.stdin.read()):
+    if "dev.astraedus.nudge" in block.split("\n", 1)[0] and "(wrapxwrap)" in block and "ty=APPLICATION" in block:
+        m = re.search(r"sim=\{([^}]*)\}", block)
+        print(m.group(1) if m else "?")
+        break
+'
+}
+
+# Types $1 into the focused field one character per `input` call (bursts reorder letters on the
+# bench keyboard, see nuke_type_field) and checks the dialog's own counter reads $2.
+challenge_type() { # chars counter
+  local s="$1" i
+  for ((i = 0; i < ${#s}; i++)); do ash input text "${s:i:1}" >/dev/null 2>&1; done
+  sleep 1
+  ui_wait_text "$2" 6 || { fail "typed ${#s} characters but the counter never read '${2}'"; return 1; }
+}
+
+# With a typed-code dialog on screen: type $2 characters of its code, assert the geometry with the
+# keyboard up, type the rest and tap $1 with the keyboard still up. Sets CHALLENGE_NOTE.
+challenge_ime_check() { # confirm_label n tag
+  local confirm="$1" n="$2" tag="$3" code len top dlg cb kb sim rc=0
+  CHALLENGE_NOTE=""
+  ui_snapshot
+  code="$(ui_xy code -)"
+  len=${#code}
+  (( len > n )) || { fail "${tag}: no challenge code on screen (read '${code}')"; return 1; }
+  ui_tap_edittext 10 || { fail "${tag}: no code field in the dialog"; return 1; }
+  challenge_type "${code:0:n}" "${n}/${len}" || return 1
+  top="$(ime_top)"
+  [[ -n "$top" ]] || { fail "${tag}: the keyboard is not up after typing"; return 1; }
+  ui_snapshot
+  shot "challenge-ime-${tag}"
+  sim="$(dialog_window_sim)"
+  dlg="$(ui_xy rootbottom -)"
+  cb="$(ui_xy tapbottom "$confirm")"
+  kb="$(ui_xy tapbottom "I changed my mind")"
+  CHALLENGE_NOTE="${tag}: ${n}/${len} typed, keyboard top ${top}, dialog bottom ${dlg:-?}, '${confirm}' ${cb:-missing}, 'I changed my mind' ${kb:-missing}, sim={${sim}}"
+  info "$CHALLENGE_NOTE"
+  [[ -n "$dlg" && "$dlg" -le "$top" ]] || { fail "${tag}: the dialog's bottom (${dlg:-?}) is under the keyboard (top ${top})"; rc=1; }
+  [[ -n "$cb" && "$cb" -le "$top" ]] || { fail "${tag}: '${confirm}' (${cb:-not in the dump}) is under the keyboard (top ${top})"; rc=1; }
+  [[ -n "$kb" && "$kb" -le "$top" ]] || { fail "${tag}: 'I changed my mind' (${kb:-not in the dump}) is under the keyboard (top ${top})"; rc=1; }
+  challenge_type "${code:n}" "${len}/${len}" || return 1
+  [[ -n "$(ime_top)" ]] || { fail "${tag}: the keyboard went down before the confirm tap"; return 1; }
+  ui_tap_text "$confirm" 6 || return 1
+  return $rc
+}
+
+STRICT_CHALLENGE_KT="${REPO_ROOT}/app/src/main/java/com/astraedus/nudge/domain/lock/StrictModeChallenge.kt"
+# The difficulty chips read "<label> (<length>)" (SettingsScreen's StrictModeDifficultyChip); the
+# lengths come from the production constants, never typed here (fixture honesty).
+challenge_chip() { # Easy|Medium|Hard
+  local n
+  n="$(kotlin_int_const "$STRICT_CHALLENGE_KT" "LENGTH_$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]')")"
+  printf '%s (%s)' "$1" "$n"
+}
+
+challenge_ime_strict() {
+  local was_on diff_was rc=0 d
+  nudge_route_home
+  scroll_to_text "Settings" 8 && ui_tap_text "Settings" 10 || { fail "could not open Settings from the dashboard"; return 1; }
+  scroll_to_text "Lock my settings (Strict Mode)" 10 || { fail "no Strict Mode row in Settings"; return 1; }
+  for d in Easy Medium Hard; do [[ "$(ui_xy selected "$(challenge_chip "$d")")" == true ]] && diff_was="$d"; done
+  diff_was="${diff_was:-Medium}"
+  ui_tap_text "$(challenge_chip Hard)" 8 || return 1     # the longest code: the field wraps
+  was_on="$(ui_xy checked "Lock my settings (Strict Mode)")"
+  if [[ "$was_on" != true ]]; then
+    ui_tap_text "Lock my settings (Strict Mode)" 8 || return 1    # turning it ON is immediate
+    sleep 1
+  fi
+  ui_tap_text "Lock my settings (Strict Mode)" 8 || return 1      # turning it OFF asks for the code
+  ui_wait_text "Strict Mode locked" 8 || { fail "no 'Strict Mode locked' dialog"; return 1; }
+  challenge_ime_check "Unlock" 36 strict || rc=1
+  STRICT_NOTE="$CHALLENGE_NOTE"
+  ui_wait_text "Lock my settings (Strict Mode)" 8 || true
+  nuke_hide_keyboard
+  if [[ "$(ui_xy checked "Lock my settings (Strict Mode)")" != false ]]; then
+    fail "Strict Mode is still on after Unlock (with the keyboard up)"
+    rc=1
+  fi
+  if [[ "$was_on" == true ]]; then ui_tap_text "Lock my settings (Strict Mode)" 8 || rc=1; fi
+  ui_tap_text "$(challenge_chip "$diff_was")" 8 || rc=1
+  return $rc
+}
+
+challenge_ime_nuke() {
+  local a="$NUKE_APP_A_LABEL" rc=0
+  nuke_preflight || return 1
+  nuke_ensure_off || return 1
+  nuke_set_ticked "$a" true || return 1
+  nuke_pair_key || return 1
+  nuke_scroll_top
+  nuke_timer_pick "None" || return 1
+  ui_tap_text "Nuke now" 10 || nuke_tap "Nuke now" || return 1
+  ui_wait_re 'Nuke is on · ' 12 || { fail "Nuke did not turn on"; return 1; }
+  nuke_tap "Emergency: end without your code" || return 1
+  ui_wait_text "Emergency: end Nuke" 8 || { fail "no 'Emergency: end Nuke' dialog"; return 1; }
+  challenge_ime_check "End it" 36 nuke || rc=1
+  NUKE_NOTE="$CHALLENGE_NOTE"
+  ui_wait_re 'Nuke is off' 12 || { fail "Nuke is still on after 'End it' (with the keyboard up)"; rc=1; }
+  nuke_hide_keyboard
+  nuke_set_ticked "$a" false || rc=1
+  return $rc
+}
+
+case_challenge_ime() {
+  local rc=0 scan=0
+  STRICT_NOTE="" NUKE_NOTE=""
+  challenge_ime_strict || rc=1
+  if nuke_scan_available; then
+    scan=1
+    challenge_ime_nuke || rc=1
+  fi
+  nuke_fakescan_clear
+  go_home
+  CASE_NOTE="${STRICT_NOTE}${NUKE_NOTE:+; ${NUKE_NOTE}}"
+  (( rc != 0 )) && return 1
+  if (( scan == 0 )); then
+    CASE_NOTE="${CASE_NOTE}; Nuke emergency half SKIPPED: release build, debug.nudge.fakescan cannot pair a key or start Nuke. Run with APK=debug to cover it"
+    return 77
+  fi
+  return 0
+}
 
 run_case() { # name
   local name="$1" fn start end rc
