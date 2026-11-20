@@ -1114,6 +1114,20 @@ run_qa "$OUT" -- "ash() { :; }; sleep() { :; }; ui_wait_text() { return 1; }; qa
 check "challenge_type: a counter miss is a clean FAIL (rc 1) with evidence, not a shell abort" \
   bash -c "grep -qx 'rc=1' '$OUT' && grep -q 'evidence challenge-counter-miss' '$OUT' && grep -q 'typed 3 characters' '$OUT'"
 
+# After a profile chip tap the Nuke screen is at the top, and the FOCUSED search field, now off
+# screen, stays in the dump as [0,0][0,0]. nuke_search must scroll then, not take y=0 as "on screen".
+cat >"$TMP/nuke-top.xml" <<'XML'
+<hierarchy><node text="Apps to nuke" class="android.widget.TextView" bounds="[44,1639][1036,1705]" />
+<node text="Keep" class="android.widget.EditText" focused="true" bounds="[0,0][0,0]" /></hierarchy>
+XML
+printf top >"$TMP/scroll.state"
+run_qa "$OUT" -- "sleep() { :; }; ui_tap_edittext() { return 0; }; nuke_type_field() { return 0; }; nuke_hide_keyboard() { :; }
+  ash() { [[ \"\$1 \$2\" == 'input swipe' ]] && { printf scrolled >'$TMP/scroll.state'; }; return 0; }
+  ui_snapshot() { if [[ \$(cat '$TMP/scroll.state') == top ]]; then UI_XML='$TMP/nuke-top.xml'; else UI_XML='$TMP/nuke-search.xml'; fi; }
+  nuke_search 'Keep notes'; echo \"label=\$NUKE_LABEL\"" || true
+check "nuke_search: an off-screen focused field ([0,0][0,0]) is scrolled into view, and the row's label is read" \
+  bash -c "grep -qx scrolled '$TMP/scroll.state' && grep -qx 'label=Keep Notes' '$OUT'"
+
 echo
 echo "$pass passed, $fail failed"
 [[ "$fail" -eq 0 ]]

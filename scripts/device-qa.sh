@@ -3524,7 +3524,10 @@ xml = open(sys.argv[1], encoding="utf-8", errors="replace").read()
 for attrs in re.findall(r"<node([^>]*)>", xml):
     if 'class="android.widget.EditText"' in attrs:
         b = re.search(r'bounds="\[\d+,(\d+)\]\[\d+,(\d+)\]', attrs)
-        if b:
+        # A FOCUSED field scrolled off screen stays in the dump with bounds [0,0][0,0]. That read as
+        # y=0, "already in the top half", so after a profile chip tap (which scrolls to the top) the
+        # rows were never scrolled into the dump and every read came back '' (1.31.0/1.31.1 gates).
+        if b and int(b.group(2)) > int(b.group(1)):
             print((int(b.group(1)) + int(b.group(2))) // 2)
             break
 PYEOF
