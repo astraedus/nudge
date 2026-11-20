@@ -22,6 +22,11 @@ import androidx.core.graphics.drawable.toBitmap
  *
  * An app with no icon (uninstalled, but a rule still names it) gets a [TonalIcon] of the same size,
  * so its name lines up with every other row instead of jumping to the left edge.
+ *
+ * A tappable row passes its click through [modifier]. A row with a checkbox makes the WHOLE row the
+ * one toggle target (`Modifier.toggleable(role = Role.Checkbox)`) and gives the `Checkbox`
+ * `onCheckedChange = null`, as [AppPicker] does. There is deliberately no `onClick` parameter: the
+ * one this had was never wired to anything, so the Nuke list's row taps did nothing (1.31.1).
  */
 @Composable
 fun AppListItem(
@@ -29,8 +34,7 @@ fun AppListItem(
     icon: Drawable?,
     modifier: Modifier = Modifier,
     supportingText: String? = null,
-    trailingContent: @Composable (() -> Unit)? = null,
-    onClick: (() -> Unit)? = null
+    trailingContent: @Composable (() -> Unit)? = null
 ) {
     ListItem(
         headlineContent = { Text(appName, maxLines = 1, overflow = TextOverflow.Ellipsis) },

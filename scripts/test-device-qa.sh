@@ -154,8 +154,8 @@ check "group3 is the mid-session clock chunk, then bounce-non-apps (#181)" \
 check "group4 is the schedule-boundary chunk" test "$(cases_of group4)" = "schedule-start-open-app schedule-end-overlay "
 check "group5 is the idle / crash chunk (refusal-alert last: it needs the cert switch)" \
   test "$(cases_of group5)" = "notif-idle crash-check refusal-alert "
-check "group6 is the Nuke profiles + timer chunk (after the five, so their lists never moved)" \
-  test "$(cases_of group6)" = "nuke-profiles nuke-timer "
+check "group6 is the Nuke chunk: profiles, the 1.31.1 row-tap and keyboard cases, then timer LAST (it may leave Nuke locked on)" \
+  test "$(cases_of group6)" = "nuke-profiles nuke-row-tap challenge-ime nuke-timer "
 check "all is every case, in the run order" test "$(cases_of all)" = "$all_cases"
 check "group1 + group2 + group3 + group4 + group5 + group6 == ALL_CASES, in order" \
   test "$(cases_of group1)$(cases_of group2)$(cases_of group3)$(cases_of group4)$(cases_of group5)$(cases_of group6)" = "$all_cases"
@@ -193,7 +193,7 @@ check "list is unchanged: one case per line, in order" \
   test "$(bash "$QA" list | tr '\n' ' ')" = "$all_cases"
 bash "$QA" --help >"$OUT" 2>&1
 check "--help documents the chunks (group1-group6, NUKE_TIMER_WAIT and the APK=installed hand-off)" \
-  bash -c "grep -q group1 '$OUT' && grep -q group2 '$OUT' && grep -q '^group3: group-limit-midsession bounce-non-apps$' '$OUT' && grep -q '^group4: schedule-start-open-app' '$OUT' && grep -q '^group5: notif-idle' '$OUT' && grep -q '^group6: nuke-profiles nuke-timer$' '$OUT' && grep -q 'NUKE_TIMER_WAIT' '$OUT' && grep -q 'APK=installed' '$OUT'"
+  bash -c "grep -q group1 '$OUT' && grep -q group2 '$OUT' && grep -q '^group3: group-limit-midsession bounce-non-apps$' '$OUT' && grep -q '^group4: schedule-start-open-app' '$OUT' && grep -q '^group5: notif-idle' '$OUT' && grep -q '^group6: nuke-profiles nuke-row-tap challenge-ime nuke-timer$' '$OUT' && grep -q 'NUKE_TIMER_WAIT' '$OUT' && grep -q 'APK=installed' '$OUT'"
 rc=0; bash "$QA" no-such-case >"$OUT" 2>&1 || rc=$?
 check "an unknown target dies (exit 2) before the lock or the phone, and names the groups" \
   bash -c "[[ $rc == 2 ]] && grep -q 'group1' '$OUT'"
@@ -925,6 +925,208 @@ check "ui_has_re matches the refusal snackbar regex" \
 rc=0; run_qa "$OUT" -- "UI_XML='$TMP/snack.xml'; ui_has_re 'Nuke is off\\.'" || rc=$?
 check "ui_has_re rejects a different message" test "$rc" = 1
 check "case_nuke_profiles and case_nuke_timer are defined" run_qa "$OUT" -- "declare -F case_nuke_profiles case_nuke_timer"
+
+# ─── 9. 1.31.1: nuke-row-tap and challenge-ime ──────────────────────────────────
+echo "nuke-row-tap, challenge-ime:"
+# namexy lands on the NAME in both row shapes: 1.31.0's (the name its own small node, only the box
+# clickable) and 1.31.1's (the whole row one checkable node), and never on the box.
+cat >"$TMP/nuke-mergedrow.xml" <<'XML'
+<?xml version='1.0' encoding='UTF-8' standalone='yes' ?><hierarchy rotation="0">
+<node text="Calendar" class="android.widget.EditText" clickable="true" checkable="false" checked="false" bounds="[44,1566][1036,1720]" />
+<node text="" class="android.view.View" clickable="true" checkable="true" checked="true" bounds="[44,1780][1036,1930]">
+<node text="" class="android.view.View" content-desc="Calendar" clickable="false" checkable="false" checked="false" bounds="[88,1797][198,1907]" />
+<node text="Calendar" class="android.widget.TextView" clickable="false" checkable="false" checked="false" bounds="[242,1819][429,1885]" />
+<node text="" class="android.view.View" clickable="false" checkable="false" checked="false" bounds="[861,1787][993,1919]" />
+</node></hierarchy>
+XML
+uix() { run_qa "$OUT" -- "WORK='$TMP'; write_ui_state; python3 '$TMP/uistate.py' $1 '$2' '$3'" || true; tr -d '\n' <"$OUT"; }
+nx="$(uix namexy "$TMP/nuke-realrow.xml" Calendar)"
+check "uistate namexy on the 1.31.0 row: a point on the name (the icon's desc node comes first and is left of the box too)" \
+  bash -c "read -r x y <<<'$nx'; (( x < 861 && y > 1780 && y < 1930 ))"
+nx="$(uix namexy "$TMP/nuke-mergedrow.xml" Calendar)"
+check "uistate namexy on the 1.31.1 merged row: left of the box, inside the row" \
+  bash -c "read -r x y <<<'$nx'; (( x < 861 && y > 1780 && y < 1930 ))"
+check "uistate checked on the merged row reads the ROW's state (the row is the checkable node)" \
+  test "$(uix checked "$TMP/nuke-mergedrow.xml" Calendar)" = "true"
+
+# The typed-code dialog, with the numbers the bench read on 1.31.0 (Hard, 32/48, keyboard top 1224).
+cat >"$TMP/challenge.xml" <<'XML'
+<?xml version='1.0' encoding='UTF-8' standalone='yes' ?><hierarchy rotation="0">
+<node text="" class="android.widget.FrameLayout" clickable="false" bounds="[100,77][980,1300]">
+<node text="Strict Mode locked" class="android.widget.TextView" bounds="[265,253][815,341]" />
+<node text="BdDse-CFsDe-kU8EJ-SD4dq-k65vY-3D6Rw-7HNjJ-K7HVE-ZcNbj-EBQ" class="android.widget.TextView" bounds="[166,500][914,700]" />
+<node text="Unlock code" class="android.widget.TextView" bounds="[180,760][400,800]" />
+<node text="BdDseCFsDekU8EJSD4dqk65vY3D6Rw7H" class="android.widget.EditText" clickable="true" bounds="[166,775][914,975]" />
+<node text="32/48" class="android.widget.TextView" bounds="[166,992][263,1036]" />
+<node text="" class="android.view.View" clickable="true" bounds="[313,1102][705,1234]"><node text="I changed my mind" class="android.widget.TextView" bounds="[340,1140][680,1196]" /></node>
+<node text="" class="android.view.View" clickable="true" bounds="[727,1102][914,1234]"><node text="Unlock" class="android.widget.TextView" bounds="[760,1140][880,1196]" /></node>
+</node></hierarchy>
+XML
+check "uistate code: the shown code without its dashes (48 characters)" \
+  test "$(uix code "$TMP/challenge.xml" -)" = "BdDseCFsDekU8EJSD4dqk65vY3D6Rw7HNjJK7HVEZcNbjEBQ"
+check "uistate tapbottom: the touch target's bottom (the clickable parent), exact label only ('Unlock code' comes first)" \
+  test "$(uix tapbottom "$TMP/challenge.xml" Unlock)" = "1234"
+check "uistate tapbottom: the other button too" \
+  test "$(uix tapbottom "$TMP/challenge.xml" 'I changed my mind')" = "1234"
+check "uistate rootbottom: the dialog window's bottom" test "$(uix rootbottom "$TMP/challenge.xml" -)" = "1300"
+
+# ime_top / dialog_window_sim against a `dumpsys window windows` cut from the 1.31.0 bench run.
+cat >"$TMP/win-ime.txt" <<'TXT'
+WINDOW MANAGER WINDOWS (dumpsys window windows)
+  Window #3 Window{a9cb472 u0 InputMethod}:
+    mAttrs={(0,0)(fillxfill) gr=BOTTOM CENTER_VERTICAL sim={adjust=pan} ty=INPUT_METHOD fmt=TRANSPARENT
+    mGivenContentInsets=[0,1147][0,0] mGivenVisibleInsets=[0,1147][0,0]
+    mFrame=[0,77][1080,2160] last=[0,77][1080,2160]
+    isVisible=true
+  Window #4 Window{29d329c u0 dev.astraedus.nudge/com.astraedus.nudge.MainActivity}:
+    mAttrs={(0,0)(wrapxwrap) gr=CENTER sim={adjust=pan} ty=APPLICATION fmt=TRANSPARENT wanim=0x10302ff
+    mFrame=[100,77][980,1300] last=[100,77][980,1300]
+    isVisible=true
+  Window #5 Window{d6a55ea u0 dev.astraedus.nudge/com.astraedus.nudge.MainActivity}:
+    mAttrs={(0,0)(fillxfill) sim={adjust=pan forwardNavigation} ty=BASE_APPLICATION wanim=0x10302fe
+    isVisible=true
+TXT
+sed 's/isVisible=true/isVisible=false/' "$TMP/win-ime.txt" >"$TMP/win-noime.txt"
+winq() { run_qa "$OUT" -- "ash() { cat '$1'; }; $2" || true; tr -d '\n' <"$OUT"; }
+check "ime_top: the InputMethod window's top + its given content inset (77 + 1147)" \
+  test "$(winq "$TMP/win-ime.txt" ime_top)" = "1224"
+check "ime_top: empty when the keyboard window is not visible" test -z "$(winq "$TMP/win-noime.txt" ime_top)"
+check "dialog_window_sim: the wrap-content dialog window's mode, not the activity's" \
+  test "$(winq "$TMP/win-ime.txt" dialog_window_sim)" = "adjust=pan"
+
+# case_nuke_row_tap's verdict: the name tap must flip the box. A stateful fake row: a name tap
+# toggles it only when ROW=fixed (1.31.1), never when ROW=broken (1.31.0).
+rowcase() { # fixed|broken -> "<rc>|<final state>"
+  printf 'false' >"$TMP/row.state"
+  run_qa "$OUT" -- "
+    nuke_preflight() { return 0; }; nuke_ensure_off() { return 0; }; nuke_search() { return 0; }
+    ui_wait_text() { return 0; }; ui_snapshot() { :; }; shot() { :; }; go_home() { :; }; sleep() { :; }
+    ui_xy() { [[ \"\$1\" == checked ]] && cat '$TMP/row.state'; }
+    ui_tap_xy_mode() { [[ '$1' == fixed && \"\$1\" == namexy ]] || return 0
+      local v; v=\$(cat '$TMP/row.state'); if [[ \$v == true ]]; then printf false; else printf true; fi >'$TMP/row.state'; }
+    nuke_set_ticked() { printf '%s' \"\$2\" >'$TMP/row.state'; }
+    case_nuke_row_tap; echo \"rc=\$?\"; trap - EXIT" || true
+  printf '%s|%s' "$(sed -n 's/^rc=//p' "$OUT")" "$(cat "$TMP/row.state")"
+}
+check "nuke-row-tap PASSES when a name tap ticks the row, and leaves it as found" test "$(rowcase fixed)" = "0|false"
+check "nuke-row-tap FAILS on the 1.31.0 row (name tap does nothing), and leaves it as found" test "$(rowcase broken)" = "1|false"
+
+# challenge_ime_check's verdict, from the geometry alone: 1.31.0's numbers fail, a fitted dialog passes.
+imecheck() { # dialog_bottom button_bottom -> "<rc>|<taps>"
+  : >"$NLOG"
+  run_qa "$OUT" NLOG="$NLOG" -- "
+    ui_snapshot() { :; }; shot() { :; }; sleep() { :; }; ui_tap_edittext() { return 0; }
+    challenge_type() { echo \"typed \${#1}\" >>\"\$NLOG\"; }; ime_top() { echo 1224; }; dialog_window_sim() { echo adjust=x; }
+    ui_tap_text() { echo \"tap \$1\" >>\"\$NLOG\"; }
+    ui_xy() { case \"\$1\" in code) echo BdDseCFsDekU8EJSD4dqk65vY3D6Rw7HNjJK7HVEZcNbjEBQ ;; rootbottom) echo $1 ;; tapbottom) echo $2 ;; esac; }
+    challenge_ime_check Unlock 36 strict; echo \"rc=\$?\"; trap - EXIT" || true
+  printf '%s|%s' "$(sed -n 's/^rc=//p' "$OUT")" "$(tr '\n' ',' <"$NLOG")"
+}
+check "challenge_ime_check FAILS on 1.31.0's geometry (dialog bottom 1300, buttons 1234, keyboard 1224)" \
+  bash -c "[[ '$(imecheck 1300 1234)' == 1\|* ]]"
+check "challenge_ime_check PASSES when the dialog and both buttons end above the keyboard; types 36 then 12, then taps Unlock" \
+  test "$(imecheck 1224 1180)" = "0|typed 36,typed 12,tap Unlock,"
+
+# case_challenge_ime: the Nuke half runs on a debug build only (release: SKIP 77, no setprop).
+ccase() { # debug|release [strict rc] -> "<rc>|<log>"
+  : >"$NLOG"
+  run_qa "$OUT" NLOG="$NLOG" -- "
+    go_home() { :; }; sleep() { :; }
+    challenge_ime_strict() { echo strict >>\"\$NLOG\"; STRICT_NOTE=s; return ${2:-0}; }
+    challenge_ime_nuke() { echo nuke >>\"\$NLOG\"; NUKE_NOTE=n; return 0; }
+    ash() { if [[ \"\$1 \$2\" == 'dumpsys package' ]]; then
+        [[ '$1' == debug ]] && echo '    flags=[ DEBUGGABLE HAS_CODE ]' || echo '    flags=[ HAS_CODE ]'
+      else echo \"ash \$*\" >>\"\$NLOG\"; fi; }
+    case_challenge_ime; echo \"rc=\$?\"; trap - EXIT" || true
+  printf '%s|%s' "$(sed -n 's/^rc=//p' "$OUT")" "$(tr '\n' ',' <"$NLOG")"
+}
+check "challenge-ime on a RELEASE build: Strict half runs, Nuke half SKIPPED (rc 77), no setprop" \
+  test "$(ccase release)" = "77|strict,"
+check "challenge-ime on a DEBUG build: both halves, rc 0" test "$(ccase debug)" = "0|strict,nuke,"
+check "a Strict half failure is a FAIL, not a SKIP" test "$(ccase release 1)" = "1|strict,"
+
+# nuke_search reads the row's label off the screen, case-insensitively: Keep's 2026-11-17 update
+# renamed it "Keep Notes", and the hand-typed default "Keep notes" then found no row at all.
+cat >"$TMP/nuke-search.xml" <<'XML'
+<hierarchy><node text="Keep" class="android.widget.EditText" bounds="[44,700][1036,850]" />
+<node text="Keep Notes" class="android.widget.TextView" bounds="[242,919][483,985]" /></hierarchy>
+XML
+run_qa "$OUT" -- "ash() { :; }; sleep() { :; }; ui_tap_edittext() { return 0; }; nuke_type_field() { return 0; }
+  nuke_hide_keyboard() { :; }; ui_snapshot() { UI_XML='$TMP/nuke-search.xml'; }
+  nuke_search 'Keep notes'; echo \"label=\$NUKE_LABEL\"" || true
+check "nuke_search: NUKE_LABEL is the device's spelling ('Keep Notes'), whatever case was configured" \
+  grep -qx 'label=Keep Notes' "$OUT"
+run_qa "$OUT" -- "ash() { :; }; sleep() { :; }; ui_tap_edittext() { return 0; }; nuke_type_field() { return 0; }
+  nuke_hide_keyboard() { :; }; ui_snapshot() { UI_XML='$TMP/nuke-search.xml'; }
+  nuke_search 'Calendar'; echo \"label=\$NUKE_LABEL\"" || true
+check "nuke_search: a label not on screen falls back to the configured one (the read then fails loudly)" \
+  grep -qx 'label=Calendar' "$OUT"
+
+run_qa "$OUT" -- 'for d in Easy Medium Hard; do challenge_chip "$d"; echo; done' || true
+check "challenge_chip: the Settings chip labels, lengths read from StrictModeChallenge's constants" \
+  test "$(tr '\n' '|' <"$OUT")" = "Easy (12)|Medium (24)|Hard (48)|"
+
+# challenge_ime_strict leaves Strict Mode OFF whatever happens (the 2026-11-20 gate run that failed
+# mid-dialog left the bench locked on Hard). A stateful fake Settings screen: the row turns ON with a
+# plain tap, OFF only through "Unlock"; CHECK=pass makes the dialog check unlock it, CHECK=fail does not.
+strictcase() { # start(on|off) check(pass|fail) -> "<rc>|<final state>|<log>"
+  printf '%s' "$([[ $1 == on ]] && echo true || echo false)" >"$TMP/strict.state"
+  : >"$NLOG"
+  run_qa "$OUT" NLOG="$NLOG" -- "
+    nudge_route_home() { :; }; scroll_to_text() { return 0; }; ui_wait_text() { return 0; }
+    nuke_hide_keyboard() { :; }; ui_snapshot() { :; }; ui_has() { return 1; }; sleep() { :; }
+    ui_tap_edittext() { return 0; }; shot() { :; }
+    ui_xy() { case \"\$1\" in checked) cat '$TMP/strict.state' ;; selected) [[ \"\$2\" == 'Medium (24)' ]] && echo true || echo false ;;
+      code) echo BdDseCFsDekU8EJSD4dqk65vY3D6Rw7HNjJK7HVEZcNbjEBQ ;; esac; }
+    ui_tap_text() { echo \"tap \$1\" >>\"\$NLOG\"
+      if [[ \"\$1\" == 'Lock my settings (Strict Mode)' && \$(cat '$TMP/strict.state') == false ]]; then printf true >'$TMP/strict.state'; fi
+      if [[ \"\$1\" == Unlock ]]; then printf false >'$TMP/strict.state'; fi; return 0; }
+    challenge_type() { echo \"typed \${#1}\" >>\"\$NLOG\"; }; challenge_keys() { echo \"keys \${#1}\" >>\"\$NLOG\"; }
+    challenge_ime_check() { echo check >>\"\$NLOG\"; CHALLENGE_NOTE=c
+      [[ '$2' == pass ]] && { printf false >'$TMP/strict.state'; return 0; }; return 1; }
+    challenge_ime_strict; echo \"rc=\$?\"; trap - EXIT" || true
+  printf '%s|%s|%s' "$(sed -n 's/^rc=//p' "$OUT")" "$(cat "$TMP/strict.state")" "$(tr '\n' ',' <"$NLOG")"
+}
+check "challenge-ime strict half PASS: ends with Strict off and the difficulty restored" \
+  test "$(strictcase off pass)" = "0|false|tap Settings,tap Hard (48),tap Lock my settings (Strict Mode),tap Lock my settings (Strict Mode),check,tap Medium (24),"
+check "a failed Unlock (keyboard up) is a FAIL, and the clean-up still turns Strict off (whole code, counter read with the keyboard down)" \
+  test "$(strictcase off fail)" = "1|false|tap Settings,tap Hard (48),tap Lock my settings (Strict Mode),tap Lock my settings (Strict Mode),check,tap Lock my settings (Strict Mode),keys 48,tap Unlock,tap Medium (24),"
+check "a bench left in Strict Mode is unlocked FIRST, and is not re-locked at the end" \
+  test "$(strictcase on pass)" = "0|false|tap Settings,tap Lock my settings (Strict Mode),keys 48,tap Unlock,tap Hard (48),tap Lock my settings (Strict Mode),tap Lock my settings (Strict Mode),check,tap Medium (24),"
+
+# An empty row read saves its evidence (screen + dump) instead of leaving only "got ''".
+readcase() { # checked-value -> "<printed>|<log>"
+  : >"$NLOG"
+  run_qa "$OUT" NLOG="$NLOG" -- "
+    nuke_search() { NUKE_LABEL='Keep Notes'; }; ui_wait_text() { return 0; }
+    qa_evidence() { echo \"evidence \$1\" >>\"\$NLOG\"; }
+    printf '%s' '$1' >'$TMP/read.val'
+    python3() { cat '$TMP/read.val'; }
+    printf 'v=%s\n' \"\$(nuke_read_ticked 'Keep notes')\"; trap - EXIT" || true
+  printf '%s|%s' "$(sed -n 's/^v=//p' "$OUT")" "$(tr '\n' ',' <"$NLOG")"
+}
+check "nuke_read_ticked: a read value passes through with no evidence" test "$(readcase true)" = "true|"
+check "nuke_read_ticked: an EMPTY read saves evidence and still prints ''" test "$(readcase '')" = "|evidence nuke-read-empty,"
+
+# challenge_type's miss path runs under `set -u` (a stale variable name there aborted a bench run).
+run_qa "$OUT" -- "ash() { :; }; sleep() { :; }; ui_wait_text() { return 1; }; qa_evidence() { echo \"evidence \$1\"; }
+  challenge_type abc 3/48; echo \"rc=\$?\"; trap - EXIT" || true
+check "challenge_type: a counter miss is a clean FAIL (rc 1) with evidence, not a shell abort" \
+  bash -c "grep -qx 'rc=1' '$OUT' && grep -q 'evidence challenge-counter-miss' '$OUT' && grep -q 'typed 3 characters' '$OUT'"
+
+# After a profile chip tap the Nuke screen is at the top, and the FOCUSED search field, now off
+# screen, stays in the dump as [0,0][0,0]. nuke_search must scroll then, not take y=0 as "on screen".
+cat >"$TMP/nuke-top.xml" <<'XML'
+<hierarchy><node text="Apps to nuke" class="android.widget.TextView" bounds="[44,1639][1036,1705]" />
+<node text="Keep" class="android.widget.EditText" focused="true" bounds="[0,0][0,0]" /></hierarchy>
+XML
+printf top >"$TMP/scroll.state"
+run_qa "$OUT" -- "sleep() { :; }; ui_tap_edittext() { return 0; }; nuke_type_field() { return 0; }; nuke_hide_keyboard() { :; }
+  ash() { [[ \"\$1 \$2\" == 'input swipe' ]] && { printf scrolled >'$TMP/scroll.state'; }; return 0; }
+  ui_snapshot() { if [[ \$(cat '$TMP/scroll.state') == top ]]; then UI_XML='$TMP/nuke-top.xml'; else UI_XML='$TMP/nuke-search.xml'; fi; }
+  nuke_search 'Keep notes'; echo \"label=\$NUKE_LABEL\"" || true
+check "nuke_search: an off-screen focused field ([0,0][0,0]) is scrolled into view, and the row's label is read" \
+  bash -c "grep -qx scrolled '$TMP/scroll.state' && grep -qx 'label=Keep Notes' '$OUT'"
 
 echo
 echo "$pass passed, $fail failed"

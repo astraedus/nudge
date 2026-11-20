@@ -4,6 +4,12 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+## [1.31.1] - 2026-11-21
+
+### Fixed
+- **Nuke: tap anywhere on an app's row to add it or take it off.** The app list's rows only reacted to the small checkbox; tapping the icon or name did nothing. The whole row is now the one tap target (and TalkBack reads one checkbox per app). Taking an app off while Nuke is on still asks for your code, as before. (#188)
+- **The unlock and emergency-code dialogs keep their buttons above the keyboard.** In the Strict Mode unlock and Nuke's "Emergency: end Nuke" dialog, the keyboard covered "Unlock" / "End it" and "I changed my mind" while you typed, so you had to close the keyboard to finish. The dialog now fits above the keyboard, the code field and its character counter stay in view while you type, and the rest of the dialog scrolls. The challenge itself is unchanged: no paste, dashes optional, same code lengths. (#188)
+
 ## [1.31.0] - 2026-11-17
 
 ### Added

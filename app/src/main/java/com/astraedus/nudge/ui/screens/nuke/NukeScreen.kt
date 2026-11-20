@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Search
@@ -37,6 +38,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -221,16 +223,19 @@ fun NukeScreen(
             }
 
             items(state.apps, key = { it.packageName }) { row ->
+                // The whole row is the one toggle target (icon, name and box), as in AppPicker;
+                // the box itself takes no clicks, so TalkBack reads one checkbox per app.
                 AppListItem(
                     appName = row.label,
                     icon = row.icon,
+                    modifier = Modifier.toggleable(
+                        value = row.nuked,
+                        role = Role.Checkbox,
+                        onValueChange = { viewModel.toggleApp(row.packageName) }
+                    ),
                     trailingContent = {
-                        Checkbox(
-                            checked = row.nuked,
-                            onCheckedChange = { viewModel.toggleApp(row.packageName) }
-                        )
-                    },
-                    onClick = { viewModel.toggleApp(row.packageName) }
+                        Checkbox(checked = row.nuked, onCheckedChange = null)
+                    }
                 )
             }
 
