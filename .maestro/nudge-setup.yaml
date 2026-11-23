@@ -53,15 +53,21 @@ appId: dev.astraedus.nudge
 # (util/NudgeLogger.kt: `BuildConfig.DEBUG || debugLoggingPreferenceEnabled`), and the
 # home-reopen case asserts on those log lines. `pm clear` wipes the preference, so it
 # is re-armed here on every setup rather than assumed.
+# Every scroll below gets 60 s, not Maestro's default 20 s: one scroll attempt (swipe + hierarchy
+# read) measured ~6.5 s on the bench on 2026-11-23, so 20 s allowed three swipes and the Settings
+# list, which keeps growing, needed more to reach "Import backup" (setup failed on 1.31.1 and on
+# 1.31.2 alike, with the row one swipe away). A longer timeout costs nothing when the row is near.
 - scrollUntilVisible:
     element:
       text: "Settings"
     direction: DOWN
+    timeout: 60000
 - tapOn: "Settings"
 - scrollUntilVisible:
     element:
       text: "Import backup"
     direction: DOWN
+    timeout: 60000
 - tapOn: "Import backup"
 # ACTION_OPEN_DOCUMENT filtered to JSON opens DocumentsUI on Recent, where the file the runner
 # just pushed is listed by name. Tapping by NAME means the ordering of that list does not matter.
@@ -93,6 +99,7 @@ appId: dev.astraedus.nudge
     element:
       text: "Version"
     direction: DOWN
+    timeout: 60000
 - repeat:
     times: 7
     commands:
@@ -104,6 +111,7 @@ appId: dev.astraedus.nudge
     element:
       text: "Debug Logging"
     direction: DOWN
+    timeout: 60000
 - tapOn: "Debug Logging"
 - takeScreenshot: 05-debug-logging
 
@@ -123,6 +131,7 @@ appId: dev.astraedus.nudge
     element:
       text: "Manage"
     direction: UP
+    timeout: 60000
 - tapOn: "Manage"
 - extendedWaitUntil:
     visible: "Search apps and groups"
