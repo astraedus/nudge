@@ -4,6 +4,11 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+## [1.31.2] - 2026-11-23
+
+### Fixed
+- **Instagram: a Reels rule now fires only on the full-screen Reels player you are watching.** The player check counted any node carrying a reel-player id, and Android also hands back nodes that are not on screen (a page beside the current one, a player left behind another screen) and says nothing about size. So a Reels rule could fire on a screen where no reel was being watched. A match now counts only if it is visible and at least 80% of the window's height; the inline video on the recorded Home feed is 63-65%, the Reels-tab player 93%. Reels opened from the Reels tab, a DM, a link or a profile are still caught. Where Instagram's tab state is readable, a Reels rule still covers the Home feed, as documented; that part of the report is a design question and is unchanged. (Refs #190)
+
 ## [1.31.1] - 2026-11-21
 
 ### Fixed
