@@ -1,6 +1,7 @@
 package com.astraedus.nudge.service
 
 import android.view.accessibility.AccessibilityNodeInfo
+import com.astraedus.nudge.domain.surfaces.ScreenBounds
 import com.astraedus.nudge.util.NudgeLogger
 import io.mockk.every
 import io.mockk.mockk
@@ -22,24 +23,45 @@ import org.junit.Test
  */
 class InAppDetectorClipsViewerTest {
 
-    private val detector = InAppDetector(mockk<NudgeLogger>(relaxed = true))
-
     private val ig = "com.instagram.android"
+
+    /** The recorded Pixel 3 Instagram window (`surface-fixtures/home.xml` root). */
+    private val window = ScreenBounds(0, 0, 1080, 2028)
+
+    /** Bounds the fake tree reports, per node. Read by the detector through its bounds seam. */
+    private val bounds = mutableMapOf<AccessibilityNodeInfo, ScreenBounds?>()
+
+    private val detector = InAppDetector(mockk<NudgeLogger>(relaxed = true)).also { d ->
+        d.boundsInScreen = { node -> bounds[node] }
+    }
+
+    /** A node as the framework hands it back: [visible] is its `isVisibleToUser`. */
+    private fun node(at: ScreenBounds?, visible: Boolean = true): AccessibilityNodeInfo {
+        val n = mockk<AccessibilityNodeInfo>(relaxed = true)
+        every { n.isVisibleToUser } returns visible
+        bounds[n] = at
+        return n
+    }
 
     /**
      * A root whose [AccessibilityNodeInfo.findAccessibilityNodeInfosByViewId] resolves exactly the
-     * ids in [presentIds] and nothing else. childCount is 0 so the debug harvest terminates.
+     * ids in [found] (to the nodes given) and nothing else. childCount is 0 so the debug harvest
+     * terminates.
      */
-    private fun rootWith(presentIds: Set<String>): AccessibilityNodeInfo {
+    private fun rootWithNodes(found: Map<String, List<AccessibilityNodeInfo>>): AccessibilityNodeInfo {
         val root = mockk<AccessibilityNodeInfo>(relaxed = true)
         every { root.childCount } returns 0
         every { root.viewIdResourceName } returns null
         every { root.findAccessibilityNodeInfosByViewId(any()) } answers {
-            val id = firstArg<String>()
-            if (id in presentIds) listOf(mockk<AccessibilityNodeInfo>(relaxed = true)) else emptyList()
+            found[firstArg<String>()] ?: emptyList()
         }
+        bounds[root] = window
         return root
     }
+
+    /** Every id in [presentIds] resolves to one on-screen, full-window node: the real player. */
+    private fun rootWith(presentIds: Set<String>): AccessibilityNodeInfo =
+        rootWithNodes(presentIds.associateWith { listOf(node(window)) })
 
     /** The exact surface captured from a reel opened out of a DM thread. */
     @Test
@@ -110,5 +132,77 @@ class InAppDetectorClipsViewerTest {
         val root = rootWith(setOf("com.instagram.android:id/clips_viewer_view_pager"))
 
         assertNull(detector.detectFeature("com.google.android.youtube", root))
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // Issue #190: an id match the user is not looking at is not the reel player
+    // -----------------------------------------------------------------------------------------
+
+    private val pager = "com.instagram.android:id/clips_viewer_view_pager"
+    private val media = "com.instagram.android:id/clips_media_component"
+
+    /**
+     * The framework's id lookup returns nodes whose views are VISIBLE but not on screen, such as a
+     * pager page beside the current one. On a surface with no other signal (a DM thread, Stories, or
+     * any screen on a device where Instagram's tab state is unreadable, #18) that used to make the
+     * screen count as Reels.
+     */
+    @Test
+    fun `a player node the user cannot see is not REELS`() {
+        val root = rootWithNodes(mapOf(pager to listOf(node(ScreenBounds(1080, 0, 2160, 2028), visible = false))))
+
+        assertNull(detector.detectFeature(ig, root))
+    }
+
+    /** A player embedded in another screen, at the size of the recorded Home feed inline video. */
+    @Test
+    fun `an inline-sized player inside another screen is not REELS`() {
+        val root = rootWithNodes(mapOf(media to listOf(node(ScreenBounds(0, 611, 1080, 1896)))))
+
+        assertNull(detector.detectFeature(ig, root))
+    }
+
+    /** The Reels tab: the player runs from the top of the window to the recorded tab bar (y=1896). */
+    @Test
+    fun `the Reels tab player above the nav bar is REELS`() {
+        val root = rootWithNodes(mapOf(pager to listOf(node(ScreenBounds(0, 0, 1080, 1896)))))
+
+        assertEquals(InAppDetector.Feature.REELS, detector.detectFeature(ig, root))
+    }
+
+    /** One off-screen copy must not hide the real player: any on-screen match is enough. */
+    @Test
+    fun `an off-screen copy next to the on-screen player is still REELS`() {
+        val root = rootWithNodes(
+            mapOf(
+                pager to listOf(
+                    node(ScreenBounds(1080, 0, 2160, 2028), visible = false),
+                    node(window)
+                )
+            )
+        )
+
+        assertEquals(InAppDetector.Feature.REELS, detector.detectFeature(ig, root))
+    }
+
+    /** Any of the three ids still suffices: a small media node does not veto a full-screen pager. */
+    @Test
+    fun `a full-screen pager counts even when the media node inside it is small`() {
+        val root = rootWithNodes(
+            mapOf(
+                media to listOf(node(ScreenBounds(0, 700, 1080, 1300))),
+                pager to listOf(node(window))
+            )
+        )
+
+        assertEquals(InAppDetector.Feature.REELS, detector.detectFeature(ig, root))
+    }
+
+    /** Fails toward the old behaviour: bounds that cannot be read never turn the player into a miss. */
+    @Test
+    fun `a visible player whose bounds cannot be read is still REELS`() {
+        val root = rootWithNodes(mapOf(pager to listOf(node(null))))
+
+        assertEquals(InAppDetector.Feature.REELS, detector.detectFeature(ig, root))
     }
 }

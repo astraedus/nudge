@@ -1,7 +1,10 @@
 package com.astraedus.nudge.service
 
+import android.graphics.Rect
 import android.view.accessibility.AccessibilityNodeInfo
 import com.astraedus.nudge.BuildConfig
+import com.astraedus.nudge.domain.surfaces.ReelPlayerOnScreen
+import com.astraedus.nudge.domain.surfaces.ScreenBounds
 import com.astraedus.nudge.domain.logging.NudgeLog
 import com.astraedus.nudge.util.NudgeLogger
 import javax.inject.Inject
@@ -64,7 +67,10 @@ class InAppDetector @Inject constructor(
          * over-match ordinary browsing.
          *
          * More than one is listed because the player's tree varies between entry points — the
-         * DM-opened variant additionally carries a reply bar. Any single match is sufficient.
+         * DM-opened variant additionally carries a reply bar. Any single match is sufficient, as long
+         * as that node is on screen and fills most of the window ([ReelPlayerOnScreen], #190). The
+         * "verified absent from the home feed" above was one Instagram build on one device, and the
+         * id lookup also returns nodes that are not on screen.
          */
         private val INSTAGRAM_CLIPS_VIEWER_IDS = listOf(
             "com.instagram.android:id/clips_viewer_view_pager",
@@ -73,17 +79,42 @@ class InAppDetector @Inject constructor(
         )
     }
 
-    /** True if any of [viewIds] resolves in [root]. Nodes are recycled before returning. */
-    private fun findsAnyViewId(root: AccessibilityNodeInfo, viewIds: List<String>): Boolean {
+    /**
+     * Reads a node's bounds in screen coordinates. A seam only because `android.graphics.Rect` is a
+     * throwing stub in JVM tests (see [HostNodeFinder.findPlacement]); tests replace it with fixed
+     * bounds. Production never reassigns it.
+     */
+    internal var boundsInScreen: (AccessibilityNodeInfo) -> ScreenBounds? = ::readBoundsInScreen
+
+    /**
+     * True if any of [viewIds] resolves in [root] to a node the user is actually looking at, at the
+     * size of the full-screen player (issue #190, [ReelPlayerOnScreen]). A node with the id that is
+     * off screen, or a small player inside another screen, does not count. Nodes are recycled before
+     * returning.
+     */
+    private fun findsOnScreenPlayer(root: AccessibilityNodeInfo, viewIds: List<String>): Boolean {
+        val window = boundsInScreen(root)
         for (id in viewIds) {
             val nodes = root.findAccessibilityNodeInfosByViewId(id)
-            if (nodes.isNotEmpty()) {
-                recycleNodes(nodes)
-                return true
+            val onScreen = nodes.any { node ->
+                ReelPlayerOnScreen.counts(node.isVisibleToUser, boundsInScreen(node), window)
+            }
+            if (nodes.isNotEmpty() && !onScreen) {
+                logger.d("instagram clips container ignored id=${id.substringAfterLast('/')} reason=not_full_screen_or_not_visible")
             }
             recycleNodes(nodes)
+            if (onScreen) return true
         }
         return false
+    }
+
+    /** The untestable residue: allocate, read, copy four fields. Null if the read fails. */
+    private fun readBoundsInScreen(node: AccessibilityNodeInfo): ScreenBounds? = try {
+        val rect = Rect()
+        node.getBoundsInScreen(rect)
+        ScreenBounds(rect.left, rect.top, rect.right, rect.bottom)
+    } catch (_: Exception) {
+        null
     }
 
     /**
@@ -163,7 +194,9 @@ class InAppDetector @Inject constructor(
         // at all — so tab-based detection cannot see it even in principle, and the user scrolled
         // reels indefinitely with a HARD_BLOCK rule active. Keying on the player's own container
         // covers every entry route, including the Reels tab, where these IDs are also present.
-        if (findsAnyViewId(root, INSTAGRAM_CLIPS_VIEWER_IDS)) {
+        // Only a container that is on screen and fills most of the window counts (#190): the
+        // framework also returns nodes with these ids that the user cannot see.
+        if (findsOnScreenPlayer(root, INSTAGRAM_CLIPS_VIEWER_IDS)) {
             logger.d("instagram clips viewer detected")
             return Feature.REELS
         }
