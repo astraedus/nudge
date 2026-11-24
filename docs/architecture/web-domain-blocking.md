@@ -89,8 +89,12 @@ anyway.
 Known edges, accepted:
 
 - A Custom Tab runs in its browser's package, so it is blocked too while that browser is covered.
-- `enforceExhaustedBudget` still evaluates a browser with its direct rules (the counter cache holds
-  direct rules only), unchanged by 5.5.
+- ~~`enforceExhaustedBudget` still evaluates a browser with its direct rules~~ **Fixed in 1.31.3
+  (#192).** In practice a spent daily limit on a browser's own rule hard-blocked the whole browser
+  on any site. The clock now re-derives a browser through `EvaluateBlockUseCase.evaluateSpentBudget`,
+  the same routing as `evaluateBrowser` (group rules as an app, then the site on screen), so only
+  the rule's own sites are blocked. The limit is still spent by ALL of the browser's time
+  (`docs/BACKLOG.md`, "Per-domain web time is not measured").
 - While a covered browser is allowed, site 2 runs one in-memory app evaluation per 2 s debounce.
 
 Tests: `WholeAppCoverageTest` (L1, every condition), `PassthroughWholeAxisTest` (L1),
