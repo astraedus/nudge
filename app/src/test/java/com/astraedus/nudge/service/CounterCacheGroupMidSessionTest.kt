@@ -125,7 +125,6 @@ class CounterCacheGroupMidSessionTest {
             usageRepository = usage,
             preferences = AlwaysOn(),
             counterCache = cache,
-            passthroughManager = PassthroughManager(),
             logger = NudgeLog.NoOp,
             serviceScope = tickScope,
             onTimeLimitExceeded = { pkg, limit -> fired += pkg to limit }
@@ -154,7 +153,7 @@ class CounterCacheGroupMidSessionTest {
         val fired = mutableListOf<Pair<String, Int>>()
         val tickScope = TestScope(dispatcher)
         val handler = TimeRemainingHandler(
-            SilentOverlay(), usage, AlwaysOn(), cache, PassthroughManager(), NudgeLog.NoOp, tickScope
+            SilentOverlay(), usage, AlwaysOn(), cache, NudgeLog.NoOp, tickScope
         ) { pkg, limit -> fired += pkg to limit }
 
         screenTime.todayMs[member] = limitMinutes * 60_000L - 1_000L

@@ -21,7 +21,6 @@ class TimeRemainingHandler(
     private val usageRepository: UsageProvider,
     private val preferences: GlobalEnabledProvider,
     private val counterCache: CounterCacheRefresher,
-    private val passthroughManager: PassthroughManager,
     logger: NudgeLog,
     private val serviceScope: CoroutineScope,
     /**
@@ -96,13 +95,11 @@ class TimeRemainingHandler(
                 }
 
                 if (remainingMs <= 0L) {
-                    // BEFORE the launch, and it is the (c) half of this fix: a completed
-                    // delay/hold/breathing grant must not let someone outlive their budget. The
-                    // grant suppresses the EVENT path (`shouldSkipForegroundEvaluation`), so
-                    // without this the user would be blocked here and then walk straight back in.
-                    // Nothing on the tick path consults the grant, so this clear is the whole
-                    // interaction between the two.
-                    passthroughManager.clear()
+                    // The completed delay/hold/breathing grant is NOT cleared here any more (#192).
+                    // It is dropped by the service's `enforceExhaustedBudget`, right before the
+                    // block it decides to put up: a spent budget does not always block what is on
+                    // screen (a browser's own rule blocks only its websites), and clearing on every
+                    // 30-second tick revoked a finished website delay on a page nothing blocked.
                     withContext(Dispatchers.Main) {
                         timeRemainingOverlayManager.hide()
                         onTimeLimitExceeded(packageName, limitMinutes)

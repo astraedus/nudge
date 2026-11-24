@@ -1,0 +1,1 @@
+• Chrome and other browsers: when a website rule's daily limit runs out, only those websites are blocked, not the whole browser.

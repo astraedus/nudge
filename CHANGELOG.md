@@ -4,6 +4,11 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+## [1.31.3] - 2026-11-24
+
+### Fixed
+- **Browsers: when a daily limit on a browser's own rule runs out, only that rule's websites are blocked, not the whole browser.** A rule set on Chrome (or any browser) from its App config is websites-only: Chrome opens normally and only the listed sites are blocked. But the daily-limit clock, which notices a spent budget while you are still in the app, re-checked the browser as an app with that rule, so within about 30 seconds of the limit running out it hard-blocked all of Chrome on any site, and again every time you reopened it. The clock now asks the same question opening the browser asks: a browser that a group or All apps rule blocks as a whole is still blocked whole when that rule's limit runs out; otherwise only the page on screen is checked, and only the rule's own sites are blocked. Because the clock now often blocks nothing on a browser, it also no longer drops a finished delay on every tick; the delay is dropped only when a block actually goes up. The limit is still spent by all of the browser's time, not only time on the listed sites. Apps are unchanged. (#192, refs #190)
+
 ## [1.31.2] - 2026-11-23
 
 ### Fixed

@@ -313,7 +313,7 @@ class BlockOverlayLaunchContractTest {
         assertTrue(
             "which must RE-DERIVE the decision from the rules rather than trust the 10-second " +
                 "counter-cache snapshot (a raised or removed limit is issue #50's own shape)",
-            enforce.contains("evaluateBlockUseCase().invoke(")
+            enforce.contains(".evaluateSpentBudget(")
         )
         assertTrue(
             "and may only ever escalate to a HARD_BLOCK",

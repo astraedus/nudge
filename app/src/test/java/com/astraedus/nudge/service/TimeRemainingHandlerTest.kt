@@ -47,7 +47,6 @@ class TimeRemainingHandlerTest {
             usageRepository = usageProvider,
             preferences = globalEnabledProvider,
             counterCache = counterCache,
-            passthroughManager = passthroughManager,
             logger = NudgeLog.NoOp,
             serviceScope = testScope,
             onTimeLimitExceeded = { pkg, limit -> timeLimitExceededCalls.add(pkg to limit) }
@@ -269,30 +268,28 @@ class TimeRemainingHandlerTest {
     }
 
     /**
-     * THE GRANT, and it is the half a "completed delay" would otherwise defeat.
+     * THE GRANT IS NOT THE CLOCK'S TO DROP (#192).
      *
      * A finished delay / hold / breathing grants passthrough, and passthrough suppresses the EVENT
-     * path (`shouldSkipForegroundEvaluation`). Nothing on the clock path consults the grant -- so
-     * the budget is enforced through it, which is the behaviour -- but the grant must also be DROPPED
-     * as the block goes up, or the user walks straight back into the app they were just removed
-     * from and the block is cosmetic.
+     * path. The clock used to clear it on every tick past the budget, before anything decided
+     * whether a block would go up. A spent budget does not always block what is on screen (a
+     * browser's own rule blocks only its websites), so on a browser that revoked a finished website
+     * delay every 30 seconds on a page nothing blocks. The grant is now dropped by the service's
+     * `enforceExhaustedBudget`, right before the block it decides on
+     * (`SpentBudgetBrowserContractTest`), so it still cannot outlive the budget.
      */
     @Test
-    fun `a completed delay grant does not let a user outlive their budget`() {
+    fun `a spent budget reports to the service and leaves the grant to the block`() {
         enablePackage("com.example.app", showTimeRemaining = false, dailyLimitMinutes = 30)
         usageProvider.foregroundTimeMs = 31 * 60 * 1000L
         passthroughManager.grant("com.example.app")
-        assertTrue(
-            "precondition: the grant really is suppressing the event path",
-            passthroughManager.shouldSkipForegroundEvaluation("com.example.app")
-        )
 
         handler.maybeUpdate("com.example.app")
         testScope.advanceUntilIdle()
 
-        assertEquals("the tick-path block is not suppressed by an active grant", 1, timeLimitExceededCalls.size)
-        assertFalse(
-            "the grant must be gone, or the user re-enters the app the block just took them out of",
+        assertEquals("the tick-path report is not suppressed by an active grant", 1, timeLimitExceededCalls.size)
+        assertTrue(
+            "the clock decides nothing, so it must not revoke the grant itself",
             passthroughManager.shouldSkipForegroundEvaluation("com.example.app")
         )
     }

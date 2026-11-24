@@ -1575,7 +1575,6 @@ class NudgeAccessibilityService : AccessibilityService() {
             usageRepository = entryPoint.usageRepository(),
             preferences = entryPoint.nudgePreferences(),
             counterCache = counterCache,
-            passthroughManager = passthrough,
             logger = entryPoint.nudgeLogger(),
             serviceScope = serviceScope,
             // THE CLOCK REPORTS, IT DOES NOT DECIDE (v1.18.4).
@@ -3934,15 +3933,49 @@ class NudgeAccessibilityService : AccessibilityService() {
      * the clock: when the evidence has gone stale, do nothing.
      */
     private suspend fun enforceExhaustedBudget(packageName: String) {
-        val decision = entryPoint.evaluateBlockUseCase().invoke(packageName)
+        // A BROWSER IS RE-DERIVED THE WAY ITS ENTRY PATH DERIVES IT (#192). Its own rule is
+        // websites-only there, so evaluating it here as an app hard-blocked the whole browser on
+        // any site once the limit ran out. `evaluateSpentBudget` routes a browser like
+        // [evaluateBrowser] (a group or All apps rule as an app, then the site on screen) and
+        // every other package through `invoke`, exactly as before.
+        val browser = entryPoint.webDomainDetector().isBrowser(packageName)
+        val urlBarText = if (browser) currentUrlBarText(packageName) else null
+        val spent = entryPoint.evaluateBlockUseCase()
+            .evaluateSpentBudget(packageName, browser = browser, urlBarText = urlBarText)
+        val decision = spent.decision
         if (decision !is BlockDecision.Block || decision.mode != BlockMode.HARD_BLOCK) {
             log.i(
                 "daily limit NOT enforced package=$packageName " +
-                    "reason=rules_disagree decision=$decision"
+                    "reason=rules_disagree site=${spent.webDomain} decision=$decision"
             )
             return
         }
-        handleDecision(decision, packageName)
+        // Only now, as the block goes up: a completed delay/hold/breathing grant suppresses the
+        // EVENT path, so it must not outlive the budget or the user walks straight back in. It used
+        // to be cleared on every tick, before anything was decided, which on a browser revoked a
+        // finished website delay every 30 seconds on a page no spent budget blocks.
+        entryPoint.passthroughManager().clear()
+        val site = spent.webDomain
+        if (site == null) {
+            // The browser itself is blocked (a group's limit), so a web session's clock must not
+            // keep running behind the overlay; same as [evaluateBrowser]'s app block.
+            if (browser) endWebSession("browser_blocked_as_app")
+            handleDecision(decision, packageName)
+        } else {
+            handleDecision(
+                decision = decision,
+                packageName = spent.trackingPackage ?: packageName,
+                web = WebBlockContext(packageName, site)
+            )
+        }
+    }
+
+    /** The URL bar text of [browserPackage] on screen now, null when it cannot be read. */
+    private suspend fun currentUrlBarText(browserPackage: String): String? {
+        val rootNode = withContext(Dispatchers.Main) {
+            try { rootInActiveWindow } catch (_: Exception) { null }
+        }
+        return entryPoint.webDomainDetector().detectUrl(rootNode, browserPackage)
     }
 
     /**

@@ -206,7 +206,10 @@ cleared, the other gates the daily-usage read and the zero-remaining block, unco
 completed delay/hold/breathing passthrough grant is cleared **before** the block launches — the grant
 only suppresses the event-driven evaluation path (`shouldSkipForegroundEvaluation`), and nothing on
 the tick path consulted it, so without this a user would meet the block here and then walk straight
-back into the app on the next event.
+back into the app on the next event. **Since #192 the clear lives in `enforceExhaustedBudget`, after
+the HARD_BLOCK is confirmed and before `handleDecision`**, not in the tick: a spent budget does not
+always block what is on screen (below), and clearing on every tick revoked a finished website delay
+every 30 seconds on a page nothing blocked.
 
 **The clock REPORTS, it does not enforce — and that is what fixed the missing row.** The daily-limit
 `HARD_BLOCK` used to log no `UsageEvent` at all (the overlay-launch-paths gap in `docs/BACKLOG.md`),
@@ -224,6 +227,17 @@ thing that drifts. `TimeRemainingHandler`'s callback now hands the FACT back and
   enabled flag and the usage total, all current. (It reads the budget from the same
   `UsageRepository.getDailyForegroundTimeMs` the trigger does, so the two can only disagree about the
   LIMIT, never about the minutes.)
+- **A browser is re-derived the way its entry path derives it (#192).** A rule set directly on a
+  browser is websites-only at entry (`web-domain-blocking.md`, "Browsers in a group"). The clock used
+  to call `invoke(browser)` with every rule, so a spent limit on Chrome's own rule took the
+  `time_budget_exceeded` branch as an APP and hard-blocked all of Chrome on any site, again on every
+  reopen. `EvaluateBlockUseCase.evaluateSpentBudget(pkg, browser, urlBarText)` now routes a
+  non-nuked browser like `evaluateBrowser`: a group or All apps rule covering it whole is evaluated
+  as an app (`excludeDirectRules`) and blocks the browser only on a HARD_BLOCK; otherwise the URL on
+  screen goes through `evaluateWebDomain`, so only the rule's own sites are blocked, as website
+  blocks. An unreadable URL blocks nothing. Apps and a nuked browser get `invoke` as before. Tests:
+  `EvaluateSpentBudgetTest` (L3, 5 of its 10 cases fail with the old `invoke` call),
+  `SpentBudgetBrowserContractTest` (the call and the clear's position).
 - **It may only ESCALATE to a HARD_BLOCK.** If the re-evaluation comes back DELAY/HOLD/BREATHING —
   i.e. the budget is not actually spent — it does nothing and says so
   (`daily limit NOT enforced … reason=rules_disagree`). Putting a countdown in front of someone who is
@@ -299,7 +313,7 @@ a limit ticks with or without the readout, the merge keeps it ticking, and the C
 rule with no limit / no overlay / no auto-kick still spins no timer, which is the battery half),
 `CooldownGateTest` and `CounterCacheRefresherMergeTest`'s `configuresAutoKick` rows,
 `TimeRemainingHandlerTest` (a plain limit is enforced with no readout drawn; no limit is never
-enforced; a completed delay grant cannot outlive the budget). L2/L3:
+enforced; the tick itself leaves the grant alone, #192). L2/L3:
 `InterventionCountReplayTest` — the tick path in the #36 row model: one row for a budget that runs out
 mid-session, one row across 40 clock-driven re-launches while `launches` climbs past 40, two rows for
 a genuine leave-and-return. Source level: `BlockOverlayLaunchContractTest` (the clock's callback

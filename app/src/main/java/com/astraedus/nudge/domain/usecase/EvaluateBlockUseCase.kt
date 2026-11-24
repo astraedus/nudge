@@ -10,6 +10,7 @@ import com.astraedus.nudge.domain.ContentFilterAllowlist
 import com.astraedus.nudge.domain.ContentFilterBlocklist
 import com.astraedus.nudge.domain.WebDomainMatcher
 import com.astraedus.nudge.domain.engine.BlockEngine
+import com.astraedus.nudge.domain.engine.BrowserRouting
 import com.astraedus.nudge.domain.engine.CoverageFacts
 import com.astraedus.nudge.domain.engine.RuleCoverage
 import com.astraedus.nudge.domain.engine.RuleEvaluator
@@ -150,6 +151,51 @@ class EvaluateBlockUseCase @Inject constructor(
             membership = snapshot.membership,
             facts = facts
         ) { rule -> scheduleEvaluator.isActiveAt(rule, now) }
+    }
+
+    /**
+     * What the daily-limit clock re-derives for [packageName] once its budget has run out while the
+     * user is still in it (`NudgeAccessibilityService.enforceExhaustedBudget`). The service only acts
+     * on a HARD_BLOCK; anything else means "do nothing".
+     *
+     * An app, or a nuked browser, gets [invoke] with every rule, as before.
+     *
+     * A BROWSER gets the answer its entry path gives for the page on screen (issue #192). A rule set
+     * directly on a browser is websites-only everywhere else (`evaluateBrowser`, [BrowserRouting]):
+     * evaluating it here as an app made a spent limit hard-block the whole browser on any site,
+     * the one place the two paths disagreed. So:
+     *  1. covered whole by a group or All apps rule ([isCoveredWhole]): the GROUP rules as an app,
+     *     `excludeDirectRules`, exactly as the entry path. A hard block there blocks the browser.
+     *     Any other answer (a delay the user is already past, an allow) goes on to the site;
+     *  2. the site on screen ([urlBarText]) through [evaluateWebDomain], the same call the entry path
+     *     makes. A spent limit blocks it only if it is one of the rule's sites. An unreadable or
+     *     missing URL is [BlockDecision.Allow]: no evidence, no block, the clock's failure direction.
+     *
+     * @param browser whether [packageName] is a browser (`WebDomainDetector.isBrowser`).
+     * @param urlBarText the browser's URL bar text right now; ignored for an app.
+     */
+    suspend fun evaluateSpentBudget(
+        packageName: String,
+        browser: Boolean,
+        urlBarText: String?
+    ): SpentBudgetDecision {
+        if (!browser || nukeEnforcement.isNuked(packageName)) {
+            return SpentBudgetDecision(invoke(packageName))
+        }
+        if (BrowserRouting.route(isCoveredWhole(packageName)) == BrowserRouting.Route.APP_FIRST) {
+            val app = invoke(packageName, excludeDirectRules = true)
+            if (app is BlockDecision.Block && app.mode == BlockMode.HARD_BLOCK) {
+                return SpentBudgetDecision(app)
+            }
+        }
+        val domain = urlBarText?.let { WebDomainMatcher.extractDomain(it) }
+            ?: return SpentBudgetDecision(BlockDecision.Allow)
+        val web = evaluateWebDomain(urlBarText)
+        return SpentBudgetDecision(
+            decision = web.decision,
+            webDomain = domain,
+            trackingPackage = web.trackingPackage
+        )
     }
 
     /**
@@ -391,4 +437,17 @@ class EvaluateBlockUseCase @Inject constructor(
 data class WebDomainBlockResult(
     val decision: BlockDecision,
     val trackingPackage: String?
+)
+
+/**
+ * [EvaluateBlockUseCase.evaluateSpentBudget]'s answer.
+ *
+ * @property webDomain set when the decision is about the website on screen rather than the app (a
+ *   browser that was not blocked as an app); the block then belongs to that site.
+ * @property trackingPackage the package whose rule matched that site ([WebDomainBlockResult]).
+ */
+data class SpentBudgetDecision(
+    val decision: BlockDecision,
+    val webDomain: String? = null,
+    val trackingPackage: String? = null
 )
