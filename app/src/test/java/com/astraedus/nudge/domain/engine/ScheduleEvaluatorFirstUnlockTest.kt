@@ -133,9 +133,10 @@ class ScheduleEvaluatorFirstUnlockTest {
     fun `the no-argument constructor never activates a first-unlock rule`() {
         // Fail-open default for hand-built evaluators: no anchor means no window. Production binds
         // FirstUnlockStateCache, so this is never the app's path.
+        // An instant a real anchor at 08:12 would put inside the window, not the wall clock.
         val evaluated = ScheduleEvaluator(FirstUnlockState.NONE).isActiveAt(
             rule(minutes = 30),
-            calendarAt(System.currentTimeMillis())
+            calendarAt(at("2026-06-08", 8, 20))
         )
 
         assertFalse(evaluated)

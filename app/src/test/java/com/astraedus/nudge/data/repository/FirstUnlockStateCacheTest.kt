@@ -30,7 +30,9 @@ class FirstUnlockStateCacheTest {
     private fun at(date: LocalDate, hour: Int, minute: Int = 0): Long =
         date.atTime(hour, minute).atZone(zone).toInstant().toEpochMilli()
 
-    private val today: LocalDate = LocalDate.now(zone)
+    // A fixed Wednesday, never LocalDate.now(): every stamp below is built from this date, so a date
+    // read off the wall clock made the cases depend on the day the suite happened to run.
+    private val today: LocalDate = LocalDate.of(2026, 11, 4)
     private val now: Long = at(today, 9, 0)
 
     private fun cache(

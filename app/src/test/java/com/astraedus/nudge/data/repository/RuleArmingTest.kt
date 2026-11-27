@@ -100,7 +100,10 @@ class RuleArmingTest {
     // ---- the editor's sentence (review should-fix 2) --------------------------------------
 
     private val zone: ZoneId = ZoneId.systemDefault()
-    private val today: LocalDate = LocalDate.now(zone)
+
+    // A fixed Wednesday, never LocalDate.now(): the stamp below is built from this date, so a date
+    // read off the wall clock made the cases depend on the day the suite happened to run.
+    private val today: LocalDate = LocalDate.of(2026, 11, 4)
     private val stamp: Long = today.atTime(8, 0).atZone(zone).toInstant().toEpochMilli()
 
     private fun firstUnlock(armedAt: Long, enabled: Boolean = true, minutes: Int = 30) =

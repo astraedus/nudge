@@ -1,6 +1,7 @@
 package com.astraedus.nudge.domain.engine
 
 import com.astraedus.nudge.domain.engine.FirstUnlockState
+import com.astraedus.nudge.domain.logging.NudgeLog
 import com.astraedus.nudge.domain.model.ActiveRule
 import com.astraedus.nudge.domain.model.BlockDecision
 import com.astraedus.nudge.domain.model.BlockMode
@@ -186,16 +187,21 @@ class BlockEngineTest {
      * A HOLD rule outside its schedule must Allow, exactly as a DELAY rule does. Asserted for BOTH
      * modes in one test so the claim is a comparison and not two separate hopes.
      *
-     * The out-of-schedule window is every ISO day EXCEPT today, derived from the clock rather than
-     * hand-picked: a hardcoded day would pass six days a week and fail on the seventh, and an
+     * The out-of-schedule window is every ISO day EXCEPT the engine's day, derived from that day
+     * rather than hand-picked: a hardcoded day would be wrong on one weekday in seven, and an
      * out-of-RANGE day (`8`) would be testing an unparseable schedule, which is a different thing
-     * from a schedule that simply is not on right now.
+     * from a schedule that simply is not on right now. The engine's clock is pinned (a Wednesday),
+     * so the day it sees and the day the window leaves out are the same on every run, not only
+     * until the suite crosses midnight.
      */
     @Test
     fun `an out-of-schedule HOLD rule Allows, exactly as an out-of-schedule DELAY rule does`() {
-        val todayIso = ScheduleEvaluator.calendarDayToIso(
-            Calendar.getInstance().get(Calendar.DAY_OF_WEEK)
-        )
+        val now = Calendar.getInstance().apply {
+            set(2026, Calendar.NOVEMBER, 4, 12, 0, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        val pinnedEngine = BlockEngine(ScheduleEvaluator(FirstUnlockState.NONE), NudgeLog.NoOp) { now.clone() as Calendar }
+        val todayIso = ScheduleEvaluator.calendarDayToIso(now.get(Calendar.DAY_OF_WEEK))
         val everyOtherDay = (1..7).filter { it != todayIso }
 
         listOf(BlockMode.HOLD, BlockMode.DELAY).forEach { mode ->
@@ -210,7 +216,7 @@ class BlockEngineTest {
                     scheduleEndMinute = 1440
                 )
             )
-            val decision = engine.evaluate("com.example.app", rules, 0L)
+            val decision = pinnedEngine.evaluate("com.example.app", rules, 0L)
             assertTrue("mode=$mode should Allow outside its schedule", decision is BlockDecision.Allow)
         }
     }
