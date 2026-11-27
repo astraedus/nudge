@@ -4,6 +4,11 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+## [1.31.4] - 2026-11-27
+
+### Fixed
+- **No more crash of the background status service on some Android 14 phones.** Nudge keeps a small always-on service (the "Nudge is active" notification) that holds its process up. Android 12 and later can refuse to let that service come to the foreground when the phone decides Nudge is in the background, and it can refuse at the moment the service itself asks, after the start was already accepted. Nudge did not expect that second refusal, so the whole app crashed, blocking included, and the phone could restart the service straight into the same refusal. Now a refused service logs it and stops quietly, blocking carries on, and Nudge starts the service again the next time it is allowed to (opening Nudge, a restart, the on/off switch, or the background check). Reported by Google Play's crash reports on 1.31.3.
+
 ## [1.31.3] - 2026-11-24
 
 ### Fixed

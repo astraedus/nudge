@@ -80,6 +80,20 @@ failure being watched for is the OS killing us, and a killed process comes back 
 (`getRunningServices()` has been restricted since API 26; a heartbeat timestamp would be this flag
 with extra I/O.)
 
+**A refused `startForeground` stops the service; it does not crash the process** (v1.31.4). Android
+12+ checks the background-start restriction twice: once at `startForegroundService` (which `start()`
+catches) and again when the service calls `startForeground` in `onStartCommand`. The second check
+threw uncaught on an Android 14 Infinix (Play vitals, 1.31.3), killing the process and the
+accessibility service with it. `onStartCommand` now runs `startForeground` through
+`tryStartForeground`; on a refusal it logs one line, leaves `isRunning` false, starts no poll,
+calls `stopSelf(startId)` and returns `START_NOT_STICKY` so the OS does not restart it into the same
+refusal. AOSP `ActiveServices.setServiceForegroundInnerLocked` clears `fgRequired` and the
+foreground-timeout message before it throws, so a caught refusal leaves no pending
+"did not call startForeground in time" deadline. The next `sync()` or watchdog cycle starts it
+again. Known gap: because `start()` itself returned true, the watchdog reads this as
+`MONITOR_SERVICE_DEAD`, not `MONITOR_START_BLOCKED`, so its alert (after the confirming cycle and the
+12-hour cooldown) names battery settings rather than the overlay permission.
+
 ### 2. The watchdog
 
 `ProtectionWatchdogWorker` is a `WorkManager` periodic worker on the 15-minute floor, enqueued

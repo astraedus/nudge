@@ -1,0 +1,1 @@
+• Fixed a crash of Nudge's background status service on some Android 14 phones.
