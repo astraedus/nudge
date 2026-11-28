@@ -257,8 +257,25 @@ class NudgeMonitorService : Service() {
         // and a DataStore read and this call has a hard few-second deadline. The first evaluation
         // below runs immediately and corrects it within milliseconds if it was wrong, and the gate
         // means it costs a post only when it WAS wrong.
+        //
+        // The platform can REFUSE this call even after it allowed startForegroundService: on
+        // Android 12+ it re-checks the background-start restriction here and throws
+        // ForegroundServiceStartNotAllowedException. Uncaught, that killed the whole process,
+        // accessibility service included (Play vitals, 1.31.3 on Android 14). Refused means: stay
+        // not-running, start no poll, stop, and do not ask to be restarted, or a sticky restart
+        // would hit the same refusal and crash-loop. See [tryStartForeground] for what the
+        // platform has already cleaned up by the time it throws.
         val startupCopy = ServiceHealth.ACTIVE.notificationCopy()
-        startForeground(NOTIFICATION_ID, buildStatusNotification(startupCopy))
+        val denied = tryStartForeground {
+            startForeground(NOTIFICATION_ID, buildStatusNotification(startupCopy))
+        }
+        if (denied != null) {
+            log.w("monitor startForeground refused by the platform, stopping startId=$startId", denied)
+            // stopSelf(startId), not stopSelf(): a newer start that is already queued (one the
+            // platform may allow) must not be cancelled by this older refusal.
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
         notificationGate.onPosted(startupCopy)
         isRunning = true
         startHealthPoll()
