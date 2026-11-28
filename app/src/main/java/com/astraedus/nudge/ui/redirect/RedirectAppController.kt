@@ -40,6 +40,21 @@ class RedirectAppController(
 
     private var loadJob: Job? = null
 
+    /** True once the user picked or removed an app here; a late first-frame answer never overrides that. */
+    private var changedHere = false
+
+    /**
+     * The first frame went out before the saved choice resolved (a slow phone, see
+     * [FirstFrameLookup]): show it as soon as [resolve] answers, unless the user has already picked
+     * or removed one on this screen in the meantime.
+     */
+    fun showWhenResolved(resolve: suspend () -> InstalledAppsRepository.AppInfo?) {
+        scope.launch {
+            val late = resolve()
+            if (!changedHere) target = late
+        }
+    }
+
     fun openPicker() {
         pickerOpen = true
         loadJob?.cancel()
@@ -52,6 +67,7 @@ class RedirectAppController(
 
     fun choose(packageName: String) {
         pickerOpen = false
+        changedHere = true
         scope.launch {
             repository.choose(packageName, blockPackages)
             target = repository.current(blockPackages)
@@ -60,6 +76,7 @@ class RedirectAppController(
 
     fun remove() {
         pickerOpen = false
+        changedHere = true
         target = null
         scope.launch { repository.clear() }
     }

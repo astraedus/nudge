@@ -34,11 +34,14 @@ import com.astraedus.nudge.service.BlockLaunchGuard
 import com.astraedus.nudge.service.EmergencyPassManager
 import com.astraedus.nudge.service.NudgeAccessibilityService
 import com.astraedus.nudge.service.PassthroughManager
+import com.astraedus.nudge.ui.redirect.FirstFrameLookup
+import com.astraedus.nudge.ui.redirect.REDIRECT_FIRST_FRAME_BUDGET_MS
 import com.astraedus.nudge.ui.redirect.RedirectAppBubble
 import com.astraedus.nudge.ui.redirect.RedirectAppController
 import com.astraedus.nudge.ui.redirect.RedirectAppPickerHost
 import com.astraedus.nudge.ui.theme.NudgeTheme
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -374,9 +377,27 @@ class BlockOverlayActivity : ComponentActivity() {
         // Re-checked on every delivery (RedirectAppPolicy.resolve), so a choice uninstalled or
         // blocked since it was made renders as the empty state instead of a door to another block.
         // The block's own packages are excluded too: the blocked app, and the browser for a web block.
+        //
+        // The lookup itself is NOT done on the main thread: it can have to list every installed app
+        // (a rule's group checks a category), which parked this thread past the ANR limit on a moto
+        // g32 (two Play ANRs, 1.31.0 and 1.31.2). It starts on IO now, runs alongside the prefs reads
+        // below, and the first frame waits for it at most REDIRECT_FIRST_FRAME_BUDGET_MS; normally it
+        // is done long before. On a phone slow enough to miss that, the bubble fills in a moment
+        // later (showWhenResolved below). See [FirstFrameLookup] for why the wait is on a Deferred.
         val blockPackages = setOf(packageName, passthroughPackage(intent))
             .filterTo(mutableSetOf()) { it.isNotBlank() }
-        var redirectTarget: InstalledAppsRepository.AppInfo? = null
+        val redirectLookup = FirstFrameLookup(lifecycleScope, Dispatchers.IO) {
+            // Never allowed to stop the block from rendering: a failure here is an empty bubble.
+            try {
+                redirectAppRepository.current(blockPackages)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                nudgeLogger.e("redirect app could not be resolved", e)
+                null
+            }
+        }
+        var redirectFirstFrame: FirstFrameLookup.Ready<InstalledAppsRepository.AppInfo?>? = null
         // "Show the camera on block screens", read before the first frame like everything above:
         // a screen that draws plain and then turns into the camera would be a visible flash.
         var cameraOnBlockScreens = false
@@ -400,20 +421,18 @@ class BlockOverlayActivity : ComponentActivity() {
                 now = System.currentTimeMillis()
             )
 
-            // Never allowed to stop the block from rendering: a failure here is an empty bubble.
-            redirectTarget = try {
-                redirectAppRepository.current(blockPackages)
-            } catch (e: Exception) {
-                nudgeLogger.e("redirect app could not be resolved", e)
-                null
-            }
+            redirectFirstFrame = redirectLookup.awaitWithin(REDIRECT_FIRST_FRAME_BUDGET_MS)
         }
         val redirect = RedirectAppController(
             repository = redirectAppRepository,
             scope = lifecycleScope,
             blockPackages = blockPackages,
-            initialTarget = redirectTarget
+            initialTarget = redirectFirstFrame?.value
         )
+        if (redirectFirstFrame == null) {
+            nudgeLogger.w("redirect app not resolved within ${REDIRECT_FIRST_FRAME_BUDGET_MS}ms, filling in")
+            redirect.showWhenResolved { redirectLookup.await() }
+        }
         // Tap = a walk-away to that app, through the ONE walk-away path; long-press = the picker.
         //
         // An All apps block (spec 3.9) hides the bubble: its "Open an allowed app" icons take the
