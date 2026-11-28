@@ -148,4 +148,33 @@ class RedirectAppContractTest {
             )
         }
     }
+    /**
+     * The redirect lookup can have to list every installed app, which parked the main thread past
+     * the ANR limit on a moto g32 (two Play ANRs, 1.31.0 and 1.31.2). It must never run inside the
+     * first frame's `runBlocking` again: the frame waits on [com.astraedus.nudge.ui.redirect.FirstFrameLookup]
+     * for a bounded time instead, and that lookup runs on IO. Started on the activity's Main
+     * dispatcher it would deadlock against the blocked main thread and always miss the budget,
+     * which is the flash the pre-first-frame read exists to prevent.
+     */
+    @Test
+    fun `the redirect lookup never runs on the main thread inside the first frame's runBlocking`() {
+        val render = activity.substringAfter("private fun render(intent: Intent)").substringBefore("\n    private fun ")
+        val blocking = render.substringAfter("runBlocking {").substringBefore("val redirect = RedirectAppController(")
+        assertFalse(
+            "redirectAppRepository is read inside the main-thread runBlocking (the moto g32 ANR)",
+            blocking.contains("redirectAppRepository.")
+        )
+        assertTrue(
+            "the first frame waits for the redirect app only within the budget",
+            blocking.contains("redirectLookup.awaitWithin(REDIRECT_FIRST_FRAME_BUDGET_MS)")
+        )
+        assertTrue(
+            "the lookup runs on IO, never on the activity's Main dispatcher",
+            render.contains("FirstFrameLookup(lifecycleScope, Dispatchers.IO)")
+        )
+        assertTrue(
+            "a lookup that missed the budget still fills the bubble in",
+            render.contains("redirect.showWhenResolved { redirectLookup.await() }")
+        )
+    }
 }

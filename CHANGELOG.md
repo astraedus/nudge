@@ -4,6 +4,9 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+### Fixed
+- **Block screen: no longer freezes the app on a slow phone while it looks up your redirect app.** The block screen read the redirect app on the main thread before its first frame, and when that lookup had to list every installed app (a rule's group picks apps by category, and the app list was not cached yet) it could hold the screen past Android's 5-second limit, which froze Nudge and showed "Nudge isn't responding" (two Play reports, moto g32, Android 13, 1.31.0 and 1.31.2). The lookup now runs in the background; the first frame waits for it at most 300 ms, which normally covers it, and on a phone too slow for that the bubble fills in a moment later. A pick or removal you make in the meantime is kept.
+
 ## [1.31.4] - 2026-11-27
 
 ### Fixed
